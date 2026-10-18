@@ -73,6 +73,10 @@ and AgentGov's policies, binding it to a deployment, and what becomes of a linea
   that judges a call its parent exempts can trip *later* than its parent. The cognitive
   property test found this on about one random call sequence in five. §5.2 is amended to
   match.
+- **`refines` keeps `min_cycle_repeats` at 2 or more under a parent that detects cycles**
+  (F5-11). AgentGov's cycle detector does not run below 2 repeats, so a child at 1 was
+  looser than its parent while the order counted it as tighter. The cognitive property
+  test found it at seed 7810, and a fixed sweep of 400 seeds now runs on every test run.
 - `Authority.issue_mandate` refuses to amend a lineage that is bound or has descendants.
   Such an amendment goes through `Binder.issue` (`fiduciary mandate amend`), which
   rebinds and rebases what hangs from it.
