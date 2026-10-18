@@ -10,11 +10,29 @@ measured consequence satisfies its checkers. Fiduciary says who decided those li
 on whose authority, and who approved an exception. It records each answer as a signed
 document that anyone holding the public keys can verify.
 
-`docs/FIDUCIARY_SPEC.md` is the specification. This is **0.1.0**, Phase 1 of its
-roadmap: the FIDU1 format, the documents, the order on mandates, the log and its two
-stores, and the command line. Compiling a mandate into Interlock's checkers is Phase 2.
-Escalation tickets and warrants are Phase 3, the agent and MCP bridge Phase 4, and the
-audit bundle Phase 5.
+`docs/FIDUCIARY_SPEC.md` is the specification. This is **0.2.0**, Phase 2 of its
+roadmap. Phase 1 (0.1.0) gave the FIDU1 format, the documents, the order on mandates, the
+log and its two stores, and the command line. Phase 2 compiles a mandate into
+Interlock's checkers and AgentGov's policies, and binds it to a deployment. Escalation
+tickets and warrants are Phase 3, the agent and MCP bridge Phase 4, and the audit bundle
+Phase 5.
+
+## What 0.2.0 adds
+
+- **Compilation** (`fiduciary.compiler`). `compile` turns a mandate and its ancestors
+  into Interlock checkers, a narrowed sink registry, namespaced rate windows,
+  AgentGov's governance and cognitive policies, and a receipt issuer.
+  - The compiled digest is the SHA-256 of a canonical description, and every object is
+    built from that description.
+  - What the deployment cannot enforce fails compilation, and every problem is named.
+- **Binding** (`fiduciary.binding`).
+  - `bind` delegates the envelope and records the binding.
+  - An amendment takes effect at the next plan boundary. Descendants that still refine
+    it are rebased; the others are suspended.
+  - Revocation and expiry cascade down the lineage. They trip every scope of it in one
+    AgentGov transaction, so nothing in flight commits and the relay holds its messages.
+- **The command line**: `fiduciary mandate compile`, `bind`, `derive`, `amend`, `revoke`
+  and `expire`.
 
 ## What 0.1.0 does
 
@@ -99,6 +117,35 @@ fiduciary approve mandate.json --principal carol --key carol.key --submit
 fiduciary mandate issue <digest>
 
 fiduciary verify
+```
+
+To bind a mandate, the configuration also names the deployment it binds to:
+
+```toml
+interlock = "interlock.toml"         # its tables and sinks
+
+[binding]
+tools      = ["refund.tool.json"]    # the tool bindings it runs: files, or module:name
+directives = ["stop-retrying.txt"]   # directive texts, by the SHA-256 of their bytes
+chains     = "chains"                # each lineage's escrow chain
+```
+
+The charter's `--ledger` must be that ledger's first entry.
+
+```
+fiduciary mandate compile <digest>   # the compiled policy, and its digest on stderr
+fiduciary mandate bind <digest>      # delegates the envelope to the mandate's scope
+
+fiduciary mandate draft --charter charter.json --parent mandate.json \
+    --scope agent/triage --label "Triage" --out child.draft.json
+fiduciary mandate derive child.draft.json --bind   # signed by the service, no approvals
+
+# an amendment, approved as an issue is:
+fiduciary mandate amend mandate-v2.json   # rebases or suspends children, rebinds
+# a revocation, on --revoke approvals:
+fiduciary approve mandate-v2.json --principal carol --key carol.key --revoke --submit
+fiduciary mandate revoke <digest>
+fiduciary mandate expire                  # every lineage past its term
 ```
 
 `fiduciary approve` prints the document it signs and asks before signing it (G8). A
