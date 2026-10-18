@@ -49,7 +49,7 @@ def _owner(store: Store, statements: Sequence[tuple[str, tuple[Any, ...]]]) -> N
     with psycopg.connect(PG_DSN, autocommit=True) as admin:
         admin.execute("SET session_replication_role = replica")
         for sql, args in statements:
-            admin.execute(sql.replace("{t}", f"{schema}.").replace("?", "%s"), args)  # type: ignore[arg-type]
+            admin.execute(sql.replace("{t}", f"{schema}.").replace("?", "%s"), args)
 
 
 _INSERT = "INSERT INTO {t}log (log_id, seq, hash, prev, kind, record) VALUES (?, ?, ?, ?, ?, ?)"

@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (py${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        os: [ubuntu-latest]
+        include:
+          # SQLite's file locking differs by platform, and the store claims a
+          # log's single writer with a lock beside the file.
+          - python-version: "3.12"
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+      # Interlock and AgentGov resolve from PyPI, pinned in uv.lock; --frozen
+      # fails a dependency edit that was not re-locked.
+      - name: Install the project
+        run: uv sync --frozen --python ${{ matrix.python-version }}
+      - name: Lint (ruff check)
+        run: uv run ruff check .
+      - name: Format (ruff format --check)
+        run: uv run ruff format --check .
+      - name: Type-check the package (mypy --strict)
+        run: uv run mypy src/
+      - name: Type-check the tests and scripts (mypy --strict)
+        run: uv run mypy --strict tests/ scripts/
+      - name: The golden vectors are what the generator writes
+        run: |
+          uv run python scripts/make_vectors.py
+          git diff --exit-code vectors/
+      - name: Tests with coverage
+        run: uv run pytest -v --cov=fiduciary --cov-branch --cov-report=term-missing
+      # postgres.py runs only against a server, which this job has none of; the
+      # postgres job below measures everything against the higher floors.
+      - name: Enforce coverage floor
+        run: uv run coverage report --fail-under=90 --omit=src/fiduciary/postgres.py
+
+  postgres:
+    name: test against PostgreSQL ${{ matrix.postgres }} (py3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["14", "16", "18"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_USER: fiduciary_admin
+          POSTGRES_PASSWORD: fiduciary
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fiduciary_admin"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      UV_PYTHON: "3.12"
+      FIDUCIARY_TEST_POSTGRES_DSN: postgresql://fiduciary_admin:fiduciary@localhost:5432/postgres
+      FIDUCIARY_REQUIRE_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen --python 3.12
+      - name: Tests with coverage, both stores
+        run: uv run pytest -v --cov=fiduciary --cov-branch --cov-report=term-missing --cov-report=json
+      # The floors: 95% of lines and 90% of branches, measured apart.
+      - name: Enforce coverage floors
+        run: |
+          uv run python - <<'EOF'
+          import json, sys
+          totals = json.load(open("coverage.json"))["totals"]
+          lines = 100 * totals["covered_lines"] / totals["num_statements"]
+          branches = 100 * totals["covered_branches"] / totals["num_branches"]
+          print(f"lines {lines:.2f}%, branches {branches:.2f}%")
+          sys.exit(0 if lines >= 95 and branches >= 90 else 1)
+          EOF
+
+  build:
+    name: build (wheel + sdist)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build -o "${{ runner.temp }}/dist" > "${{ runner.temp }}/build.log" 2>&1 || (cat "${{ runner.temp }}/build.log"; exit 1)
+      - name: Install the wheel into a bare environment
+        run: |
+          uv venv "${{ runner.temp }}/bare" --python 3.12
+          uv pip install --python "${{ runner.temp }}/bare/bin/python" "${{ runner.temp }}"/dist/*.whl
+          "${{ runner.temp }}/bare/bin/fiduciary" --version
+          "${{ runner.temp }}/bare/bin/python" -W error -c "import fiduciary.cli, fiduciary.postgres, fiduciary.verify"

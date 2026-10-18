@@ -535,7 +535,7 @@ WIDENINGS: list[Widening] = [
         lambda r: r["roster"]["quorums"].update(
             {_granting_above_revoke(r): r["roster"]["quorums"][_granting_above_revoke(r)] - 1}
         ),
-    ),  # type: ignore[dict-item]
+    ),
     (
         "roster.quorums.revoke",
         lambda r: (
