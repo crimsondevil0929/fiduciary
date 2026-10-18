@@ -164,28 +164,47 @@ class Log:
     ) -> Record:
         """Sign and write the next record, the documents it names and its
         projection rows, together; then anchor it."""
+        (record,) = self.append_all([(kind, body)], documents=documents, issued_at=issued_at)
+        return record
+
+    def append_all(
+        self,
+        entries: Sequence[tuple[str, dict[str, Any]]],
+        *,
+        documents: Sequence[Document] = (),
+        issued_at: datetime | None = None,
+    ) -> list[Record]:
+        """Write several records in one transaction, in order: all of them, or
+        none. A parent's amendment and what it does to its descendants are
+        written so (F5-7)."""
+        written: list[Record] = []
+        when = issued_at or self._clock()
         with self._store.transaction():
             seq, head = self._store.head(self._log_id)
-            record = Record.make(
-                self._signer,
-                log=self._log_id,
-                seq=seq + 1,
-                kind=kind,
-                body=body,
-                prev=head,
-                issued_at=issued_at or self._clock(),
-            )
             for document in documents:
                 self.put(document)
-            self._store.insert_record(
-                StoredRecord(
-                    self._log_id, record.seq, record.hash, record.prev, kind, record.canonical()
+            for kind, body in entries:
+                record = Record.make(
+                    self._signer,
+                    log=self._log_id,
+                    seq=seq + 1,
+                    kind=kind,
+                    body=body,
+                    prev=head,
+                    issued_at=when,
                 )
-            )
-            for table, row in rows_for(record):
-                self._store.insert_row(table, row)
-        self._anchor(record)
-        return record
+                self._store.insert_record(
+                    StoredRecord(
+                        self._log_id, record.seq, record.hash, record.prev, kind, record.canonical()
+                    )
+                )
+                for table, row in rows_for(record):
+                    self._store.insert_row(table, row)
+                written.append(record)
+                seq, head = record.seq, record.hash
+        for record in written:
+            self._anchor(record)
+        return written
 
     # -- anchors ---------------------------------------------------------------
 

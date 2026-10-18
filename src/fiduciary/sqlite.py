@@ -27,7 +27,9 @@ from fiduciary.store import PROJECTIONS, Store, StoredRecord
 
 __all__ = ["SCHEMA_VERSION", "SqliteStore"]
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
+"""1: 0.1.0. 2: 0.2.0, the lineage events (bound, rebased, suspended, revoked,
+expired). Upgrading adds the table, which a version 1 log holds nothing for."""
 _PROTECTED: Final = ("documents", "log", "intake")
 
 
@@ -134,6 +136,10 @@ class SqliteStore(Store):
         if row is None:
             self._conn.execute(
                 "INSERT INTO meta (key, value) VALUES ('schema', ?)", (str(SCHEMA_VERSION),)
+            )
+        elif int(row[0]) < SCHEMA_VERSION:
+            self._conn.execute(
+                "UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),)
             )
         elif int(row[0]) != SCHEMA_VERSION:
             raise StoreError(

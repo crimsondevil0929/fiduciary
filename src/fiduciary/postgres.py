@@ -33,7 +33,8 @@ if TYPE_CHECKING:
 
 __all__ = ["SCHEMA_VERSION", "PostgresStore", "install", "roles"]
 
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
+"""As :data:`fiduciary.sqlite.SCHEMA_VERSION`."""
 _SCHEMA: Final = re.compile(r"[a-z_][a-z0-9_]{0,40}")
 _COLUMN_TYPES: Final = {"version": "bigint", "seq": "bigint", "intake": "bigint"}
 
@@ -160,6 +161,10 @@ def install(conn: psycopg.Connection[Any], *, schema: str = "fiduciary") -> None
                 conn.execute(
                     f"INSERT INTO {s}.meta (key, value) VALUES ('schema', %s)",
                     (str(SCHEMA_VERSION),),
+                )
+            elif int(found[0]) < SCHEMA_VERSION:
+                conn.execute(
+                    f"UPDATE {s}.meta SET value = %s WHERE key = 'schema'", (str(SCHEMA_VERSION),)
                 )
             elif int(found[0]) != SCHEMA_VERSION:
                 raise StoreError(

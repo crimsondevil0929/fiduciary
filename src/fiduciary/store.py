@@ -48,6 +48,7 @@ PROJECTIONS: Final[Mapping[str, tuple[str, ...]]] = {
         "seq",
     ),
     "refusals": ("intake", "digest", "seq"),
+    "lineage": ("mandate_id", "event", "digest", "detail", "seq"),
 }
 """Each projection table and its columns, in order. Every column is text or an
 integer; ``seq`` is the record a row follows from."""
@@ -105,7 +106,29 @@ def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
         ]
     if kind == "approval.refused":
         return [("refusals", (body["intake"], body["digest"], record.seq))]
+    event = _LINEAGE_EVENTS.get(kind)
+    if event is not None:
+        detail = str(body.get(_DETAIL[event]) or "")
+        return [("lineage", (body["mandate_id"], event, body["mandate"], detail, record.seq))]
     return []
+
+
+_LINEAGE_EVENTS: Final = {
+    "mandate.bound": "bound",
+    "mandate.rebased": "rebased",
+    "mandate.suspended": "suspended",
+    "mandate.revoked": "revoked",
+    "mandate.expired": "expired",
+}
+_DETAIL: Final = {
+    "bound": "compiled",
+    "rebased": "parent",
+    "suspended": "cause",
+    "revoked": "cascade",
+    "expired": "cascade",
+}
+TERMINAL: Final = frozenset({"suspended", "revoked", "expired"})
+"""Lineage events after which a lineage governs nothing more."""
 
 
 def fold(records: Sequence[Record]) -> dict[str, list[tuple[Any, ...]]]:
@@ -156,6 +179,13 @@ class State:
     """Intake ids a record answers, recorded or refused."""
     issued: dict[str, str] = field(default_factory=dict)
     """Mandate digest to its ``mandate_id``, for every issued version."""
+    parents: dict[str, str] = field(default_factory=dict)
+    """Each lineage's parent version in force: the digest its first version
+    named, or the one it was last rebased onto."""
+    events: dict[str, list[tuple[str, str, str, int]]] = field(default_factory=dict)
+    """Each lineage's events: ``(event, mandate digest, detail, seq)``, in order."""
+    bound: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """Each bound lineage's last ``mandate.bound`` body."""
     head_seq: int = 0
 
     @classmethod
@@ -176,6 +206,14 @@ class State:
             elif table == "mandates":
                 self.lineages.setdefault(row[0], []).append((row[1], row[2], row[3], row[4]))
                 self.issued[row[2]] = row[0]
+                if body.get("parent"):
+                    self.parents[row[0]] = str(body["parent"])
+            elif table == "lineage":
+                self.events.setdefault(row[0], []).append((row[1], row[2], row[3], row[4]))
+                if row[1] == "rebased":
+                    self.parents[row[0]] = row[3]
+                elif row[1] == "bound":
+                    self.bound[row[0]] = dict(body)
             elif table == "approvals":
                 self.approvals.append(ApprovalRow(*row))
                 self.processed.add(int(body["intake"]))
@@ -197,6 +235,43 @@ class State:
             return None
         version, digest, _, _ = versions[-1]
         return version, digest
+
+    def status(self, mandate_id: str) -> str | None:
+        """``issued``, ``bound``, or the terminal event (``suspended``,
+        ``revoked``, ``expired``); ``None`` for no lineage."""
+        if mandate_id not in self.lineages:
+            return None
+        events = [e[0] for e in self.events.get(mandate_id, ())]
+        terminal = [e for e in events if e in TERMINAL]
+        if terminal:
+            return terminal[0]
+        return "bound" if "bound" in events else "issued"
+
+    def in_force(self, mandate_id: str) -> bool:
+        """Issued, and neither suspended, revoked nor expired."""
+        return self.status(mandate_id) in ("issued", "bound")
+
+    def parent_lineage(self, mandate_id: str) -> str | None:
+        """The ``mandate_id`` of a lineage's parent, or ``None`` for a root."""
+        parent = self.parents.get(mandate_id)
+        return None if parent is None else self.issued.get(parent)
+
+    def children(self, mandate_id: str) -> list[str]:
+        """The lineages derived or issued below ``mandate_id``, in issue order."""
+        found = [
+            (versions[0][3], child)
+            for child, versions in self.lineages.items()
+            if self.parent_lineage(child) == mandate_id
+        ]
+        return [child for _, child in sorted(found)]
+
+    def descendants(self, mandate_id: str) -> list[str]:
+        """Every lineage below ``mandate_id``, depth first."""
+        found: list[str] = []
+        for child in self.children(mandate_id):
+            found.append(child)
+            found.extend(self.descendants(child))
+        return found
 
     def decisions(self, subject_type: str, subject_digest: str) -> dict[str, ApprovalRow]:
         """Each principal's latest recorded decision on a subject (F7-3, rule 6)."""
