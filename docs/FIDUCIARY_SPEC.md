@@ -844,7 +844,7 @@ when `child ⊑ parent`.
 | `governance.cognitive.similarity_threshold`, `.result_similarity_threshold` | `CognitivePolicy` | ≤ (a lower threshold counts more pairs as stagnant) |
 | `governance.cognitive.max_cycle_period` | `CognitivePolicy` | ≥ (longer cycles are looked for too) |
 | `governance.cognitive.min_novelty_ratio` | `CognitivePolicy` | ≥ |
-| `governance.cognitive.exempt_tools` | `CognitivePolicy` | ⊆ |
+| `governance.cognitive.exempt_tools` | `CognitivePolicy` | equal: a child that judged a call its parent exempts would see it between two others, and a repeat the parent counts would break (F5-11 found it) |
 | `data.tables` | `TableAllowlist`, `NoDelete`, `bound_statements` | tables ⊆; per table, operations ⊆ |
 | `data.tenants` | `tenant_allowlist` | ⊆; `"*"` only under `"*"` |
 | `data.declared_tenants` | `TenantIsolation(declared=…)` | true if the parent's is |

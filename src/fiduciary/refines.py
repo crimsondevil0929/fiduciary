@@ -222,7 +222,13 @@ def _governance(check: _Check, child: Mandate, parent: Mandate) -> None:
     )
     check.at_least(f"{base}.max_cycle_period", c.max_cycle_period, p.max_cycle_period)
     check.at_least(f"{base}.min_novelty_ratio", c.min_novelty_ratio, p.min_novelty_ratio)
-    check.subset(f"{base}.exempt_tools", c.exempt_tools, p.exempt_tools)
+    # Equal, not a subset: a child that judges a call its parent exempts sees
+    # that call between two others, and a streak the parent counts breaks.
+    # F5-11's property test found it (tests/test_monotonicity.py).
+    if c.exempt_tools != p.exempt_tools:
+        check.fail(
+            f"{base}.exempt_tools", "differs from the parent's: a child exempts exactly its tools"
+        )
 
 
 def _data(check: _Check, child: Mandate, parent: Mandate) -> None:

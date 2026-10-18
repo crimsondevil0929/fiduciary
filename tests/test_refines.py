@@ -252,7 +252,6 @@ def n_governance(raw: Raw, rnd: random.Random) -> None:
     c["min_novelty_ratio"] = _spell(
         min(Decimal(1), _dec(c["min_novelty_ratio"]) + Decimal(rnd.randint(0, 5)) / 100)
     )
-    _drop_one(c["exempt_tools"], rnd, keep=0)
 
 
 def n_data(raw: Raw, rnd: random.Random) -> None:
