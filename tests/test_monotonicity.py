@@ -310,6 +310,23 @@ def test_a_childs_cognitive_policy_trips_no_later_than_its_parents(seed: int) ->
         assert at_child is not None and at_child <= at_parent, (at_parent, at_child, calls)
 
 
+def test_the_cognitive_property_over_a_fixed_sweep() -> None:
+    """Hypothesis draws 60 seeds a run; this sweeps the same 400 every run, seed
+    7810 (the counterexample that turned cycle detection off) among them."""
+    for seed in [7810, *range(400)]:
+        rnd = random.Random(seed)
+        pair = _pair(rnd)
+        if pair is None:
+            continue
+        parent, child = pair
+        for _ in range(20):
+            calls = _calls(rnd)
+            at_parent = _trips_at(parent.cognitive, calls)
+            if at_parent is not None:
+                at_child = _trips_at(child.cognitive, calls)
+                assert at_child is not None and at_child <= at_parent, (seed, calls)
+
+
 def test_a_child_judging_a_tool_its_parent_exempts_would_trip_later() -> None:
     """Why ``exempt_tools`` is equal, not a subset, in the order (F5-11)."""
     calls = [("search", "q", "r"), ("poll", "s", "x")] * 3 + [("search", "q", "r")]
@@ -317,3 +334,12 @@ def test_a_child_judging_a_tool_its_parent_exempts_would_trip_later() -> None:
     child = CognitivePolicy(exempt_tools=frozenset())
     at_parent, at_child = _trips_at(parent, calls), _trips_at(child, calls)
     assert at_parent is not None and at_child is not None and at_child > at_parent
+
+
+def test_a_child_turning_cycle_detection_off_would_trip_later() -> None:
+    """Why ``min_cycle_repeats`` stays at 2 or more under a parent that detects
+    cycles (F5-11): at 1, AgentGov's cycle detector does not run."""
+    calls = [("search", "a", "r"), ("fetch", "b", "s")] * 2 + [("search", "c", "t")]
+    parent = CognitivePolicy(max_cycle_period=2, min_cycle_repeats=2)
+    child = CognitivePolicy(max_cycle_period=2, min_cycle_repeats=1)
+    assert _trips_at(parent, calls) == 3 and _trips_at(child, calls) is None

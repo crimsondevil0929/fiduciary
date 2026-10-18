@@ -214,6 +214,15 @@ def _governance(check: _Check, child: Mandate, parent: Mandate) -> None:
     check.at_most(f"{base}.max_identical_repeats", c.max_identical_repeats, p.max_identical_repeats)
     check.at_most(f"{base}.max_similar_streak", c.max_similar_streak, p.max_similar_streak)
     check.at_most(f"{base}.min_cycle_repeats", c.min_cycle_repeats, p.min_cycle_repeats)
+    # AgentGov's cycle detector runs only from a period and a repeat count of 2:
+    # below either it is off, so a child "narrowing" to 1 drops its parent's check.
+    # F5-11's property test found it (tests/test_monotonicity.py).
+    if min(p.max_cycle_period, p.min_cycle_repeats) >= 2 and c.min_cycle_repeats < 2:
+        check.fail(
+            f"{base}.min_cycle_repeats",
+            f"is {c.min_cycle_repeats}, which turns off the cycle detection its parent runs "
+            f"(it runs from 2 repeats)",
+        )
     check.at_most(f"{base}.similarity_threshold", c.similarity_threshold, p.similarity_threshold)
     check.at_most(
         f"{base}.result_similarity_threshold",

@@ -843,7 +843,7 @@ when `child ⊑ parent`.
 | `budget.models` | the bridge's model allowlist | ⊆ |
 | `governance.max_calls`, `.seconds` | `GovernancePolicy.max_calls_per_window`, `.window_seconds` | `max_calls ≤` and `seconds ≥` (any shorter window lies inside a longer one, so the child's bound implies the parent's) |
 | `governance.fleet_velocity` | `GovernancePolicy.fleet_velocity` | true if the parent's is |
-| `governance.cognitive.max_identical_repeats`, `.max_similar_streak`, `.min_cycle_repeats` | `CognitivePolicy` | ≤ |
+| `governance.cognitive.max_identical_repeats`, `.max_similar_streak`, `.min_cycle_repeats` | `CognitivePolicy` | ≤; and `min_cycle_repeats` ≥ 2 while the parent's `max_cycle_period` and `min_cycle_repeats` are both ≥ 2, since AgentGov's cycle detector does not run below 2 |
 | `governance.cognitive.similarity_threshold`, `.result_similarity_threshold` | `CognitivePolicy` | ≤ (a lower threshold counts more pairs as stagnant) |
 | `governance.cognitive.max_cycle_period` | `CognitivePolicy` | ≥ (longer cycles are looked for too) |
 | `governance.cognitive.min_novelty_ratio` | `CognitivePolicy` | ≥ |

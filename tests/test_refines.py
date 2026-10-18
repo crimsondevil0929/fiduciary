@@ -244,8 +244,11 @@ def n_governance(raw: Raw, rnd: random.Random) -> None:
     g["seconds"] = rnd.randint(g["seconds"], g["seconds"] + 600)
     g["fleet_velocity"] = g["fleet_velocity"] or rnd.random() < 0.5
     c = g["cognitive"]
+    before = c["min_cycle_repeats"]
     for key in ("max_identical_repeats", "max_similar_streak", "min_cycle_repeats"):
         c[key] = _shrink_int(c[key], rnd)
+    if c["min_cycle_repeats"] < 2 <= min(c["max_cycle_period"], before):
+        c["min_cycle_repeats"] = 2  # below 2 the cycle detector is off: no narrowing
     for key in ("similarity_threshold", "result_similarity_threshold"):
         c[key] = _spell(_dec(c[key]) * Decimal(rnd.randint(50, 100)) / 100)
     c["max_cycle_period"] = rnd.randint(c["max_cycle_period"], c["max_cycle_period"] + 3)
@@ -597,6 +600,17 @@ WIDENINGS: list[Widening] = [
         lambda r: r["governance"]["cognitive"].update(
             min_cycle_repeats=r["governance"]["cognitive"]["min_cycle_repeats"] + 1
         ),
+    ),
+    (
+        "governance.cognitive.min_cycle_repeats",
+        lambda r: (
+            min(
+                r["governance"]["cognitive"]["min_cycle_repeats"],
+                r["governance"]["cognitive"]["max_cycle_period"],
+            )
+            >= 2
+        ),
+        lambda r: r["governance"]["cognitive"].update(min_cycle_repeats=1),
     ),
     (
         "governance.cognitive.similarity_threshold",
