@@ -1,0 +1,31 @@
+# Python build and bytecode
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Logs, such as a build's: the sdist packs whatever is not ignored
+*.log
+
+# Stores and keys made by hand while trying the command line
+*.db
+*.db-wal
+*.db-shm
+*.key
+
+# OS metadata
+.DS_Store

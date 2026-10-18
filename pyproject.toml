@@ -1,0 +1,96 @@
+[project]
+name = "interlock-fiduciary"
+version = "0.1.0"
+description = "Signed mandates, quorum warrants and offline compliance proofs over Interlock and AgentGov."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "Edward Gu", email = "edwardgu0929@gmail.com" }]
+keywords = ["agents", "llm", "delegation", "quorum", "audit", "zero-trust", "escrow"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Typing :: Typed",
+]
+dependencies = [
+    "interlock-escrow>=1.0.2",
+    "interlock-agentgov>=1.0.0",
+]
+
+[project.scripts]
+fiduciary = "fiduciary.cli:main_entry"
+
+[project.optional-dependencies]
+# The PostgreSQL store (fiduciary.postgres), and AgentGov and Interlock on PostgreSQL.
+postgres = ["psycopg[binary]>=3.2", "interlock-escrow[postgres]>=1.0.2"]
+# Signing with an Ed25519 key held locally: a principal's approvals, the service's
+# records. Verifying needs nothing extra.
+sign = ["interlock-agentgov[sign]>=1.0.0"]
+# Signing with an Ed25519 key held by AWS KMS (agentgov.receipts.kms_aws.AwsKmsSigner).
+kms-aws = ["interlock-agentgov[kms-aws]>=1.0.0"]
+# AgentGov's OpenTelemetry metrics, for the governor fiduciary anchors into.
+otel = ["interlock-agentgov[otel]>=1.0.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
+    "psycopg[binary]>=3.2",
+    "hypothesis>=6.100",
+    "cryptography>=42",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+faulthandler_timeout = 300
+filterwarnings = ["error::DeprecationWarning"]
+
+[tool.coverage.run]
+source = ["fiduciary"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "raise AssertionError", "@overload"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N", "S", "RUF"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests sign with secrets they make up, which name nothing real (S105, S106), and
+# build SQL from table names they define themselves to tamper with fixtures (S608).
+"tests/**/*.py" = ["S101", "S105", "S106", "S608"]
+# The stores join their own table names, module constants, into constant SQL;
+# every value is a bound parameter.
+"src/fiduciary/sqlite.py" = ["S608"]
+"src/fiduciary/postgres.py" = ["S608"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+packages = ["fiduciary"]
+strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+show_error_codes = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fiduciary"]
