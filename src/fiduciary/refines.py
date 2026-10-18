@@ -340,6 +340,9 @@ def _outbound(check: _Check, child: Mandate, parent: Mandate) -> None:
                 theirs.tenants.require_tenant,
             )
             for target, field in sorted(theirs.tenants.fields.items()):
+                sink, _, operation = target.partition(".")
+                if sink not in mine.sinks or (operation and not allowed(sink, operation)):
+                    continue  # the child sends nothing there
                 if found.fields.get(target) != field:
                     check.fail(
                         f"outbound.tenants.fields.{target}",
