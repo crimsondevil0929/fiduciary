@@ -29,7 +29,7 @@ latest decision recorded on the subject.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -257,6 +257,11 @@ class Decide:
         if now >= mandate.not_after:
             raise AuthorityError(f"mandate {digest[:16]}'s term ended")
         head = state.head(mandate.mandate_id)
+        if head is not None and not state.in_force(mandate.mandate_id):
+            raise AuthorityError(
+                f"lineage {mandate.mandate_id} is {state.status(mandate.mandate_id)}: it takes "
+                f"no new version"
+            )
         if head is None and mandate.version != 1:
             raise AuthorityError(
                 f"lineage {mandate.mandate_id} has no version {mandate.version - 1}"
@@ -284,6 +289,10 @@ class Decide:
             parent_head = state.head(mandate.parent.mandate_id)
             if parent_head is None or parent_head[1] != mandate.parent.digest:
                 raise AuthorityError("a child names its parent's version in force")
+            if not state.in_force(mandate.parent.mandate_id):
+                raise AuthorityError(
+                    f"its parent lineage is {state.status(mandate.parent.mandate_id)}"
+                )
             parent: Mandate = _load(self.store, mandate.parent.digest, Mandate)
             found = delegation_problems(mandate, parent)
             if found:
@@ -316,6 +325,121 @@ class Decide:
             "issuance": mandate.issuance,
             "approvals": counted,
         }
+
+    # -- the lineage after issuance (§5.4, §5.5) ---------------------------------
+
+    def head_mandate(self, state: State, mandate_id: str) -> Mandate:
+        head = state.head(mandate_id)
+        if head is None:
+            raise AuthorityError(f"no lineage {mandate_id} is issued")
+        found: Mandate = _load(self.store, head[1], Mandate)
+        return found
+
+    def bindable(self, state: State, digest: str) -> Mandate:
+        """The mandate ``digest``, when it may be bound: the head of a lineage
+        in force, whose parent lineage, if any, is bound and in force."""
+        mandate_id = state.issued.get(digest)
+        if mandate_id is None:
+            raise AuthorityError(f"no issued mandate has digest {digest[:16]}")
+        head = state.head(mandate_id)
+        assert head is not None
+        if head[1] != digest:
+            raise AuthorityError(f"mandate {digest[:16]} is not its lineage's version in force")
+        if not state.in_force(mandate_id):
+            raise AuthorityError(f"lineage {mandate_id} is {state.status(mandate_id)}")
+        parent = state.parent_lineage(mandate_id)
+        if parent is not None and state.status(parent) != "bound":
+            raise AuthorityError(
+                f"its parent lineage {parent} is {state.status(parent)}, not bound"
+            )
+        mandate: Mandate = _load(self.store, digest, Mandate)
+        return mandate
+
+    def rebase(self, state: State, mandate_id: str, parent: str) -> tuple[str, dict[str, Any]]:
+        """What a parent's new version ``parent`` does to its child lineage
+        (F5-7): ``mandate.rebased`` when the child's version in force still
+        refines it, ``mandate.suspended`` with every reason when not."""
+        child = self.head_mandate(state, mandate_id)
+        new: Mandate = _load(self.store, parent, Mandate)
+        if state.issued.get(parent) != state.parent_lineage(mandate_id):
+            raise AuthorityError(f"{parent[:16]} is no version of lineage {mandate_id}'s parent")
+        problems = [str(p) for p in delegation_problems(child, new) if p.path != "parent"]
+        if not problems:
+            return "mandate.rebased", {
+                "mandate": child.digest,
+                "mandate_id": mandate_id,
+                "parent": parent,
+            }
+        return "mandate.suspended", {
+            "mandate": child.digest,
+            "mandate_id": mandate_id,
+            "cause": parent,
+            "why": problems,
+        }
+
+    def revoke(self, state: State, digest: str) -> dict[str, Any]:
+        """The ``mandate.revoked`` body for the version in force ``digest``
+        (F5-8): approvals from the revocation quorum of its own roster, of any
+        ancestor in force, or of the charter."""
+        mandate_id = state.issued.get(digest)
+        head = None if mandate_id is None else state.head(mandate_id)
+        if mandate_id is None or head is None or head[1] != digest:
+            raise AuthorityError(f"{digest[:16]} is no lineage's version in force")
+        if not state.in_force(mandate_id):
+            raise AuthorityError(f"lineage {mandate_id} is {state.status(mandate_id)} already")
+        charter = self.charter(state)
+        candidates: list[tuple[str, Sequence[str] | None, int]] = []
+        current: str | None = mandate_id
+        while current is not None:
+            if state.in_force(current):
+                found = self.head_mandate(state, current)
+                by = "roster" if current == mandate_id else current
+                candidates.append((by, found.roster.principals, found.roster.quorum("revoke")))
+            current = state.parent_lineage(current)
+        candidates.append(("charter", None, charter.revoke_quorum))
+        best: list[str] = []
+        for by, roster, quorum in candidates:
+            counted = self.count(state, "revocation", digest, charter, roster)
+            if len(counted) >= quorum:
+                return {
+                    "mandate": digest,
+                    "mandate_id": mandate_id,
+                    "approvals": counted,
+                    "by": by,
+                    "cascade": None,
+                }
+            best = max(best, counted, key=len)
+        raise AuthorityError(
+            f"revoking mandate {mandate_id} needs its roster's, an ancestor's or the charter's "
+            f"revocation quorum; {len(best)} approvals count"
+        )
+
+    def cascade(self, state: State, mandate_id: str, cause: str, kind: str) -> dict[str, Any]:
+        """A descendant's ``mandate.revoked`` or ``mandate.expired``, caused by
+        an ancestor's (F5-8)."""
+        ancestor = state.issued.get(cause)
+        if ancestor is None or state.status(ancestor) not in ("revoked", "expired"):
+            raise AuthorityError(f"{cause[:16]} was not revoked or expired")
+        if mandate_id not in state.descendants(ancestor):
+            raise AuthorityError(f"lineage {mandate_id} does not descend from {ancestor}")
+        if not state.in_force(mandate_id):
+            raise AuthorityError(f"lineage {mandate_id} is {state.status(mandate_id)} already")
+        head = self.head_mandate(state, mandate_id)
+        body: dict[str, Any] = {"mandate": head.digest, "mandate_id": mandate_id, "cascade": cause}
+        if kind == "mandate.revoked":
+            body.update(approvals=[], by="cascade")
+        return body
+
+    def expire(self, state: State, mandate_id: str, now: datetime) -> dict[str, Any]:
+        """The ``mandate.expired`` body of a lineage whose term has ended."""
+        if not state.in_force(mandate_id):
+            raise AuthorityError(f"lineage {mandate_id} is {state.status(mandate_id)}")
+        head = self.head_mandate(state, mandate_id)
+        if now < head.not_after:
+            raise AuthorityError(
+                f"lineage {mandate_id}'s term runs to {fidu1.format_instant(head.not_after)}"
+            )
+        return {"mandate": head.digest, "mandate_id": mandate_id, "cascade": None}
 
     def _children(self, state: State, parent_id: str) -> set[str]:
         children = set()
@@ -360,6 +484,10 @@ class Authority:
     @property
     def log(self) -> Log:
         return self._log
+
+    @property
+    def decide(self) -> Decide:
+        return self._decide
 
     def propose(self, document: Document) -> str:
         """Store a proposed charter or mandate (or any document) for approvals
@@ -442,4 +570,27 @@ def _expected(
         return decide.suspend(state, str(body["principal"]))
     if kind == "mandate.issued":
         return decide.issue(state, str(body["mandate"]), record.issued_at)
+    if kind == "mandate.bound":
+        decide.bindable(state, str(body["mandate"]))
+        return None  # what it compiled to is the deployment's: verify compiles it with one
+    if kind in ("mandate.rebased", "mandate.suspended"):
+        cause = str(body.get("parent") or body.get("cause"))
+        found_kind, found = decide.rebase(state, str(body["mandate_id"]), cause)
+        if found_kind != kind:
+            raise AuthorityError(f"the child is {found_kind.split('.')[1]} by that version")
+        return _with_trips(found, body)
+    if kind in ("mandate.revoked", "mandate.expired"):
+        if body.get("cascade"):
+            found = decide.cascade(state, str(body["mandate_id"]), str(body["cascade"]), kind)
+        elif kind == "mandate.revoked":
+            found = decide.revoke(state, str(body["mandate"]))
+        else:
+            found = decide.expire(state, str(body["mandate_id"]), record.issued_at)
+        return _with_trips(found, body)
     return None  # later phases' kinds: replayed by the phase that writes them
+
+
+def _with_trips(expected: dict[str, Any], body: Mapping[str, Any]) -> dict[str, Any]:
+    """``expected``, with the AgentGov trips the record names: what the ledger
+    did is the ledger's to show, not the rules'."""
+    return {**expected, "trips": body["trips"]} if "trips" in body else expected
