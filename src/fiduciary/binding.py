@@ -230,7 +230,23 @@ class Binder:
         mandate = self.decide.bindable(state, digest) if state.issued.get(digest) else None
         if mandate is None:
             raise BindingError(f"no issued mandate has digest {digest[:16]}")
-        lineage = self.lineage(state, mandate)
+        return self.preview(mandate, state)
+
+    def preview(self, mandate: Mandate, state: State | None = None) -> CompiledMandate:
+        """Compile ``mandate``, issued or not, beneath its parent lineage's
+        version in force: what binding it would enforce."""
+        state = state or self.log.state()
+        if mandate.mandate_id in state.lineages:
+            lineage = self.lineage(state, mandate)
+        elif mandate.parent is None:
+            lineage = [mandate]
+        else:
+            parent = state.issued.get(mandate.parent.digest)
+            if parent is None or not state.in_force(parent):
+                raise BindingError(
+                    f"its parent {mandate.parent.digest[:16]} is no issued version in force"
+                )
+            lineage = [*self.lineage(state, self.decide.head_mandate(state, parent)), mandate]
         root = lineage[0].subject.funded_from
         try:
             depth = self._governor.node(root).depth
