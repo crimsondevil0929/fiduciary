@@ -602,7 +602,7 @@ parameters only; the statements are the developer's.
     {"id": "debit", "kind": "update", "table": "orders",
      "statement": "UPDATE orders SET total = total - :amount WHERE id = :order_id AND tenant = :tenant",
      "parameters": {"amount": "$.amount", "order_id": "$.order_id", "tenant": "$session.tenant"},
-     "stated_rows": 1},
+     "stated_rows": 1, "after": []},
     {"id": "record", "kind": "insert", "table": "refunds", "after": ["debit"],
      "statement": "INSERT INTO refunds (order_id, tenant, amount) VALUES (:order_id, :tenant, :amount)",
      "parameters": {"order_id": "$.order_id", "tenant": "$session.tenant", "amount": "$.amount"},
@@ -714,7 +714,8 @@ parameters only; the statements are the developer's.
   - `mandate` (an issuance or an amendment);
   - `revocation` (of a mandate digest);
   - `charter`;
-  - `suspension` (of a principal's key).
+  - `suspension` (of a principal's key). Its digest is that of the object
+    `{"v": "FIDU1", "type": "suspension", "charter_id", "principal", "key"}`.
 
   `resolution` is a digest for a ticket, and `null` for every other subject: the subject is
   then itself what is approved.
@@ -807,7 +808,10 @@ when `child ⊑ parent`.
 - **F5-1.** ⊑ is reflexive and transitive: each field's order is a partial order, and ⊑ is
   their product. A chain of derivations is therefore bounded by its root, at any depth.
 - **F5-2.** A derived mandate is valid iff all three hold:
-  - `refines(child, parent_in_force) = ∅`;
+  - `delegation_problems(child, parent_in_force) = ∅`: `refines` is empty, and so are the
+    three lineage rows of §5.2 (marked *lineage*), which relate a child to its parent
+    rather than ordering two mandates' bounds. They are kept out of ⊑ because no mandate
+    is its own child, and ⊑ is reflexive;
   - `parent.delegation` is not null;
   - the parent's derivation budget (`max_depth`, `max_children`) allows it.
 
@@ -827,11 +831,11 @@ when `child ⊑ parent`.
 | Path | Compiles to (section 6) | `child ⊑ parent` iff |
 |---|---|---|
 | `term.not_before`, `term.not_after` | the session's validity | `not_before ≥`, `not_after ≤` |
-| `subject.funded_from` | the AgentGov delegation | equals `parent.subject.scope` |
+| `subject.funded_from` | the AgentGov delegation | *lineage:* equals `parent.subject.scope` |
 | `roster.principals` | who may approve | ⊆ |
 | `roster.quorums.<granting class>` | approvals required | ≥ (with ⊆ above, every child quorum is a parent quorum) |
 | `roster.quorums.revoke`, `.reduce` | approvals required | ≤ (a child is never harder to stop) |
-| `budget.envelope` | `delegate(funded_from, scope, envelope)` | ≤ `parent.delegation.envelope` |
+| `budget.envelope` | `delegate(funded_from, scope, envelope)` | ≤ `parent.budget.envelope`; *lineage:* ≤ `parent.delegation.envelope` |
 | `budget.per_call`, `budget.max_output_tokens` | the `Interceptor` ceilings `hold` and `max_output_tokens` | ≤ |
 | `budget.models` | the bridge's model allowlist | ⊆ |
 | `governance.max_calls`, `.seconds` | `GovernancePolicy.max_calls_per_window`, `.window_seconds` | `max_calls ≤` and `seconds ≥` (any shorter window lies inside a longer one, so the child's bound implies the parent's) |
@@ -861,7 +865,7 @@ when `child ⊑ parent`.
 | `extension` | `BudgetGuard`, and fiduciary's caps | null, or every bound tighter (see the list below this table) |
 | `escalation.max_open`, `.ttl_seconds` | ticket bounds | ≤ |
 | `escalation.auto` | autonomous resolution | each child rule tightens the parent rule with its id: the same class and resolution, and every `when` bound at least as strict |
-| `delegation` | derivation | null; or `max_depth ≤ parent.max_depth − 1`, `max_children ≤`, `envelope ≤` |
+| `delegation` | derivation | null; or `max_depth ≤`, `max_children ≤`, `envelope ≤`; *lineage:* `max_depth ≤ parent.max_depth − 1` |
 
 A non-null child `recovery` is tighter only if the parent's `recovery` is not null and every
 one of these holds:
