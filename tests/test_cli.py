@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -13,36 +12,8 @@ import pytest
 from fiduciary.cli import main
 from fiduciary.documents import Approval, Charter, Mandate, ToolBinding, loads
 from tests import examples as e
-from tests.conftest import need_postgres
 
 Run = Any
-
-
-@pytest.fixture(params=["sqlite", "postgres"])
-def home(
-    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[dict[str, Any]]:
-    """A directory with keys for three principals and the service, and the
-    database the configuration will name."""
-    monkeypatch.chdir(tmp_path)
-    schema = None
-    if request.param == "sqlite":
-        database = "fid.db"
-    else:
-        database = need_postgres()
-        schema = f"fid_{uuid.uuid4().hex[:12]}"
-    yield {"dir": tmp_path, "database": database, "schema": schema}
-    if schema is not None:
-        import psycopg
-
-        from fiduciary.postgres import roles
-
-        with psycopg.connect(database, autocommit=True) as admin:
-            admin.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
-            for role in roles(schema):
-                if admin.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone():
-                    admin.execute(f"DROP OWNED BY {role}")
-                    admin.execute(f"DROP ROLE {role}")
 
 
 def run(capsys: pytest.CaptureFixture[str], *args: str) -> tuple[int, str, str]:

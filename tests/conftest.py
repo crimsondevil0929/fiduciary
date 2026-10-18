@@ -164,3 +164,30 @@ def world(authority: Authority) -> Authority:
 
 
 Factory = Callable[..., Any]
+
+
+@pytest.fixture(params=["sqlite", "postgres"])
+def home(
+    request: pytest.FixtureRequest, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[dict[str, Any]]:
+    """A working directory for the command line, and the database its
+    configuration will name: a SQLite file, or a fresh PostgreSQL schema."""
+    monkeypatch.chdir(tmp_path)
+    schema = None
+    if request.param == "sqlite":
+        database = "fid.db"
+    else:
+        database = need_postgres()
+        schema = f"fid_{uuid.uuid4().hex[:12]}"
+    yield {"dir": tmp_path, "database": database, "schema": schema}
+    if schema is not None:
+        import psycopg
+
+        from fiduciary.postgres import roles
+
+        with psycopg.connect(database, autocommit=True) as admin:
+            admin.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+            for role in roles(schema):
+                if admin.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone():
+                    admin.execute(f"DROP OWNED BY {role}")
+                    admin.execute(f"DROP ROLE {role}")

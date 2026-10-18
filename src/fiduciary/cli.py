@@ -1,4 +1,4 @@
-"""The ``fiduciary`` command (``docs/FIDUCIARY_SPEC.md`` §10.6, Phase 1).
+"""The ``fiduciary`` command (``docs/FIDUCIARY_SPEC.md`` §10.6, Phases 1 and 2).
 
 Exit status: 0 on success; 1 when something is refused or does not verify;
 2 on a usage, configuration or input error.
@@ -7,7 +7,6 @@ Exit status: 0 on success; 1 when something is refused or does not verify;
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import sys
 import uuid
@@ -24,8 +23,7 @@ from fiduciary.documents import (
     Charter,
     Document,
     Mandate,
-    ToolBinding,
-    load,
+    Record,
     loads,
     suspension_digest,
 )
@@ -144,6 +142,41 @@ def _service(args: argparse.Namespace) -> Any:
         _fail(str(exc))
     log = Log(store, signer, ledger=ledger)
     return config, log, Authority(log, pinned=config.pinned())
+
+
+def _binder(args: argparse.Namespace, *, read_only: bool = False) -> Any:
+    """A :class:`~fiduciary.binding.Binder` of the configured deployment: the
+    store, the ledger (read-only when ``read_only``, and the log unanchored,
+    for commands that write nothing), ``interlock`` and ``[binding]``."""
+    from fiduciary.authority import Authority
+    from fiduciary.binding import Binder
+    from fiduciary.log import Log
+
+    config = _config(args)
+    if config.ledger is None:
+        _fail("binding needs the deployment's AgentGov ledger: set ledger")
+    try:
+        signer = config.service()
+        store = _opened(config.open_store())
+        governor = _opened(config.open_ledger(read_only=read_only))
+        deployment = config.deployment(governor)
+    except (OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc))
+    log = Log(store, signer, ledger=None if read_only else governor)
+    authority = Authority(log, pinned=config.pinned())
+    return _opened(Binder(authority, governor, deployment=deployment, chains=config.chains))
+
+
+def _records(action: Callable[[], Sequence[Record]], nothing: str = "nothing recorded") -> int:
+    try:
+        records = action()
+    except FiduciaryError as exc:
+        _fail(str(exc), REFUSED)
+    for record in records:
+        _out(f"record {record.seq}: {record.kind} {record.hash}")
+    if not records:
+        _out(nothing)
+    return OK
 
 
 def _resolve(target: str, args: argparse.Namespace) -> Document:
@@ -291,6 +324,73 @@ def _charter_suspend(args: argparse.Namespace) -> int:
 def _mandate_issue(args: argparse.Namespace) -> int:
     _, _, authority = _service(args)
     return _decided(lambda: authority.issue_mandate(args.digest))
+
+
+def _mandate_compile(args: argparse.Namespace) -> int:
+    document = _resolve(args.target, args)
+    if not isinstance(document, Mandate):
+        _fail(f"{args.target} is no mandate")
+    binder = _binder(args, read_only=True)
+    try:
+        compiled = binder.preview(document)
+    except FiduciaryError as exc:
+        _fail(str(exc), REFUSED)
+    _out(json.dumps(compiled.description, indent=2, sort_keys=True))
+    _err(
+        f"compiled {compiled.digest} for mandate {document.mandate_id} version "
+        f"{document.version}: {len(compiled.checkers)} checkers, {len(compiled.windows)} windows"
+    )
+    return OK
+
+
+def _mandate_bind(args: argparse.Namespace) -> int:
+    binder = _binder(args)
+    try:
+        record = binder.bind(args.digest)
+    except FiduciaryError as exc:
+        _fail(str(exc), REFUSED)
+    _out(f"record {record.seq}: {record.kind} {record.hash}")
+    _err(
+        f"bound mandate {record.content['mandate_id']} version {record.content['version']}: "
+        f"compiled {record.content['compiled']}, {record.content['delegated']} delegated"
+    )
+    return OK
+
+
+def _mandate_derive(args: argparse.Namespace) -> int:
+    draft = _read(args.file, signed=False)
+    if not isinstance(draft, Mandate):
+        _fail(f"{args.file} is no mandate")
+    binder = _binder(args)
+    try:
+        records = list(binder.derive(draft))
+        if args.bind:
+            records.append(binder.bind(str(records[0].content["mandate"])))
+    except FiduciaryError as exc:
+        _fail(str(exc), REFUSED)
+    return _records(lambda: records)
+
+
+def _mandate_amend(args: argparse.Namespace) -> int:
+    document = _resolve(args.digest, args)
+    if not isinstance(document, Mandate):
+        _fail(f"{args.digest} is no mandate")
+    if document.prev is None:
+        _fail(
+            f"mandate {document.mandate_id} version 1 is no amendment: fiduciary mandate issue",
+        )
+    binder = _binder(args)
+    return _records(lambda: binder.issue(document.digest))
+
+
+def _mandate_revoke(args: argparse.Namespace) -> int:
+    binder = _binder(args)
+    return _records(lambda: binder.revoke(args.digest))
+
+
+def _mandate_expire(args: argparse.Namespace) -> int:
+    binder = _binder(args)
+    return _records(binder.expire, "no lineage in force has outlived its term")
 
 
 def _mandate_draft(args: argparse.Namespace) -> int:
@@ -476,24 +576,12 @@ def _mandate_diff(args: argparse.Namespace) -> int:
 
 
 def _tool_digest(args: argparse.Namespace) -> int:
-    target: str = args.target
-    if Path(target).exists() or ":" not in target:
-        document = _read(target)
-    else:
-        module, _, attribute = target.partition(":")
-        try:
-            value = getattr(importlib.import_module(module), attribute)
-        except (ImportError, AttributeError) as exc:
-            _fail(f"{target}: {exc}")
-        if isinstance(value, ToolBinding):
-            document = value
-        else:
-            try:
-                document = load(value, signed=isinstance(value, dict) and "sig" in value)
-            except FiduciaryError as exc:
-                _fail(f"{target}: {exc}")
-    if not isinstance(document, ToolBinding):
-        _fail(f"{target} is no tool binding")
+    from fiduciary.config import ConfigError, load_tool
+
+    try:
+        document = load_tool(args.target)
+    except ConfigError as exc:
+        _fail(str(exc))
     _out(document.digest)
     _err(f'pin it in a mandate as {{"name": "{document.name}", "digest": "{document.digest}"}}')
     return OK
@@ -696,6 +784,35 @@ def _parser() -> argparse.ArgumentParser:
     )
     issue.add_argument("digest")
     issue.set_defaults(handler=_mandate_issue)
+    compile_ = mandate.add_parser(
+        "compile", help="print what a mandate compiles to against the deployment, and its digest"
+    )
+    compile_.add_argument("target", metavar="FILE|DIGEST")
+    compile_.set_defaults(handler=_mandate_compile)
+    bind = mandate.add_parser(
+        "bind", help="bind an issued mandate to the deployment, or rebind its lineage to it"
+    )
+    bind.add_argument("digest")
+    bind.set_defaults(handler=_mandate_bind)
+    derive = mandate.add_parser(
+        "derive", help="sign a derived child with the service key and issue it (no approvals)"
+    )
+    derive.add_argument("file", help="the unsigned draft (fiduciary mandate draft --parent)")
+    derive.add_argument("--bind", action="store_true", help="and bind it")
+    derive.set_defaults(handler=_mandate_derive)
+    amend = mandate.add_parser(
+        "amend",
+        help="issue an approved amendment; rebase or suspend descendants, rebind what is bound",
+    )
+    amend.add_argument("digest", metavar="DIGEST|FILE")
+    amend.set_defaults(handler=_mandate_amend)
+    revoke = mandate.add_parser(
+        "revoke", help="revoke a mandate and its descendants, on a revocation quorum's approvals"
+    )
+    revoke.add_argument("digest")
+    revoke.set_defaults(handler=_mandate_revoke)
+    expire = mandate.add_parser("expire", help="expire every lineage whose term has ended")
+    expire.set_defaults(handler=_mandate_expire)
 
     tool = commands.add_parser("tool", help="tool bindings").add_subparsers(
         dest="action", required=True
