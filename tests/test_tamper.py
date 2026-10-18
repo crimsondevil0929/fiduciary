@@ -52,6 +52,9 @@ def _owner(store: Store, statements: Sequence[tuple[str, tuple[Any, ...]]]) -> N
             admin.execute(sql.replace("{t}", f"{schema}.").replace("?", "%s"), args)  # type: ignore[arg-type]
 
 
+_INSERT = "INSERT INTO {t}log (log_id, seq, hash, prev, kind, record) VALUES (?, ?, ?, ?, ?, ?)"
+
+
 def _verify(store: Store, ledger: BudgetManager | None) -> Report:
     entries = None
     if ledger is not None:
@@ -330,7 +333,7 @@ def test_a_record_of_another_log_or_unreadable_is_named(
         store,
         [
             (
-                "INSERT INTO {t}log (log_id, seq, hash, prev, kind, record) VALUES (?, ?, ?, ?, ?, ?)",
+                _INSERT,
                 ("fiduciary", alien.seq, alien.hash, alien.prev, alien.kind, alien.canonical()),
             )
         ],
@@ -340,7 +343,7 @@ def test_a_record_of_another_log_or_unreadable_is_named(
         store,
         [
             (
-                "INSERT INTO {t}log (log_id, seq, hash, prev, kind, record) VALUES (?, ?, ?, ?, ?, ?)",
+                _INSERT,
                 ("fiduciary", alien.seq + 1, "0" * 64, alien.hash, "x", b"garbage"),
             )
         ],
