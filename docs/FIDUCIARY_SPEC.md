@@ -630,6 +630,9 @@ parameters only; the statements are the developer's.
   session (`$session.tenant`, `$session.trajectory`).
   - The agent never supplies a statement, a table, a sink, an operation, or a tenant the
     session does not already hold.
+  - A statement names its parameters as its substrate's driver binds them: `:name` for
+    SQLite, `%(name)s` for psycopg on PostgreSQL. A statement uses one style, never both, and
+    never a positional `?`. A binding is therefore written for one database.
   - `tenant: "session"` stamps every effect's `tenant_id` with the session's tenant. With
     `data.declared_tenants`, that refuses a row of any other tenant
     (`TenantIsolation(declared=True)`).
@@ -1099,8 +1102,12 @@ Each of fiduciary's checkers has three properties:
    - `deployment.ledger` matches entry 1 of the ledger;
    - `funded_from` exists and is not halted;
    - `compile` succeeds;
-   - the governor's `policy` is no looser than the compiled `GovernancePolicy` on
-     `max_depth`, `trip_on_overdraft` and `trip_on_exhaustion`.
+   - the governor's `policy` trips on overdraft and on exhaustion;
+   - the governor's `max_depth` reaches the subject: the compiled
+     `GovernancePolicy.max_depth` less the mandate's `delegation.max_depth`. The governor is
+     one per ledger, so it cannot hold each lineage to its own depth. Derivation enforces
+     the depth below the subject instead, since a child deeper than its parent allows does
+     not refine it (§5.2).
 2. **Delegate the envelope:**
    `governor.delegate(funded_from, scope, envelope, memo="FIDU1 bind <digest>", idempotency_key="fidu1-bind-<digest>")`.
    A retried bind writes nothing twice.
@@ -1111,6 +1118,20 @@ Each of fiduciary's checkers has three properties:
    still be submitted under version n+1, where it is adjudicated from scratch.
 4. **Record `mandate.bound`**, naming the delegation entry, the chain and the compiled
    digest.
+
+**Rebinding.** Binding a later version of a bound lineage runs the same preconditions.
+Then:
+- a larger envelope delegates the difference from `funded_from` to the next free
+  `{scope}/ext-N`, because AgentGov delegates to a scope once;
+- a smaller one releases the difference from the subject, up to what it has available;
+- the engine takes the new compiled policy at its next plan boundary (F1-3).
+
+`mandate.bound` records what is delegated in all, and the entries written.
+
+An amendment of a lineage that is bound, or that has descendants, is issued by the binder
+only. It issues the version, rebases or suspends the descendants in the same log
+transaction (F5-7), and rebinds what is bound, parents first. Issued alone, it would leave
+the binding on a version no longer in force.
 
 The surface consumed:
 
@@ -1631,8 +1652,14 @@ They require:
 ```toml
 # fiduciary.toml
 database   = "postgresql://fiduciary_service@db/acme"  # or a SQLite path
+ledger     = "postgresql://fiduciary_service@db/agentgov"  # the deployment's AgentGov ledger
 interlock  = "interlock.toml"                          # the deployment fiduciary drives
 in_process = "no"                                      # or "tool-calls-only" (F8-10)
+
+[binding]
+tools      = ["tools/refund.json", "acme.tools:lookup"] # tool bindings: files or module:name
+directives = ["directives/stop-retrying.txt"]          # keyed by the SHA-256 of their bytes
+chains     = "chains"                                  # each lineage's <mandate_id>.chain
 
 [charter]
 file   = "charter-v1.json"
@@ -1662,7 +1689,7 @@ skew_seconds = 5
 | Command | Does |
 |---|---|
 | `fiduciary charter init`, `show`, `propose`, `adopt` | Write charter versions and adopt them |
-| `fiduciary mandate draft`, `check`, `diff`, `compile`, `propose`, `bind`, `revoke`, `show` | Manage mandates. `check` runs `refines` against the parent; `compile` prints the compiled policy and its digest. |
+| `fiduciary mandate draft`, `check`, `diff`, `compile`, `propose`, `issue`, `bind`, `derive`, `amend`, `revoke`, `expire`, `show` | Manage mandates. `check` runs `refines` against the parent. `compile` prints the compiled policy and its digest. `derive` signs a child with the service key and issues it. `amend` issues an approved version through the binder (§6.4). `expire` ends every lineage past its term. |
 | `fiduciary tool digest <module:binding>` | Print a binding's canonical document and digest, for pinning |
 | `fiduciary approve <ticket or document> --key <file>` or `--signer <name>` | Sign an approval on the principal's own machine, from the rendered bytes. Needs no database credential. |
 | `fiduciary tickets list`, `show` | Show open tickets and their evidence, rendered as F7-3 requires |
@@ -1720,7 +1747,7 @@ change after that bumps a domain's version.
   namespaced windows, and the governance and cognitive policies.
 - `bind`, rebinding at plan boundaries, derivation, rebasing, suspension, revocation and
   expiry.
-- The commands `mandate compile`, `bind` and `revoke`.
+- The commands `mandate compile`, `bind`, `derive`, `amend`, `revoke` and `expire`.
 
 **Needs.** U-1. Without it, V4 runs partially (F6-8), and the phase says so.
 
