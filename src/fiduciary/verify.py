@@ -94,12 +94,19 @@ def verify_store(
             record.verify(service_key)
         except FiduciaryError as exc:
             problems.append(f"{where}: {exc}")
-        if (record.log, record.seq, record.kind, record.hash) != (row.log, row.seq, row.kind, row.hash):
+        if (record.log, record.seq, record.kind, record.hash) != (
+            row.log,
+            row.seq,
+            row.kind,
+            row.hash,
+        ):
             problems.append(f"{where}: its columns disagree with the record they hold")
         if record.log != log_id:
             problems.append(f"{where}: names log {record.log!r}, not {log_id!r}")
         if record.seq != expected:
-            problems.append(f"{where}: expected record {expected}: the log lost or reordered records")
+            problems.append(
+                f"{where}: expected record {expected}: the log lost or reordered records"
+            )
         if record.prev != previous:
             problems.append(f"{where}: does not link to the record before it")
         previous, expected = record.hash, record.seq + 1
@@ -132,7 +139,8 @@ def verify_store(
                 f"the service"
             )
     problems.extend(replay(records, store, pinned=pinned, service_key=service_key))
-    anchored, unanchored = 0, ()
+    anchored = 0
+    unanchored: tuple[int, ...] = ()
     if ledger is not None:
         found_problems, anchored, missing = check_anchors(records, ledger, log_id)
         problems.extend(found_problems)

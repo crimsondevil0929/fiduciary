@@ -69,6 +69,8 @@ exclude_also = ["if TYPE_CHECKING:", "raise AssertionError", "@overload"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+# The specification's code blocks are illustrations, laid out for reading.
+extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "N", "S", "RUF"]
