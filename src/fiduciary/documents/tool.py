@@ -49,6 +49,7 @@ SCHEMA_KEYWORDS: Final = frozenset(
 _TYPES: Final = frozenset({"object", "array", "string", "integer", "boolean", "null"})
 _SOURCE: Final = re.compile(r"\$(\.[A-Za-z_][A-Za-z0-9_]{0,63}|session\.(tenant|trajectory))")
 _PLACEHOLDER: Final = re.compile(r"(?<![:\w]):([A-Za-z_][A-Za-z0-9_]*)")
+_PYFORMAT: Final = re.compile(r"(?<!%)%\(([A-Za-z_][A-Za-z0-9_]*)\)s")
 _EFFECT_ID: Final = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 MAX_ITEMS: Final = 64
 
@@ -112,15 +113,23 @@ def check_schema(schema: object, path: str) -> None:
 
 
 def placeholders(statement: str) -> tuple[str, ...]:
-    """The named placeholders (``:name``) of a statement, outside its string
-    literals, sorted. A ``?`` placeholder is refused: parameters bind by name.
+    """The named placeholders of a statement, outside its string literals,
+    sorted: ``:name``, as Interlock's SQLite substrate binds them, or
+    ``%(name)s``, as its PostgreSQL substrate does (psycopg's). A statement is
+    written for one database, so it uses one style; a ``?`` placeholder is
+    refused, since parameters bind by name.
 
-    :raises ValueError: On a ``?`` outside a literal.
+    :raises ValueError: On a ``?`` outside a literal, or both styles in one
+        statement.
     """
     outside = re.sub(r"'(?:[^']|'')*'", "''", statement)
     if "?" in outside:
         raise ValueError("a positional placeholder '?': parameters bind by name (:name)")
-    return tuple(sorted(set(_PLACEHOLDER.findall(outside))))
+    colon = set(_PLACEHOLDER.findall(outside))
+    pyformat = set(_PYFORMAT.findall(outside))
+    if colon and pyformat:
+        raise ValueError("a statement binds by :name or by %(name)s, not both")
+    return tuple(sorted(colon | pyformat))
 
 
 @dataclass(frozen=True, slots=True)
