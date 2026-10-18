@@ -1,0 +1,83 @@
+{
+  "key": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+  "records": [
+    {
+      "hash": "272ddbd2b2a1fde7ab9ac6b918209697010747d670b31760c4d434b29c0f7ed0",
+      "record": {
+        "body": {
+          "approval": "3333333333333333333333333333333333333333333333333333333333333333",
+          "decision": "approve",
+          "intake": 1,
+          "principal": "cfo",
+          "resolution": null,
+          "subject": {
+            "digest": "98347c4b45abe6de1575593fb59778032fe8d16fd454be740634a1f5d16ef85a",
+            "type": "charter"
+          }
+        },
+        "issued_at": "2026-10-18T10:01:00.000000Z",
+        "kind": "approval.recorded",
+        "log": "fiduciary",
+        "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+        "seq": 1,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "6d6f75f3abafc197498f6bc8c007f408f646b24e53376e9615710be9e438e8b0e5c335d0bb2d45e96b9ee5b2cb5058f116271c7923fb32f381986c74dd719703"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      },
+      "signing_input": "46494455312f7265636f72642f76310ad18b06c6dc00d883ba97272867a8dde85e8e101caea3d8bd88925c6470229853def6389a28e69d4e3cfb5fdf9a875ef222a1e2658a352f5b9062714bc1675b3e"
+    },
+    {
+      "hash": "dec9adfb1919b9f948d023366f593f7aff16fd4b0809c3a80af13eaf15437cc7",
+      "record": {
+        "body": {
+          "digest": "4444444444444444444444444444444444444444444444444444444444444444",
+          "intake": 2,
+          "why": "signature: does not verify"
+        },
+        "issued_at": "2026-10-18T10:02:00.000000Z",
+        "kind": "approval.refused",
+        "log": "fiduciary",
+        "prev": "272ddbd2b2a1fde7ab9ac6b918209697010747d670b31760c4d434b29c0f7ed0",
+        "seq": 2,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "2d98c839f607b216ad618ab367ed9dcbd5b9789720c4549d2ead469acb17347109e8ba7214f039cf7c48f0325a94f9914d51e30971ab9edb6fe5354aa5a91a06"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      },
+      "signing_input": "46494455312f7265636f72642f76310a18a3101e2343714e2889609b87b19efbea052d7e116bc74d06c9e2e6b6ad748d31683d70cd59863902a17df7f28af4becf0cf7ca3f71961dd3edce2bc4a374c2"
+    },
+    {
+      "hash": "5c55104fb30c75edd1f03543b1a99da9fd856fd41b993b32a660656ea652be0a",
+      "record": {
+        "body": {
+          "approvals": [
+            "3333333333333333333333333333333333333333333333333333333333333333"
+          ],
+          "charter": "98347c4b45abe6de1575593fb59778032fe8d16fd454be740634a1f5d16ef85a",
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "version": 1
+        },
+        "issued_at": "2026-10-18T10:03:00.000000Z",
+        "kind": "charter.adopted",
+        "log": "fiduciary",
+        "prev": "dec9adfb1919b9f948d023366f593f7aff16fd4b0809c3a80af13eaf15437cc7",
+        "seq": 3,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "fbe3b8d0145da9da0858b29e3831299a0c89a64f2b43728f47c0af1f96364e9ff1b4e15bd682e6c86ec7b7f57d165a4c95366d2580b1807a77e6635f49dc9f05"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      },
+      "signing_input": "46494455312f7265636f72642f76310a36fd0b7d853be678ee04a19e369b2eddf6d37eb4a73eb51f99f89dc4a606506fd50389bb737e3bb197e0d4e0ef30e9cd1b2f3bdf5e9c22db4b31512cad73c62f"
+    }
+  ]
+}

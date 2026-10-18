@@ -27,7 +27,8 @@ def test_a_configuration_reads_with_paths_beside_it(
     monkeypatch.delenv("FIDUCIARY_LEDGER", raising=False)
     path = _write(
         tmp_path,
-        f'database = "f.db"\nledger = "l.db"\n[charter]\nfile = "c.json"\ndigest = "{"a" * 64}"\n[service]\nkey = "s.key"\n',
+        'database = "f.db"\nledger = "l.db"\n[charter]\nfile = "c.json"\n'
+        f'digest = "{"a" * 64}"\n[service]\nkey = "s.key"\n',
     )
     config = load_config(path)
     assert config.database == str(tmp_path / "f.db")
@@ -63,7 +64,8 @@ def test_the_environment_overrides_the_database_and_the_ledger(
         ('database = "f.db"\ncharter = 3\n', "is a table"),
         ('database = "f.db"\n[service]\nsigner = "nope"\n', "names no"),
         (
-            'database = "f.db"\n[service]\nkey = "k"\nsigner = "s"\n[signers.s]\ntype = "aws-kms"\nkey_id = "k"\n',
+            'database = "f.db"\n[service]\nkey = "k"\nsigner = "s"\n'
+            '[signers.s]\ntype = "aws-kms"\nkey_id = "k"\n',
             "not both",
         ),
         ('database = "f.db"\nschema = 3\n', "schema is a name"),
@@ -139,7 +141,7 @@ def test_a_signer_opens_from_a_file_an_http_service_or_kms(
     assert isinstance(signer, AwsKmsSigner) and signer.key_id == e.signer("cfo").key_id
     with pytest.raises(ValueError, match="one"):
         open_signer({}, key=None, signer=None)
-    with pytest.raises(ValueError, match="no \\[signers.x\\]"):
+    with pytest.raises(ValueError, match=r"no \[signers\.x\]"):
         open_signer({}, key=None, signer="x")
     assert parse_signers(None) == {}
 

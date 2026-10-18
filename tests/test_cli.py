@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from fiduciary.cli import main
-from fiduciary.documents import Approval, Charter, Mandate, loads
+from fiduciary.documents import Approval, Charter, Mandate, ToolBinding, loads
 from tests import examples as e
 from tests.conftest import need_postgres
 
@@ -377,9 +377,7 @@ NOT_A_DOCUMENT = {"v": "FIDU1", "type": "tool"}
 
 
 class ToolDraft:
-    from fiduciary.documents import ToolBinding as _T
-
-    digest = _T.from_json(e.tool_json(), signed=False).digest
+    digest = ToolBinding.from_json(e.tool_json(), signed=False).digest
 
 
 @pytest.mark.parametrize(
