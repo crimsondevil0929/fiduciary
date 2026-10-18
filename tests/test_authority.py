@@ -279,14 +279,23 @@ def test_an_approval_by_a_key_suspended_after_it_was_recorded_still_counts(
 def test_a_root_is_issued_amended_and_its_child_derived(authority: Authority) -> None:
     adopt(authority)
     issue(authority)
-    child = issue(authority, e.child())
-    state = authority.log.state()
-    assert state.head(e.MANDATE_ID) == (1, e.mandate().digest)
-    assert state.head(e.CHILD_ID) == (1, child.digest)
     amended = Mandate.from_json(
         {**e.mandate_json(), "version": 2, "prev": e.mandate().digest}, signed=False
     ).signed(e.signer("cfo"))
-    issue(authority, amended)
+    issue(authority, amended)  # no binding and no descendant: the authority issues it alone
+    child = issue(
+        authority, Mandate.from_json(e.child_json(of=amended), signed=False).signed(e.SERVICE)
+    )
+    state = authority.log.state()
+    assert state.head(e.MANDATE_ID) == (2, amended.digest)
+    assert state.head(e.CHILD_ID) == (1, child.digest)
+    third = Mandate.from_json(
+        {**e.mandate_json(), "version": 3, "prev": amended.digest}, signed=False
+    ).signed(e.signer("cfo"))
+    authority.propose(third)
+    approve(authority.log.store, ("cfo", "head-ops"), "mandate", third.digest)
+    with pytest.raises(AuthorityError, match="amend it through the binder"):
+        authority.issue_mandate(third.digest)  # its child is rebased or suspended by the binder
     assert authority.log.state().head(e.MANDATE_ID) == (2, amended.digest)
     assert _verify(authority) == []
 

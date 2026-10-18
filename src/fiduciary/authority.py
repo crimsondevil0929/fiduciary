@@ -523,9 +523,21 @@ class Authority:
         return self._log.append("principal.suspended", body)
 
     def issue_mandate(self, digest: str) -> Record:
+        """Issue the version ``digest``: a lineage's first, or an amendment of
+        one with no binding and no descendant. Any other amendment rebinds or
+        rebases what hangs from it, which :meth:`Binder.issue` does."""
         self.process_intake()
         now = self._log.now()
-        body = self._decide.issue(self._log.state(), digest, now)
+        state = self._log.state()
+        body = self._decide.issue(state, digest, now)
+        mandate_id = str(body["mandate_id"])
+        if mandate_id in state.lineages and (
+            state.status(mandate_id) == "bound" or state.descendants(mandate_id)
+        ):
+            raise AuthorityError(
+                f"lineage {mandate_id} is bound or has descendants: amend it through the binder "
+                f"(fiduciary mandate amend), which rebinds and rebases them"
+            )
         return self._log.append("mandate.issued", body, issued_at=now)
 
 
