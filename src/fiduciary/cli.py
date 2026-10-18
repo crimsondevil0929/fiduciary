@@ -36,6 +36,17 @@ __all__ = ["main", "main_entry"]
 OK, REFUSED, USAGE = 0, 1, 2
 
 
+_OPENED: list[Callable[[], None]] = []
+"""What this invocation opened, closed when it returns."""
+
+
+def _opened(thing: Any) -> Any:
+    """Close ``thing`` when the command returns."""
+    if thing is not None:
+        _OPENED.append(thing.close)
+    return thing
+
+
 class _ExitError(Exception):
     def __init__(self, status: int, message: str) -> None:
         super().__init__(message)
@@ -127,8 +138,8 @@ def _service(args: argparse.Namespace) -> Any:
     config = _config(args)
     try:
         signer = config.service()
-        store = config.open_store()
-        ledger = config.open_ledger()
+        store = _opened(config.open_store())
+        ledger = _opened(config.open_ledger())
     except (OSError, ValueError, FiduciaryError) as exc:
         _fail(str(exc))
     log = Log(store, signer, ledger=ledger)
@@ -139,7 +150,7 @@ def _resolve(target: str, args: argparse.Namespace) -> Document:
     """A document from a file, or from the store by its digest."""
     if fidu1.HASH.fullmatch(target) and not Path(target).exists():
         config = _config(args)
-        found = config.open_store().document(target)
+        found = _opened(config.open_store()).document(target)
         if found is None:
             _fail(f"the store holds no document {target}", REFUSED)
         return loads(found[1], signed=True)
@@ -181,7 +192,7 @@ def _install(args: argparse.Namespace) -> int:
     else:
         config.open_store().close()
         _out(f"installed {config.database}")
-    ledger = config.open_ledger()
+    ledger = _opened(config.open_ledger())
     if ledger is not None:
         opened = ensure_anchor_scope(ledger)
         _out(
@@ -290,6 +301,8 @@ def _mandate_draft(args: argparse.Namespace) -> int:
         parent = _read(args.parent)
         if not isinstance(parent, Mandate):
             _fail(f"{args.parent} is no mandate")
+        if parent.delegation is None or parent.delegation.max_depth < 1:
+            _fail(f"{args.parent} allows no derivation: a child of it would not refine it", REFUSED)
         draft = parent.body()
         draft.update(
             {
@@ -550,7 +563,7 @@ def _approve(args: argparse.Namespace) -> int:
     _write(approval, args.out)
     if args.submit:
         config = _config(args)
-        submitted = config.open_store().submit(approval.canonical())
+        submitted = _opened(config.open_store()).submit(approval.canonical())
         _err(f"submitted as intake {submitted}")
     return OK
 
@@ -561,7 +574,7 @@ def _submit(args: argparse.Namespace) -> int:
         _fail(f"{args.file} is no approval")
     config = _config(args)
     try:
-        submitted = config.open_store().submit(approval.canonical())
+        submitted = _opened(config.open_store()).submit(approval.canonical())
     except FiduciaryError as exc:
         _fail(str(exc), REFUSED)
     _out(f"intake {submitted}")
@@ -582,8 +595,8 @@ def _verify(args: argparse.Namespace) -> int:
             key = config.service().public_key()
         except (OSError, ValueError, FiduciaryError) as exc:
             _fail(f"cannot read the service key: {exc}")
-    store = config.open_store()
-    ledger = config.open_ledger()
+    store = _opened(config.open_store())
+    ledger = _opened(config.open_ledger(read_only=True))
     entries = None
     if ledger is not None:
         ledger.refresh()
@@ -727,6 +740,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except FiduciaryError as exc:
         _err(f"fiduciary: {exc}")
         return REFUSED
+    finally:
+        while _OPENED:
+            _OPENED.pop()()
     return status
 
 

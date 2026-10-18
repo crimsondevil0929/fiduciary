@@ -71,13 +71,13 @@ class Config:
 
         return SqliteStore(self.database)
 
-    def open_ledger(self) -> BudgetManager | None:
-        """A write-capable governor of ``ledger``, or ``None``."""
+    def open_ledger(self, *, read_only: bool = False) -> BudgetManager | None:
+        """A governor of ``ledger`` (write-capable unless ``read_only``), or ``None``."""
         if self.ledger is None:
             return None
         from interlock.wiring import open_ledger
 
-        governor: BudgetManager = open_ledger(self.ledger)
+        governor: BudgetManager = open_ledger(self.ledger, read_only=read_only)
         return governor
 
     def service(self) -> Signer:
