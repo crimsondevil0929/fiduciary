@@ -418,15 +418,17 @@ class Binder:
         """Expire every lineage in force whose term has ended, and its descendants."""
         state = self.log.state()
         now = self.log.now()
+        due = {
+            mandate_id
+            for mandate_id in state.lineages
+            if state.in_force(mandate_id)
+            and now >= self.decide.head_mandate(state, mandate_id).not_after
+        }
         entries: list[tuple[str, dict[str, Any]]] = []
-        simulated = state
-        for mandate_id in sorted(state.lineages, key=lambda m: state.lineages[m][0][3]):
-            if not simulated.in_force(mandate_id):
-                continue
-            if now >= self.decide.head_mandate(simulated, mandate_id).not_after:
-                body = self.decide.expire(simulated, mandate_id, now)
-                entries.append(("mandate.expired", body))
-                simulated = _after(simulated, "mandate.expired", body)
+        for mandate_id in sorted(due, key=lambda m: state.lineages[m][0][3]):
+            if _ancestors(state, mandate_id) & due:
+                continue  # its ancestor's expiry cascades to it
+            entries.append(("mandate.expired", self.decide.expire(state, mandate_id, now)))
         if not entries:
             return []
         return self._end(state, entries, "expired", issued_at=now)
@@ -490,6 +492,15 @@ class Binder:
         for engine in self._engines.values():
             engine.close()
         self._anchor.close()
+
+
+def _ancestors(state: State, mandate_id: str) -> set[str]:
+    found: set[str] = set()
+    current = state.parent_lineage(mandate_id)
+    while current is not None:
+        found.add(current)
+        current = state.parent_lineage(current)
+    return found
 
 
 def _after(state: State, kind: str, body: dict[str, Any]) -> State:
