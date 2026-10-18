@@ -325,9 +325,10 @@ def mandate() -> Mandate:
     return Mandate.from_json(mandate_json(), signed=False).signed(signer("head-ops"))
 
 
-def child_json(parent: Mandate | None = None, **changes: Any) -> dict[str, Any]:
-    """A derived child of :func:`mandate`: the parent narrowed, as the service signs it."""
-    parent = parent or mandate()
+def child_json(of: Mandate | None = None, **changes: Any) -> dict[str, Any]:
+    """A derived child of :func:`mandate` (or ``of``): the parent narrowed, as the
+    service signs it."""
+    parent = of or mandate()
     doc = mandate_json()
     doc.update(
         {

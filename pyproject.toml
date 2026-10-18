@@ -75,9 +75,10 @@ select = ["E", "F", "I", "UP", "B", "N", "S", "RUF"]
 ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
-# Tests sign with secrets they make up, which name nothing real (S105, S106), and
-# build SQL from table names they define themselves to tamper with fixtures (S608).
-"tests/**/*.py" = ["S101", "S105", "S106", "S608"]
+# Tests sign with secrets they make up, which name nothing real (S105, S106),
+# build SQL from table names they define themselves to tamper with fixtures
+# (S608), and draw mandates from seeded generators so a case reproduces (S311).
+"tests/**/*.py" = ["S101", "S105", "S106", "S311", "S608"]
 # The stores join their own table names, module constants, into constant SQL;
 # every value is a bound parameter.
 "src/fiduciary/sqlite.py" = ["S608"]
