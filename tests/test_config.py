@@ -72,6 +72,12 @@ def test_the_environment_overrides_the_database_and_the_ledger(
         ('database = "f.db"\n[charter]\nfile = ""\n', "is a path"),
         ('database = "f.db"\nsigners = 3\n', "tables"),
         ("not toml [", "Expected"),
+        ('database = "f.db"\nbinding = 3\n', "\\[binding\\] is a table"),
+        ('database = "f.db"\n[binding]\nwho = 1\n', "unknown key"),
+        ('database = "f.db"\n[binding]\ntools = "t.json"\n', "a list of paths"),
+        ('database = "f.db"\n[binding]\ndirectives = [""]\n', "a list of paths"),
+        ('database = "f.db"\n[binding]\nchains = 3\n', "is a path"),
+        ('database = "f.db"\ninterlock = ""\n', "interlock is a path"),
     ],
 )
 def test_a_configuration_that_says_what_it_may_not_is_refused(
@@ -155,3 +161,17 @@ def _with_client(kms: FakeKms) -> object:
         original(self, key_id, client=kms, region=region)
 
     return init
+
+
+def test_binding_reads_paths_beside_it_and_keeps_module_names(tmp_path: Path) -> None:
+    (tmp_path / "t.json").write_text("{}")
+    path = _write(
+        tmp_path,
+        'database = "f.db"\ninterlock = "i.toml"\n[binding]\n'
+        'tools = ["t.json", "acme.tools:refund"]\ndirectives = ["d.txt"]\nchains = "c"\n',
+    )
+    config = load_config(path)
+    assert config.interlock == tmp_path / "i.toml"
+    assert config.tools == (str(tmp_path / "t.json"), "acme.tools:refund")
+    assert config.directives == (tmp_path / "d.txt",)
+    assert config.chains == tmp_path / "c"

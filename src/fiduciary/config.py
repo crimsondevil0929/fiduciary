@@ -3,6 +3,7 @@
     database = "postgresql://fiduciary_service@db/acme"  # or a SQLite file
     schema   = "fiduciary"                               # the PostgreSQL schema
     ledger   = "ledger.db"                               # AgentGov ledger to anchor into
+    interlock = "interlock.toml"                         # the deployment mandates bind to
 
     [charter]
     file   = "charter-v1.json"
@@ -13,14 +14,23 @@
 
     [signers.<name>]                                     # fiduciary.keys
 
+    [binding]
+    tools      = ["refund.tool.json", "acme.tools:lookup"] # tool bindings: files or module:name
+    directives = ["stop-retrying.txt"]                   # directive texts, by their bytes' SHA-256
+    chains     = "chains"                                # each lineage's <mandate_id>.chain
+
 Paths are relative to the file. ``FIDUCIARY_DATABASE`` and ``FIDUCIARY_LEDGER``
 override ``database`` and ``ledger``, which keeps a password out of the file.
-The keys of later phases (``interlock``, ``in_process``, ``[executor]``,
+``interlock`` and ``[binding]`` are the deployment :func:`fiduciary.compiler.compile`
+reads: ``interlock.toml``'s tables and sinks, the tool bindings it runs and the
+directive texts. The keys of later phases (``in_process``, ``[executor]``,
 ``[runtime]``, ``[receipts]``, ``[bridge]``) are read when those phases are.
 """
 
 from __future__ import annotations
 
+import hashlib
+import importlib
 import os
 import tomllib
 from collections.abc import Mapping
@@ -35,11 +45,15 @@ if TYPE_CHECKING:
     from agentgov import BudgetManager
     from agentgov.receipts.signing import Signer
 
+    from fiduciary.compiler import Deployment
+    from fiduciary.documents import ToolBinding
     from fiduciary.store import Store
 
-__all__ = ["Config", "ConfigError", "load_config"]
+__all__ = ["Config", "ConfigError", "load_config", "load_tool"]
 
-_TOP: Final = frozenset({"database", "schema", "ledger", "charter", "service", "signers"})
+_TOP: Final = frozenset(
+    {"database", "schema", "ledger", "interlock", "charter", "service", "signers", "binding"}
+)
 
 
 class ConfigError(ValueError):
@@ -60,6 +74,10 @@ class Config:
     service_key: Path | None = None
     service_signer: str | None = None
     signers: Mapping[str, SignerSpec] = field(default_factory=dict)
+    interlock: Path | None = None
+    tools: tuple[str, ...] = ()
+    directives: tuple[Path, ...] = ()
+    chains: Path | None = None
 
     def open_store(self) -> Store:
         """The store ``database`` names."""
@@ -86,10 +104,77 @@ class Config:
             raise ConfigError("[service] names no key and no signer")
         return open_signer(self.signers, key=self.service_key, signer=self.service_signer)
 
+    def deployment(self, governor: BudgetManager) -> Deployment:
+        """The deployment snapshot compilation reads: ``interlock.toml``'s
+        tables and sinks, ``[binding]``'s tools and directives, and the
+        ledger ``governor`` keeps, by its first entry.
+
+        :raises ConfigError: On a deployment the files do not describe.
+        """
+        from interlock.config import load_config as load_interlock
+
+        from fiduciary.compiler import Deployment
+
+        if self.interlock is None:
+            raise ConfigError('interlock names no deployment: set interlock = "interlock.toml"')
+        try:
+            found = load_interlock(self.interlock, require_database=False)
+        except (OSError, ValueError) as exc:
+            raise ConfigError(f"{self.interlock}: {exc}") from exc
+        tools = {}
+        for target in self.tools:
+            tool = load_tool(target)
+            tools[tool.digest] = tool
+        directives = {}
+        for path in self.directives:
+            try:
+                data = path.read_bytes()
+                text = data.decode("utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                raise ConfigError(f"[binding] directive {path}: {exc}") from exc
+            directives[hashlib.sha256(data).hexdigest()] = text
+        governor.refresh()
+        if len(governor.ledger) == 0:
+            raise ConfigError("the ledger is empty: it has no first entry for a charter to name")
+        return Deployment(
+            ledger=governor.entry(1).entry_hash,
+            tables={t.name: frozenset((t.primary_key, *t.columns)) for t in found.tables},
+            sinks=found.sink_registry(),
+            tools=tools,
+            directives=directives,
+        )
+
     def pinned(self) -> str:
         if self.charter_digest is None:
             raise ConfigError("[charter] pins no digest: the root of authority is unset")
         return self.charter_digest
+
+
+def load_tool(target: str) -> ToolBinding:
+    """A tool binding from a file, or from ``module:name`` (a
+    :class:`ToolBinding`, or its JSON as a mapping).
+
+    :raises ConfigError: On a target that is no tool binding.
+    """
+    from fiduciary.documents import ToolBinding, load, loads
+    from fiduciary.exceptions import FiduciaryError
+
+    try:
+        if Path(target).exists() or ":" not in target:
+            document = loads(Path(target).read_bytes())
+        else:
+            module, _, attribute = target.partition(":")
+            value = getattr(importlib.import_module(module), attribute)
+            document = (
+                value
+                if isinstance(value, ToolBinding)
+                else load(value, signed=isinstance(value, dict) and "sig" in value)
+            )
+    except (OSError, ImportError, AttributeError, FiduciaryError) as exc:
+        raise ConfigError(f"{target}: {exc}") from exc
+    if not isinstance(document, ToolBinding):
+        raise ConfigError(f"{target} is no tool binding")
+    return document
 
 
 def load_config(path: str | Path) -> Config:
@@ -150,6 +235,24 @@ def load_config(path: str | Path) -> Config:
     schema = raw.get("schema", "fiduciary")
     if not isinstance(schema, str):
         raise ConfigError(f"{where}: schema is a name")
+    interlock = raw.get("interlock")
+    binding = raw.get("binding", {})
+    if not isinstance(binding, dict):
+        raise ConfigError(f"{where}: [binding] is a table")
+    extra = sorted(set(binding) - {"tools", "directives", "chains"})
+    if extra:
+        raise ConfigError(f"{where}: [binding] has unknown key(s) {', '.join(extra)}")
+    lists: dict[str, list[str]] = {}
+    for key in ("tools", "directives"):
+        value = binding.get(key, [])
+        if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+            raise ConfigError(f"{where}: [binding] {key} is a list of paths")
+        lists[key] = value
+
+    def tool(target: str) -> str:
+        found = place(target, "[binding] tools")
+        return str(found) if found.exists() or ":" not in target else target
+
     return Config(
         database=database,
         schema=schema,
@@ -159,4 +262,8 @@ def load_config(path: str | Path) -> Config:
         service_key=None if "key" not in service else place(service["key"], "[service] key"),
         service_signer=signer,
         signers=signers,
+        interlock=None if interlock is None else place(interlock, "interlock"),
+        tools=tuple(tool(t) for t in lists["tools"]),
+        directives=tuple(place(d, "[binding] directives") for d in lists["directives"]),
+        chains=None if "chains" not in binding else place(binding["chains"], "[binding] chains"),
     )
