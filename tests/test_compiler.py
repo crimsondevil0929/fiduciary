@@ -334,7 +334,7 @@ def test_interlock_refusing_a_compiled_policy_fails_closed(monkeypatch: pytest.M
     def refuse(args: Any) -> Any:
         raise ValueError("max_tenants is at least 1")
 
-    monkeypatch.setitem(compiler._BUILT, "TenantIsolation", refuse)  # type: ignore[index]
+    monkeypatch.setitem(compiler._BUILT, "TenantIsolation", refuse)
     with pytest.raises(CompileError, match=r"Interlock refuses the compiled policy: max_tenants"):
         _compile(e.mandate_json())
 
