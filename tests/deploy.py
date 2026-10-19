@@ -22,7 +22,11 @@ TABLES: dict[str, tuple[str, ...]] = {
 SINKS = (
     SinkSpec(
         "stripe",
-        (OperationSpec("refunds.create"), OperationSpec("charges.create")),
+        (
+            OperationSpec("refunds.create"),
+            OperationSpec("charges.create"),
+            OperationSpec("charges.capture", compensation="refunds.create"),
+        ),
         cost_per_call=Decimal("0.01"),
         idempotency="header",
         max_payload_bytes=65536,
