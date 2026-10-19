@@ -696,5 +696,121 @@
     "name": "approval of a ticket's resolution",
     "signing_input": "46494455312f617070726f76616c2f76310aeebe78fdabd23b653c8ce1f7667621add700d968722fa8d053547e63cb9aa39cd83b38725ba9eff2e72aa378b46d3983e804c708e3db87b8a3dc966dd9b6195e",
     "type": "approval"
+  },
+  {
+    "canonical_sha256": "16050101f501e1d574394f7db30909e22606f939de5ad845418d6e5b77f56a6b",
+    "document": {
+      "agent": {
+        "statement": "Finished 3 of 4 batch items; 12 refunds remain in the queue."
+      },
+      "class": "extension",
+      "evidence": {
+        "progress": {
+          "committed": 14,
+          "receipts": {
+            "log": "support-agent",
+            "root": "b867be093f87455ea0573d41bc5069988543ab139d9195a78812ac4b8f87aee8",
+            "tree_size": 14
+          },
+          "rows": 28
+        },
+        "quote": {
+          "available": "0.18000000",
+          "estimate": "milestones",
+          "expires_at": "2026-10-18T11:02:11.842100Z",
+          "id": "ext-91",
+          "needed": "15.20000000",
+          "record": {
+            "hash": "c317aac50f17b2e4291db664cb85e4da4f80640390ed717ddfe88b657b032352",
+            "log": "interlock",
+            "seq": 19
+          },
+          "requested": "19.00000000",
+          "spent": "249.82000000"
+        }
+      },
+      "mandate": {
+        "digest": "3229ec1f916c8d01d22425b3b531148c7c97d1987a24af5157cc43a3816fbb73",
+        "mandate_id": "2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31",
+        "version": 1
+      },
+      "not_after": "2026-10-18T11:02:11.842100Z",
+      "observed": {
+        "ledger": {
+          "head": "8dddf6f16a1f904da1f679c5022c6f559812da498b89f6c336ba703e0abab784",
+          "sequence": 1419
+        },
+        "log": {
+          "hash": "e3a56885e27518161f751fc602f7ffc19212c08330e51f6f372c68b0f11bd54b",
+          "seq": 88
+        }
+      },
+      "options": [
+        {
+          "digest": "7f287c42a05c12f4171e47bef9793ae49ddb1b34122059ba852e49db5aea8369",
+          "quorum": 1,
+          "resolution": {
+            "action": "grant",
+            "amount": "19.00000000",
+            "quote": "ext-91"
+          }
+        },
+        {
+          "digest": "2da56bcba9c4b0c4ced660b9e742889bd34be95662ce610c80d9b46c7dfa5161",
+          "quorum": 1,
+          "resolution": {
+            "action": "decline",
+            "quote": "ext-91"
+          }
+        }
+      ],
+      "raised_at": "2026-10-18T10:02:11.842100Z",
+      "sig": {
+        "alg": "ed25519",
+        "key_id": "a6a17e3b834c9950",
+        "signature": "207c9f843904fa61256c129d62b7a5850ca9241d51ed1c8ba6a78a8ce62946ccfb8382b77141b77cc75bdcbeabc1e9e0f0fabe72068bf0640d9405243bc08603"
+      },
+      "ticket_id": "91e2c4a0-7f12-4a8e-9d01-5b3f8c2a1e44",
+      "type": "ticket",
+      "v": "FIDU1"
+    },
+    "key": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+    "name": "ticket, extension",
+    "signing_input": "46494455312f7469636b65742f76310ad7906ad86b77158b35c06417bee1d4721dc551c148e83597fd21a0ab9171a1af0c84baba50360c1d1e706c79f7429f8a4fa1facc24f39425280fc74c43b6bb7a",
+    "type": "ticket"
+  },
+  {
+    "canonical_sha256": "252227d54946218239706562f53a01b298bda3617feedff07c53db7afa441089",
+    "document": {
+      "basis": {
+        "approvals": [
+          "784dd01cc4c100c91e4d378cee2997f7478004020381a1951a04de91d755bccf"
+        ]
+      },
+      "formed_at": "2026-10-18T10:05:41.310022Z",
+      "not_after": "2026-10-18T10:35:40.004211Z",
+      "resolution": {
+        "action": "grant",
+        "amount": "19.00000000",
+        "quote": "ext-91"
+      },
+      "resolution_digest": "7f287c42a05c12f4171e47bef9793ae49ddb1b34122059ba852e49db5aea8369",
+      "sig": {
+        "alg": "ed25519",
+        "key_id": "a6a17e3b834c9950",
+        "signature": "1ca758f37d7031df1ed2d96ede87b3c1170d087f58ad9d4cf651669761e161eba189f481814ca2fc9bc7a2a1dba189863691fd1478e28d131c04fb60006f020e"
+      },
+      "ticket": {
+        "digest": "16050101f501e1d574394f7db30909e22606f939de5ad845418d6e5b77f56a6b",
+        "ticket_id": "91e2c4a0-7f12-4a8e-9d01-5b3f8c2a1e44"
+      },
+      "type": "warrant",
+      "v": "FIDU1",
+      "warrant_id": "c8b2a190-5d3e-4f12-9a04-1e7c3b5d9f20"
+    },
+    "key": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+    "name": "warrant, quorum",
+    "signing_input": "46494455312f77617272616e742f76310a9dc5af404578d33cfd7d4a59dedde64a1126f10a744649c29de21a8bbbc29e2eab452cb7d76901f09d121b0cb31128f431bc41b12a01059b8150cb29e0c92c80",
+    "type": "warrant"
   }
 ]

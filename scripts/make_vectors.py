@@ -31,7 +31,15 @@ sys.path.insert(0, str(ROOT))
 from tests import examples as e  # noqa: E402
 
 from fiduciary import fidu1  # noqa: E402
-from fiduciary.documents import Approval, Charter, Document, Mandate, Record  # noqa: E402
+from fiduciary.documents import (  # noqa: E402
+    Approval,
+    Charter,
+    Document,
+    Mandate,
+    Record,
+    Ticket,
+    Warrant,
+)
 
 OUT = ROOT / "vectors" / "fidu1"
 
@@ -69,6 +77,8 @@ def valid() -> list[dict[str, Any]]:
             ).signed(e.signer("cfo")),
             e.key("cfo"),
         ),
+        _valid("ticket, extension", e.ticket(), e.SERVICE.public_key().spec()),
+        _valid("warrant, quorum", e.warrant(), e.SERVICE.public_key().spec()),
     ]
 
 
@@ -320,6 +330,58 @@ def invalid() -> list[dict[str, Any]]:
             "signature:key",
             signed=True,
             key=e.key("head-ops"),
+        ),
+        _bad(
+            "a ticket option whose digest disagrees with its resolution",
+            Ticket,
+            {
+                **e.ticket_json(),
+                "options": [
+                    {**e.ticket_json()["options"][0], "digest": "0" * 64},
+                    e.ticket_json()["options"][1],
+                ],
+            },
+            "malformed:agreement",
+            "$.options[0].digest",
+        ),
+        _bad(
+            "a ticket with an agent statement over 512 characters",
+            Ticket,
+            {**e.ticket_json(), "agent": {"statement": "x" * 513}},
+            "malformed:format",
+            "$.agent.statement",
+        ),
+        _bad(
+            "a warrant whose resolution_digest disagrees with its resolution",
+            Warrant,
+            {**e.warrant_json(), "resolution_digest": "0" * 64},
+            "malformed:agreement",
+            "$.resolution_digest",
+        ),
+        _bad(
+            "a warrant naming both approvals and a rule",
+            Warrant,
+            {
+                **e.warrant_json(),
+                "basis": {
+                    "approvals": ["1" * 64],
+                    "rule": {"mandate": "2" * 64, "id": "trim-refused"},
+                },
+            },
+            "malformed:fields",
+            "$.basis",
+        ),
+        _bad(
+            "a warrant whose autonomous rule forms an amendment",
+            Warrant,
+            {
+                **e.warrant_json(),
+                "resolution": {"action": "amend", "mandate": "3" * 64},
+                "resolution_digest": fidu1.digest({"action": "amend", "mandate": "3" * 64}),
+                "basis": {"rule": {"mandate": "2" * 64, "id": "auto-amend"}},
+            },
+            "malformed:agreement",
+            "$.resolution.action",
         ),
     ]
 

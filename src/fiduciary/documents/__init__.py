@@ -16,7 +16,20 @@ from fiduciary.documents.approval import SUBJECTS, Approval, suspension_digest
 from fiduciary.documents.charter import Charter, Deployment, Principal
 from fiduciary.documents.mandate import Mandate, MandateRef
 from fiduciary.documents.record import RECORD_KINDS, Record, anchor_memo
+from fiduciary.documents.ticket import (
+    Resolution,
+    Ticket,
+    TicketOption,
+    quorum_for_resolution,
+)
 from fiduciary.documents.tool import ToolBinding
+from fiduciary.documents.warrant import (
+    RuleBasis,
+    TicketRef,
+    Warrant,
+    WarrantBasis,
+    warrant_not_after,
+)
 from fiduciary.exceptions import MalformedError
 
 __all__ = [
@@ -31,15 +44,24 @@ __all__ = [
     "MandateRef",
     "Principal",
     "Record",
+    "Resolution",
+    "RuleBasis",
+    "Ticket",
+    "TicketOption",
+    "TicketRef",
     "ToolBinding",
+    "Warrant",
+    "WarrantBasis",
     "anchor_memo",
     "load",
     "loads",
+    "quorum_for_resolution",
     "suspension_digest",
+    "warrant_not_after",
 ]
 
 TYPES: dict[str, type[Document]] = {
-    cls.TYPE: cls for cls in (Charter, Mandate, ToolBinding, Approval, Record)
+    cls.TYPE: cls for cls in (Charter, Mandate, ToolBinding, Ticket, Approval, Warrant, Record)
 }
 
 

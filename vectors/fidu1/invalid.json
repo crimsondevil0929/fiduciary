@@ -2585,5 +2585,250 @@
     "name": "a document checked under another key",
     "signed": true,
     "type": "charter"
+  },
+  {
+    "document": {
+      "agent": {
+        "statement": "Finished 3 of 4 batch items; 12 refunds remain in the queue."
+      },
+      "class": "extension",
+      "evidence": {
+        "progress": {
+          "committed": 14,
+          "receipts": {
+            "log": "support-agent",
+            "root": "b867be093f87455ea0573d41bc5069988543ab139d9195a78812ac4b8f87aee8",
+            "tree_size": 14
+          },
+          "rows": 28
+        },
+        "quote": {
+          "available": "0.18000000",
+          "estimate": "milestones",
+          "expires_at": "2026-10-18T11:02:11.842100Z",
+          "id": "ext-91",
+          "needed": "15.20000000",
+          "record": {
+            "hash": "c317aac50f17b2e4291db664cb85e4da4f80640390ed717ddfe88b657b032352",
+            "log": "interlock",
+            "seq": 19
+          },
+          "requested": "19.00000000",
+          "spent": "249.82000000"
+        }
+      },
+      "mandate": {
+        "digest": "3229ec1f916c8d01d22425b3b531148c7c97d1987a24af5157cc43a3816fbb73",
+        "mandate_id": "2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31",
+        "version": 1
+      },
+      "not_after": "2026-10-18T11:02:11.842100Z",
+      "observed": {
+        "ledger": {
+          "head": "8dddf6f16a1f904da1f679c5022c6f559812da498b89f6c336ba703e0abab784",
+          "sequence": 1419
+        },
+        "log": {
+          "hash": "e3a56885e27518161f751fc602f7ffc19212c08330e51f6f372c68b0f11bd54b",
+          "seq": 88
+        }
+      },
+      "options": [
+        {
+          "digest": "0000000000000000000000000000000000000000000000000000000000000000",
+          "quorum": 1,
+          "resolution": {
+            "action": "grant",
+            "amount": "19.00000000",
+            "quote": "ext-91"
+          }
+        },
+        {
+          "digest": "2da56bcba9c4b0c4ced660b9e742889bd34be95662ce610c80d9b46c7dfa5161",
+          "quorum": 1,
+          "resolution": {
+            "action": "decline",
+            "quote": "ext-91"
+          }
+        }
+      ],
+      "raised_at": "2026-10-18T10:02:11.842100Z",
+      "ticket_id": "91e2c4a0-7f12-4a8e-9d01-5b3f8c2a1e44",
+      "type": "ticket",
+      "v": "FIDU1"
+    },
+    "error": "malformed:agreement",
+    "name": "a ticket option whose digest disagrees with its resolution",
+    "path": "$.options[0].digest",
+    "signed": false,
+    "type": "ticket"
+  },
+  {
+    "document": {
+      "agent": {
+        "statement": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "class": "extension",
+      "evidence": {
+        "progress": {
+          "committed": 14,
+          "receipts": {
+            "log": "support-agent",
+            "root": "b867be093f87455ea0573d41bc5069988543ab139d9195a78812ac4b8f87aee8",
+            "tree_size": 14
+          },
+          "rows": 28
+        },
+        "quote": {
+          "available": "0.18000000",
+          "estimate": "milestones",
+          "expires_at": "2026-10-18T11:02:11.842100Z",
+          "id": "ext-91",
+          "needed": "15.20000000",
+          "record": {
+            "hash": "c317aac50f17b2e4291db664cb85e4da4f80640390ed717ddfe88b657b032352",
+            "log": "interlock",
+            "seq": 19
+          },
+          "requested": "19.00000000",
+          "spent": "249.82000000"
+        }
+      },
+      "mandate": {
+        "digest": "3229ec1f916c8d01d22425b3b531148c7c97d1987a24af5157cc43a3816fbb73",
+        "mandate_id": "2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31",
+        "version": 1
+      },
+      "not_after": "2026-10-18T11:02:11.842100Z",
+      "observed": {
+        "ledger": {
+          "head": "8dddf6f16a1f904da1f679c5022c6f559812da498b89f6c336ba703e0abab784",
+          "sequence": 1419
+        },
+        "log": {
+          "hash": "e3a56885e27518161f751fc602f7ffc19212c08330e51f6f372c68b0f11bd54b",
+          "seq": 88
+        }
+      },
+      "options": [
+        {
+          "digest": "7f287c42a05c12f4171e47bef9793ae49ddb1b34122059ba852e49db5aea8369",
+          "quorum": 1,
+          "resolution": {
+            "action": "grant",
+            "amount": "19.00000000",
+            "quote": "ext-91"
+          }
+        },
+        {
+          "digest": "2da56bcba9c4b0c4ced660b9e742889bd34be95662ce610c80d9b46c7dfa5161",
+          "quorum": 1,
+          "resolution": {
+            "action": "decline",
+            "quote": "ext-91"
+          }
+        }
+      ],
+      "raised_at": "2026-10-18T10:02:11.842100Z",
+      "ticket_id": "91e2c4a0-7f12-4a8e-9d01-5b3f8c2a1e44",
+      "type": "ticket",
+      "v": "FIDU1"
+    },
+    "error": "malformed:format",
+    "name": "a ticket with an agent statement over 512 characters",
+    "path": "$.agent.statement",
+    "signed": false,
+    "type": "ticket"
+  },
+  {
+    "document": {
+      "basis": {
+        "approvals": [
+          "784dd01cc4c100c91e4d378cee2997f7478004020381a1951a04de91d755bccf"
+        ]
+      },
+      "formed_at": "2026-10-18T10:05:41.310022Z",
+      "not_after": "2026-10-18T10:35:40.004211Z",
+      "resolution": {
+        "action": "grant",
+        "amount": "19.00000000",
+        "quote": "ext-91"
+      },
+      "resolution_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+      "ticket": {
+        "digest": "16050101f501e1d574394f7db30909e22606f939de5ad845418d6e5b77f56a6b",
+        "ticket_id": "91e2c4a0-7f12-4a8e-9d01-5b3f8c2a1e44"
+      },
+      "type": "warrant",
+      "v": "FIDU1",
+      "warrant_id": "c8b2a190-5d3e-4f12-9a04-1e7c3b5d9f20"
+    },
+    "error": "malformed:agreement",
+    "name": "a warrant whose resolution_digest disagrees with its resolution",
+    "path": "$.resolution_digest",
+    "signed": false,
+    "type": "warrant"
+  },
+  {
+    "document": {
+      "basis": {
+        "approvals": [
+          "1111111111111111111111111111111111111111111111111111111111111111"
+        ],
+        "rule": {
+          "id": "trim-refused",
+          "mandate": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      },
+      "formed_at": "2026-10-18T10:05:41.310022Z",
+      "not_after": "2026-10-18T10:35:40.004211Z",
+      "resolution": {
+        "action": "grant",
+        "amount": "19.00000000",
+        "quote": "ext-91"
+      },
+      "resolution_digest": "7f287c42a05c12f4171e47bef9793ae49ddb1b34122059ba852e49db5aea8369",
+      "ticket": {
+        "digest": "16050101f501e1d574394f7db30909e22606f939de5ad845418d6e5b77f56a6b",
+        "ticket_id": "91e2c4a0-7f12-4a8e-9d01-5b3f8c2a1e44"
+      },
+      "type": "warrant",
+      "v": "FIDU1",
+      "warrant_id": "c8b2a190-5d3e-4f12-9a04-1e7c3b5d9f20"
+    },
+    "error": "malformed:fields",
+    "name": "a warrant naming both approvals and a rule",
+    "path": "$.basis",
+    "signed": false,
+    "type": "warrant"
+  },
+  {
+    "document": {
+      "basis": {
+        "rule": {
+          "id": "auto-amend",
+          "mandate": "2222222222222222222222222222222222222222222222222222222222222222"
+        }
+      },
+      "formed_at": "2026-10-18T10:05:41.310022Z",
+      "not_after": "2026-10-18T10:35:40.004211Z",
+      "resolution": {
+        "action": "amend",
+        "mandate": "3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "resolution_digest": "4b937af71d9d0e372e6c3256e824fdd69122a1cf3c2d4210c402aaf56ddc4237",
+      "ticket": {
+        "digest": "16050101f501e1d574394f7db30909e22606f939de5ad845418d6e5b77f56a6b",
+        "ticket_id": "91e2c4a0-7f12-4a8e-9d01-5b3f8c2a1e44"
+      },
+      "type": "warrant",
+      "v": "FIDU1",
+      "warrant_id": "c8b2a190-5d3e-4f12-9a04-1e7c3b5d9f20"
+    },
+    "error": "malformed:agreement",
+    "name": "a warrant whose autonomous rule forms an amendment",
+    "path": "$.resolution.action",
+    "signed": false,
+    "type": "warrant"
   }
 ]

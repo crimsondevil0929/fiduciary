@@ -15,12 +15,22 @@ from typing import Any
 from agentgov.receipts.signing import Ed25519Signer
 
 from fiduciary import fidu1
-from fiduciary.documents import Approval, Charter, Mandate, ToolBinding
+from fiduciary.documents import (
+    Approval,
+    Charter,
+    Mandate,
+    Resolution,
+    Ticket,
+    ToolBinding,
+    Warrant,
+)
 
 LEDGER = hashlib.sha256(b"agentgov entry 1").hexdigest()
 CHARTER_ID = "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11"
 MANDATE_ID = "2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31"
 CHILD_ID = "4b7f1e0a-9c2d-4e6f-8a1b-3c5d7e9f0a12"
+TICKET_ID = "91e2c4a0-7f12-4a8e-9d01-5b3f8c2a1e44"
+WARRANT_ID = "c8b2a190-5d3e-4f12-9a04-1e7c3b5d9f20"
 
 
 def signer(name: str) -> Ed25519Signer:
@@ -375,6 +385,120 @@ def approval(principal: str = "head-ops", **changes: Any) -> Approval:
     return Approval.from_json(approval_json(principal, **changes), signed=False).signed(
         signer(principal)
     )
+
+
+def ticket_json(**changes: Any) -> dict[str, Any]:
+    grant_res: dict[str, Any] = {
+        "action": "grant",
+        "quote": "ext-91",
+        "amount": "19.00000000",
+    }
+    decline_res: dict[str, Any] = {
+        "action": "decline",
+        "quote": "ext-91",
+    }
+    doc: dict[str, Any] = {
+        "v": "FIDU1",
+        "type": "ticket",
+        "ticket_id": TICKET_ID,
+        "mandate": mandate().ref.to_json(),
+        "class": "extension",
+        "raised_at": "2026-10-18T10:02:11.842100Z",
+        "not_after": "2026-10-18T11:02:11.842100Z",
+        "observed": {
+            "ledger": {
+                "sequence": 1419,
+                "head": hashlib.sha256(b"ledger-1419").hexdigest(),
+            },
+            "log": {
+                "seq": 88,
+                "hash": hashlib.sha256(b"log-88").hexdigest(),
+            },
+        },
+        "evidence": {
+            "quote": {
+                "id": "ext-91",
+                "record": {
+                    "log": "interlock",
+                    "seq": 19,
+                    "hash": hashlib.sha256(b"interlock-19").hexdigest(),
+                },
+                "needed": "15.20000000",
+                "requested": "19.00000000",
+                "spent": "249.82000000",
+                "available": "0.18000000",
+                "estimate": "milestones",
+                "expires_at": "2026-10-18T11:02:11.842100Z",
+            },
+            "progress": {
+                "committed": 14,
+                "rows": 28,
+                "receipts": {
+                    "log": "support-agent",
+                    "tree_size": 14,
+                    "root": hashlib.sha256(b"receipt-root-14").hexdigest(),
+                },
+            },
+        },
+        "options": [
+            {
+                "resolution": grant_res,
+                "digest": fidu1.digest(grant_res),
+                "quorum": 1,
+            },
+            {
+                "resolution": decline_res,
+                "digest": fidu1.digest(decline_res),
+                "quorum": 1,
+            },
+        ],
+        "agent": {
+            "statement": "Finished 3 of 4 batch items; 12 refunds remain in the queue.",
+        },
+    }
+    doc.update(changes)
+    return doc
+
+
+def ticket() -> Ticket:
+    return Ticket.from_json(ticket_json(), signed=False).signed(SERVICE)
+
+
+def warrant_json(**changes: Any) -> dict[str, Any]:
+    res_raw: dict[str, Any] = {
+        "action": "grant",
+        "quote": "ext-91",
+        "amount": "19.00000000",
+    }
+    res_digest = Resolution.read(res_raw).digest
+    tk = ticket()
+    ap = Approval.from_json(
+        approval_json(
+            "head-ops",
+            subject="ticket",
+            digest=tk.digest,
+            resolution=res_digest,
+            decision="approve",
+        ),
+        signed=False,
+    ).signed(signer("head-ops"))
+    doc: dict[str, Any] = {
+        "v": "FIDU1",
+        "type": "warrant",
+        "warrant_id": WARRANT_ID,
+        "ticket": {"ticket_id": tk.ticket_id, "digest": tk.digest},
+        "resolution": res_raw,
+        "resolution_digest": res_digest,
+        "basis": {"approvals": [ap.digest]},
+        "formed_at": "2026-10-18T10:05:41.310022Z",
+        "not_after": "2026-10-18T10:35:40.004211Z",
+    }
+    doc.update(changes)
+    return doc
+
+
+def warrant() -> Warrant:
+    return Warrant.from_json(warrant_json(), signed=False).signed(SERVICE)
 
 
 def canonical(doc: dict[str, Any]) -> bytes:
