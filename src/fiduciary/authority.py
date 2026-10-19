@@ -734,7 +734,10 @@ class Decide:
             if "outcome" in when and ticket.evidence.message.outcome not in set(when["outcome"]):
                 return False
             if "max_requeues" in when:
-                prior = self._requeues_so_far(state, ticket.evidence.message.message_id)
+                prior = max(
+                    ticket.evidence.message.requeues,
+                    self._requeues_so_far(state, ticket.evidence.message.message_id),
+                )
                 limit = int(when["max_requeues"])
                 if resolution.action == "requeue":
                     if prior + 1 > limit:
