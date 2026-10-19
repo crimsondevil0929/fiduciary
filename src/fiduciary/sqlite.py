@@ -27,9 +27,9 @@ from fiduciary.store import PROJECTIONS, Store, StoredRecord
 
 __all__ = ["SCHEMA_VERSION", "SqliteStore"]
 
-SCHEMA_VERSION: Final = 2
-"""1: 0.1.0. 2: 0.2.0, the lineage events (bound, rebased, suspended, revoked,
-expired). Upgrading adds the table, which a version 1 log holds nothing for."""
+SCHEMA_VERSION: Final = 3
+"""1: 0.1.0. 2: 0.2.0, the lineage events. 3: 0.3.0, tickets, warrants and
+executions. Upgrading adds the tables, which an earlier log holds nothing for."""
 _PROTECTED: Final = ("documents", "log", "intake")
 
 

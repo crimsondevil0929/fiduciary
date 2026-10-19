@@ -217,6 +217,11 @@ def test_sqlite_refuses_a_store_of_another_version(tmp_path: Path) -> None:
     import sqlite3
 
     raw = sqlite3.connect(tmp_path / "f.db")
+    for earlier in ("1", "2"):
+        raw.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (earlier,))
+        raw.commit()
+        SqliteStore(tmp_path / "f.db").close()
+        assert raw.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == ("3",)
     raw.execute("UPDATE meta SET value = '99' WHERE key = 'schema'")
     raw.commit()
     raw.close()

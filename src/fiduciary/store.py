@@ -19,16 +19,21 @@ import abc
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
+from datetime import datetime
+from decimal import Decimal
 from typing import Any, Final
 
 from fiduciary.documents import Record
 
 __all__ = [
     "PROJECTIONS",
+    "TICKET_TERMINAL",
     "ApprovalRow",
     "State",
     "Store",
     "StoredRecord",
+    "TicketRow",
+    "WarrantRow",
     "fold",
     "rows_for",
 ]
@@ -49,6 +54,18 @@ PROJECTIONS: Final[Mapping[str, tuple[str, ...]]] = {
     ),
     "refusals": ("intake", "digest", "seq"),
     "lineage": ("mandate_id", "event", "digest", "detail", "seq"),
+    "tickets": ("ticket_id", "digest", "mandate_id", "class", "event", "detail", "seq"),
+    "warrants": (
+        "warrant_id",
+        "digest",
+        "ticket_id",
+        "ticket_digest",
+        "action",
+        "resolution_digest",
+        "basis",
+        "seq",
+    ),
+    "executions": ("warrant", "event", "detail", "seq"),
 }
 """Each projection table and its columns, in order. Every column is text or an
 integer; ``seq`` is the record a row follows from."""
@@ -110,7 +127,91 @@ def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
     if event is not None:
         detail = str(body.get(_DETAIL[event]) or "")
         return [("lineage", (body["mandate_id"], event, body["mandate"], detail, record.seq))]
+    if kind == "ticket.raised":
+        return [
+            (
+                "tickets",
+                (
+                    body["ticket_id"],
+                    body["ticket"],
+                    body["mandate_id"],
+                    body["class"],
+                    "raised",
+                    body["mandate"],
+                    record.seq,
+                ),
+            )
+        ]
+    if kind == "warrant.formed":
+        basis = body["basis"]
+        basis_label = f"rule:{basis['rule']['id']}" if "rule" in basis else "quorum"
+        return [
+            (
+                "tickets",
+                (
+                    body["ticket_id"],
+                    body["ticket"],
+                    body["mandate_id"],
+                    body["class"],
+                    "warranted",
+                    body["warrant"],
+                    record.seq,
+                ),
+            ),
+            (
+                "warrants",
+                (
+                    body["warrant_id"],
+                    body["warrant"],
+                    body["ticket_id"],
+                    body["ticket"],
+                    body["action"],
+                    body["resolution"],
+                    basis_label,
+                    record.seq,
+                ),
+            ),
+        ]
+    if kind in ("ticket.lapsed", "ticket.declined"):
+        ticket_event = kind.split(".")[1]
+        return [
+            (
+                "tickets",
+                (
+                    body["ticket_id"],
+                    body["ticket"],
+                    body["mandate_id"],
+                    body["class"],
+                    ticket_event,
+                    body["mandate"],
+                    record.seq,
+                ),
+            )
+        ]
+    if kind in (
+        "execution.intent",
+        "execution.applied",
+        "execution.refused",
+        "execution.abandoned",
+    ):
+        exec_event = kind.split(".")[1]
+        if exec_event == "intent":
+            exec_detail = str(len(body.get("steps", ())))
+        elif exec_event == "applied":
+            exec_detail = "mismatch" if body.get("mismatches") else "ok"
+        else:
+            exec_detail = str(body.get("why") or "")
+        return [
+            (
+                "executions",
+                (body["warrant"], exec_detail_event(exec_event), exec_detail, record.seq),
+            )
+        ]
     return []
+
+
+def exec_detail_event(event: str) -> str:
+    return event
 
 
 _LINEAGE_EVENTS: Final = {
@@ -129,6 +230,8 @@ _DETAIL: Final = {
 }
 TERMINAL: Final = frozenset({"suspended", "revoked", "expired"})
 """Lineage events after which a lineage governs nothing more."""
+TICKET_TERMINAL: Final = frozenset({"warranted", "lapsed", "declined"})
+"""Ticket events after which a ticket accepts no new warrant or decline."""
 
 
 def fold(records: Sequence[Record]) -> dict[str, list[tuple[Any, ...]]]:
@@ -164,6 +267,32 @@ class ApprovalRow:
     seq: int
 
 
+@dataclass(frozen=True, slots=True)
+class TicketRow:
+    ticket_id: str
+    digest: str
+    mandate_id: str
+    mandate_digest: str
+    ticket_class: str
+    seq: int
+
+
+@dataclass(frozen=True, slots=True)
+class WarrantRow:
+    warrant_id: str
+    digest: str
+    ticket_id: str
+    ticket_digest: str
+    mandate_id: str
+    mandate_digest: str
+    ticket_class: str
+    action: str
+    resolution_digest: str
+    basis: dict[str, Any]
+    amount: str | None
+    seq: int
+
+
 @dataclass(slots=True)
 class State:
     """What the log says, as of its last record."""
@@ -186,6 +315,20 @@ class State:
     """Each lineage's events: ``(event, mandate digest, detail, seq)``, in order."""
     bound: dict[str, dict[str, Any]] = field(default_factory=dict)
     """Each bound lineage's last ``mandate.bound`` body."""
+    tickets: dict[str, TicketRow] = field(default_factory=dict)
+    """Raised tickets keyed by ``ticket_id``."""
+    tickets_by_digest: dict[str, str] = field(default_factory=dict)
+    """Ticket digest to ``ticket_id``."""
+    ticket_events: dict[str, list[tuple[str, str, int]]] = field(default_factory=dict)
+    """Each ticket's events: ``(event, detail, seq)``, in order."""
+    warrants: dict[str, WarrantRow] = field(default_factory=dict)
+    """Formed warrants keyed by warrant digest."""
+    warrants_by_id: dict[str, str] = field(default_factory=dict)
+    """``warrant_id`` to warrant digest."""
+    executions: dict[str, list[tuple[str, dict[str, Any], int]]] = field(default_factory=dict)
+    """Each warrant's execution records: ``(event, body, seq)``, in order."""
+    record_times: dict[int, datetime] = field(default_factory=dict)
+    """Each record's ``issued_at`` timestamp by ``seq``."""
     head_seq: int = 0
 
     @classmethod
@@ -197,6 +340,7 @@ class State:
 
     def apply(self, record: Record) -> None:
         self.head_seq = record.seq
+        self.record_times[record.seq] = record.issued_at
         body = record.content
         for table, row in rows_for(record):
             if table == "charters":
@@ -219,6 +363,39 @@ class State:
                 self.processed.add(int(body["intake"]))
             elif table == "refusals":
                 self.processed.add(int(body["intake"]))
+            elif table == "tickets":
+                ticket_id, digest, mandate_id, ticket_class, event, detail, seq = row
+                if event == "raised":
+                    self.tickets[ticket_id] = TicketRow(
+                        ticket_id=ticket_id,
+                        digest=digest,
+                        mandate_id=mandate_id,
+                        mandate_digest=detail,
+                        ticket_class=ticket_class,
+                        seq=seq,
+                    )
+                    self.tickets_by_digest[digest] = ticket_id
+                self.ticket_events.setdefault(ticket_id, []).append((event, detail, seq))
+            elif table == "warrants":
+                warrant_id, digest, ticket_id, ticket_digest, action, res_digest, _, seq = row
+                self.warrants[digest] = WarrantRow(
+                    warrant_id=warrant_id,
+                    digest=digest,
+                    ticket_id=ticket_id,
+                    ticket_digest=ticket_digest,
+                    mandate_id=str(body["mandate_id"]),
+                    mandate_digest=str(body["mandate"]),
+                    ticket_class=str(body["class"]),
+                    action=action,
+                    resolution_digest=res_digest,
+                    basis=dict(body["basis"]),
+                    amount=None if body.get("amount") is None else str(body["amount"]),
+                    seq=seq,
+                )
+                self.warrants_by_id[warrant_id] = digest
+            elif table == "executions":
+                warrant_digest, event, _, seq = row
+                self.executions.setdefault(warrant_digest, []).append((event, dict(body), seq))
 
     @property
     def charter(self) -> tuple[int, str] | None:
@@ -280,6 +457,78 @@ class State:
             if (row.subject_type, row.subject_digest) == (subject_type, subject_digest):
                 latest[row.principal] = row
         return latest
+
+    def ticket_status(self, ticket_id: str) -> str | None:
+        """``open``, ``warranted``, ``lapsed`` or ``declined``; ``None`` for no ticket."""
+        if ticket_id not in self.tickets:
+            return None
+        events = [e[0] for e in self.ticket_events.get(ticket_id, ())]
+        terminal = [e for e in events if e in TICKET_TERMINAL]
+        return terminal[-1] if terminal else "open"
+
+    def ticket_terminal_seq(self, ticket_id: str) -> int | None:
+        """The first ``seq`` at which ``ticket_id`` became terminal, or ``None``."""
+        for event, _, seq in self.ticket_events.get(ticket_id, ()):
+            if event in TICKET_TERMINAL:
+                return seq
+        return None
+
+    def open_tickets(self, mandate_id: str | None = None) -> list[TicketRow]:
+        """Open tickets, optionally filtered to ``mandate_id``, in raised order."""
+        found = [
+            row
+            for row in self.tickets.values()
+            if self.ticket_status(row.ticket_id) == "open"
+            and (mandate_id is None or row.mandate_id == mandate_id)
+        ]
+        return sorted(found, key=lambda r: r.seq)
+
+    def ticket_decisions(
+        self, ticket_digest: str, *, before_seq: int | None = None
+    ) -> dict[str, ApprovalRow]:
+        """Each principal's latest decision on ``ticket_digest`` recorded before
+        the warrant formed (§7.3 rule 6, F7-6)."""
+        ticket_id = self.tickets_by_digest.get(ticket_digest)
+        cutoff = before_seq
+        if cutoff is None and ticket_id is not None:
+            cutoff = self.ticket_terminal_seq(ticket_id)
+        latest: dict[str, ApprovalRow] = {}
+        for row in self.approvals:
+            if (row.subject_type, row.subject_digest) != ("ticket", ticket_digest):
+                continue
+            if cutoff is not None and row.seq >= cutoff:
+                continue
+            latest[row.principal] = row
+        return latest
+
+    def execution_status(self, warrant_digest: str) -> str | None:
+        """``intent``, ``applied``, ``refused`` or ``abandoned``; ``None`` before intent."""
+        events = self.executions.get(warrant_digest)
+        if not events:
+            return None
+        return events[-1][0]
+
+    def open_intents(self) -> list[tuple[str, dict[str, Any], int]]:
+        """Every ``(warrant_digest, intent_body, seq)`` with no outcome yet."""
+        found = []
+        for warrant_digest, events in self.executions.items():
+            if len(events) == 1 and events[0][0] == "intent":
+                found.append((warrant_digest, events[0][1], events[0][2]))
+        return sorted(found, key=lambda item: item[2])
+
+    def auto_extension_total(self, mandate_digest: str) -> Decimal:
+        """Total autonomous extension grant amount recorded for ``mandate_digest`` (F7-11)."""
+        total = Decimal("0.00000000")
+        for warrant in self.warrants.values():
+            if (
+                warrant.mandate_digest == mandate_digest
+                and warrant.action == "grant"
+                and "rule" in warrant.basis
+                and warrant.amount is not None
+                and self.execution_status(warrant.digest) not in ("refused", "abandoned")
+            ):
+                total += Decimal(warrant.amount)
+        return total
 
 
 # --------------------------------------------------------------------------

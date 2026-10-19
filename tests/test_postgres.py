@@ -149,6 +149,11 @@ def test_install_is_idempotent_and_refuses_another_version(pg_schema: tuple[str,
     dsn, schema = pg_schema
     with psycopg.connect(dsn, autocommit=True) as admin:
         install(admin, schema=schema)
+        for earlier in ("1", "2"):
+            admin.execute(f"UPDATE {schema}.meta SET value = %s", (earlier,))
+            install(admin, schema=schema)
+            row = admin.execute(f"SELECT value FROM {schema}.meta WHERE key = 'schema'").fetchone()
+            assert row == ("3",)
         admin.execute(f"UPDATE {schema}.meta SET value = '99'")
         with pytest.raises(StoreError, match="version 99"):
             install(admin, schema=schema)

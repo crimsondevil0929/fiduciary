@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 __all__ = ["SCHEMA_VERSION", "PostgresStore", "install", "roles"]
 
-SCHEMA_VERSION: Final = 2
+SCHEMA_VERSION: Final = 3
 """As :data:`fiduciary.sqlite.SCHEMA_VERSION`."""
 _SCHEMA: Final = re.compile(r"[a-z_][a-z0-9_]{0,40}")
 _COLUMN_TYPES: Final = {"version": "bigint", "seq": "bigint", "intake": "bigint"}

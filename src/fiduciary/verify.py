@@ -40,6 +40,8 @@ _NAMED = {
     "charter.adopted": ("charter", "charter"),
     "mandate.issued": ("mandate", "mandate"),
     "approval.recorded": ("approval", "approval"),
+    "ticket.raised": ("ticket", "ticket"),
+    "warrant.formed": ("warrant", "warrant"),
 }
 
 
@@ -116,6 +118,15 @@ def verify_store(
         count += 1
         if hashlib.sha256(data).hexdigest() != digest:
             problems.append(f"document {digest[:16]}: its bytes do not hash to its digest")
+            continue
+        if kind == "resolution":
+            try:
+                raw_res = fidu1.parse(data)
+                res = documents.Resolution.read(raw_res)
+                if fidu1.canonical(res.to_json()) != data:
+                    problems.append(f"document {digest[:16]}: not canonical FIDU1 resolution")
+            except FiduciaryError as exc:
+                problems.append(f"document {digest[:16]}: not a FIDU1 resolution: {exc}")
             continue
         try:
             found = documents.loads(data, signed=True)
