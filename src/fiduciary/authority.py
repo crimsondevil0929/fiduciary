@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -351,6 +351,10 @@ class Decide:
                 )
             self._signed_by_principal(mandate, charter)
             counted = self.count(state, "mandate", digest, approvers, roster)
+            if len(counted) < quorum and head is not None:
+                counted = (
+                    self._amend_warrant_approvals(state, mandate.mandate_id, digest, now) or counted
+                )
             _enough(counted, quorum, f"mandate {mandate.mandate_id} version {mandate.version}")
         else:
             parent_head = state.head(mandate.parent.mandate_id)
@@ -380,6 +384,11 @@ class Decide:
             else:
                 self._signed_by_principal(mandate, charter)
                 counted = self.count(state, "mandate", digest, charter, parent.roster.principals)
+                if len(counted) < parent.roster.quorum("amend") and head is not None:
+                    counted = (
+                        self._amend_warrant_approvals(state, mandate.mandate_id, digest, now)
+                        or counted
+                    )
                 _enough(
                     counted, parent.roster.quorum("amend"), f"child mandate {mandate.mandate_id}"
                 )
@@ -919,6 +928,24 @@ class Decide:
                 f"warrant {warrant_digest[:16]} has execution status {status!r}, not 'intent'"
             )
 
+    def _amend_warrant_approvals(
+        self, state: State, mandate_id: str, digest: str, now: datetime
+    ) -> list[str]:
+        """Approvals from a formed, unexpired ``amend`` warrant for ``digest``."""
+        for row in state.warrants.values():
+            if row.mandate_id != mandate_id or row.action != "amend":
+                continue
+            if state.execution_status(row.digest) in ("refused", "abandoned"):
+                continue
+            warrant: Warrant = _load(self.store, row.digest, Warrant)
+            if (
+                warrant.resolution.mandate == digest
+                and warrant.basis.approvals
+                and now < warrant.not_after
+            ):
+                return list(warrant.basis.approvals)
+        return []
+
     def _children(self, state: State, parent_id: str) -> set[str]:
         children = set()
         for mandate_id, versions in state.lineages.items():
@@ -955,9 +982,16 @@ class Authority:
     :param pinned: Charter version 1's digest, as configuration pins it.
     """
 
-    def __init__(self, log: Log, *, pinned: str) -> None:
+    def __init__(
+        self,
+        log: Log,
+        *,
+        pinned: str,
+        checkpoint: Callable[[str], None] | None = None,
+    ) -> None:
         self._log = log
         self._decide = Decide(log.store, pinned, log.signer.public_key())
+        self._checkpoint = checkpoint or (lambda _: None)
 
     @property
     def log(self) -> Log:
@@ -999,6 +1033,7 @@ class Authority:
                 kind, body, approval = self._decide.approval(state, intake, data, now)
                 entries: list[tuple[str, dict[str, Any]]] = [(kind, body)]
                 docs: list[Document] = [approval] if approval is not None else []
+                followup_kind: str | None = None
                 if approval is not None:
                     self._log.put(approval)
                     if approval.subject.type == "ticket":
@@ -1007,9 +1042,13 @@ class Authority:
                         )
                         if followup is not None:
                             entries.append(followup)
+                            followup_kind = followup[0]
                         if followup_doc is not None:
                             docs.append(followup_doc)
                 records.extend(self._log.append_all(entries, documents=docs, issued_at=now))
+                self._checkpoint("recorded")
+                if followup_kind == "warrant.formed":
+                    self._checkpoint("formed")
         return records
 
     def _ticket_followup(

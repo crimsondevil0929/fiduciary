@@ -52,7 +52,18 @@ if TYPE_CHECKING:
 __all__ = ["Config", "ConfigError", "load_config", "load_tool"]
 
 _TOP: Final = frozenset(
-    {"database", "schema", "ledger", "interlock", "charter", "service", "signers", "binding"}
+    {
+        "database",
+        "schema",
+        "ledger",
+        "interlock",
+        "charter",
+        "service",
+        "signers",
+        "binding",
+        "executor",
+        "runtime",
+    }
 )
 
 
@@ -78,6 +89,12 @@ class Config:
     tools: tuple[str, ...] = ()
     directives: tuple[Path, ...] = ()
     chains: Path | None = None
+    executor_key: Path | None = None
+    executor_signer: str | None = None
+    operator_log: Path | None = None
+    runtime_records: Path | None = None
+    runtime_key: Path | None = None
+    runtime_signer: str | None = None
 
     def open_store(self) -> Store:
         """The store ``database`` names."""
@@ -103,6 +120,34 @@ class Config:
         if self.service_key is None and self.service_signer is None:
             raise ConfigError("[service] names no key and no signer")
         return open_signer(self.signers, key=self.service_key, signer=self.service_signer)
+
+    def executor(self) -> Signer:
+        """The executor key, which signs ILOK1 operator records (not AWS KMS before U-2, F3-9)."""
+        from fiduciary.executor import ExecutionError, check_ilok1_signer
+
+        if self.executor_key is None and self.executor_signer is None:
+            signer = self.service()
+        else:
+            signer = open_signer(self.signers, key=self.executor_key, signer=self.executor_signer)
+        try:
+            check_ilok1_signer(signer, role="executor")
+        except ExecutionError as exc:
+            raise ConfigError(str(exc)) from exc
+        return signer
+
+    def runtime(self) -> Signer:
+        """The runtime key, which signs ILOK1 recovery and extension records (F3-9)."""
+        from fiduciary.executor import ExecutionError, check_ilok1_signer
+
+        if self.runtime_key is None and self.runtime_signer is None:
+            signer = self.service()
+        else:
+            signer = open_signer(self.signers, key=self.runtime_key, signer=self.runtime_signer)
+        try:
+            check_ilok1_signer(signer, role="runtime")
+        except ExecutionError as exc:
+            raise ConfigError(str(exc)) from exc
+        return signer
 
     def deployment(self, governor: BudgetManager) -> Deployment:
         """The deployment snapshot compilation reads: ``interlock.toml``'s
@@ -211,9 +256,13 @@ def load_config(path: str | Path) -> Config:
             ledger = str(place(ledger, "ledger"))
     charter = raw.get("charter", {})
     service = raw.get("service", {})
+    executor = raw.get("executor", {})
+    runtime = raw.get("runtime", {})
     for name, table, allowed in (
         ("charter", charter, {"file", "digest"}),
         ("service", service, {"key", "signer"}),
+        ("executor", executor, {"key", "signer", "log"}),
+        ("runtime", runtime, {"records", "key", "signer"}),
     ):
         if not isinstance(table, dict):
             raise ConfigError(f"{where}: [{name}] is a table")
@@ -227,11 +276,27 @@ def load_config(path: str | Path) -> Config:
         signers = parse_signers(raw.get("signers"))
     except ValueError as exc:
         raise ConfigError(f"{where}: {exc}") from exc
+    for section_name, section_table in (
+        ("service", service),
+        ("executor", executor),
+        ("runtime", runtime),
+    ):
+        sec_signer = section_table.get("signer")
+        if sec_signer is not None and sec_signer not in signers:
+            raise ConfigError(
+                f"{where}: [{section_name}] signer {sec_signer!r} names no [signers.{sec_signer}]"
+            )
+        if "key" in section_table and sec_signer is not None:
+            raise ConfigError(f"{where}: [{section_name}] has a key or a signer, not both")
     signer = service.get("signer")
-    if signer is not None and signer not in signers:
-        raise ConfigError(f"{where}: [service] signer {signer!r} names no [signers.{signer}]")
-    if "key" in service and signer is not None:
-        raise ConfigError(f"{where}: [service] has a key or a signer, not both")
+    exec_signer = executor.get("signer")
+    run_signer = runtime.get("signer")
+    for role_name, sec_signer in (("executor", exec_signer), ("runtime", run_signer)):
+        if sec_signer is not None and signers[sec_signer].type == "aws-kms":
+            raise ConfigError(
+                f"{where}: [{role_name}] signer {sec_signer!r} is aws-kms, which is refused "
+                f"before U-2 (F3-9)"
+            )
     schema = raw.get("schema", "fiduciary")
     if not isinstance(schema, str):
         raise ConfigError(f"{where}: schema is a name")
@@ -266,4 +331,12 @@ def load_config(path: str | Path) -> Config:
         tools=tuple(tool(t) for t in lists["tools"]),
         directives=tuple(place(d, "[binding] directives") for d in lists["directives"]),
         chains=None if "chains" not in binding else place(binding["chains"], "[binding] chains"),
+        executor_key=None if "key" not in executor else place(executor["key"], "[executor] key"),
+        executor_signer=exec_signer,
+        operator_log=None if "log" not in executor else place(executor["log"], "[executor] log"),
+        runtime_records=(
+            None if "records" not in runtime else place(runtime["records"], "[runtime] records")
+        ),
+        runtime_key=None if "key" not in runtime else place(runtime["key"], "[runtime] key"),
+        runtime_signer=run_signer,
     )

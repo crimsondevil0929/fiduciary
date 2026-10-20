@@ -33,7 +33,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -42,6 +42,7 @@ from interlock.deliveries import OUTCOMES, OutboxOperations
 from interlock.extension import ExtensionRequest
 from interlock.recovery import breaker_reason, spent_out
 from interlock.repair import Repair
+from interlock.types import EffectPlan
 
 from fiduciary import fidu1
 from fiduciary.authority import Authority, Decide
@@ -132,9 +133,17 @@ class Escalation:
     """Raises tickets from Interlock and AgentGov evidence, processes principal
     intake, expires overdue tickets, and forms autonomous or quorum warrants."""
 
-    def __init__(self, authority: Authority, governor: BudgetManager) -> None:
+    def __init__(
+        self,
+        authority: Authority,
+        governor: BudgetManager,
+        *,
+        checkpoint: Callable[[str], None] | None = None,
+    ) -> None:
         self._authority = authority
         self._governor = governor
+        self._checkpoint = checkpoint or (lambda _: None)
+        self.proposals: dict[str, EffectPlan] = {}
 
     @property
     def authority(self) -> Authority:
@@ -317,6 +326,9 @@ class Escalation:
                 entries.append(("warrant.formed", warrant_body))
                 docs.append(warrant)
             self.log.append_all(entries, documents=docs, issued_at=now)
+            self._checkpoint("raised")
+            if warrant is not None:
+                self._checkpoint("formed")
             return ticket, warrant
 
     def _auto_warrant(
@@ -402,6 +414,7 @@ class Escalation:
         if not kept or not dropped:
             raise EscalationError("a repair proposal must keep at least one step and drop one")
         proposal = repair.proposal.content_hash()
+        self.proposals[proposal] = repair.proposal
         receipt_digest = hashlib.sha256(rcpt.canonical()).hexdigest()
         evidence = RefusedEvidence(
             receipt=ReceiptRef(receipt_id=rcpt.receipt_id, digest=receipt_digest),

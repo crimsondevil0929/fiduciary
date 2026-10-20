@@ -24,12 +24,22 @@ from fiduciary.documents import (
     Document,
     Mandate,
     Record,
+    Ticket,
+    Warrant,
     loads,
     suspension_digest,
 )
+from fiduciary.documents.ticket import (
+    AmendEvidence,
+    DeadEvidence,
+    ExtensionEvidence,
+    HeldEvidence,
+    RefusedEvidence,
+    UndoEvidence,
+)
 from fiduciary.exceptions import FiduciaryError
 
-__all__ = ["main", "main_entry"]
+__all__ = ["main", "main_entry", "render_ticket"]
 
 OK, REFUSED, USAGE = 0, 1, 2
 
@@ -616,14 +626,62 @@ def _approve(args: argparse.Namespace) -> int:
         what = (
             "revoke" if args.revoke else "issue"
         ) + f" mandate {document.mandate_id} version {document.version}"
+    elif isinstance(document, Ticket):
+        config = _config(args)
+        store = _opened(config.open_store())
+        mandate_raw = store.document(document.mandate.digest)
+        if mandate_raw is not None:
+            mandate_doc = loads(mandate_raw[1], signed=True)
+            assert isinstance(mandate_doc, Mandate)
+            charter_ref = {
+                "charter_id": mandate_doc.charter.charter_id,
+                "version": mandate_doc.charter.version,
+            }
+        else:
+            from fiduciary.log import LOG_ID
+            from fiduciary.store import State
+
+            state = State.of([Record.loads(r.data) for r in store.records(LOG_ID)])
+            if state.charter is None:
+                _fail("the store holds no adopted charter to reference")
+            charter_raw = store.document(state.charter[1])
+            assert charter_raw is not None
+            charter_doc = loads(charter_raw[1], signed=True)
+            assert isinstance(charter_doc, Charter)
+            charter_ref = {"charter_id": charter_doc.charter_id, "version": charter_doc.version}
+        res_arg = getattr(args, "resolution", None)
+        if res_arg is None:
+            if len(document.options) == 1:
+                resolution = document.options[0].digest
+            elif args.decline:
+                resolution = document.options[0].digest
+            else:
+                _fail("approving a ticket requires --resolution <DIGEST|ACTION>")
+        else:
+            matched_opt = next(
+                (
+                    opt
+                    for opt in document.options
+                    if opt.digest == res_arg or opt.resolution.action == res_arg
+                ),
+                None,
+            )
+            if matched_opt is not None:
+                resolution = matched_opt.digest
+            elif fidu1.HASH.fullmatch(res_arg):
+                resolution = res_arg
+            else:
+                _fail(f"no ticket option matches {res_arg!r}")
+        subject = {"type": "ticket", "digest": document.digest}
+        what = f"ticket {document.ticket_id} ({document.ticket_class}) resolution {resolution[:16]}"
     else:
-        _fail(
-            f"{args.file} is a {document.TYPE}; approvals decide charters and mandates in this "
-            f"release"
-        )
+        _fail(f"{args.file} is a {document.TYPE}; approvals decide charters, mandates and tickets")
     decision = "decline" if args.decline else "approve"
-    # What you see is what you sign (G8): the document, from the bytes read, then its digest.
-    _err(document.pretty())
+    # What you see is what you sign (G8, F7-3): the document, from the bytes read, then its digest.
+    if isinstance(document, Ticket):
+        _err(render_ticket(document))
+    else:
+        _err(document.pretty())
     _err(f"{decision}: {what}; digest {subject['digest']}")
     if not args.yes:
         if not sys.stdin.isatty():
@@ -696,6 +754,199 @@ def _verify(args: argparse.Namespace) -> int:
     status = "PASS" if report.ok else "FAIL"
     _out(f"{status}: {report.records} records, {report.documents} documents{anchored}")
     return OK if report.ok else REFUSED
+
+
+def render_ticket(ticket: Ticket) -> str:
+    """Render ``ticket`` from its canonical bytes in a fixed template, with
+    ``agent.statement`` quarantined apart as the agent's unverified claim (F7-3, G8)."""
+    canonical = ticket.canonical()
+    reparsed = Ticket.loads(canonical, signed=ticket.signature is not None)
+    assert reparsed.digest == ticket.digest
+    lines = [
+        f"Ticket:   {reparsed.ticket_id}",
+        f"Digest:   {reparsed.digest}",
+        f"Class:    {reparsed.ticket_class}",
+        (
+            f"Mandate:  {reparsed.mandate.mandate_id} version {reparsed.mandate.version} "
+            f"({reparsed.mandate.digest})"
+        ),
+        f"Raised:   {fidu1.format_instant(reparsed.raised_at)}",
+        f"Expires:  {fidu1.format_instant(reparsed.not_after)}",
+        (
+            f"Observed: ledger #{reparsed.observed.ledger.sequence} "
+            f"({reparsed.observed.ledger.head[:16]}), "
+            f"log #{reparsed.observed.log.seq} ({reparsed.observed.log.hash[:16]})"
+        ),
+        "",
+        f"Evidence ({reparsed.ticket_class}):",
+    ]
+    ev = reparsed.evidence
+    if isinstance(ev, RefusedEvidence):
+        lines.append(f"  refused receipt: {ev.receipt.receipt_id} ({ev.receipt.digest[:16]})")
+        lines.append(f"  blocked by:      {', '.join(ev.blocked_by)}")
+        lines.append(f"  proposal hash:   {ev.proposal}")
+        lines.append(f"  kept effects:    {', '.join(ev.kept)}")
+        for d in ev.dropped:
+            lines.append(f"  dropped effect:  {d.effect_id} ({d.cause})")
+        lines.append(f"  exhaustive:      {ev.exhaustive} (trials: {ev.trials})")
+    elif isinstance(ev, HeldEvidence):
+        if ev.halt is not None:
+            lines.append(
+                f"  halting scope:   {ev.halt.scope} (spent_out={ev.halt.spent_out}, "
+                f"reason={ev.halt.reason!r})"
+            )
+        else:
+            lines.append("  halting scope:   (cleared)")
+        for m in ev.messages:
+            lines.append(
+                f"  held message:    {m.message_id} sink={m.sink} op={m.operation} "
+                f"head={m.head[:16]} payload={m.payload_hash[:16]}"
+            )
+    elif isinstance(ev, DeadEvidence):
+        dm = ev.message
+        lines.append(
+            f"  dead message:    {dm.message_id} outcome={dm.outcome} "
+            f"attempts={dm.attempts} requeues={dm.requeues} head={dm.head[:16]}"
+        )
+    elif isinstance(ev, UndoEvidence):
+        lines.append(f"  plan_id:         {ev.plan_id} (late={ev.late})")
+        for um in ev.messages:
+            lines.append(
+                f"  original:        {um.message_id} comp_op={um.operation} "
+                f"not_after={fidu1.format_instant(um.not_after)} head={um.head[:16]}"
+            )
+    elif isinstance(ev, ExtensionEvidence):
+        q = ev.quote
+        lines.append(
+            f"  quote:           {q.quote_id} ({q.record_log}#{q.record_seq} {q.record_hash[:16]})"
+        )
+        lines.append(
+            f"  amounts:         needed={q.needed} requested={q.requested} "
+            f"spent={q.spent} available={q.available} estimate={q.estimate}"
+        )
+        lines.append(f"  quote expires:   {fidu1.format_instant(q.expires_at)}")
+        lines.append(
+            f"  progress:        committed={ev.progress.committed} rows={ev.progress.rows}"
+        )
+    elif isinstance(ev, AmendEvidence):
+        lines.append(f"  proposed:        version {ev.proposed.version} ({ev.proposed.digest})")
+        for item in ev.wider:
+            lines.append(f"  wider:           {item.path}: {item.message}")
+        for item in ev.narrower:
+            lines.append(f"  narrower:        {item.path}: {item.message}")
+
+    lines.append("")
+    lines.append("Options:")
+    for opt in reparsed.options:
+        lines.append(
+            f"  - {opt.resolution.action} (quorum={opt.quorum}, digest={opt.digest}): "
+            f"{json.dumps(opt.resolution.to_json(), sort_keys=True)}"
+        )
+
+    lines.append("")
+    if reparsed.statement is None:
+        lines.append("Agent statement (unverified claim): (none)")
+    else:
+        lines.append(
+            "--- AGENT STATEMENT (UNVERIFIED CLAIM — QUARANTINED; DO NOT TRUST AS EVIDENCE) ---"
+        )
+        lines.append(reparsed.statement)
+        lines.append("--- END UNVERIFIED AGENT STATEMENT ---")
+    return "\n".join(lines)
+
+
+def _store_and_state(args: argparse.Namespace) -> tuple[Any, Any]:
+    from fiduciary.log import LOG_ID
+    from fiduciary.store import State
+
+    config = _config(args)
+    try:
+        store = _opened(config.open_store())
+    except (OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc))
+    state = State.of([Record.loads(r.data) for r in store.records(LOG_ID)])
+    return store, state
+
+
+def _tickets_list(args: argparse.Namespace) -> int:
+    _, state = _store_and_state(args)
+    if args.all:
+        rows = sorted(state.tickets.values(), key=lambda r: r.seq)
+        if args.mandate is not None:
+            rows = [r for r in rows if r.mandate_id == args.mandate]
+    else:
+        rows = state.open_tickets(args.mandate)
+    if not rows:
+        _out("no tickets" if args.all else "no open tickets")
+        return OK
+    for row in rows:
+        status = state.ticket_status(row.ticket_id) or "open"
+        _out(f"{row.ticket_id}  {status}  {row.ticket_class}  {row.mandate_id}  {row.digest}")
+    return OK
+
+
+def _tickets_show(args: argparse.Namespace) -> int:
+    target = args.target
+    if Path(target).exists():
+        doc = _read(target, signed=True)
+    else:
+        store, state = _store_and_state(args)
+        row = state.tickets.get(target)
+        digest = row.digest if row is not None else target
+        found = store.document(digest)
+        if found is None:
+            _fail(f"the store holds no ticket {target}", REFUSED)
+        doc = loads(found[1], signed=True)
+    if not isinstance(doc, Ticket):
+        _fail(f"{target} is a {doc.TYPE}, not a ticket")
+    _out(render_ticket(doc))
+    signer = doc.signature.key_id if doc.signature else "unsigned"
+    _err(f"ticket {doc.digest} (signed by key {signer})")
+    return OK
+
+
+def _warrant_show(args: argparse.Namespace) -> int:
+    target = args.target
+    if Path(target).exists():
+        doc = _read(target, signed=True)
+    else:
+        store, state = _store_and_state(args)
+        digest = state.warrants_by_id.get(target, target)
+        found = store.document(digest)
+        if found is None:
+            _fail(f"the store holds no warrant {target}", REFUSED)
+        doc = loads(found[1], signed=True)
+    if not isinstance(doc, Warrant):
+        _fail(f"{target} is a {doc.TYPE}, not a warrant")
+    _out(doc.pretty())
+    signer = doc.signature.key_id if doc.signature else "unsigned"
+    _err(f"warrant {doc.digest} (signed by key {signer})")
+    return OK
+
+
+def _resolve_cmd(args: argparse.Namespace) -> int:
+    from interlock.records import RecordLog
+
+    from fiduciary.executor import Executor
+
+    config = _config(args)
+    binder = _binder(args)
+    try:
+        exec_signer = config.executor()
+        run_signer = config.runtime()
+    except (OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc), REFUSED)
+    runtime_records = None
+    if config.runtime_records is not None:
+        runtime_records = _opened(RecordLog(run_signer, path=config.runtime_records))
+    executor = Executor(
+        binder,
+        operator_log=config.operator_log,
+        executor_signer=exec_signer,
+        runtime_records=runtime_records,
+        runtime_signer=run_signer,
+    )
+    return _records(executor.resolve, "no open execution intents")
 
 
 # --------------------------------------------------------------------------
@@ -827,6 +1078,11 @@ def _parser() -> argparse.ArgumentParser:
     approve.add_argument("--decline", action="store_true")
     approve.add_argument("--revoke", action="store_true", help="approve revoking the mandate")
     approve.add_argument(
+        "--resolution",
+        metavar="DIGEST|ACTION",
+        help="the ticket option digest or action to approve",
+    )
+    approve.add_argument(
         "--suspend", metavar="PRINCIPAL", help="approve suspending a principal's key"
     )
     approve.add_argument("--ttl", type=int, default=3600, help="seconds the approval holds")
@@ -839,6 +1095,31 @@ def _parser() -> argparse.ArgumentParser:
     submit = commands.add_parser("submit", help="put a signed approval into the intake")
     submit.add_argument("file")
     submit.set_defaults(handler=_submit)
+
+    tickets = commands.add_parser("tickets", help="escalated tickets").add_subparsers(
+        dest="action", required=True
+    )
+    t_list = tickets.add_parser("list", help="list open tickets (or all with --all)")
+    t_list.add_argument("--mandate", help="filter by mandate_id")
+    t_list.add_argument("--all", action="store_true", help="include terminal tickets")
+    t_list.set_defaults(handler=_tickets_list)
+    t_show = tickets.add_parser(
+        "show", help="render a ticket from its signed bytes, quarantining agent.statement (F7-3)"
+    )
+    t_show.add_argument("target", metavar="FILE|DIGEST|TICKET_ID")
+    t_show.set_defaults(handler=_tickets_show)
+
+    warrant = commands.add_parser("warrant", help="formed warrants").add_subparsers(
+        dest="action", required=True
+    )
+    w_show = warrant.add_parser("show", help="a warrant, from a file or the store")
+    w_show.add_argument("target", metavar="FILE|DIGEST|WARRANT_ID")
+    w_show.set_defaults(handler=_warrant_show)
+
+    resolve = commands.add_parser(
+        "resolve", help="resolve interrupted execution intents from what the target systems hold"
+    )
+    resolve.set_defaults(handler=_resolve_cmd)
 
     verify = commands.add_parser("verify", help="verify the store, its log and its anchors")
     verify.add_argument("--service-key", help="ed25519:<hex>; the configured key's by default")
