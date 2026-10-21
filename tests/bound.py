@@ -235,12 +235,20 @@ class World:
             cleanup()
 
 
-def build(backend: str, tmp: Path, store: Store, clock: Clock) -> Generator[World, None, None]:
-    """A world on ``backend``, its fiduciary store ``store``."""
+def build(
+    backend: str,
+    tmp: Path,
+    store: Store,
+    clock: Clock,
+    *,
+    ledger: Callable[[], BudgetManager] | None = None,
+) -> Generator[World, None, None]:
+    """A world on ``backend``, its fiduciary store ``store``; its AgentGov
+    ledger a SQLite file, or what ``ledger`` opens (a shared one)."""
     from interlock.substrate import SqliteSubstrate
 
     cleanups: list[Callable[[], None]] = []
-    governor = BudgetManager.open_sqlite(str(tmp / "ledger.db"))
+    governor = ledger() if ledger is not None else BudgetManager.open_sqlite(str(tmp / "ledger.db"))
     ensure_anchor_scope(governor)
     governor.open_root("support", "1000")
     genesis = governor.entry(1).entry_hash

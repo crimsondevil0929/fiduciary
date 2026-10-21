@@ -81,6 +81,9 @@ class Manifest:
     genesis: str
     mandate_id: str
     now: str
+    ledger_schema: str = ""
+    """The schema of a ledger shared through PostgreSQL (``ledger`` its DSN);
+    empty for a SQLite file, which one governor process holds."""
 
     def dump(self, path: Path) -> None:
         path.write_text(json.dumps(asdict(self)))
@@ -127,7 +130,16 @@ def crash_mandate(world: bound.World) -> Mandate:
 class Env:
     """The service's parts, opened from a :class:`Manifest`."""
 
-    def __init__(self, m: Manifest, checkpoint: Callable[[str], None] | None = None) -> None:
+    def __init__(
+        self,
+        m: Manifest,
+        checkpoint: Callable[[str], None] | None = None,
+        *,
+        engines: bool = True,
+    ) -> None:
+        """:param engines: Open the lineage's engine, and the guard: each has
+        one writer (its escrow chain, its record log), so a second service
+        process runs without them, as a lineage has one engine (F10-7)."""
         self.m = m
         tmp = Path(m.tmp)
         self.clock = Clock(m.at())
@@ -138,11 +150,17 @@ class Env:
             from fiduciary.postgres import PostgresStore
 
             self.store = PostgresStore(m.store, schema=m.schema)
-        self.governor = BudgetManager.open_sqlite(m.ledger)
+        self.governor = (
+            BudgetManager.open_postgres(m.ledger, schema=m.ledger_schema)
+            if m.ledger_schema
+            else BudgetManager.open_sqlite(m.ledger)
+        )
         self.log = Log(self.store, e.SERVICE, ledger=self.governor, clock=self.clock)
         self.authority = Authority(self.log, pinned=m.charter, checkpoint=checkpoint)
-        self.receipts = ReceiptLog(
-            "fiduciary-receipts", Ed25519Signer(bytes(32)), path=tmp / "receipts.jsonl"
+        self.receipts = (
+            ReceiptLog("fiduciary-receipts", Ed25519Signer(bytes(32)), path=tmp / "receipts.jsonl")
+            if engines
+            else None
         )
         if m.backend == "sqlite":
             from interlock.sqlite_outbox import OPERATOR, SqliteOutboxStore
@@ -168,18 +186,21 @@ class Env:
             deployment=deploy.deployment(
                 ledger=m.genesis, tools={tool.digest: tool, e.lookup().digest: e.lookup()}
             ),
-            substrate=substrate,
+            substrate=substrate if engines else None,
             chains=tmp / "chains",
             receipts=self.receipts,
         )
         self.binder.resume()
         public = e.SERVICE.public_key()
-        self.runtime = RecordLog(
-            e.SERVICE, path=tmp / "runtime.jsonl", keyring=Keyring({public.key_id: public})
-        )
-        self.guard = BudgetGuard(
-            self.governor, self.runtime, receipts=self.receipts, clock=self.clock
-        )
+        self.runtime: RecordLog | None = None
+        self.guard: BudgetGuard | None = None
+        if engines:
+            self.runtime = RecordLog(
+                e.SERVICE, path=tmp / "runtime.jsonl", keyring=Keyring({public.key_id: public})
+            )
+            self.guard = BudgetGuard(
+                self.governor, self.runtime, receipts=self.receipts, clock=self.clock
+            )
         self.escalation = Escalation(self.authority, self.governor, checkpoint=checkpoint)
         self.executor = Executor(
             self.binder,
@@ -197,9 +218,11 @@ class Env:
         return self.authority.decide.head_mandate(state, self.m.mandate_id)
 
     def close(self) -> None:
-        self.runtime.close()
+        if self.runtime is not None:
+            self.runtime.close()
         self.binder.close()
-        self.receipts.close()
+        if self.receipts is not None:
+            self.receipts.close()
         self._outbox_conn.close()
         self.store.close()
         self.governor.close()
@@ -355,6 +378,7 @@ def raise_ticket(env: Env, action: str, n: int, prepared: dict[str, Any]) -> Tic
     elif ticket_class == "undo":
         ticket, _ = escalation.raise_undo(mandate_id, env.outbox, prepared["plan_id"])
     elif ticket_class == "extension":
+        assert env.guard is not None
         quote = env.guard.quote(SCOPE, Decimal("4.00"), task=SCOPE)
         ticket, _ = escalation.raise_extension(mandate_id, quote)
     else:
