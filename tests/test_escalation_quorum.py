@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 from agentgov.receipts.signing import Ed25519Signer
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, event, given, settings
 from hypothesis import strategies as st
 from interlock import PlanBuilder
 from interlock.deliveries import OutboxOperations, operations
@@ -33,6 +33,7 @@ from fiduciary.documents import (
     Mandate,
     Resolution,
     Ticket,
+    Warrant,
     suspension_digest,
 )
 from fiduciary.documents.ticket import (
@@ -746,16 +747,19 @@ def test_verify_catches_tampered_ticket_and_warrant_projections(
 ALL_NAMES = ("alice", "bob", "carol", "dave", "erin")
 
 
+_FAULTS = ("wrong_key", "wrong_ticket", "wrong_resolution", "expired", "late", "other_charter")
+
+
 @dataclass(frozen=True)
 class _EventSpec:
     kind: str
     principal: str
     decision: str = "approve"
     option_idx: int = 0
-    wrong_key: bool = False
-    wrong_ticket: bool = False
-    wrong_resolution: bool = False
-    expired_approval: bool = False
+    fault: str = ""
+    """Why the approval must never count, or ``""``: signed by another key;
+    for another ticket, resolution or deployment (charter); expired before it
+    was submitted; or recorded after its own ``not_after``."""
 
 
 @st.composite
@@ -768,14 +772,11 @@ def _quorum_scenario(draw: st.DrawFn) -> tuple[tuple[str, ...], int, int, list[_
         st.lists(
             st.builds(
                 _EventSpec,
-                kind=st.sampled_from(["approval", "approval", "approval", "suspend"]),
-                principal=st.sampled_from(ALL_NAMES),
-                decision=st.sampled_from(["approve", "decline"]),
+                kind=st.sampled_from(["approval"] * 7 + ["suspend"]),
+                principal=st.sampled_from(roster * 3 + ALL_NAMES),  # and outsiders
+                decision=st.sampled_from(["approve", "approve", "decline"]),
                 option_idx=st.sampled_from([0, 1]),
-                wrong_key=st.booleans(),
-                wrong_ticket=st.booleans(),
-                wrong_resolution=st.booleans(),
-                expired_approval=st.booleans(),
+                fault=st.sampled_from(("",) * 2 * len(_FAULTS) + _FAULTS),
             ),
             min_size=1,
             max_size=18,
@@ -785,7 +786,7 @@ def _quorum_scenario(draw: st.DrawFn) -> tuple[tuple[str, ...], int, int, list[_
 
 
 @settings(
-    max_examples=50,
+    max_examples=100,
     deadline=None,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.function_scoped_fixture],
 )
@@ -794,6 +795,9 @@ def test_quorum_counting_is_exact_under_generated_histories(
     tmp_path_factory: pytest.TempPathFactory,
     scenario: tuple[tuple[str, ...], int, int, list[_EventSpec]],
 ) -> None:
+    """A warrant forms iff section 7.3 says it does, from the approvals it
+    says count, and a ticket is declined iff declines make every option
+    unreachable (F7-5 to F7-7, §11 Phase 3)."""
     roster, q_grant, q_reduce, events = scenario
     tmp = tmp_path_factory.mktemp("quorum_prop")
     clock = Clock(e.at("2026-10-18T10:10:00"))
@@ -851,8 +855,8 @@ def test_quorum_counting_is_exact_under_generated_histories(
         log.append("ticket.raised", authority.decide.raise_ticket(log.state(), tk.digest, clock()))
 
         suspended: set[str] = set()
-        expected_decisions: dict[str, tuple[str, int]] = {}
-        terminal_reached = False
+        latest: dict[str, tuple[str, int, str]] = {}  # principal: (decision, option, digest)
+        outcome = "open"
 
         for idx, ev in enumerate(events, start=1):
             clock.advance(seconds=1)
@@ -869,59 +873,66 @@ def test_quorum_counting_is_exact_under_generated_histories(
                 continue
 
             opt = tk.options[ev.option_idx]
-            res_digest = f"{'f' * 64}" if ev.wrong_resolution else opt.digest
-            subj_digest = f"{'e' * 64}" if ev.wrong_ticket else tk.digest
-            not_after_dt = (
-                now - timedelta(seconds=1) if ev.expired_approval else now + timedelta(seconds=1800)
-            )
-            signer = e.signer("outsiders" if ev.wrong_key else ev.principal)
+            if ev.fault == "expired":
+                not_after = now - timedelta(seconds=1)
+            elif ev.fault == "late":
+                not_after = now + timedelta(seconds=1)
+            else:
+                not_after = now + timedelta(seconds=1800)
             ap = Approval(
                 approval_id=str(uuid.uuid5(uuid.NAMESPACE_OID, f"prop-{idx}")),
-                charter_id=charter.charter_id,
+                charter_id=str(uuid.uuid4()) if ev.fault == "other_charter" else charter.charter_id,
                 charter_version=1,
                 principal=ev.principal,
-                subject=e.approval().subject.__class__("ticket", subj_digest),
-                resolution=res_digest,
+                subject=e.approval().subject.__class__(
+                    "ticket", "e" * 64 if ev.fault == "wrong_ticket" else tk.digest
+                ),
+                resolution="f" * 64 if ev.fault == "wrong_resolution" else opt.digest,
                 decision=ev.decision,
                 issued_at=now - timedelta(seconds=10),
-                not_after=not_after_dt,
-            ).signed(signer)
+                not_after=not_after,
+            ).signed(e.signer("outsiders" if ev.fault == "wrong_key" else ev.principal))
             store.submit(ap.canonical())
+            if ev.fault == "late":
+                clock.advance(seconds=2)  # submitted in time, recorded after its not_after
             authority.process_intake()
 
-            valid = (
-                not ev.wrong_key
-                and not ev.wrong_ticket
-                and not ev.wrong_resolution
-                and not ev.expired_approval
-                and ev.principal not in suspended
-            )
-            if valid and not terminal_reached and ev.principal in roster:
-                expected_decisions[ev.principal] = (ev.decision, ev.option_idx)
-                if ev.decision == "approve":
-                    approvers = [
-                        p
-                        for p, (dec, o_idx) in expected_decisions.items()
-                        if dec == "approve" and o_idx == ev.option_idx
-                    ]
-                    if len(approvers) >= opt.quorum:
-                        terminal_reached = True
-                else:
-                    decliners = [
-                        p for p, (dec, _) in expected_decisions.items() if dec == "decline"
-                    ]
-                    if len(roster) - len(decliners) < min(q_grant, q_reduce):
-                        terminal_reached = True
+            if ev.fault or ev.principal in suspended or ev.principal not in roster:
+                continue
+            if outcome != "open":
+                continue  # recorded, and changes nothing (F7-6)
+            latest[ev.principal] = (ev.decision, ev.option_idx, ap.digest)
+            if ev.decision == "approve":
+                counted = [
+                    p for p, (d, o, _) in latest.items() if d == "approve" and o == ev.option_idx
+                ]
+                if len(counted) >= opt.quorum:
+                    outcome = f"warranted:{ev.option_idx}"
+            else:
+                declined = sum(1 for d, _, _ in latest.values() if d == "decline")
+                if all(len(roster) - declined < o.quorum for o in tk.options):
+                    outcome = "declined"
 
         state = log.state()
+        status = state.ticket_status(tk.ticket_id)
+        event(f"ticket {outcome.split(':')[0]}")
+        assert status == outcome.split(":")[0], (status, outcome)
+        if outcome.startswith("warranted"):
+            chosen = int(outcome.split(":")[1])
+            (row,) = state.warrants.values()
+            warrant = Warrant.loads(store.document(row.digest)[1])  # type: ignore[index]
+            assert warrant.resolution_digest == tk.options[chosen].digest
+            expected = sorted(
+                digest for _, (d, o, digest) in latest.items() if d == "approve" and o == chosen
+            )
+            assert list(warrant.basis.approvals) == expected
+        else:
+            assert state.warrants == {}
         for opt_idx, opt in enumerate(tk.options):
-            counted, _ = authority.decide.count_ticket(state, tk, opt.resolution)
-            expected_approvers = {
-                p
-                for p, (dec, o_idx) in expected_decisions.items()
-                if dec == "approve" and o_idx == opt_idx
-            }
-            assert len(counted) == len(expected_approvers)
+            counted_now, _ = authority.decide.count_ticket(state, tk, opt.resolution)
+            assert sorted(counted_now) == sorted(
+                digest for _, (d, o, digest) in latest.items() if d == "approve" and o == opt_idx
+            )
 
         report = verify_store(store, service_key=e.SERVICE.public_key(), pinned=charter.digest)
         assert report.ok, report.problems
