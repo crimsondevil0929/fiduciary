@@ -882,6 +882,76 @@ def test_resolve_finds_a_compensation_interlock_reordered(world: bound.World) ->
     _verify(world)
 
 
+def test_a_ticket_storm_raises_nothing_and_leaves_every_boundary_standing(
+    world: bound.World,
+) -> None:
+    """Past ``escalation.max_open``, triggers of every class raise nothing
+    and write nothing: the quotes stay unanswered, the held message stays
+    held, the refused plan stays refused (F7-2). Once the one open ticket
+    lapses, silence has executed nothing (F1-6)."""
+    escalation = {"max_open": 1, "ttl_seconds": 600, "auto": []}
+    raw = world.mandate_json(escalation=escalation)
+    raw["data"]["agreements"] = []
+    raw["tools"] = {"statements": "any", "bindings": []}
+    mandate = Mandate.from_json(raw, signed=False).signed(e.signer("cfo"))
+    world.issue_and_bind(mandate)
+    esc = Escalation(world.authority, world.governor)
+    runtime_records, guard = _runtime_guard(world)
+    outbox, outbox_conn = _outbox_ops(world)
+    try:
+        assert world.execute(mandate, world.refund_plan(1, "10.00")).committed
+        hold = world.governor.authorize(bound.SCOPE, Decimal("230.00"))
+        world.governor.capture(hold, Decimal("230.00"))
+        first = guard.quote(bound.SCOPE, Decimal("20.00"), task=bound.SCOPE)
+        tk, _ = esc.raise_extension(mandate.mandate_id, first)
+        assert tk is not None
+        head = world.store.head(world.log.log_id)
+
+        storm = [guard.quote(bound.SCOPE, Decimal("20.00"), task=bound.SCOPE) for _ in range(20)]
+        for quote in storm:
+            assert esc.raise_extension(mandate.mandate_id, quote) == (None, None)
+        world.governor.trip(bound.SCOPE, "spend envelope exhausted")
+        _run_relay(world, DeliveryResult(outcome=DELIVERED, detail="ok"))
+        assert esc.raise_held(mandate.mandate_id, outbox) == (None, None)
+        world.governor.reset(bound.SCOPE)
+        two_tenants = PlanBuilder(bound.SCOPE)
+        for order, tenant in ((3, "acme"), (4, "beta")):  # max_tenants is 1
+            two_tenants.update(
+                table="orders",
+                statement=world.sql(bound.DEBIT),
+                parameters={"amount": "1.00", "order_id": order, "tenant": tenant},
+                tenant_id=tenant,
+                stated_rows=1,
+                effect_id=EffectId(f"debit-{tenant}"),
+            )
+        plan = two_tenants.build()
+        refused = world.execute(mandate, plan)
+        assert not refused.committed
+        repair = world.binder.engine(mandate.mandate_id).engine.repair(plan)
+        assert repair.proposal is not None
+        assert esc.raise_refused(mandate.mandate_id, repair, receipt=refused.receipt) == (
+            None,
+            None,
+        )
+        assert world.fetch("SELECT total FROM orders WHERE id IN (3, 4)") == [(1000,), (1000,)]
+        assert world.store.head(world.log.log_id) == head  # nothing written
+        assert {q.quote_id for q in guard.pending()} == {first.quote_id} | {
+            q.quote_id for q in storm
+        }
+        assert world.outbox_states() == ["held"]
+
+        world.clock.advance(seconds=601)
+        (lapsed,) = esc.process_intake()
+        assert lapsed.kind == "ticket.lapsed" and lapsed.content["ticket"] == tk.digest
+        assert first.quote_id in {q.quote_id for q in guard.pending()}  # never answered
+        assert world.outbox_states() == ["held"]
+        assert world.log.state().warrants == {}
+    finally:
+        outbox_conn.close()
+        runtime_records.close()
+    _verify(world)
+
+
 def test_an_autonomous_rule_cancels_held_messages(world: bound.World) -> None:
     """A class with no rule vocabulary takes a rule with an empty predicate,
     which names only a reducing resolution (§7.2, F7-9)."""
