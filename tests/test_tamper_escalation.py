@@ -54,8 +54,8 @@ def _raise(authority: Authority, ticket: Ticket, clock: Clock) -> None:
     log.append("ticket.raised", authority.decide.raise_ticket(log.state(), ticket.digest, clock()))
 
 
-@pytest.fixture
-def escalated(world: Authority, clock: Clock) -> Escalated:
+@pytest.fixture(name="escalated")
+def escalated_fixture(world: Authority, clock: Clock) -> Escalated:
     ticket = _ticket(clock)
     _raise(world, ticket, clock)
     grant = ticket.options[0]
