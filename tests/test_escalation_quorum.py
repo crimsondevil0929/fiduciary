@@ -117,6 +117,11 @@ def _submit_ticket_approval(
     return ap
 
 
+def _past_compensation_deadline(world: World, ops: OutboxOperations, plan_id: str) -> None:
+    deadline = max(c.not_after for c in ops.compensables(plan_id))
+    world.clock.now = max(world.clock.now, deadline) + timedelta(seconds=1)
+
+
 # -- 1. Refused trigger & autonomous trim rule (§7.1, §7.4) -------------------------
 
 
@@ -441,8 +446,9 @@ def test_undo_trigger_on_time_and_late(world: World) -> None:
         assert tk1.options[0].resolution.action == "compensate"
         assert tk1.options[0].quorum == 1
 
-        # Advance clock past the compensation window -> option is compensate_late (quorum 2)
-        world.clock.advance(days=2)
+        # Past the compensation window -> option is compensate_late (quorum 2). The
+        # relay stamps deliveries with the wall clock, so the window is read back.
+        _past_compensation_deadline(world, ops, str(p2.plan_id))
         tk2, wt2 = escalation.raise_undo(mandate.mandate_id, ops, str(p2.plan_id))
         assert tk2 is not None and wt2 is None
         assert isinstance(tk2.evidence, UndoEvidence)

@@ -285,7 +285,7 @@ def test_approve_suspend_revoke_and_decline(
     status, _, err = run(
         capsys, "approve", "tool.json", "--principal", "alice", "--key", "alice.key", "--yes"
     )
-    assert status == 2 and "approvals decide charters and mandates" in err
+    assert status == 2 and "approvals decide charters, mandates and tickets" in err
     status, _, err = run(
         capsys,
         "approve",

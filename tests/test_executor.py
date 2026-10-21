@@ -421,7 +421,9 @@ def test_execute_dead_requeue_and_undo_compensate_and_compensate_late(
         cap_plan_late = _capture_plan(5)
         assert world.execute(mandate, cap_plan_late).committed
         _run_relay(world, DeliveryResult(outcome=DELIVERED, detail="ch_5"))
-        world.clock.advance(days=5)
+        # The relay stamps deliveries with the wall clock: read the window back.
+        deadline = max(c.not_after for c in outbox.compensables(str(cap_plan_late.plan_id)))
+        world.clock.now = max(world.clock.now, deadline) + timedelta(seconds=1)
         tk_late, _ = esc.raise_undo(mandate.mandate_id, outbox, str(cap_plan_late.plan_id))
         assert tk_late is not None
         w_late = _approve_ticket(
