@@ -94,6 +94,8 @@ class MandateEngine:
         self._row_secret = row_secret
         self._clock = clock
         self._closed = False
+        self._staging = 0
+        """Plans in flight: a revocation can close the engine from within one."""
         self._mandate = mandate
         self._compiled = compiled
         self._engine = self._build(compiled)
@@ -148,7 +150,13 @@ class MandateEngine:
                     f"mandate {self._mandate.mandate_id} version {self._mandate.version} is "
                     f"outside its term at {fidu1.format_instant(now)}"
                 )
-            return self._engine.execute(plan, settle_cost=settle_cost)
+            self._staging += 1
+            try:
+                return self._engine.execute(plan, settle_cost=settle_cost)
+            finally:
+                self._staging -= 1
+                if self._closed and not self._staging:
+                    self._chain.close()  # closed during this plan: it has finished now
 
     def rebind(self, mandate: Mandate, compiled: CompiledMandate) -> None:
         """Take up a new version at the next plan boundary."""
@@ -162,7 +170,8 @@ class MandateEngine:
         with self._lock:
             if not self._closed:
                 self._closed = True
-                self._chain.close()
+                if not self._staging:  # else the plan in flight closes it as it ends
+                    self._chain.close()
 
 
 class Binder:
