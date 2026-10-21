@@ -341,9 +341,7 @@ class Executor:
                 if not done.ok:
                     return [
                         intent,
-                        *self._refused(
-                            intent, done.why, results, mismatches, lapse=done.lost
-                        ),
+                        *self._refused(intent, done.why, results, mismatches, lapse=done.lost),
                     ]
                 assert done.result is not None
                 results.append(done.result)
@@ -513,8 +511,15 @@ class Executor:
         expected = {str(t["message_id"]): str(t["head"]) for t in targets}
         registry = None
         if kind in ("compensate", "compensate_late"):
-            try:  # before the operator log is claimed: nothing slow under a claim
-                registry = self._binder.compile(ticket.mandate.digest).sinks
+            # Admitted as the lineage's version in force admits requests now: an
+            # amendment since the ticket was raised governs the compensation.
+            # Compiled before the operator log is claimed: nothing slow under it.
+            state = self.log.state()
+            head = state.head(ticket.mandate.mandate_id)
+            try:
+                if head is None:
+                    raise AuthorityError(f"no lineage {ticket.mandate.mandate_id} is issued")
+                registry = self._binder.compile(head[1], state).sinks
             except FiduciaryError as exc:
                 return _Step(False, why=str(exc))
         try:
