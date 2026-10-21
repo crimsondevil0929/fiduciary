@@ -67,6 +67,7 @@ __all__ = [
     "UndoEvidence",
     "UndoMessage",
     "quorum_for_resolution",
+    "resolution_quorum",
 ]
 
 SIGNED_MONEY: Final = re.compile(r"-?(0|[1-9][0-9]{0,17})\.[0-9]{8}")
@@ -998,20 +999,23 @@ class Ticket(Document):
                 )
 
 
-def quorum_for_resolution(mandate: Mandate, ticket: Ticket, resolution: Resolution) -> int:
-    """The quorum ``mandate`` requires for ``resolution`` on ``ticket`` (§7.2, §7.3)."""
+def resolution_quorum(mandate: Mandate, evidence: Evidence, resolution: Resolution) -> int:
+    """The quorum ``mandate`` requires for ``resolution`` over ``evidence`` (§7.2, §7.3)."""
     roster = mandate.roster
     action = resolution.action
     if action in ("reject", "cancel", "decline"):
         return roster.quorum("reduce")
+    halt = evidence.halt if isinstance(evidence, HeldEvidence) else None
+    halt_class = "reset" if halt is not None and halt.spent_out else "reset_safety"
     if action == "release":
         if resolution.reset is None:
             return roster.quorum("release")
-        assert isinstance(ticket.evidence, HeldEvidence) and ticket.evidence.halt is not None
-        halt_class = "reset" if ticket.evidence.halt.spent_out else "reset_safety"
         return max(roster.quorum("release"), roster.quorum(halt_class))
     if action == "reset":
-        if isinstance(ticket.evidence, HeldEvidence) and ticket.evidence.halt is not None:
-            return roster.quorum("reset" if ticket.evidence.halt.spent_out else "reset_safety")
-        return roster.quorum("reset_safety")
+        return roster.quorum(halt_class)
     return roster.quorum(action)
+
+
+def quorum_for_resolution(mandate: Mandate, ticket: Ticket, resolution: Resolution) -> int:
+    """The quorum ``mandate`` requires for ``resolution`` on ``ticket`` (§7.2, §7.3)."""
+    return resolution_quorum(mandate, ticket.evidence, resolution)

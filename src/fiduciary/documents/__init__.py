@@ -24,15 +24,18 @@ from fiduciary.documents.ticket import (
 )
 from fiduciary.documents.tool import ToolBinding
 from fiduciary.documents.warrant import (
+    MAX_OUTBOX_TARGETS,
     RuleBasis,
     TicketRef,
     Warrant,
     WarrantBasis,
+    execution_steps,
     warrant_not_after,
 )
 from fiduciary.exceptions import MalformedError
 
 __all__ = [
+    "MAX_OUTBOX_TARGETS",
     "RECORD_KINDS",
     "SUBJECTS",
     "TYPES",
@@ -53,6 +56,7 @@ __all__ = [
     "Warrant",
     "WarrantBasis",
     "anchor_memo",
+    "execution_steps",
     "load",
     "loads",
     "quorum_for_resolution",

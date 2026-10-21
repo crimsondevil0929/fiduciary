@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, ClassVar
+from decimal import Decimal
+from typing import Any, ClassVar, Final
 
 from fiduciary import fidu1
 from fiduciary.documents._base import Document
@@ -13,6 +14,9 @@ from fiduciary.documents.approval import Approval
 from fiduciary.documents.ticket import (
     AUTO_ACTIONS,
     ExtensionEvidence,
+    HeldEvidence,
+    MessageTarget,
+    RefusedEvidence,
     Resolution,
     Ticket,
     UndoEvidence,
@@ -21,12 +25,18 @@ from fiduciary.exceptions import MalformedError
 from fiduciary.fidu1 import Fields, Signature
 
 __all__ = [
+    "MAX_OUTBOX_TARGETS",
     "RuleBasis",
     "TicketRef",
     "Warrant",
     "WarrantBasis",
+    "execution_steps",
     "warrant_not_after",
 ]
+
+MAX_OUTBOX_TARGETS: Final = 8
+"""The most outbox targets one ILOK1 operator intent names until U-2 (F3-9):
+a ``compensate`` intent of 8 targets is the largest that AWS KMS can sign."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,3 +189,68 @@ def warrant_not_after(
             if msg.message_id in wanted:
                 deadlines.append(msg.not_after)
     return min(deadlines)
+
+
+def _targets(chunk: Sequence[MessageTarget]) -> list[dict[str, str]]:
+    return [{"message_id": m.message_id, "head": m.head} for m in chunk]
+
+
+def _chunks(targets: Sequence[MessageTarget]) -> list[Sequence[MessageTarget]]:
+    return [targets[i : i + MAX_OUTBOX_TARGETS] for i in range(0, len(targets), MAX_OUTBOX_TARGETS)]
+
+
+def execution_steps(warrant: Warrant, ticket: Ticket) -> list[dict[str, Any]]:
+    """The steps ``warrant`` executes, in order, each with the precondition
+    ``ticket`` observed: what ``execution.intent`` records (§7.5, §7.6).
+
+    Outbox actions are split into intents of at most
+    :data:`MAX_OUTBOX_TARGETS` targets (F3-9); a ``release`` past a halt
+    resets it first; ``cancel`` and ``requeue`` take one message per intent,
+    as interlock's operator does. A pure function of the two documents, so a
+    verifier writes the same steps.
+    """
+    res = warrant.resolution
+    action = res.action
+    ev = ticket.evidence
+    spent = isinstance(ev, HeldEvidence) and ev.halt is not None and ev.halt.spent_out
+    steps: list[dict[str, Any]] = []
+
+    def add(kind: str, **fields: Any) -> None:
+        steps.append({"step": len(steps), "kind": kind, **fields})
+
+    if action == "accept_repair":
+        assert isinstance(ev, RefusedEvidence) and res.proposal is not None
+        add("accept_repair", proposal=res.proposal, receipt=ev.receipt.receipt_id)
+    elif action in ("release", "reset"):
+        scope = res.reset if action == "release" else res.scope
+        if scope is not None:
+            add("reset", scope=scope, spent_out=spent)
+        if action == "release":
+            for chunk in _chunks(res.messages):
+                add("release", targets=_targets(chunk))
+    elif action in ("cancel", "requeue"):
+        for target in res.messages:
+            add(action, targets=_targets([target]))
+    elif action in ("compensate", "compensate_late"):
+        assert res.plan_id is not None
+        for chunk in _chunks(res.messages):
+            add(
+                action,
+                plan_id=res.plan_id,
+                late=action == "compensate_late",
+                targets=_targets(chunk),
+            )
+    elif action in ("grant", "decline"):
+        assert isinstance(ev, ExtensionEvidence) and res.quote is not None
+        if action == "grant":
+            assert res.amount is not None
+            amount = format(res.amount.quantize(Decimal("0.00000001")), "f")
+            add("grant", quote=res.quote, amount=amount, record_hash=ev.quote.record_hash)
+        else:
+            add("decline", quote=res.quote, record_hash=ev.quote.record_hash)
+    elif action == "amend":
+        add("amend", mandate=res.mandate)
+    else:
+        assert action == "reject"
+        add("reject")
+    return steps

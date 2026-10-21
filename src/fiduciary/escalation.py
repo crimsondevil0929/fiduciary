@@ -57,7 +57,6 @@ from fiduciary.documents import (
     Warrant,
     WarrantBasis,
     loads,
-    quorum_for_resolution,
     warrant_not_after,
 )
 from fiduciary.documents.ticket import (
@@ -83,6 +82,7 @@ from fiduciary.documents.ticket import (
     RefusedEvidence,
     UndoEvidence,
     UndoMessage,
+    resolution_quorum,
 )
 from fiduciary.exceptions import AuthorityError, FiduciaryError
 from fiduciary.log import Log
@@ -108,25 +108,6 @@ def clip_statement(statement: str | None) -> str | None:
         return None
     cleaned = _CONTROLS.sub(" ", statement).strip()[:512]
     return cleaned or None
-
-
-def _option_quorum(mandate: Mandate, evidence: Evidence, resolution: Resolution) -> int:
-    """The quorum ``mandate`` requires for ``resolution`` over ``evidence`` (§7.2, §7.3)."""
-    roster = mandate.roster
-    action = resolution.action
-    if action in ("reject", "cancel", "decline"):
-        return roster.quorum("reduce")
-    if action == "release":
-        if resolution.reset is None:
-            return roster.quorum("release")
-        assert isinstance(evidence, HeldEvidence) and evidence.halt is not None
-        halt_class = "reset" if evidence.halt.spent_out else "reset_safety"
-        return max(roster.quorum("release"), roster.quorum(halt_class))
-    if action == "reset":
-        if isinstance(evidence, HeldEvidence) and evidence.halt is not None:
-            return roster.quorum("reset" if evidence.halt.spent_out else "reset_safety")
-        return roster.quorum("reset_safety")
-    return roster.quorum(action)
 
 
 class Escalation:
@@ -298,7 +279,7 @@ class Escalation:
             observed = self._observed()
             deadline = not_after or (now + timedelta(seconds=mandate.escalation.ttl_seconds))
             options = tuple(
-                TicketOption.make(res, _option_quorum(mandate, evidence, res))
+                TicketOption.make(res, resolution_quorum(mandate, evidence, res))
                 for res in resolutions
             )
             ticket = Ticket(
@@ -312,9 +293,6 @@ class Escalation:
                 options=options,
                 statement=clip_statement(statement),
             ).signed(self.log.signer)
-            for opt in ticket.options:
-                expected_q = quorum_for_resolution(mandate, ticket, opt.resolution)
-                assert opt.quorum == expected_q
             self.log.put(ticket)
             raised_body = self.decide.raise_ticket(state, ticket.digest, now)
             entries: list[tuple[str, dict[str, object]]] = [("ticket.raised", raised_body)]
