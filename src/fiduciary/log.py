@@ -176,7 +176,8 @@ class Log:
     ) -> list[Record]:
         """Write several records in one transaction, in order: all of them, or
         none. A parent's amendment and what it does to its descendants are
-        written so (F5-7)."""
+        written so (F5-7). They are anchored once the outermost transaction
+        commits, so the ledger never anchors a record the log rolled back."""
         written: list[Record] = []
         when = issued_at or self._clock()
         with self._store.transaction():
@@ -202,9 +203,12 @@ class Log:
                     self._store.insert_row(table, row)
                 written.append(record)
                 seq, head = record.seq, record.hash
-        for record in written:
-            self._anchor(record)
+            self._store.after_commit(lambda: self._anchor_all(written))
         return written
+
+    def _anchor_all(self, records: Sequence[Record]) -> None:
+        for record in records:
+            self._anchor(record)
 
     # -- anchors ---------------------------------------------------------------
 

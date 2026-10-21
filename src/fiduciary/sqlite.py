@@ -11,6 +11,7 @@ system's. A second writer of a log is refused by a lock beside the file
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import sqlite3
@@ -121,7 +122,7 @@ class SqliteStore(Store):
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA synchronous = FULL")
         self._conn.execute("PRAGMA busy_timeout = 5000")
-        self._depth = 0
+        super().__init__()
         with self.transaction():
             self._install()
 
@@ -167,10 +168,18 @@ class SqliteStore(Store):
             yield
         except BaseException:
             self._depth = 0
+            self._drop_committed()
             self._conn.execute("ROLLBACK")
             raise
         self._depth = 0
-        self._conn.execute("COMMIT")
+        try:
+            self._conn.execute("COMMIT")
+        except sqlite3.Error as exc:
+            self._drop_committed()
+            with contextlib.suppress(sqlite3.Error):
+                self._conn.execute("ROLLBACK")
+            raise StoreError(f"the store refused the commit: {exc}") from exc
+        self._run_committed()
 
     def transaction(self) -> AbstractContextManager[None]:
         return self._transaction()

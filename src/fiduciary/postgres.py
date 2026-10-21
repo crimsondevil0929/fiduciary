@@ -193,7 +193,7 @@ class PostgresStore(Store):
         except psycopg.Error as exc:
             raise StoreError(f"cannot connect to PostgreSQL: {exc}") from exc
         self._errors = psycopg.Error
-        self._depth = 0
+        super().__init__()
 
     @property
     def schema(self) -> str:
@@ -223,9 +223,14 @@ class PostgresStore(Store):
             with self._conn.transaction():
                 yield
         except self._errors as exc:
+            self._drop_committed()
             raise StoreError(f"the store refused the write: {exc}") from exc
+        except BaseException:
+            self._drop_committed()
+            raise
         finally:
             self._depth = 0
+        self._run_committed()
 
     def transaction(self) -> AbstractContextManager[None]:
         return self._transaction()

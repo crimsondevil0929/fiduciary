@@ -307,6 +307,31 @@ def test_pending_anchors_are_written_on_the_next_open(
     assert _verify(store, ledger).ok
 
 
+def test_a_record_rolled_back_is_never_anchored(world: Authority, ledger: BudgetManager) -> None:
+    """A record written inside a transaction that then rolls back leaves no
+    anchor: the ledger would otherwise name a record the log never held, and
+    the next record at that sequence would read as a rewrite."""
+    store = world.log.store
+    seq = store.head("fiduciary")[0]
+    store.submit(b"not an approval")
+
+    def anchored() -> list[str]:
+        ledger.refresh()
+        return [en.memo for en in ledger.audit_trail("fiduciary") if f" {seq + 1} " in en.memo]
+
+    with pytest.raises(RuntimeError, match="stop"), store.transaction():
+        assert [r.seq for r in world.process_intake()] == [seq + 1]
+        assert anchored() == []  # not before the commit
+        raise RuntimeError("stop")
+    assert store.head("fiduciary")[0] == seq
+    assert anchored() == []
+    assert [r.seq for r in world.process_intake()] == [seq + 1]
+    assert len(anchored()) == 1
+    report = _verify(store, ledger)
+    assert report.ok, report.problems
+    assert report.unanchored == ()
+
+
 def test_a_record_signed_by_another_key_is_named(world: Authority, ledger: BudgetManager) -> None:
     store = world.log.store
     Log(store, e.signer("mallory"), ledger=ledger).append(

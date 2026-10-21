@@ -1033,22 +1033,21 @@ class Authority:
                 kind, body, approval = self._decide.approval(state, intake, data, now)
                 entries: list[tuple[str, dict[str, Any]]] = [(kind, body)]
                 docs: list[Document] = [approval] if approval is not None else []
-                followup_kind: str | None = None
-                if approval is not None:
-                    self._log.put(approval)
-                    if approval.subject.type == "ticket":
-                        followup, followup_doc = self._ticket_followup(
-                            state, body, approval, now, self._log.signer
-                        )
-                        if followup is not None:
-                            entries.append(followup)
-                            followup_kind = followup[0]
-                        if followup_doc is not None:
-                            docs.append(followup_doc)
-                records.extend(self._log.append_all(entries, documents=docs, issued_at=now))
-                self._checkpoint("recorded")
-                if followup_kind == "warrant.formed":
-                    self._checkpoint("formed")
+                if approval is not None and approval.subject.type == "ticket":
+                    self._log.put(approval)  # counted below, before its record is written
+                    followup, followup_doc = self._ticket_followup(
+                        state, body, approval, now, self._log.signer
+                    )
+                    if followup is not None:
+                        entries.append(followup)
+                    if followup_doc is not None:
+                        docs.append(followup_doc)
+                written = self._log.append_all(entries, documents=docs, issued_at=now)
+            # The checkpoints follow the commit: what a crash there leaves is written.
+            records.extend(written)
+            self._checkpoint("recorded")
+            if any(r.kind == "warrant.formed" for r in written):
+                self._checkpoint("formed")
         return records
 
     def _ticket_followup(

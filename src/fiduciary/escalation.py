@@ -326,10 +326,11 @@ class Escalation:
                 entries.append(("warrant.formed", warrant_body))
                 docs.append(warrant)
             self.log.append_all(entries, documents=docs, issued_at=now)
-            self._checkpoint("raised")
-            if warrant is not None:
-                self._checkpoint("formed")
-            return ticket, warrant
+        # The checkpoints follow the commit: what a crash there leaves is written.
+        self._checkpoint("raised")
+        if warrant is not None:
+            self._checkpoint("formed")
+        return ticket, warrant
 
     def _auto_warrant(
         self, state: State, mandate: Mandate, ticket: Ticket, now: datetime

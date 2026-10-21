@@ -16,7 +16,7 @@ the service takes, it takes from the state.
 from __future__ import annotations
 
 import abc
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -541,11 +541,34 @@ class Store(abc.ABC):
 
     Every write the service makes happens inside :meth:`transaction`, so a
     record and the projection rows it implies commit together or not at all.
+    Transactions nest: only the outermost commits, and what must follow a
+    commit (an anchor in AgentGov) waits for it (:meth:`after_commit`).
     """
+
+    def __init__(self) -> None:
+        self._depth = 0
+        self._committed: list[Callable[[], None]] = []
 
     @abc.abstractmethod
     def transaction(self) -> AbstractContextManager[None]:
         """One write transaction, serialized against every other writer."""
+
+    def after_commit(self, action: Callable[[], None]) -> None:
+        """Run ``action`` once the outermost transaction open now commits, or
+        now when none is open. A rollback drops it: a record that was never
+        written is never anchored."""
+        if self._depth:
+            self._committed.append(action)
+        else:
+            action()
+
+    def _run_committed(self) -> None:
+        actions, self._committed = self._committed, []
+        for action in actions:
+            action()
+
+    def _drop_committed(self) -> None:
+        self._committed = []
 
     @abc.abstractmethod
     def claim(self, log: str) -> AbstractContextManager[None]:
