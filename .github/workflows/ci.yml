@@ -53,6 +53,8 @@ jobs:
         run: |
           uv run python scripts/make_vectors.py
           git diff --exit-code vectors/
+      - name: The spec's ILOK1 sizes are what interlock signs (F3-9)
+        run: uv run python scripts/ilok1_sizes.py --check
       - name: Tests with coverage
         run: uv run pytest -v --cov=fiduciary --cov-branch --cov-report=term-missing
       # postgres.py runs only against a server, which this job has none of; the

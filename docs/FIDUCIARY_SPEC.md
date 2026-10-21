@@ -403,13 +403,19 @@ Ed25519ph, whose signatures do not verify as Ed25519.
   - its guard's quotes and grants.
 
   Interlock signs ILOK1 records whole: `ILOK1/record/v1\n` followed by the canonical record.
-  Measured on interlock 1.0.2:
+  Measured on interlock 1.0.2 by `scripts/ilok1_sizes.py`, from records interlock's own
+  `Operator` writes under a `FIDU1 warrant <digest>` reason on the test deployment (stripe's
+  `charges.capture` compensated by `refunds.create`, an operator named by its key id).
+  `--check` holds this table to the script, and the tests run it:
 
   | ILOK1 record | Bytes signed, first item | Each further item | Fits in 4096 |
   |---|---|---|---|
-  | `operator.intent`, `release` or `cancel` | 579 | 125 per target | 29 targets |
-  | `operator.intent`, `compensate` | 865 | 408 per target | 8 targets |
-  | `operator.applied` | 616 | 166 per row | 21 rows |
+  | `operator.intent`, `release` or `cancel` | 573 | 125 per target | 29 targets |
+  | `operator.intent`, `compensate` | 854 | 403 per target | 9 targets |
+  | `operator.applied` | 595 | 152 per row | 24 rows |
+
+  The sizes grow with the names a deployment uses: the operator's, and each sink's and
+  operation's. The bound of 8 targets below leaves a compensation one target of room for them.
 
   A cancel also cancels everything that waits for its target, so the number of rows an
   applied record names is not bounded by its targets. Through AWS KMS an action can sign its
@@ -1891,7 +1897,7 @@ in that package. None is worked around here.
 | # | Package | Gap, as measured or read | Needed by | Until it ships |
 |---|---|---|---|---|
 | U-1 | interlock | `receipts.checker_records` digests a checker's configuration from the `repr` of its slots. A `frozenset` of strings has a `repr` whose order depends on the hash seed: on 1.0.2, `table_allowlist` over four tables digested four ways under four seeds. A receipt's `decision.checkers` therefore cannot be recomputed in another process. The fix is to encode sets sorted. It changes no plan, diff or verdict hash, only checker configuration digests, which were never reproducible. | F6-8, V4 (Phase 2) | Fixed on interlock `main` (crimsondevil0929/interlock#20, under `[Unreleased]`); ships in the next release. Until fiduciary requires it, V4 checks `fiduciary_mandate` exactly, and the other checkers by name. |
-| U-2 | interlock | ILOK1 records are signed whole. Through AWS KMS, an `operator.applied` record fails past 21 rows and a `compensate` intent past 8 targets, and a cancel's cascade is unbounded (F3-9). The fix is to sign ILOK1 records at a digest version, as ARC1 1.2 does. | F3-9 (Phase 3) | Executor and runtime keys on AWS KMS are refused, and outbox actions are chunked to 8 targets. |
+| U-2 | interlock | ILOK1 records are signed whole. Through AWS KMS, an `operator.applied` record fails past about 24 rows and a `compensate` intent past about 9 targets (§3.5's measurement), and a cancel's cascade is unbounded (F3-9). The fix is to sign ILOK1 records at a digest version, as ARC1 1.2 does. | F3-9 (Phase 3) | Executor and runtime keys on AWS KMS are refused, and outbox actions are chunked to 8 targets. |
 | U-3 | interlock | `BudgetGuard` keeps quotes in memory, and grants only those it issued, so a restart loses every open quote. The fix is to adopt unanswered, unexpired quotes from the record log. | F7-14 (Phase 3) | Extension tickets lapse on a restart. |
 | U-4 | interlock | `Operator` reads each target's head itself when it signs its intent, so a caller cannot require the heads its principals saw. The fix is to accept `expected_heads=`, and to refuse on a mismatch before signing. | G5, F7-15 (Phase 3) | The mismatch is recorded and named, not prevented. |
 | U-5 | agentgov | `reset(scope)` always writes the memo `operator reset`, so nothing in the entry can name a warrant. The fix is to accept `memo=`. | §7.6, `reset` | The warrant's anchor immediately precedes the reset, in one transaction. |
