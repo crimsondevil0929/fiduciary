@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from collections.abc import Iterator
 from datetime import timedelta
@@ -24,7 +25,7 @@ from interlock.types import EffectId
 
 from fiduciary import cli, fidu1
 from fiduciary.config import ConfigError, load_config
-from fiduciary.documents import Mandate, Resolution, Ticket, Warrant
+from fiduciary.documents import Approval, Mandate, Resolution, Ticket, Warrant
 from fiduciary.escalation import Escalation
 from fiduciary.exceptions import AuthorityError
 from fiduciary.executor import MAX_OUTBOX_TARGETS, ExecutionError, Executor, check_ilok1_signer
@@ -919,6 +920,35 @@ def test_cli_tickets_warrant_approve_and_resolve(
         # `fiduciary approve <ticket.json> --resolution reset`
         tk_file = world.tmp / "ticket.json"
         tk_file.write_text(tk.pretty())
+
+        # A principal signs on their own machine: the charter from a file, no database.
+        charter_file = world.tmp / "charter.json"
+        charter_file.write_text(world.charter.pretty())
+        offline = ["approve", str(tk_file), "--charter", str(charter_file), "--principal", "cfo"]
+        offline += ["--key", str(cfo_key_path), "--yes"]
+        assert cli.main([*offline, "--resolution", "reset"]) == 0
+        signed = Approval.loads(capsys.readouterr().out.encode())
+        reset_option = next(o for o in tk.options if o.resolution.action == "reset")
+        assert (signed.charter_id, signed.charter_version) == (e.CHARTER_ID, 1)
+        assert signed.resolution == reset_option.digest
+        # A digest alone shows the principal nothing: it is never signed (G8).
+        assert cli.main([*offline, "--resolution", "f" * 64]) == 2
+        assert "no option of the ticket" in capsys.readouterr().err
+        # A narrowing is read from a file, and rendered before it is signed.
+        cancel = next(o for o in tk.options if o.resolution.action == "cancel")
+        narrowing = world.tmp / "narrowing.json"
+        narrowing.write_text(json.dumps(cancel.resolution.to_json()))
+        assert cli.main([*offline, "--resolution", str(narrowing)]) == 0
+        captured = capsys.readouterr()
+        assert "the narrowing" in captured.err
+        assert Approval.loads(captured.out.encode()).resolution == cancel.digest
+        widened = {
+            **cancel.resolution.to_json(),
+            "messages": [{"id": str(uuid.uuid4()), "head": "0" * 64}],
+        }
+        narrowing.write_text(json.dumps(widened))
+        assert cli.main([*offline, "--resolution", str(narrowing)]) == 2
+        assert "narrows no option" in capsys.readouterr().err
         assert (
             cli.main(
                 [
@@ -967,8 +997,17 @@ def test_cli_tickets_warrant_approve_and_resolve(
         out_warrant = capsys.readouterr().out
         assert warrant.warrant_id in out_warrant and '"action": "reset"' in out_warrant
 
+        # An execution killed after its intent, resolved from the command line.
+        def stop(point: str) -> None:
+            if point == "intent":
+                raise RuntimeError(point)
+
+        with pytest.raises(RuntimeError):
+            Executor(world.binder, checkpoint=stop).execute(warrant)
         # Close world's governor lock before invoking `fiduciary resolve`
         world.governor.close()
+        assert cli.main(["--config", str(cfg_file), "resolve"]) == 0
+        assert "execution.abandoned" in capsys.readouterr().out
         assert cli.main(["--config", str(cfg_file), "resolve"]) == 0
         assert "no open execution intents" in capsys.readouterr().out
     finally:

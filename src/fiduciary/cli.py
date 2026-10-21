@@ -627,53 +627,10 @@ def _approve(args: argparse.Namespace) -> int:
             "revoke" if args.revoke else "issue"
         ) + f" mandate {document.mandate_id} version {document.version}"
     elif isinstance(document, Ticket):
-        config = _config(args)
-        store = _opened(config.open_store())
-        mandate_raw = store.document(document.mandate.digest)
-        if mandate_raw is not None:
-            mandate_doc = loads(mandate_raw[1], signed=True)
-            assert isinstance(mandate_doc, Mandate)
-            charter_ref = {
-                "charter_id": mandate_doc.charter.charter_id,
-                "version": mandate_doc.charter.version,
-            }
-        else:
-            from fiduciary.log import LOG_ID
-            from fiduciary.store import State
-
-            state = State.of([Record.loads(r.data) for r in store.records(LOG_ID)])
-            if state.charter is None:
-                _fail("the store holds no adopted charter to reference")
-            charter_raw = store.document(state.charter[1])
-            assert charter_raw is not None
-            charter_doc = loads(charter_raw[1], signed=True)
-            assert isinstance(charter_doc, Charter)
-            charter_ref = {"charter_id": charter_doc.charter_id, "version": charter_doc.version}
-        res_arg = getattr(args, "resolution", None)
-        if res_arg is None:
-            if len(document.options) == 1:
-                resolution = document.options[0].digest
-            elif args.decline:
-                resolution = document.options[0].digest
-            else:
-                _fail("approving a ticket requires --resolution <DIGEST|ACTION>")
-        else:
-            matched_opt = next(
-                (
-                    opt
-                    for opt in document.options
-                    if opt.digest == res_arg or opt.resolution.action == res_arg
-                ),
-                None,
-            )
-            if matched_opt is not None:
-                resolution = matched_opt.digest
-            elif fidu1.HASH.fullmatch(res_arg):
-                resolution = res_arg
-            else:
-                _fail(f"no ticket option matches {res_arg!r}")
+        charter_ref = _charter_in_force(args)
+        resolution, shown = _ticket_resolution(document, args)
         subject = {"type": "ticket", "digest": document.digest}
-        what = f"ticket {document.ticket_id} ({document.ticket_class}) resolution {resolution[:16]}"
+        what = f"ticket {document.ticket_id} ({document.ticket_class}): {shown}"
     else:
         _fail(f"{args.file} is a {document.TYPE}; approvals decide charters, mandates and tickets")
     decision = "decline" if args.decline else "approve"
@@ -754,6 +711,59 @@ def _verify(args: argparse.Namespace) -> int:
     status = "PASS" if report.ok else "FAIL"
     _out(f"{status}: {report.records} records, {report.documents} documents{anchored}")
     return OK if report.ok else REFUSED
+
+
+def _charter_in_force(args: argparse.Namespace) -> dict[str, Any]:
+    """The charter an approval names: ``--charter``'s file, which needs no
+    database credential, or else the one the configured store has in force."""
+    if args.charter is not None:
+        found = _read(args.charter, signed=True)
+        if not isinstance(found, Charter):
+            _fail(f"{args.charter} is a {found.TYPE}, not a charter")
+        return {"charter_id": found.charter_id, "version": found.version}
+    from fiduciary.log import LOG_ID
+    from fiduciary.store import State
+
+    try:
+        store = _opened(_config(args).open_store())
+    except (OSError, ValueError, FiduciaryError) as exc:
+        _fail(f"{exc}; or name the charter in force with --charter")
+    state = State.of([Record.loads(r.data) for r in store.records(LOG_ID)])
+    if state.charter is None:
+        _fail("the store holds no adopted charter: name it with --charter")
+    version, digest = state.charter
+    charter_raw = store.document(digest)
+    assert charter_raw is not None
+    found = loads(charter_raw[1], signed=True)
+    assert isinstance(found, Charter)
+    return {"charter_id": found.charter_id, "version": version}
+
+
+def _ticket_resolution(ticket: Ticket, args: argparse.Namespace) -> tuple[str, str]:
+    """The resolution digest an approval of ``ticket`` names, and how it is
+    shown: an option by action or digest, or a narrowing of one read from a
+    file and rendered (F4-20, G8). A digest alone is never signed."""
+    from fiduciary.documents import Resolution
+
+    chosen = args.resolution
+    if chosen is None:
+        if len(ticket.options) == 1 or args.decline:
+            option = ticket.options[0]
+            return option.digest, f"{option.resolution.action} {option.digest}"
+        _fail("approving a ticket names its resolution: --resolution ACTION|DIGEST|FILE")
+    for option in ticket.options:
+        if chosen in (option.digest, option.resolution.action):
+            return option.digest, f"{option.resolution.action} {option.digest}"
+    if not Path(chosen).is_file():
+        _fail(f"{chosen!r} is no option of the ticket, nor a file holding a narrowing of one")
+    try:
+        narrowed = Resolution.read(fidu1.parse(Path(chosen).read_bytes()))
+    except (OSError, FiduciaryError) as exc:
+        _fail(f"{chosen}: {exc}")
+    if ticket.option_for(narrowed) is None:
+        _fail(f"{chosen} narrows no option of the ticket (F4-20)")
+    shown = json.dumps(narrowed.to_json(), sort_keys=True)
+    return narrowed.digest, f"the narrowing {shown} {narrowed.digest}"
 
 
 def render_ticket(ticket: Ticket) -> str:
@@ -925,8 +935,6 @@ def _warrant_show(args: argparse.Namespace) -> int:
 
 
 def _resolve_cmd(args: argparse.Namespace) -> int:
-    from interlock.records import RecordLog
-
     from fiduciary.executor import Executor
 
     config = _config(args)
@@ -936,14 +944,11 @@ def _resolve_cmd(args: argparse.Namespace) -> int:
         run_signer = config.runtime()
     except (OSError, ValueError, FiduciaryError) as exc:
         _fail(str(exc), REFUSED)
-    runtime_records = None
-    if config.runtime_records is not None:
-        runtime_records = _opened(RecordLog(run_signer, path=config.runtime_records))
-    executor = Executor(
+    executor = Executor(  # reads both ILOK1 logs without claiming them
         binder,
         operator_log=config.operator_log,
         executor_signer=exec_signer,
-        runtime_records=runtime_records,
+        runtime_records=config.runtime_records,
         runtime_signer=run_signer,
     )
     return _records(executor.resolve, "no open execution intents")
@@ -1079,8 +1084,13 @@ def _parser() -> argparse.ArgumentParser:
     approve.add_argument("--revoke", action="store_true", help="approve revoking the mandate")
     approve.add_argument(
         "--resolution",
-        metavar="DIGEST|ACTION",
-        help="the ticket option digest or action to approve",
+        metavar="ACTION|DIGEST|FILE",
+        help="a ticket's option, by action or digest, or a file holding a narrowing of one",
+    )
+    approve.add_argument(
+        "--charter",
+        metavar="FILE",
+        help="the charter in force, for a ticket: no database is read then",
     )
     approve.add_argument(
         "--suspend", metavar="PRINCIPAL", help="approve suspending a principal's key"
