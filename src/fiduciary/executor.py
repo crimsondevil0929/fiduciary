@@ -107,7 +107,8 @@ class _Step:
     result: dict[str, Any] | None = None
     why: str = ""
     mismatches: list[dict[str, Any]] = field(default_factory=list)
-    quote_lost: bool = False
+    lost: bool = False
+    """What the step needs was held in a memory a restart lost: its ticket lapses."""
 
 
 @dataclass(slots=True)
@@ -341,7 +342,7 @@ class Executor:
                     return [
                         intent,
                         *self._refused(
-                            intent, done.why, results, mismatches, lapse=done.quote_lost
+                            intent, done.why, results, mismatches, lapse=done.lost
                         ),
                     ]
                 assert done.result is not None
@@ -397,8 +398,9 @@ class Executor:
         *,
         lapse: bool,
     ) -> list[Record]:
-        """``execution.refused``; and, for a quote this process no longer holds,
-        the ticket's lapse in the same transaction: the agent asks again (F7-14)."""
+        """``execution.refused``; and, for a quote or a repair proposal this
+        process no longer holds, the ticket's lapse in the same transaction:
+        the agent asks again (F7-14)."""
         body = self._outcome_body(intent, results, mismatches, {"why": why[:512]})
         entries = [("execution.refused", body)]
         if lapse:
@@ -442,7 +444,13 @@ class Executor:
     def _accept_repair(self, idx: int, ticket: Ticket, proposal: str) -> _Step:
         plan = self._find_proposal(proposal)
         if plan is None or plan.content_hash() != proposal:
-            return _Step(False, why=f"repair proposal {proposal[:16]} is not held by this executor")
+            # Like a quote (F7-14): a restart loses it, the ticket lapses, and
+            # the agent's next refusal raises a new one.
+            return _Step(
+                False,
+                why=f"proposal_lost: repair proposal {proposal[:16]} is not held by this executor",
+                lost=True,
+            )
         try:
             staged = self._binder.engine(ticket.mandate.mandate_id).execute(plan)
         except (FiduciaryError, InterlockError) as exc:
@@ -549,7 +557,7 @@ class Executor:
                 False,
                 why=f"quote_lost: the guard holds no quote {quote_id}, which a restart loses "
                 f"(F7-14, U-3)",
-                quote_lost=True,
+                lost=True,
             )
         if quote.record.record_hash != step["record_hash"]:
             return _Step(
