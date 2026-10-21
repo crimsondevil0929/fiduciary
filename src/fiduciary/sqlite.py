@@ -222,9 +222,11 @@ class SqliteStore(Store):
         return None if row is None else (str(row[0]), bytes(row[1]))
 
     def documents(self) -> Iterator[tuple[str, str, bytes]]:
-        for digest, kind, body in self._conn.execute(
-            "SELECT digest, type, body FROM documents ORDER BY digest"
-        ):
+        # Every reader reads its rows first: a cursor left open holds a read
+        # snapshot, and BEGIN IMMEDIATE on a stale one is refused at once,
+        # before the busy timeout, when another process wrote since.
+        rows = self._conn.execute("SELECT digest, type, body FROM documents ORDER BY digest")
+        for digest, kind, body in rows.fetchall():
             yield str(digest), str(kind), bytes(body)
 
     # -- the log --------------------------------------------------------------
@@ -245,7 +247,7 @@ class SqliteStore(Store):
         for row in self._conn.execute(
             "SELECT log_id, seq, hash, prev, kind, record FROM log WHERE log_id = ? ORDER BY seq",
             (log,),
-        ):
+        ).fetchall():
             yield StoredRecord(
                 str(row[0]), int(row[1]), str(row[2]), str(row[3]), str(row[4]), bytes(row[5])
             )
@@ -275,7 +277,7 @@ class SqliteStore(Store):
         return int(cursor.lastrowid)
 
     def intake(self) -> Iterator[tuple[int, bytes]]:
-        for row in self._conn.execute("SELECT id, body FROM intake ORDER BY id"):
+        for row in self._conn.execute("SELECT id, body FROM intake ORDER BY id").fetchall():
             yield int(row[0]), bytes(row[1])
 
     def close(self) -> None:
