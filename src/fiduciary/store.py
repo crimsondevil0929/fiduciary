@@ -206,14 +206,10 @@ def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
         return [
             (
                 "executions",
-                (body["warrant"], exec_detail_event(exec_event), exec_detail, record.seq),
+                (body["warrant"], exec_event, exec_detail, record.seq),
             )
         ]
     return []
-
-
-def exec_detail_event(event: str) -> str:
-    return event
 
 
 _LINEAGE_EVENTS: Final = {

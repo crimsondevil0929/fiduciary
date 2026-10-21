@@ -9,6 +9,7 @@ writer per log (F10-5).
 from __future__ import annotations
 
 import hashlib
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -16,13 +17,15 @@ from pathlib import Path
 import pytest
 
 from fiduciary import fidu1
+from fiduciary.authority import Authority
 from fiduciary.documents import Record
 from fiduciary.exceptions import StoreError
 from fiduciary.log import Log
 from fiduciary.sqlite import SqliteStore
 from fiduciary.store import PROJECTIONS, Store, StoredRecord, fold
+from fiduciary.verify import verify_store
 from tests import examples as e
-from tests.conftest import Clock, reopen
+from tests.conftest import Clock, need_postgres, reopen
 
 
 def _record(
@@ -195,7 +198,6 @@ def test_sqlite_refuses_an_update_or_a_deletion(tmp_path: Path) -> None:
         store.insert_record(_stored(record))
         store.put_document(hashlib.sha256(b"x").hexdigest(), "charter", b"x")
     store.submit(b"y")
-    import sqlite3
 
     raw = sqlite3.connect(tmp_path / "f.db")
     for statement in (
@@ -216,7 +218,6 @@ def test_sqlite_refuses_an_update_or_a_deletion(tmp_path: Path) -> None:
 
 def test_sqlite_refuses_a_store_of_another_version(tmp_path: Path) -> None:
     SqliteStore(tmp_path / "f.db").close()
-    import sqlite3
 
     raw = sqlite3.connect(tmp_path / "f.db")
     for earlier in ("1", "2"):
@@ -260,3 +261,60 @@ def test_write_transactions_wait_for_each_other(store: Store) -> None:
     finally:
         other.close()
     assert order == ["first", "second"]
+
+
+_V3: tuple[str, ...] = ("tickets", "warrants", "executions")
+
+
+@pytest.mark.parametrize(("earlier", "absent"), [(1, ("lineage", *_V3)), (2, _V3)])
+def test_an_earlier_store_upgrades_in_place(
+    world: Authority, earlier: int, absent: tuple[str, ...]
+) -> None:
+    """A version 1 or 2 store, with its log, opens as version 3: the tables
+    later versions add are created, the service may write them, and the log
+    verifies as before (F10-1)."""
+    store = world.log.store
+    before = store.rows("mandates")
+    if isinstance(store, SqliteStore):
+        raw = sqlite3.connect(store.path)
+        for table in absent:
+            raw.execute(f"DROP TABLE {table}")
+        raw.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(earlier),))
+        raw.commit()
+        raw.close()
+        upgraded: Store = SqliteStore(store.path)
+        version = sqlite3.connect(store.path).execute("SELECT value FROM meta").fetchone()
+    else:
+        import psycopg
+
+        from fiduciary.postgres import PostgresStore, install, roles
+
+        assert isinstance(store, PostgresStore)
+        schema = store.schema
+        with psycopg.connect(need_postgres(), autocommit=True) as admin:
+            for table in absent:
+                admin.execute(f"DROP TABLE {schema}.{table}")
+            admin.execute(f"UPDATE {schema}.meta SET value = %s", (str(earlier),))
+            install(admin, schema=schema)
+            version = admin.execute(f"SELECT value FROM {schema}.meta").fetchone()
+            service = roles(schema)[0]
+            for table in absent:
+                granted = admin.execute(
+                    "SELECT has_table_privilege(%s, %s, 'INSERT')", (service, f"{schema}.{table}")
+                ).fetchone()
+                assert granted == (True,), table
+        upgraded = PostgresStore(need_postgres(), schema=schema)
+    try:
+        assert version == ("3",)
+        assert upgraded.rows("mandates") == before
+        for table in absent:
+            assert upgraded.rows(table) == []
+        report = verify_store(
+            upgraded, service_key=e.SERVICE.public_key(), pinned=e.charter().digest
+        )
+        assert report.ok, report.problems
+        with pytest.raises(RuntimeError), upgraded.transaction():
+            upgraded.insert_row("executions", ("a" * 64, "intent", "1", 99))
+            raise RuntimeError("written, and rolled back")
+    finally:
+        upgraded.close()
