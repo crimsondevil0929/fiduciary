@@ -13,7 +13,7 @@ import copy
 import re
 import sqlite3
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from contextlib import closing
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -99,6 +99,8 @@ class World:
     """The SQLite file, or the PostgreSQL DSN as the database's owner."""
     relay_dsn: str = ""
     cleanups: list[Callable[[], None]] = field(default_factory=list)
+    stage_dsn: str = ""
+    """What the engine stages on: the SQLite file, or the stage role's DSN."""
 
     # -- documents under this world's charter ----------------------------------------
 
@@ -233,7 +235,7 @@ class World:
             cleanup()
 
 
-def build(backend: str, tmp: Path, store: Store, clock: Clock) -> Iterator[World]:
+def build(backend: str, tmp: Path, store: Store, clock: Clock) -> Generator[World, None, None]:
     """A world on ``backend``, its fiduciary store ``store``."""
     from interlock.substrate import SqliteSubstrate
 
@@ -247,6 +249,7 @@ def build(backend: str, tmp: Path, store: Store, clock: Clock) -> Iterator[World
         from interlock.sqlite_outbox import install_sqlite_outbox
 
         back_office = str(tmp / "back_office.db")
+        stage_dsn = back_office
         with closing(sqlite3.connect(back_office)) as conn:
             for ddl in _ddl("INTEGER"):
                 conn.execute(ddl)
@@ -300,6 +303,7 @@ def build(backend: str, tmp: Path, store: Store, clock: Clock) -> Iterator[World
         back_office,
         relay_dsn,
         cleanups,
+        stage_dsn,
     )
     try:
         yield world

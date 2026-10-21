@@ -811,6 +811,77 @@ def test_verify_replays_every_execution_record(world: bound.World) -> None:
         )
 
 
+def test_resolve_finds_a_compensation_interlock_reordered(world: bound.World) -> None:
+    """Interlock signs a compensation's targets dependents first, not in the
+    order the ticket lists them (sorted by id): resolve matches the intent by
+    its set of targets, and finds the step applied."""
+    raw = world.mandate_json()
+    raw["data"]["agreements"] = []
+    raw["tools"] = {"statements": "any", "bindings": []}
+    raw["outbound"]["sinks"]["stripe"]["operations"] = ["charges.capture", "refunds.create"]
+    mandate = Mandate.from_json(raw, signed=False).signed(e.signer("cfo"))
+    world.issue_and_bind(mandate)
+    esc = Escalation(world.authority, world.governor)
+    outbox, outbox_conn = _outbox_ops(world)
+    op_log = world.tmp / "operators.jsonl"
+    try:
+        for attempt in range(40):
+            plan = PlanBuilder(bound.SCOPE)
+            for n, after in ((1, None), (2, [EffectId("capture-1")])):
+                payload = {
+                    "payment_intent": f"pi_{attempt}_{n}",
+                    "amount": "2.00",
+                    "currency": "usd",
+                }
+                plan.enqueue(
+                    sink="stripe",
+                    operation="charges.capture",
+                    payload=payload,
+                    compensation=OutboundRequest(
+                        sink="stripe", operation="refunds.create", payload=payload
+                    ),
+                    tenant_id="acme",
+                    effect_id=EffectId(f"capture-{n}"),
+                    after=after,
+                )
+            built = plan.build()
+            assert world.execute(mandate, built).committed
+            originals = {
+                c.effect_id: str(c.message_id) for c in outbox.compensables(str(built.plan_id))
+            }
+            if originals["capture-2"] < originals["capture-1"]:
+                continue  # interlock's order (capture-2 first) is the sorted one: try again
+            break
+        else:  # pragma: no cover - 40 coin flips
+            pytest.fail("no plan whose ids sort against interlock's order")
+        _run_relay(world, DeliveryResult(outcome=DELIVERED, detail="ch"))
+        tk, _ = esc.raise_undo(mandate.mandate_id, outbox, str(built.plan_id))
+        assert tk is not None
+        warrant = _approve_ticket(world, esc, tk, "compensate")
+
+        def stop(point: str) -> None:
+            if point == "acted:0":
+                raise RuntimeError(point)
+
+        killed = Executor(world.binder, outbox=outbox, operator_log=op_log, checkpoint=stop)
+        with pytest.raises(RuntimeError):
+            killed.execute(warrant)
+        (resolved,) = Executor(world.binder, outbox=outbox, operator_log=op_log).resolve()
+        assert resolved.kind == "execution.applied"
+        (result,) = resolved.content["results"]
+        public = e.SERVICE.public_key()
+        intent = next(
+            r
+            for r in RecordLog.load(op_log, Keyring({public.key_id: public}))
+            if r.record_hash == result["intent"]
+        )
+        signed = [t["message"] for t in intent.body["targets"]]
+        assert signed == [originals["capture-2"], originals["capture-1"]] != sorted(signed)
+    finally:
+        outbox_conn.close()
+    _verify(world)
+
+
 def test_an_autonomous_rule_cancels_held_messages(world: bound.World) -> None:
     """A class with no rule vocabulary takes a rule with an empty predicate,
     which names only a reducing resolution (§7.2, F7-9)."""
