@@ -9,6 +9,8 @@ writer per log (F10-5).
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -20,7 +22,7 @@ from fiduciary.log import Log
 from fiduciary.sqlite import SqliteStore
 from fiduciary.store import PROJECTIONS, Store, StoredRecord, fold
 from tests import examples as e
-from tests.conftest import Clock
+from tests.conftest import Clock, reopen
 
 
 def _record(
@@ -232,3 +234,29 @@ def test_sqlite_refuses_a_store_of_another_version(tmp_path: Path) -> None:
 def test_sqlite_reports_a_file_it_cannot_open(tmp_path: Path) -> None:
     with pytest.raises(StoreError, match="cannot open"):
         SqliteStore(tmp_path / "missing-dir" / "f.db")
+
+
+def test_write_transactions_wait_for_each_other(store: Store) -> None:
+    """A second writer's transaction begins only once the first commits, on
+    both stores: a decision taken from the state it read is still current
+    when its record is written (F10-5)."""
+    other = reopen(store)
+    entered = threading.Event()
+    order: list[str] = []
+
+    def second() -> None:
+        entered.wait()
+        with other.transaction():
+            order.append("second")
+
+    worker = threading.Thread(target=second)
+    try:
+        with store.transaction():
+            worker.start()
+            entered.set()
+            time.sleep(0.3)
+            order.append("first")
+        worker.join(10)
+    finally:
+        other.close()
+    assert order == ["first", "second"]

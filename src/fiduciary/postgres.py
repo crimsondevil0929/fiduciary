@@ -221,6 +221,12 @@ class PostgresStore(Store):
         self._depth = 1
         try:
             with self._conn.transaction():
+                # One writer at a time, as SQLite's BEGIN IMMEDIATE: what a
+                # transaction reads of the log stays its head until it commits.
+                self._conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (f"{self._s}.transaction",),
+                )
                 yield
         except self._errors as exc:
             self._drop_committed()

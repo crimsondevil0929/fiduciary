@@ -81,6 +81,16 @@ def _open(kind: str, tmp_path: Path, request: pytest.FixtureRequest) -> Store:
     return PostgresStore(dsn, schema=schema)
 
 
+def reopen(store: Store) -> Store:
+    """Another connection to the store ``store`` is: what a second process opens."""
+    if isinstance(store, SqliteStore):
+        return SqliteStore(store.path)
+    from fiduciary.postgres import PostgresStore
+
+    assert isinstance(store, PostgresStore)
+    return PostgresStore(need_postgres(), schema=store.schema)
+
+
 @pytest.fixture(params=["sqlite", "postgres"])
 def store(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[Store]:
     """A store, on each backend."""
