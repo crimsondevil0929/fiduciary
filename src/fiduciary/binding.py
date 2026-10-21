@@ -157,9 +157,12 @@ class MandateEngine:
             self._mandate, self._compiled = mandate, compiled
 
     def close(self) -> None:
-        """Run nothing more; the plan in flight, if any, finishes first."""
+        """Run nothing more; the plan in flight, if any, finishes first. The
+        chain's file claim goes with it, so another process can resume it."""
         with self._lock:
-            self._closed = True
+            if not self._closed:
+                self._closed = True
+                self._chain.close()
 
 
 class Binder:
