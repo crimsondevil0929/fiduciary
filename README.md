@@ -10,12 +10,46 @@ measured consequence satisfies its checkers. Fiduciary says who decided those li
 on whose authority, and who approved an exception. It records each answer as a signed
 document that anyone holding the public keys can verify.
 
-`docs/FIDUCIARY_SPEC.md` is the specification. This is **0.2.0**, Phase 2 of its
-roadmap. Phase 1 (0.1.0) gave the FIDU1 format, the documents, the order on mandates, the
-log and its two stores, and the command line. Phase 2 compiles a mandate into
-Interlock's checkers and AgentGov's policies, and binds it to a deployment. Escalation
-tickets and warrants are Phase 3, the agent and MCP bridge Phase 4, and the audit bundle
-Phase 5.
+`docs/FIDUCIARY_SPEC.md` is the specification. This is **0.3.0**, Phase 3 of its
+roadmap:
+- Phase 1 (0.1.0) gave the FIDU1 format, the documents, the order on mandates, the log
+  and its two stores, and the command line.
+- Phase 2 (0.2.0) compiles a mandate into Interlock's checkers and AgentGov's policies,
+  and binds it to a deployment.
+- Phase 3 escalates what a mandate does not allow to its principals, and executes their
+  decision exactly once.
+
+The agent and MCP bridge are Phase 4, and the audit bundle Phase 5.
+
+## What 0.3.0 adds
+
+- **Tickets** (`fiduciary.escalation`). When an agent reaches a boundary, the service
+  raises a signed ticket of typed evidence read from Interlock and AgentGov. The
+  boundaries are:
+  - a refused plan with a repair;
+  - a held or dead message;
+  - an undo;
+  - an extension quote;
+  - a proposed amendment.
+
+  The agent's own words sit apart, as an unverified claim. One ticket covers one piece of
+  evidence, and past `escalation.max_open` nothing is raised and the boundary stands.
+- **Quorum and warrants.** Principals approve an option, or a narrowing of one. A
+  warrant forms when the approvals counted reach the quorum of its class, by principal,
+  under the charter's keys, before every deadline. A mandate's autonomous rules may form
+  one alone, within a closed vocabulary. Silence refuses: a ticket lapses at its
+  deadline, and is declined once no option can still be reached.
+- **Execution** (`fiduciary.executor`). A warrant runs in two phases, its digest bound
+  into what each system signs:
+  - interlock's operator intents;
+  - the AgentGov anchor before a reset;
+  - the guard's grant and decline records.
+
+  `resolve()` settles what a crash interrupted, from what the systems hold, and guesses
+  nothing. The crash tests kill the service at every checkpoint of every resolution, and
+  each warrant still executes once.
+- **The command line**: `fiduciary tickets list|show`, `fiduciary warrant show`,
+  `fiduciary resolve`, and `fiduciary approve` of a ticket.
 
 ## What 0.2.0 adds
 
@@ -152,6 +186,32 @@ fiduciary mandate expire                  # every lineage past its term
 principal signs on their own machine, and needs no database credential beyond the intake
 role.
 
+An exception is escalated as a ticket, and decided on the principals' own machines:
+
+```
+fiduciary tickets list                    # open tickets
+fiduciary tickets show <ticket_id>        # rendered from its signed bytes (F7-3)
+fiduciary approve ticket.json --charter charter.json --principal alice --key alice.key \
+    --resolution grant --submit           # an option, by action or digest
+fiduciary approve ticket.json --charter charter.json --principal bob --key bob.key \
+    --resolution narrowed.json --submit   # or a narrowing of one, read from a file
+fiduciary warrant show <warrant_id>
+fiduciary resolve                         # settle executions a crash interrupted
+```
+
+The executor signs interlock's operator records. Until U-2 ships, its key and the runtime
+records key may not be AWS KMS keys:
+
+```toml
+[executor]
+key = "executor.key"                 # an [operators.keys] key of interlock.toml
+log = "operators.jsonl"              # interlock's operator log
+
+[runtime]
+records = "runtime.jsonl"            # the guard's ILOK1 log of quotes and grants
+key     = "runtime.key"
+```
+
 ## Tests
 
 ```
@@ -166,6 +226,14 @@ roles:
 FIDUCIARY_TEST_POSTGRES_DSN=postgresql://user:pw@localhost:5432/postgres \
 FIDUCIARY_REQUIRE_POSTGRES=1 uv run pytest
 ```
+
+The crash tests (`tests/test_crash_recovery.py`) run the service as a child process and
+kill it at every checkpoint. The contention test (`tests/test_contention.py`) runs two
+service processes over an AgentGov ledger shared through PostgreSQL, so it needs the
+DSN even when the store under test is SQLite.
+
+`scripts/ilok1_sizes.py --check` measures the ILOK1 records the executor has interlock
+sign, and requires the spec's table (§3.5) to match.
 
 `vectors/fidu1/` holds the golden vectors: valid documents with their digests and
 signing inputs, a chain of records, and invalid documents, each with the error it must

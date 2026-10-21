@@ -6,6 +6,105 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [0.3.0]
+
+Phase 3 of `docs/FIDUCIARY_SPEC.md` §11: escalation tickets, quorum, warrants, their
+two-phase execution against Interlock and AgentGov, and resolving what a crash left.
+
+### Added
+
+- **Tickets and warrants** (`fiduciary.documents.ticket`, `fiduciary.documents.warrant`).
+  - A ticket's evidence is typed per class: `refused`, `held`, `dead`, `undo`,
+    `extension` and `amend` (§7.1, F4-17).
+  - `agent.statement` is clipped to 512 characters, and enters no rule, option or
+    decision (F4-18).
+  - Each option carries its resolution's digest and its class's quorum (F4-19).
+  - A principal may approve a narrowing of an option (F4-20).
+  - A warrant's basis is the approvals counted or an autonomous rule (F4-24). Its
+    `not_after` is the earliest of its bounds (F4-25).
+  - `execution_steps(warrant, ticket)` is the pure plan an execution records.
+    `resolution_quorum` is §7.2 in one place.
+  - Golden vectors for both documents.
+- **Escalation** (`fiduciary.escalation`).
+  - The six triggers, each reading its evidence from Interlock and AgentGov, never from
+    the agent's prose.
+  - One ticket per distinct evidence (F7-1). Past `escalation.max_open`, a trigger
+    raises nothing and its boundary stands (F7-2).
+  - Autonomous rules within their closed vocabulary. An autonomous grant is bounded per
+    quote and over the version's life, counted from the log (F7-9 to F7-11).
+- **Quorum, decline and lapse** (`fiduciary.authority`).
+  - A warrant forms in the same log transaction as the approval that completes it. It
+    counts each principal's latest decision once, only under the charter's keys, and
+    only when recorded before both deadlines (§7.3, F7-5, F7-6).
+  - A ticket is declined when declines make every option unreachable (F7-7), and lapses
+    at its deadline (F1-6).
+  - `verify` replays every Phase 3 record. That includes each execution intent, as its
+    warrant's steps, and each outcome, as an answer to its intent.
+- **Execution** (`fiduciary.executor`).
+  - Two phases, for all eleven resolutions: `execution.intent`, each step, then
+    `applied` or `refused`.
+  - The warrant's digest is bound into each system's signed or hashed record: the ILOK1
+    operator's reason, the AgentGov anchor immediately before a reset, and the guard's
+    `approved_by` and `declined_by` (§7.6, F2-2).
+  - Each execution holds a claim on its warrant. `resolve()` skips intents a live process
+    claims, and resolves the others from the four places a digest can reach. Evidence
+    not yet settled leaves an intent open (F7-13).
+  - The F3-9 guard refuses AWS KMS executor and runtime keys, and outbox actions are
+    chunked to 8 targets (U-2).
+  - A quote or repair proposal lost to a restart refuses the step and lapses the ticket
+    (F7-14, U-3).
+  - A head the ILOK1 intent signed that is not the one the ticket observed is recorded
+    as a mismatch (F7-15, U-4).
+- **The stores are at version 3**, with the `tickets`, `warrants` and `executions`
+  projections. Version 1 and 2 stores upgrade in place.
+- **`Binder.resume`** opens the engine of every bound lineage at start, writing nothing.
+- **The command line**:
+  - `fiduciary tickets list|show`, which renders a ticket in fixed templates from its
+    signed bytes (F7-3);
+  - `fiduciary warrant show` and `fiduciary resolve`;
+  - `fiduciary approve` of a ticket, offline with `--charter FILE`, of an option or of a
+    narrowing read from a file;
+  - configuration gains `[executor]` (`key`, `signer`, `log`) and `[runtime]`
+    (`records`, `key`, `signer`).
+- **`scripts/ilok1_sizes.py`** measures the ILOK1 records the executor has interlock
+  sign, and `--check` holds §3.5's table to it.
+
+### Fixed
+
+- **An anchor was written before its record committed.** `Log.append_all` anchored as
+  soon as its own block ended, which inside an outer transaction is not a commit. A
+  rollback or a crash then left the ledger anchoring a record the log never held, and
+  the log could no longer be anchored. Stores now run actions after the outermost
+  commit.
+- **PostgreSQL write transactions now wait for each other**, as SQLite's `BEGIN
+  IMMEDIATE` does. A second writer used to fail at the append instead.
+- **SQLite readers fetch their rows before yielding them.** An open cursor held a stale
+  read snapshot, and a second process's write made the next `BEGIN IMMEDIATE` fail at
+  once with "database is locked".
+- **A closed `MandateEngine` releases its escrow chain**, after any plan in flight. The
+  chain used to stay claimed until garbage collection.
+
+### Proven
+
+- **Crash consistency.** The service runs as a child process and is killed with
+  `SIGKILL` at every checkpoint (`raised`, `recorded`, `formed`, `intent`, `acted:<n>`,
+  `applied`) of all eleven resolutions, on both stores: 66 kills per store. F10-9 to
+  F10-11 hold.
+- **Exactly once under contention.** Two service processes share one deployment and an
+  AgentGov ledger shared through PostgreSQL. Approvals are replayed, and some arrive as
+  their warrant forms. Each warrant still executes once.
+- **Quorum, by property test.** A warrant forms iff §7.3 says it does, from the
+  approvals it counts. The generated approvals include duplicates, wrong and suspended
+  keys, another ticket, resolution or deployment, and approvals expired or recorded
+  late.
+- **Tamper.** On both stores, `verify` names:
+  - a forged approval, and an approval moved to another ticket or deleted;
+  - a reordered log;
+  - an edited ticket, warrant or execution projection;
+  - a second intent, and a lapse written before its deadline.
+- **Fatigue.** A ticket storm past `max_open` raises nothing, and every boundary stands.
+- Coverage on both stores: 97.29% of lines and 94.31% of branches.
+
 ## [0.2.0]
 
 Phase 2 of `docs/FIDUCIARY_SPEC.md` §11: compiling a mandate into Interlock's checkers
