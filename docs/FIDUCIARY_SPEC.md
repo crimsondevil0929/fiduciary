@@ -1314,10 +1314,20 @@ resolution. It runs in two phases, as interlock's operators act:
   - the escrow chain's record of the proposal's plan hash.
 
   Nothing is guessed. A step with no evidence did not happen. A step whose ILOK1 intent is
-  unresolved is first resolved by interlock's `Operator.resolve`.
+  unresolved is first resolved by interlock's `Operator.resolve`. Evidence that is not
+  settled yet leaves the intent open for a later run: an ILOK1 intent with no outcome, an
+  escrow commit intent the engine's recovery has not answered, or an operator log another
+  process holds.
+
+  An execution holds a claim on its warrant (`execution:<digest>`) from its intent to its
+  outcome: a file lock on SQLite, and a session advisory lock on PostgreSQL. A killed
+  process loses it. `resolve()` skips an intent whose claim a live process holds, since
+  that process is still acting on it.
 - **F7-14.** `BudgetGuard` keeps quotes in memory, and grants only the quotes it issued. A
   step that needs a quote this process no longer holds is therefore `refused`, with that
-  reason. Its ticket lapses, and the agent asks again. U-3 removes this limit.
+  reason. Its ticket lapses, and the agent asks again. U-3 removes this limit. A repair
+  proposal is held in memory too, since it carries row data (F4-27). An `accept_repair`
+  step whose proposal a restart lost is refused, and its ticket lapses, in the same way.
 - **F7-15.** Until U-4, after each outbox step fiduciary compares the heads the ILOK1 intent
   signed with the heads the ticket observed. A mismatch means the action reached a state no
   principal saw. It is recorded in `execution.applied`, and V8 names it.
