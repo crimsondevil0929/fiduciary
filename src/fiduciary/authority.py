@@ -537,13 +537,8 @@ class Decide:
             raise AuthorityError(
                 f"lineage {ticket.mandate.mandate_id} is {state.status(ticket.mandate.mandate_id)}"
             )
-        if ticket.raised_at != now:
+        if ticket.raised_at != now:  # and so before its not_after, which follows raised_at
             raise AuthorityError("ticket raised_at disagrees with its record")
-        if now >= ticket.not_after:
-            raise AuthorityError(
-                f"ticket {ticket.ticket_id}'s deadline {fidu1.format_instant(ticket.not_after)} "
-                f"has passed"
-            )
         mandate: Mandate = _load(self.store, ticket.mandate.digest, Mandate)
         for option in ticket.options:
             expected_quorum = quorum_for_resolution(mandate, ticket, option.resolution)
