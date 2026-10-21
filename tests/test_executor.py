@@ -30,11 +30,11 @@ from fiduciary.exceptions import AuthorityError
 from fiduciary.executor import MAX_OUTBOX_TARGETS, ExecutionError, Executor, check_ilok1_signer
 from fiduciary.keys import generate_key
 from fiduciary.sqlite import SqliteStore
-from fiduciary.store import Store
+from fiduciary.store import State, Store
 from fiduciary.verify import verify_store
 from tests import bound
 from tests import examples as e
-from tests.conftest import PG_DSN, Clock, approve
+from tests.conftest import PG_DSN, Clock, approve, reopen
 from tests.fakes import FakeKms
 
 
@@ -660,6 +660,178 @@ def test_resolve_settles_interrupted_intents_deterministically(world: bound.Worl
         assert len(resolved2[0].content["results"]) == 2
         assert world.log.state().execution_status(w2.digest) == "applied"
         assert exec_recover.resolve() == []
+    finally:
+        op_log.close()
+        outbox_conn.close()
+    _verify(world)
+
+
+def _held_ticket(world: bound.World, esc: Escalation, outbox: OutboxOperations) -> Ticket:
+    assert world.execute(world_mandate(world), world.refund_plan(1, "10.00")).committed
+    world.governor.trip(bound.SCOPE, "spend envelope exhausted")
+    _run_relay(world, DeliveryResult(outcome=DELIVERED, detail="ok"))
+    tk, _ = esc.raise_held(world_mandate(world).mandate_id, outbox)
+    assert tk is not None
+    return tk
+
+
+def world_mandate(world: bound.World) -> Mandate:
+    state = world.log.state()
+    (mandate_id,) = state.bound
+    return world.authority.decide.head_mandate(state, mandate_id)
+
+
+def test_resolve_leaves_an_intent_a_live_executor_claims(world: bound.World) -> None:
+    """An intent whose execution another process still claims is that
+    process's to finish: resolving it would abandon a warrant mid-step."""
+    world.issue_and_bind(world.mandate())
+    esc = Escalation(world.authority, world.governor)
+    outbox, outbox_conn = _outbox_ops(world)
+    try:
+        tk = _held_ticket(world, esc, outbox)
+        warrant = _approve_ticket(world, esc, tk, "reset")
+
+        def stop(point: str) -> None:
+            if point == "intent":
+                raise RuntimeError(point)
+
+        with pytest.raises(RuntimeError):
+            Executor(world.binder, checkpoint=stop).execute(warrant)
+        other = reopen(world.store)
+        try:
+            with other.claim(f"execution:{warrant.digest}"):
+                assert Executor(world.binder).resolve() == []
+                assert world.log.state().execution_status(warrant.digest) == "intent"
+                with pytest.raises(ExecutionError, match="executing elsewhere"):
+                    Executor(world.binder).execute(warrant)
+        finally:
+            other.close()
+        (resolved,) = Executor(world.binder).resolve()
+        assert resolved.kind == "execution.abandoned"
+        assert resolved.content["why"] == "step 0 (reset) left no evidence"
+    finally:
+        outbox_conn.close()
+    _verify(world)
+
+
+def test_a_reset_acts_only_on_the_scope_it_names(world: bound.World) -> None:
+    """AgentGov resets a scope's own breaker. A warrant to reset a scope that
+    another scope's breaker now halts is refused, not recorded as applied."""
+    world.issue_and_bind(world.mandate())
+    esc = Escalation(world.authority, world.governor)
+    outbox, outbox_conn = _outbox_ops(world)
+    try:
+        tk = _held_ticket(world, esc, outbox)
+        warrant = _approve_ticket(world, esc, tk, "reset")
+        world.governor.reset(bound.SCOPE)
+        world.governor.trip("support", "safety review")
+        records = Executor(world.binder).execute(warrant)
+        assert [r.kind for r in records] == ["execution.intent", "execution.refused"]
+        assert "halted by 'support'" in records[1].content["why"]
+        assert world.governor.halted_by(bound.SCOPE) == "support"
+    finally:
+        outbox_conn.close()
+    _verify(world)
+
+
+def test_a_lapse_never_overrides_an_executed_warrant(world: bound.World) -> None:
+    world.issue_and_bind(world.mandate())
+    esc = Escalation(world.authority, world.governor)
+    outbox, outbox_conn = _outbox_ops(world)
+    try:
+        tk = _held_ticket(world, esc, outbox)
+        warrant = _approve_ticket(world, esc, tk, "reset")
+        assert Executor(world.binder).execute(warrant)[-1].kind == "execution.applied"
+    finally:
+        outbox_conn.close()
+    world.clock.now = tk.not_after + timedelta(seconds=1)
+    decide = world.authority.decide
+    with pytest.raises(AuthorityError, match="execution is applied"):
+        decide.lapse_ticket(world.log.state(), tk.digest, world.clock())
+    # A lapse written around the rules is named by verify.
+    body = {
+        "ticket": tk.digest,
+        "ticket_id": tk.ticket_id,
+        "mandate": tk.mandate.digest,
+        "mandate_id": tk.mandate.mandate_id,
+        "class": tk.ticket_class,
+    }
+    record = world.log.append("ticket.lapsed", body)
+    world.governor.refresh()
+    report = verify_store(
+        world.store,
+        service_key=e.SERVICE.public_key(),
+        pinned=world.charter.digest,
+        ledger=world.governor.audit_trail(),
+    )
+    assert any(f"record {record.seq} (ticket.lapsed)" in p for p in report.problems)
+
+
+def test_verify_replays_every_execution_record(world: bound.World) -> None:
+    """An intent is a pure function of its warrant and ticket, and an outcome
+    answers its own intent: verify names an intent with other steps, and an
+    outcome naming another intent or more results than steps."""
+    world.issue_and_bind(world.mandate())
+    esc = Escalation(world.authority, world.governor)
+    outbox, outbox_conn = _outbox_ops(world)
+    try:
+        tk = _held_ticket(world, esc, outbox)
+        warrant = _approve_ticket(world, esc, tk, "reset")
+    finally:
+        outbox_conn.close()
+    decide = world.authority.decide
+    body = decide.execution_intent(world.log.state(), warrant.digest, world.clock())
+    assert body["steps"] == [{"step": 0, "kind": "reset", "scope": bound.SCOPE, "spent_out": True}]
+    forged = {**body, "steps": [{**body["steps"][0], "scope": "support"}]}
+    intent = world.log.append("execution.intent", forged)
+    fixed = {k: body[k] for k in ("warrant", "warrant_id", "ticket", "ticket_id", "mandate")}
+    outcome = {**fixed, "mandate_id": body["mandate_id"], "action": "reset", "mismatches": []}
+    wrong = world.log.append(
+        "execution.applied", {**outcome, "intent": intent.seq - 1, "results": []}
+    )
+    world.governor.refresh()
+    problems = verify_store(
+        world.store,
+        service_key=e.SERVICE.public_key(),
+        pinned=world.charter.digest,
+        ledger=world.governor.audit_trail(),
+    ).problems
+    assert any(
+        f"record {intent.seq} (execution.intent): its rules write another" in p for p in problems
+    )
+    assert any(
+        f"record {wrong.seq} (execution.applied)" in p and "does not answer" in p for p in problems
+    )
+    with pytest.raises(AuthorityError, match="more results than its steps"):
+        decide.execution_outcome(
+            State.of(world.log.records()[:-1]),
+            "execution.refused",
+            {**outcome, "intent": intent.seq, "results": [{}, {}]},
+        )
+
+
+def test_an_autonomous_rule_cancels_held_messages(world: bound.World) -> None:
+    """A class with no rule vocabulary takes a rule with an empty predicate,
+    which names only a reducing resolution (§7.2, F7-9)."""
+    escalation = {
+        "max_open": 5,
+        "ttl_seconds": 86400,
+        "auto": [{"id": "drop-held", "class": "held", "resolution": "cancel", "when": {}}],
+    }
+    world.issue_and_bind(world.mandate(escalation=escalation))
+    esc = Escalation(world.authority, world.governor)
+    outbox, outbox_conn = _outbox_ops(world)
+    op_log = _op_log(world)
+    try:
+        assert world.execute(world_mandate(world), world.refund_plan(1, "10.00")).committed
+        world.governor.trip(bound.SCOPE, "spend envelope exhausted")
+        _run_relay(world, DeliveryResult(outcome=DELIVERED, detail="ok"))
+        tk, warrant = esc.raise_held(world_mandate(world).mandate_id, outbox)
+        assert tk is not None and warrant is not None
+        assert warrant.basis.rule is not None and warrant.basis.rule.rule_id == "drop-held"
+        executor = Executor(world.binder, outbox=outbox, operator_log=op_log)
+        assert executor.execute(warrant)[-1].kind == "execution.applied"
+        assert world.outbox_states() == ["cancelled"]
     finally:
         op_log.close()
         outbox_conn.close()

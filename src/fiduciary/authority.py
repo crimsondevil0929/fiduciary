@@ -50,6 +50,7 @@ from fiduciary.documents import (
     TicketRef,
     Warrant,
     WarrantBasis,
+    execution_steps,
     quorum_for_resolution,
     suspension_digest,
     warrant_not_after,
@@ -202,16 +203,6 @@ class Decide:
                 f"resolution {res_digest[:16]} does not narrow any option of "
                 f"ticket {ticket.ticket_id}"
             )
-        for _, kind, data in self.store.documents():
-            if kind == "warrant":
-                warrant = Warrant.loads(data)
-                if warrant.resolution_digest == res_digest:
-                    if ticket.option_for(warrant.resolution) is not None:
-                        return warrant.resolution
-                    raise AuthorityError(
-                        f"resolution {res_digest[:16]} does not narrow any option of "
-                        f"ticket {ticket.ticket_id}"
-                    )
         raise AuthorityError(
             f"resolution {res_digest[:16]} is no option of ticket {ticket.ticket_id}"
         )
@@ -546,6 +537,8 @@ class Decide:
             raise AuthorityError(
                 f"lineage {ticket.mandate.mandate_id} is {state.status(ticket.mandate.mandate_id)}"
             )
+        if ticket.raised_at != now:
+            raise AuthorityError("ticket raised_at disagrees with its record")
         if now >= ticket.not_after:
             raise AuthorityError(
                 f"ticket {ticket.ticket_id}'s deadline {fidu1.format_instant(ticket.not_after)} "
@@ -767,7 +760,9 @@ class Decide:
                 if spent_auto + requested > mandate.extension.auto.max_total:
                     return False
             return True
-        return False
+        # held, undo and amend: no vocabulary (F7-9), so a rule's predicate is
+        # empty, and it names only a reducing resolution (§7.2).
+        return not when
 
     def form_warrant(self, state: State, warrant_digest: str, now: datetime) -> dict[str, Any]:
         """The ``warrant.formed`` body for warrant ``warrant_digest`` (§4.6, §7.3, §7.4)."""
@@ -880,19 +875,23 @@ class Decide:
                     f"ticket {ticket_id} runs until {fidu1.format_instant(ticket.not_after)}"
                 )
         elif status == "warranted":
-            warrant_events = [
+            # Its warrant ran nothing, and never will: the execution was
+            # refused or abandoned (F7-14), or the warrant expired without one.
+            (warrant_digest,) = [
                 detail
                 for ev, detail, _ in state.ticket_events.get(ticket_id, ())
                 if ev == "warranted"
             ]
-            warrant_digest = warrant_events[-1] if warrant_events else ""
-            if (
-                state.execution_status(warrant_digest) not in ("refused", "abandoned")
-                and now < ticket.not_after
-            ):
-                raise AuthorityError(
-                    f"ticket {ticket_id} is warranted and its execution has not been refused"
-                )
+            execution = state.execution_status(warrant_digest)
+            if execution is None:
+                warrant: Warrant = _load(self.store, warrant_digest, Warrant)
+                if now < warrant.not_after:
+                    raise AuthorityError(
+                        f"ticket {ticket_id}'s warrant runs until "
+                        f"{fidu1.format_instant(warrant.not_after)}"
+                    )
+            elif execution not in ("refused", "abandoned"):
+                raise AuthorityError(f"ticket {ticket_id}'s warrant execution is {execution}")
         else:
             raise AuthorityError(f"ticket {ticket_id} is {status} already")
         return {
@@ -903,8 +902,10 @@ class Decide:
             "class": ticket.ticket_class,
         }
 
-    def execution_intent(self, state: State, warrant_digest: str, now: datetime) -> Warrant:
-        """Check that ``warrant_digest`` may record its single ``execution.intent`` (F7-12)."""
+    def execution_intent(self, state: State, warrant_digest: str, now: datetime) -> dict[str, Any]:
+        """The ``execution.intent`` body of ``warrant_digest``: its single intent
+        (F7-12), written before its ``not_after``, naming its steps in order
+        with the preconditions its ticket observed (§7.5)."""
         if warrant_digest not in state.warrants:
             raise AuthorityError(f"no formed warrant has digest {warrant_digest[:16]}")
         if state.execution_status(warrant_digest) is not None:
@@ -916,17 +917,54 @@ class Decide:
             raise AuthorityError(
                 f"warrant {warrant.warrant_id} expired at {fidu1.format_instant(warrant.not_after)}"
             )
-        return warrant
+        ticket: Ticket = _load(self.store, warrant.ticket.digest, Ticket)
+        if state.ticket_status(ticket.ticket_id) != "warranted":
+            raise AuthorityError(
+                f"ticket {ticket.ticket_id} is {state.ticket_status(ticket.ticket_id)}"
+            )
+        return {
+            "warrant": warrant.digest,
+            "warrant_id": warrant.warrant_id,
+            "ticket": ticket.digest,
+            "ticket_id": ticket.ticket_id,
+            "mandate": ticket.mandate.digest,
+            "mandate_id": ticket.mandate.mandate_id,
+            "action": warrant.resolution.action,
+            "steps": execution_steps(warrant, ticket),
+        }
 
-    def execution_outcome(self, state: State, warrant_digest: str) -> None:
-        """Check that ``warrant_digest`` has an open ``execution.intent``."""
-        if warrant_digest not in state.warrants:
-            raise AuthorityError(f"no formed warrant has digest {warrant_digest[:16]}")
-        status = state.execution_status(warrant_digest)
-        if status != "intent":
+    def execution_outcome(self, state: State, kind: str, body: Mapping[str, Any]) -> None:
+        """Check an outcome record against the open intent it answers: the same
+        warrant, ticket, mandate and action, its intent's sequence, and results
+        for the steps the intent named, in order. What each step reached is the
+        systems' to show, not the rules'."""
+        warrant_digest = str(body.get("warrant"))
+        events = state.executions.get(warrant_digest, [])
+        if [event for event, _, _ in events] != ["intent"]:
+            status = state.execution_status(warrant_digest)
             raise AuthorityError(
                 f"warrant {warrant_digest[:16]} has execution status {status!r}, not 'intent'"
             )
+        _, intent, intent_seq = events[0]
+        fixed = ("warrant", "warrant_id", "ticket", "ticket_id", "mandate", "mandate_id", "action")
+        if (
+            any(body.get(name) != intent[name] for name in fixed)
+            or body.get("intent") != intent_seq
+        ):
+            raise AuthorityError(f"the {kind} record does not answer intent {intent_seq}")
+        results = body.get("results")
+        steps = intent["steps"]
+        if not isinstance(results, list) or len(results) > len(steps):
+            raise AuthorityError(f"the {kind} record names more results than its steps")
+        for result, step in zip(results, steps, strict=False):
+            if (
+                not isinstance(result, Mapping)
+                or result.get("step") != step["step"]
+                or result.get("kind") != step["kind"]
+            ):
+                raise AuthorityError(f"the {kind} record's results do not follow its steps")
+        if kind == "execution.applied" and len(results) != len(steps):
+            raise AuthorityError("execution.applied names a result for every step")
 
     def _amend_warrant_approvals(
         self, state: State, mandate_id: str, digest: str, now: datetime
@@ -1204,10 +1242,9 @@ def _expected(
     if kind == "ticket.lapsed":
         return decide.lapse_ticket(state, str(body["ticket"]), record.issued_at)
     if kind == "execution.intent":
-        decide.execution_intent(state, str(body["warrant"]), record.issued_at)
-        return None
+        return decide.execution_intent(state, str(body["warrant"]), record.issued_at)
     if kind in ("execution.applied", "execution.refused", "execution.abandoned"):
-        decide.execution_outcome(state, str(body["warrant"]))
+        decide.execution_outcome(state, kind, body)
         return None
     return None  # later phases' kinds: replayed by the phase that writes them
 

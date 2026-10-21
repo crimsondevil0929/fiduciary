@@ -20,7 +20,6 @@ of a halted scope commits (E3-8), and a relay holds its messages (§5.5).
 
 from __future__ import annotations
 
-import copy
 import dataclasses
 import re
 import threading
@@ -348,20 +347,47 @@ class Binder:
         if self._substrate is not None:
             engine = self._engines.get(mandate.mandate_id)
             if engine is None or engine.closed:
-                self._engines[mandate.mandate_id] = MandateEngine(
-                    mandate,
-                    compiled,
-                    substrate=self._substrate(),
-                    chain=EscrowChain(chain) if chain is not None else EscrowChain(),
-                    anchor=self._anchor,
-                    receipts=self._receipts,
-                    inbox=self._inbox,
-                    row_secret=self._row_secret,
-                    clock=self.log.now,
-                )
+                self._open_engine(mandate, compiled)
             else:
                 engine.rebind(mandate, compiled)
         return record
+
+    def _open_engine(self, mandate: Mandate, compiled: CompiledMandate) -> MandateEngine:
+        assert self._substrate is not None
+        chain = None if self._chains is None else self._chains / f"{mandate.mandate_id}.chain"
+        engine = MandateEngine(
+            mandate,
+            compiled,
+            substrate=self._substrate(),
+            chain=EscrowChain(chain) if chain is not None else EscrowChain(),
+            anchor=self._anchor,
+            receipts=self._receipts,
+            inbox=self._inbox,
+            row_secret=self._row_secret,
+            clock=self.log.now,
+        )
+        self._engines[mandate.mandate_id] = engine
+        return engine
+
+    def resume(self) -> list[str]:
+        """Open the engine of every lineage bound and in force, as the service
+        does when it starts, writing nothing: each engine first recovers what a
+        crash left on its chain. Returns the lineages it opened."""
+        if self._substrate is None:
+            return []
+        state = self.log.state()
+        opened = []
+        for mandate_id, bound in sorted(state.bound.items()):
+            found = self._engines.get(mandate_id)
+            if (found is not None and not found.closed) or state.status(mandate_id) != "bound":
+                continue
+            digest = str(bound["mandate"])
+            if state.head(mandate_id) != (int(bound["version"]), digest):
+                continue  # issued and not yet rebound: the next bind opens it
+            mandate = self.decide.bindable(state, digest)
+            self._open_engine(mandate, self.compile(digest, state))
+            opened.append(mandate_id)
+        return opened
 
     def _next_extension(self, scope: str) -> str:
         taken = set(self._governor.scopes())
@@ -522,15 +548,4 @@ def _ancestors(state: State, mandate_id: str) -> set[str]:
 def _after(state: State, kind: str, body: dict[str, Any]) -> State:
     """``state`` with a record of ``kind`` applied: what the next decision in
     the same transaction is taken from."""
-    found = copy.deepcopy(state)
-    found.apply(
-        Record(
-            log="fiduciary",
-            seq=state.head_seq + 1,
-            kind=kind,
-            issued_at=datetime.now(UTC),
-            content=body,
-            prev=fidu1.GENESIS,
-        )
-    )
-    return found
+    return state.after(kind, body)

@@ -25,6 +25,7 @@ from interlock.records import RecordLog
 from interlock.relay import DELIVERED, PERMANENT, DeliveryResult, LedgerBreaker, Relay
 from interlock.types import EffectId, OutboundRequest
 
+from fiduciary import fidu1
 from fiduciary.authority import Authority
 from fiduciary.documents import (
     Approval,
@@ -717,7 +718,7 @@ def test_verify_catches_tampered_ticket_and_warrant_projections(
     approve(store, ("cfo", "head-ops"), "mandate", mandate.digest)
     authority.issue_mandate(mandate.digest)
 
-    tk_raw = copy.deepcopy(e.ticket_json())
+    tk_raw = copy.deepcopy(e.ticket_json(raised_at=fidu1.format_instant(clock())))
     tk_raw["options"][0]["quorum"] = 2
     tk = Ticket.from_json(tk_raw, signed=False).signed(e.SERVICE)
     log.put(tk)
@@ -840,7 +841,9 @@ def test_quorum_counting_is_exact_under_generated_histories(
         approve(store, ("alice",), "mandate", mandate.digest)
         authority.issue_mandate(mandate.digest)
 
-        tk_raw = copy.deepcopy(e.ticket_json(mandate=mandate.ref.to_json()))
+        tk_raw = copy.deepcopy(
+            e.ticket_json(mandate=mandate.ref.to_json(), raised_at=fidu1.format_instant(clock()))
+        )
         tk_raw["options"][0]["quorum"] = q_grant
         tk_raw["options"][1]["quorum"] = q_reduce
         tk = Ticket.from_json(tk_raw, signed=False).signed(e.SERVICE)

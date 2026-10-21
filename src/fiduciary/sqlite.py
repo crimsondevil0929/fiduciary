@@ -100,8 +100,11 @@ class _FileLock:
             ) from exc
         self._fd = fd
 
-    def release(self) -> None:
+    def release(self, *, unlink: bool = False) -> None:
         if self._fd is not None:
+            if unlink:  # while still held: a later claimant creates the file anew
+                with contextlib.suppress(OSError):
+                    self._path.unlink()
             os.close(self._fd)  # closing the descriptor releases the lock
             self._fd = None
 
@@ -191,7 +194,8 @@ class SqliteStore(Store):
         try:
             yield
         finally:
-            lock.release()
+            # A warrant's execution claim is held once: its file goes with it.
+            lock.release(unlink=log.startswith("execution:"))
 
     def claim(self, log: str) -> AbstractContextManager[None]:
         return self._claim(log)

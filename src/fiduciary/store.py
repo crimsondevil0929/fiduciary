@@ -16,13 +16,15 @@ the service takes, it takes from the state.
 from __future__ import annotations
 
 import abc
+import copy
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Final
 
+from fiduciary import fidu1
 from fiduciary.documents import Record
 
 __all__ = [
@@ -337,6 +339,22 @@ class State:
         for record in records:
             state.apply(record)
         return state
+
+    def after(self, kind: str, body: dict[str, Any]) -> State:
+        """A copy of this state with a record of ``kind`` applied: what the
+        next decision written in the same log transaction is taken from."""
+        found = copy.deepcopy(self)
+        found.apply(
+            Record(
+                log="fiduciary",
+                seq=self.head_seq + 1,
+                kind=kind,
+                issued_at=self.record_times.get(self.head_seq, datetime.now(UTC)),
+                content=body,
+                prev=fidu1.GENESIS,
+            )
+        )
+        return found
 
     def apply(self, record: Record) -> None:
         self.head_seq = record.seq
