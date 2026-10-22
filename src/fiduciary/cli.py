@@ -7,6 +7,7 @@ Exit status: 0 on success; 1 when something is refused or does not verify;
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import uuid
@@ -1047,6 +1048,83 @@ def _mcp_proxy(args: argparse.Namespace) -> int:
     return OK
 
 
+def _export_bundle(args: argparse.Namespace) -> int:
+    from agentgov.receipts import ReceiptLog
+    from interlock.records import Keyring, RecordLog
+
+    from fiduciary.bundle import BundleError, Evidence, export_bundle
+    from fiduciary.bundle.export import spec
+    from fiduciary.config import ConfigError, _outbox
+    from fiduciary.keys import open_signer
+
+    config = _config(args)
+    target = Path(args.out)
+    if target.exists():
+        _fail(f"{args.out} exists: a bundle is never overwritten")
+    if config.ledger is None:
+        _fail("a bundle needs the deployment's AgentGov ledger: set ledger")
+    if args.ledger_key is None and args.ledger_signer is None:
+        _fail("the ledger checkpoint is signed by the ledger's checkpoint key: give --ledger-key")
+    opened: list[Callable[[], None]] = []
+    try:
+        ledger_signer = open_signer(config.signers, key=args.ledger_key, signer=args.ledger_signer)
+        service = config.service()
+        store = _opened(config.open_store())
+        governor = _opened(config.open_ledger(read_only=True))
+        deployment = config.deployment(governor)
+        receipts = receipt_keys = None
+        if config.receipts_log is not None:
+            signer = config.receipts()
+            receipts = _opened(ReceiptLog("fiduciary-receipts", signer, path=config.receipts_log))
+            receipt_keys = [signer.public_key()]
+        keyring = config.operator_keyring()
+        executor = config.executor().public_key()
+        operator_keys = {"executor": spec(executor)}
+        if config.interlock is not None and config.interlock_config().operators is not None:
+            operators = config.interlock_config().operators
+            assert operators is not None
+            operator_keys = dict(operators.keys)
+        operator_records: tuple[Any, ...] = ()
+        log = config.operators_log()
+        if log is not None and log.exists():
+            operator_records = RecordLog.load(log, keyring or Keyring({executor.key_id: executor}))
+        runtime_key = config.runtime().public_key()
+        runtime_records: tuple[Any, ...] = ()
+        if config.runtime_records is not None and config.runtime_records.exists():
+            runtime_records = RecordLog.load(config.runtime_records, runtime_key)
+        outbox = None
+        if config.executor_outbox is not None:
+            outbox = _outbox(config.executor_outbox, opened)
+        data = export_bundle(
+            store,
+            args.mandate,
+            deployment=deployment,
+            evidence=Evidence(
+                ledger=governor,
+                ledger_signer=ledger_signer,
+                receipts=receipts,
+                receipt_keys=receipt_keys or (),
+                operator_records=operator_records,
+                operator_keys=operator_keys,
+                runtime_records=runtime_records,
+                runtime_key=runtime_key,
+                chains=config.chains,
+                outbox=outbox,
+                service=service,
+            ),
+            from_seq=args.from_seq,
+            to_seq=args.to_seq,
+        )
+    except (ConfigError, BundleError, OSError, ValueError) as exc:
+        _fail(str(exc), REFUSED if isinstance(exc, BundleError) else USAGE)
+    finally:
+        for close in reversed(opened):
+            close()
+    target.write_bytes(data)
+    _err(f"wrote {args.out}: {len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()}")
+    return OK
+
+
 # --------------------------------------------------------------------------
 # the parser
 # --------------------------------------------------------------------------
@@ -1244,6 +1322,15 @@ def _parser() -> argparse.ArgumentParser:
         else:
             sub.add_argument("upstream", nargs=argparse.REMAINDER, help="-- <command>")
             sub.set_defaults(handler=_mcp_proxy)
+
+    export = commands.add_parser("export-bundle", help="write a lineage's audit bundle (§9)")
+    export.add_argument("--mandate", required=True, help="the lineage's mandate_id")
+    export.add_argument("--from", dest="from_seq", type=int, help="the range's first record")
+    export.add_argument("--to", dest="to_seq", type=int, help="the range's last record")
+    export.add_argument("--out", required=True, help="the bundle file to write (.fidb)")
+    export.add_argument("--ledger-key", help="the ledger's checkpoint key file")
+    export.add_argument("--ledger-signer", help="the ledger's checkpoint key, a [signers.<name>]")
+    export.set_defaults(handler=_export_bundle)
 
     verify = commands.add_parser("verify", help="verify the store, its log and its anchors")
     verify.add_argument("--service-key", help="ed25519:<hex>; the configured key's by default")

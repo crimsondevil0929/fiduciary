@@ -1,0 +1,88 @@
+"""What the bundle tests share: a world on the wall clock (its instants are
+held to the ledger's, V12), and its evidence gathered for the exporter."""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+from agentgov.receipts.signing import Ed25519Signer, verifier_of
+from interlock.records import Keyring, RecordLog, SignedRecord
+
+from fiduciary.bridge import Fiduciary
+from fiduciary.bundle import Evidence, export_bundle
+from fiduciary.bundle.export import spec
+from fiduciary.store import Store
+from tests import bound
+from tests import bridge_kit as kit
+from tests import examples as e
+from tests.conftest import LiveClock
+
+LEDGER_KEY = e.signer("ledger-checkpoints")
+RECEIPTS_KEY = Ed25519Signer(bytes(32))
+"""The world's receipt log signs with this (``tests.bound``)."""
+
+
+def world(store: Store, tmp_path: Path, **kw: Any) -> Iterator[bound.World]:
+    yield from kit.world(store, tmp_path, LiveClock(), **kw)
+
+
+def _records(path: Path, keyring: Keyring) -> tuple[SignedRecord, ...]:
+    return RecordLog.load(path, keyring) if path.exists() else ()
+
+
+def operator_keyring(*names: str) -> Keyring:
+    """The operators' keys: the service's (the executor's), and ``names``'."""
+    keys = [e.SERVICE.public_key(), *(e.signer(n).public_key() for n in names)]
+    return Keyring({k.key_id: k for k in keys})
+
+
+def evidence(
+    w: bound.World, fid: Fiduciary | None = None, operators: tuple[str, ...] = (), **changes: Any
+) -> Evidence:
+    service = e.SERVICE.public_key()
+    keyring = operator_keyring(*operators)
+    runtime = getattr(w, "runtime", None)
+    found = Evidence(
+        ledger=w.governor,
+        ledger_signer=LEDGER_KEY,
+        receipts=w.receipts,
+        receipt_keys=[verifier_of(RECEIPTS_KEY)],
+        operator_records=_records(w.tmp / "operators.jsonl", keyring),
+        operator_keys={
+            "fiduciary": spec(service),
+            **{n: spec(e.signer(n).public_key()) for n in operators},
+        },
+        runtime_records=runtime.records() if runtime is not None else (),
+        runtime_key=service,
+        chains=w.tmp / "chains",
+        service=e.SERVICE,
+    )
+    return dataclasses.replace(found, **changes)
+
+
+def export(w: bound.World, mandate_id: str, **kw: Any) -> bytes:
+    changes = kw.pop("evidence", {})
+    operators = kw.pop("operators", ())
+    deployment = kw.pop("deployment", w.binder.deployment)
+    return export_bundle(
+        w.store,
+        mandate_id,
+        deployment=deployment,
+        evidence=evidence(w, operators=operators, **changes),
+        **kw,
+    )
+
+
+def manifest(data: bytes) -> dict[str, Any]:
+    import io
+    import tarfile
+
+    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+        member = tar.extractfile("manifest.json")
+        assert member is not None
+        found: dict[str, Any] = json.loads(member.read())
+        return found
