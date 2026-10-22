@@ -928,33 +928,54 @@ class Session:
                 else feedback_for_error(plan, exc)
             )
             return CallResult(name, "error", feedback.render())
-        rendered = result.feedback.render() if result.feedback is not None else ""
+        rendered = _lines(result.feedback.render() if result.feedback is not None else "")
         if result.committed:
+            plan_id = str(plan.plan_id)
             with self._lock:
-                self._committed.add(str(plan.plan_id))
-            return CallResult(name, "committed", rendered or "The plan committed.")
+                self._committed.add(plan_id)
+            return CallResult(
+                name,
+                "committed",
+                _committed(binding, plan_id, rendered),
+                value={"plan_id": plan_id},
+            )
         try:
             repair = engine.engine.repair(plan)
         except InterlockError:
             return CallResult(name, "refused", rendered)
-        advice = repair.feedback.render()
-        if repair.proposal is None or repair.already_admissible:
-            return CallResult(name, "refused", rendered, repair=advice)
+        if (
+            repair.proposal is None
+            or repair.already_admissible
+            or not _whole(plan, set(repair.kept))
+        ):
+            # No part of the call stands alone: the binding's steps that wait
+            # for a kept one would be dropped (a debit without its refund).
+            return CallResult(name, "refused", rendered)
+        part = (
+            f"Only part of this call would be admitted: keeping {', '.join(repair.kept)}, "
+            f"dropping {', '.join(d.effect_id for d in repair.dropped)}."
+        )
         try:
             ticket, warrant = self._fid.escalation.raise_refused(
                 self.mandate_id, repair, receipt=result.receipt
             )
         except (EscalationError, FiduciaryError):
-            return CallResult(name, "refused", rendered, repair=advice)
+            return CallResult(name, "refused", rendered)
         if ticket is None:
             self._reject(name, "max_open", "")
             return CallResult(
                 name,
                 "refused",
                 rendered + "\nNot escalated: this mandate has as many open tickets as it allows.",
-                repair=advice,
             )
         repaired = warrant is not None and self._execute(warrant)
+        if repaired:
+            advice = f"{part} A rule of the mandate accepted that part, and it committed."
+        else:
+            advice = (
+                f"{part} Whether to run that part is the principals' decision, not yours: it "
+                f"was sent to them as a ticket. You cannot resubmit part of a call."
+            )
         return CallResult(
             name,
             "refused",
@@ -1285,6 +1306,36 @@ class Session:
         with self._lock:
             if scope not in self._billed:
                 self._billed.append(scope)
+
+
+def _lines(text: str) -> str:
+    """Feedback with a line said once: two violations of one constraint render alike."""
+    return "\n".join(dict.fromkeys(text.splitlines()))
+
+
+def _whole(plan: EffectPlan, kept: set[str]) -> bool:
+    """Whether ``kept`` leaves no step of the binding without a step it was
+    written to follow: a part that stands on its own."""
+    return not any(
+        effect.effect_id not in kept and any(d in kept for d in effect.depends_on)
+        for effect in plan.effects
+    )
+
+
+def _committed(binding: ToolBinding, plan_id: str, feedback: str) -> str:
+    """What a committed call tells the agent: the plan's id, what it queued,
+    and how to ask for it to be undone when its requests can be."""
+    lines = [f"Committed: {binding.name} ran as plan {plan_id}."]
+    if binding.requests:
+        sent = ", ".join(sorted({f"{r.sink} {r.operation}" for r in binding.requests}))
+        lines.append(f"Its outside request(s) ({sent}) are queued; the relay delivers them.")
+    if any(r.compensation is not None for r in binding.requests):
+        lines.append(
+            "To ask the principals to undo it, call fiduciary_request with kind undo and this "
+            "plan_id."
+        )
+    extra = [line for line in feedback.splitlines()[1:] if line]  # advisory notes, if any
+    return "\n".join(lines + extra)
 
 
 def _empty_plan(session: Session) -> EffectPlan:

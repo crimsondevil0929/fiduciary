@@ -96,7 +96,9 @@ def test_a_call_and_a_refusal(world: bound.World, fid: Fiduciary) -> None:
     server = McpServer(_session(fid))
     done = _call(server, 1, "tools/call", {"name": "refund_order", "arguments": REFUND})
     assert done["result"]["isError"] is False
-    assert "committed" in done["result"]["content"][0]["text"]
+    assert done["result"]["content"][0]["text"].startswith(
+        "Committed: refund_order ran as plan plan-"
+    )
     before = _chain(world)
     # Outside the schema: a float. Refused as a result, before any plan (F8-5).
     floated = {**REFUND, "order_id": 7.0}

@@ -67,7 +67,15 @@ class _Client:
 
 
 @pytest.mark.parametrize(
-    "key", ["compliant", "other-account", "over-the-cap", "loose-figures", "outside-the-remit"]
+    "key",
+    [
+        "compliant",
+        "other-account",
+        "over-the-cap",
+        "loose-figures",
+        "ask-the-principals",
+        "outside-the-remit",
+    ],
 )
 def test_every_reference_proposal_holds(suite: ModuleType, key: str, tmp_path: Path) -> None:
     (scenario,) = [s for s in suite.SCENARIOS if s.key == key]

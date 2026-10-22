@@ -125,7 +125,7 @@ def test_a_call_whose_systems_refuse_says_so_and_changes_nothing(
     with monkeypatch.context() as patched:
         patched.setattr(fid.escalation, "raise_refused", unraisable)
         result = session.call("adjust_orders", {**adjust, "first": 3, "second": 4})
-        assert result.outcome == "refused" and result.ticket is None and result.repair
+        assert result.outcome == "refused" and result.ticket is None and result.repair is None
 
     def unexecutable(*args: Any, **kwargs: Any) -> Any:
         raise FiduciaryError("executing elsewhere")

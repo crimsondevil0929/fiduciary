@@ -398,3 +398,39 @@ def test_the_last_session_to_close_returns_the_recovery_reserve(world: bound.Wor
     assert stood.value.messages is None and stood.value.ticket is None
     later.close()
     _verify(world)
+
+
+def test_feedback_an_agent_can_act_on(world: bound.World) -> None:
+    """What the live model needed (scripts/live_acceptance.py's transcripts):
+    a committed call names its plan; a refused call whose binding's steps
+    cannot stand apart offers no partial repair (a debit without its refund),
+    and raises no ticket for one; a repair of independent steps says the
+    decision is the principals'; and no constraint is said twice."""
+    escalation = {"max_open": 5, "ttl_seconds": 3600, "auto": []}
+    world.issue_and_bind(kit.mandate(world, escalation=escalation))
+    session = kit.fiduciary(world).session(bound.SCOPE, tenant="acme")
+    done = session.call(
+        "refund_order", {"order_id": 7, "amount": "12.50", "payment_intent": "pi_0000000007"}
+    )
+    (plan_id,) = session._committed
+    assert done.value == {"plan_id": plan_id}
+    assert done.feedback == (
+        f"Committed: refund_order ran as plan {plan_id}.\n"
+        "Its outside request(s) (stripe refunds.create) are queued; the relay delivers them."
+    )
+    capped = session.call(
+        "refund_order", {"order_id": 9, "amount": "250.00", "payment_intent": "pi_0000000009"}
+    )
+    assert capped.outcome == "refused" and capped.repair is None and capped.ticket is None
+    assert "payload_amount_cap" in capped.feedback and "Resubmit" not in capped.render()
+    crossed = session.call(
+        "refund_order", {"order_id": 8, "amount": "1.00", "payment_intent": "pi_0000000008"}
+    )
+    lines = crossed.feedback.splitlines()
+    assert len(lines) == len(set(lines))
+    split = session.call("adjust_orders", {"first": 1, "second": 2, "amount": "1.00"})
+    assert split.ticket is not None and split.repair is not None
+    assert split.repair.startswith("Only part of this call would be admitted: keeping debit-first")
+    assert "the principals' decision, not yours" in split.repair
+    assert [t.ticket_class for t in session.tickets()] == ["refused"]
+    _verify(world)
