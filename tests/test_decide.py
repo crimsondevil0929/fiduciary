@@ -26,6 +26,7 @@ from fiduciary.documents import Approval, Mandate, Resolution, Ticket, Warrant
 from fiduciary.documents.mandate import AutoRule
 from fiduciary.documents.warrant import RuleBasis, TicketRef, WarrantBasis
 from fiduciary.exceptions import AuthorityError
+from fiduciary.log import Log
 from fiduciary.store import ApprovalRow, State
 from tests import examples as e
 from tests.conftest import Clock, approve
@@ -33,9 +34,12 @@ from tests.test_tamper_escalation import Escalated, _raise, _ticket, escalated_f
 from tests.test_tickets_warrants import _dead_ticket_json, _refused_ticket_json
 
 
-def _quote_ticket(clock: Clock, quote: str, **changes: Any) -> Ticket:
-    """The example extension ticket, for quote ``quote``: distinct evidence."""
+def _quote_ticket(clock: Clock, quote: str, log: Log | None = None, **changes: Any) -> Ticket:
+    """The example extension ticket, for quote ``quote``: distinct evidence,
+    observing ``log``'s head."""
     changes.setdefault("raised_at", fidu1.format_instant(clock()))
+    if log is not None:
+        changes.setdefault("observed", e.observed_json(log))
     raw = copy.deepcopy(e.ticket_json(ticket_id=str(uuid.uuid4()), **changes))
     raw["evidence"]["quote"]["id"] = quote
     for option, quorum in zip(raw["options"], (2, 1), strict=True):
@@ -55,11 +59,11 @@ def _refuses(match: str, decision: Any, *args: Any) -> None:
 
 def test_a_ticket_the_lineage_does_not_take_is_refused(world: Authority, clock: Clock) -> None:
     decide, log = world.decide, world.log
-    raised = _ticket(clock)
+    raised = _ticket(clock, log)
     _raise(world, raised, clock)
     state = log.state()
     _refuses("raised already", decide.raise_ticket, state, raised.digest, clock())
-    same = _quote_ticket(clock, "ext-91")  # another id, the same evidence
+    same = _quote_ticket(clock, "ext-91", log)  # another id, the same evidence
     log.put(same)
     _refuses(
         r"already open for this evidence \(F7-1\)", decide.raise_ticket, state, same.digest, clock()
@@ -71,11 +75,21 @@ def test_a_ticket_the_lineage_does_not_take_is_refused(world: Authority, clock: 
     log.put(early)
     _refuses("raised_at disagrees", decide.raise_ticket, state, early.digest, clock())
 
+    blind = _quote_ticket(clock, "ext-4")  # observes a log record that is not the head
+    log.put(blind)
+    _refuses("observed log record 88", decide.raise_ticket, state, blind.digest, clock())
+    behind = e.observed_json(log)
+    previous = log.records()[-2]
+    behind["log"] = {"seq": previous.seq, "hash": previous.hash}
+    late = _quote_ticket(clock, "ext-5", observed=behind)  # read before the last record
+    log.put(late)
+    _refuses(f"not record {state.head_seq}", decide.raise_ticket, state, late.digest, clock())
+
     stale = _quote_ticket(clock, "ext-2", mandate={**e.mandate().ref.to_json(), "digest": "a" * 64})
     log.put(stale)
     _refuses("version in force", decide.raise_ticket, state, stale.digest, clock())
 
-    raw = copy.deepcopy(_quote_ticket(clock, "ext-3").to_json())
+    raw = copy.deepcopy(_quote_ticket(clock, "ext-3", log).to_json())
     raw["options"][0]["quorum"] = 1
     raw.pop("sig")
     lenient = Ticket.from_json(raw, signed=False).signed(e.SERVICE)
@@ -83,18 +97,21 @@ def test_a_ticket_the_lineage_does_not_take_is_refused(world: Authority, clock: 
     _refuses("has quorum 1, not 2", decide.raise_ticket, state, lenient.digest, clock())
 
     for n in range(4):  # the example mandate's max_open is 5
-        _raise(world, _quote_ticket(clock, f"ext-storm-{n}"), clock)
-    storm = _quote_ticket(clock, "ext-storm-5")
+        _raise(world, _quote_ticket(clock, f"ext-storm-{n}", log), clock)
+    storm = _quote_ticket(clock, "ext-storm-5", log)
     log.put(storm)
     _refuses(r"max_open bound \(F7-2\)", decide.raise_ticket, log.state(), storm.digest, clock())
 
 
-def _amend_ticket(clock: Clock, current: Mandate, proposed: Mandate, **evidence: Any) -> Ticket:
+def _amend_ticket(
+    clock: Clock, log: Log, current: Mandate, proposed: Mandate, **evidence: Any
+) -> Ticket:
     amend = {"action": "amend", "mandate": proposed.digest}
     reject = {"action": "reject", "mandate": proposed.digest}
     raw = e.ticket_json(
         ticket_id=str(uuid.uuid4()),
         raised_at=fidu1.format_instant(clock()),
+        observed=e.observed_json(log),
         mandate=current.ref.to_json(),
         **{
             "class": "amend",
@@ -123,7 +140,7 @@ def test_an_amend_ticket_names_the_next_version_and_its_true_diff(
     raw["budget"] = {**raw["budget"], "envelope": "300.00000000"}
     wider = Mandate.from_json(raw, signed=False).signed(e.signer("cfo"))
     log.put(wider)
-    hidden = _amend_ticket(clock, current, wider)  # its diff hides the wider envelope
+    hidden = _amend_ticket(clock, log, current, wider)  # its diff hides the wider envelope
     log.put(hidden)
     _refuses("does not match refines", decide.raise_ticket, log.state(), hidden.digest, clock())
 
@@ -131,7 +148,7 @@ def test_an_amend_ticket_names_the_next_version_and_its_true_diff(
     other["mandate_id"] = str(uuid.uuid4())
     elsewhere = Mandate.from_json(other, signed=False).signed(e.signer("cfo"))
     log.put(elsewhere)
-    misplaced = _amend_ticket(clock, current, elsewhere)
+    misplaced = _amend_ticket(clock, log, current, elsewhere)
     log.put(misplaced)
     _refuses("is not version 2", decide.raise_ticket, log.state(), misplaced.digest, clock())
 
@@ -143,7 +160,7 @@ def test_approvals_that_must_never_count_are_left_out(escalated: Escalated, cloc
     """Rows a store could hold only if written around the service: each fails
     one of §7.3's six conditions, and none counts, for approval or decline."""
     authority, log = escalated.authority, escalated.authority.log
-    ticket = _quote_ticket(clock, "ext-count")
+    ticket = _quote_ticket(clock, "ext-count", authority.log)
     _raise(authority, ticket, clock)
     grant, decline = ticket.options
     state = log.state()
@@ -211,7 +228,7 @@ def test_approvals_that_must_never_count_are_left_out(escalated: Escalated, cloc
 
 
 def test_a_narrowing_must_narrow_an_option(world: Authority, clock: Clock) -> None:
-    ticket = _quote_ticket(clock, "ext-narrow")
+    ticket = _quote_ticket(clock, "ext-narrow", world.log)
     _raise(world, ticket, clock)
     smaller = Resolution(action="grant", quote="ext-narrow", amount=Decimal("5"))
     larger = Resolution(action="grant", quote="ext-narrow", amount=Decimal("50"))
@@ -321,7 +338,7 @@ def test_a_warrant_that_overstates_its_basis_is_refused(escalated: Escalated, cl
         ),
     )
 
-    ticket = _quote_ticket(clock, "ext-form")
+    ticket = _quote_ticket(clock, "ext-form", authority.log)
     _raise(authority, ticket, clock)
     _, decline = ticket.options
     by_quorum = WarrantBasis(approvals=("a" * 64,))
@@ -391,7 +408,7 @@ def test_declines_and_lapses_follow_the_ticket(escalated: Escalated, clock: Cloc
     _refuses("is warranted already", decide.decline_ticket, state, done)
     _refuses("execution is applied", decide.lapse_ticket, state, done, clock())
 
-    ticket = _quote_ticket(clock, "ext-decline")
+    ticket = _quote_ticket(clock, "ext-decline", authority.log)
     _raise(authority, ticket, clock)
     _refuses("still has a reachable option", decide.decline_ticket, log.state(), ticket.digest)
     _refuses("runs until", decide.lapse_ticket, log.state(), ticket.digest, clock())
@@ -402,7 +419,7 @@ def test_declines_and_lapses_follow_the_ticket(escalated: Escalated, clock: Cloc
     _refuses("is lapsed already", decide.lapse_ticket, log.state(), ticket.digest, after)
 
     # A warrant with no intent lapses once it can no longer run.
-    waiting = _quote_ticket(clock, "ext-waiting")
+    waiting = _quote_ticket(clock, "ext-waiting", authority.log)
     _raise(authority, waiting, clock)
     approve(log.store, ("cfo",), "ticket", waiting.digest, resolution=waiting.options[1].digest)
     authority.process_intake()
@@ -453,7 +470,7 @@ def test_execution_records_answer_their_warrant(escalated: Escalated, clock: Clo
     decide.execution_outcome(before, "execution.abandoned", {**none, "why": "x"})
 
     # A lapsed ticket's warrant runs no more.
-    waiting = _quote_ticket(clock, "ext-lapsing")
+    waiting = _quote_ticket(clock, "ext-lapsing", authority.log)
     _raise(authority, waiting, clock)
     approve(log.store, ("cfo",), "ticket", waiting.digest, resolution=waiting.options[1].digest)
     authority.process_intake()

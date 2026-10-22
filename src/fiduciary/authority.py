@@ -539,6 +539,12 @@ class Decide:
             )
         if ticket.raised_at != now:  # and so before its not_after, which follows raised_at
             raise AuthorityError("ticket raised_at disagrees with its record")
+        observed = ticket.observed.log
+        if (observed.seq, observed.hash) != (state.head_seq, state.hashes.get(state.head_seq)):
+            raise AuthorityError(
+                f"the ticket observed log record {observed.seq} ({observed.hash[:16]}), not "
+                f"record {state.head_seq}, the head its own record follows"
+            )
         mandate: Mandate = _load(self.store, ticket.mandate.digest, Mandate)
         for option in ticket.options:
             expected_quorum = quorum_for_resolution(mandate, ticket, option.resolution)

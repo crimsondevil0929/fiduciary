@@ -327,6 +327,8 @@ class State:
     """Each warrant's execution records: ``(event, body, seq)``, in order."""
     record_times: dict[int, datetime] = field(default_factory=dict)
     """Each record's ``issued_at`` timestamp by ``seq``."""
+    hashes: dict[int, str] = field(default_factory=dict)
+    """Each signed record's hash by ``seq``: what a ticket's ``observed.log`` names."""
     head_seq: int = 0
 
     @classmethod
@@ -355,6 +357,8 @@ class State:
     def apply(self, record: Record) -> None:
         self.head_seq = record.seq
         self.record_times[record.seq] = record.issued_at
+        if record.signature is not None:  # a record simulated by after() has no hash yet
+            self.hashes[record.seq] = record.hash
         body = record.content
         for table, row in rows_for(record):
             if table == "charters":

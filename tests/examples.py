@@ -387,6 +387,19 @@ def approval(principal: str = "head-ops", **changes: Any) -> Approval:
     )
 
 
+def observed_json(log: Any) -> dict[str, Any]:
+    """A ticket's ``observed``, naming the heads of ``log`` and of the ledger
+    it anchors into, as a ticket raised now observes them (the example's
+    ledger head when it anchors into none)."""
+    seq, head = log.store.head(log.log_id)
+    observed: dict[str, Any] = ticket_json()["observed"]
+    ledger = log._ledger
+    if ledger is not None:
+        ledger.refresh()
+        observed["ledger"] = {"sequence": len(ledger.ledger), "head": ledger.ledger.head_hash}
+    return {**observed, "log": {"seq": seq, "hash": head}}
+
+
 def ticket_json(**changes: Any) -> dict[str, Any]:
     grant_res: dict[str, Any] = {
         "action": "grant",

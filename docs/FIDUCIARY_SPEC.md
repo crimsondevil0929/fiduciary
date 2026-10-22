@@ -687,6 +687,12 @@ parameters only; the statements are the developer's.
 - **F4-17.** `evidence` is typed per class (section 7.1). It holds ids, digests, counts,
   amounts and instants read from interlock and AgentGov, never prose. Every digest in it
   names an artifact the bundle can carry.
+  `observed` names the heads the evidence was read at, and both are checked:
+  - `log` is the FIDU1 log's head, the record the ticket's own `ticket.raised` follows.
+    Replay refuses a ticket that observed any other.
+  - `ledger` is the ledger's entry count and head hash. `verify`, given the ledger, names a
+    ticket whose entry the ledger does not hold with that hash, or that does not precede
+    the anchor of the ticket's record.
 - **F4-18.** `agent.statement` is the only agent-authored text in a ticket, clipped to 512
   characters.
   - It enters no decision, no rule, no option, and no digest except the ticket's own.

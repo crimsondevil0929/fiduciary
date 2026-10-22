@@ -14,8 +14,10 @@
 - a decision the log records that its rules, taken again from the state before
   it, would not have written (:func:`fiduciary.authority.replay`);
 - with the ledger's entries: an anchor naming a record the log does not hold,
-  or holds with another hash (the log was truncated or rewritten), and every
-  record no anchor names.
+  or holds with another hash (the log was truncated or rewritten), every
+  record no anchor names, and a ticket whose ``observed.ledger`` is no entry of
+  the ledger, or one written after the ticket's own anchor. (Its
+  ``observed.log`` is the replay's to check: the head its record follows.)
 """
 
 from __future__ import annotations
@@ -24,14 +26,14 @@ import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from agentgov.core import LedgerEntry
+from agentgov.core import EntryType, LedgerEntry
 from agentgov.receipts.signing import Verifier
 
 from fiduciary import documents, fidu1
 from fiduciary.authority import replay
 from fiduciary.documents import Record
 from fiduciary.exceptions import FiduciaryError
-from fiduciary.log import LOG_ID, check_anchors
+from fiduciary.log import LOG_ID, check_anchors, parse_memo
 from fiduciary.store import PROJECTIONS, Store, fold
 
 __all__ = ["Report", "verify_store"]
@@ -153,9 +155,49 @@ def verify_store(
     anchored = 0
     unanchored: tuple[int, ...] = ()
     if ledger is not None:
-        found_problems, anchored, missing = check_anchors(records, ledger, log_id)
+        entries = list(ledger)
+        found_problems, anchored, missing = check_anchors(records, entries, log_id)
         problems.extend(found_problems)
+        problems.extend(_observed_problems(store, records, entries, log_id))
         unanchored = tuple(missing)
         if require_anchors:
             problems.extend(f"record {seq}: no anchor in the ledger names it" for seq in missing)
     return Report(tuple(problems), len(records), count, anchored, unanchored)
+
+
+def _observed_problems(
+    store: Store, records: Iterable[Record], entries: list[LedgerEntry], log_id: str
+) -> list[str]:
+    """Each ticket's ``observed.ledger`` held to the ledger: the entry it names
+    has the hash it names, and precedes the anchor of the ticket's record."""
+    by_seq = {entry.sequence: entry for entry in entries}
+    anchors: dict[int, int] = {}
+    for entry in entries:
+        found = parse_memo(entry.memo) if entry.entry_type is EntryType.ANCHOR else None
+        if found is not None and found[0] == log_id:
+            anchors.setdefault(found[1], entry.sequence)
+    problems = []
+    for record in records:
+        if record.kind != "ticket.raised":
+            continue
+        held = store.document(str(record.content.get("ticket")))
+        try:
+            ticket = documents.loads(held[1]) if held is not None else None
+        except FiduciaryError:
+            continue  # named above, as a document that does not parse
+        if not isinstance(ticket, documents.Ticket):
+            continue
+        seen = ticket.observed.ledger
+        at = by_seq.get(seen.sequence)
+        if at is None or at.entry_hash != seen.head:
+            problems.append(
+                f"record {record.seq}: its ticket observed ledger entry {seen.sequence} as "
+                f"{seen.head[:16]}, which the ledger does not hold"
+            )
+        anchor = anchors.get(record.seq)
+        if anchor is not None and anchor <= seen.sequence:
+            problems.append(
+                f"record {record.seq}: its ticket observed ledger entry {seen.sequence}, which "
+                f"is not before the record's own anchor ({anchor})"
+            )
+    return problems

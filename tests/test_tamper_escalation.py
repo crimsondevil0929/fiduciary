@@ -13,16 +13,20 @@ write them (A3): only replaying the rules names those.
 from __future__ import annotations
 
 import copy
+import dataclasses
 from datetime import timedelta
 from typing import Any
 
 import pytest
 from agentgov import BudgetManager
+from agentgov.core import EntryType
 
 from fiduciary import fidu1
 from fiduciary.authority import Authority
 from fiduciary.documents import Approval, Ticket, Warrant
+from fiduciary.log import Log
 from fiduciary.store import Store
+from fiduciary.verify import verify_store
 from tests import examples as e
 from tests.conftest import Clock, approve
 from tests.test_tamper import _names, _owner, _verify
@@ -42,7 +46,8 @@ class Escalated:
         return next(r.seq for r in self.authority.log.records() if r.kind == kind)
 
 
-def _ticket(clock: Clock, **changes: Any) -> Ticket:
+def _ticket(clock: Clock, log: Log, **changes: Any) -> Ticket:
+    changes.setdefault("observed", e.observed_json(log))
     raw = copy.deepcopy(e.ticket_json(raised_at=fidu1.format_instant(clock()), **changes))
     raw["options"][0]["quorum"] = 2  # the example mandate's grant quorum
     return Ticket.from_json(raw, signed=False).signed(e.SERVICE)
@@ -56,7 +61,7 @@ def _raise(authority: Authority, ticket: Ticket, clock: Clock) -> None:
 
 @pytest.fixture(name="escalated")
 def escalated_fixture(world: Authority, clock: Clock) -> Escalated:
-    ticket = _ticket(clock)
+    ticket = _ticket(clock, world.log)
     _raise(world, ticket, clock)
     grant = ticket.options[0]
     approve(world.log.store, ("cfo", "head-ops"), "ticket", ticket.digest, resolution=grant.digest)
@@ -88,13 +93,60 @@ def test_an_untouched_escalation_verifies(escalated: Escalated, ledger: BudgetMa
     assert report.ok, report.problems
 
 
+def test_a_ticket_that_observed_another_ledger_is_named(
+    world: Authority, ledger: BudgetManager, clock: Clock
+) -> None:
+    """``observed.ledger`` is held to the ledger: the entry it names, with the
+    hash it names, and before the ticket's own anchor."""
+    observed = e.observed_json(world.log)
+    observed["ledger"]["head"] = "f" * 64
+    forged = _ticket(clock, world.log, observed=observed)
+    _raise(world, forged, clock)
+    seq = world.log.records()[-1].seq
+    _names(
+        _verify(world.log.store, ledger),
+        f"record {seq}: its ticket observed ledger entry {observed['ledger']['sequence']} as "
+        "ffffffffffffffff, which the ledger does not hold",
+    )
+
+
+def test_a_ticket_anchored_before_what_it_observed_is_named(
+    escalated: Escalated, ledger: BudgetManager
+) -> None:
+    """A ledger whose anchor of the ticket's record comes before the entry the
+    ticket observed: the ledger's order and the ticket disagree."""
+    ledger.refresh()
+    entries = list(ledger.audit_trail())
+    raised = escalated.seq("ticket.raised")
+    seen = escalated.ticket.observed.ledger.sequence
+    anchor = next(
+        i for i, x in enumerate(entries) if x.memo.startswith(f"FIDU1 fiduciary {raised} ")
+    )
+    early = next(i for i, x in enumerate(entries) if x.sequence == seen)
+    moved = dataclasses.replace(
+        entries[early], memo=entries[anchor].memo, entry_type=EntryType.ANCHOR
+    )
+    entries[early], entries[anchor] = moved, dataclasses.replace(entries[anchor], memo="moved")
+    report = verify_store(
+        escalated.store,
+        service_key=e.SERVICE.public_key(),
+        pinned=e.charter().digest,
+        ledger=entries,
+    )
+    _names(
+        report,
+        f"record {raised}: its ticket observed ledger entry {seen}, which is not before the "
+        f"record's own anchor ({seen})",
+    )
+
+
 def test_a_forged_approval_is_named(
     escalated: Escalated, ledger: BudgetManager, clock: Clock
 ) -> None:
     """An approval in head-ops's name that another key signed, recorded by a
     service holding its own key: the rules refuse it when replayed."""
     authority, store = escalated.authority, escalated.store
-    other = _ticket(clock, ticket_id="4b1f3a52-8c0e-4e3a-9d7b-5f6a2c9e8d10")
+    other = _ticket(clock, authority.log, ticket_id="4b1f3a52-8c0e-4e3a-9d7b-5f6a2c9e8d10")
     _raise(authority, other, clock)
     forged = Approval.from_json(
         e.approval_json(
@@ -126,7 +178,7 @@ def test_an_approval_moved_to_another_ticket_is_named(
     escalated: Escalated, ledger: BudgetManager, clock: Clock
 ) -> None:
     authority, store = escalated.authority, escalated.store
-    other = _ticket(clock, ticket_id="4b1f3a52-8c0e-4e3a-9d7b-5f6a2c9e8d10")
+    other = _ticket(clock, authority.log, ticket_id="4b1f3a52-8c0e-4e3a-9d7b-5f6a2c9e8d10")
     _raise(authority, other, clock)
     # Around the service: the projection says the approval names the other ticket.
     _owner(
@@ -147,7 +199,7 @@ def test_an_approval_recorded_against_another_ticket_is_named(
     """The service records a principal's approval of one ticket as an
     approval of another: its body is not what the rules write."""
     authority, store = escalated.authority, escalated.store
-    other = _ticket(clock, ticket_id="4b1f3a52-8c0e-4e3a-9d7b-5f6a2c9e8d10")
+    other = _ticket(clock, authority.log, ticket_id="4b1f3a52-8c0e-4e3a-9d7b-5f6a2c9e8d10")
     _raise(authority, other, clock)
     approval = Approval.from_json(
         e.approval_json(
@@ -254,7 +306,7 @@ def test_a_lapse_after_its_deadline_passes_but_not_before(
     """A ticket left open lapses at its deadline (F1-6); a lapse written
     before it is named."""
     authority = escalated.authority
-    other = _ticket(clock, ticket_id="4b1f3a52-8c0e-4e3a-9d7b-5f6a2c9e8d10")
+    other = _ticket(clock, authority.log, ticket_id="4b1f3a52-8c0e-4e3a-9d7b-5f6a2c9e8d10")
     _raise(authority, other, clock)
     body = {
         "ticket": other.digest,
