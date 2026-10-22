@@ -13,6 +13,9 @@
   the service;
 - a decision the log records that its rules, taken again from the state before
   it, would not have written (:func:`fiduciary.authority.replay`);
+- with the ledger's entries and a skew: every instant a record says that
+  disagrees with the ledger order of its anchor by more than the skew (V12,
+  §9.4);
 - with the ledger's entries: an anchor naming a record the log does not hold,
   or holds with another hash (the log was truncated or rewritten), every
   record no anchor names, and a ticket whose ``observed.ledger`` is no entry of
@@ -23,8 +26,9 @@
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import timedelta
 
 from agentgov.core import EntryType, LedgerEntry
 from agentgov.receipts.signing import Verifier
@@ -36,7 +40,7 @@ from fiduciary.exceptions import FiduciaryError
 from fiduciary.log import LOG_ID, check_anchors, parse_memo
 from fiduciary.store import PROJECTIONS, Store, fold
 
-__all__ = ["Report", "verify_store"]
+__all__ = ["Report", "ordering_problems", "verify_store"]
 
 _NAMED = {
     "charter.adopted": ("charter", "charter"),
@@ -73,6 +77,7 @@ def verify_store(
     log_id: str = LOG_ID,
     ledger: Iterable[LedgerEntry] | None = None,
     require_anchors: bool = True,
+    skew_seconds: int | None = None,
 ) -> Report:
     """Verify everything a store holds (module docstring).
 
@@ -80,6 +85,8 @@ def verify_store(
     :param pinned: Charter version 1's digest, as configuration pins it.
     :param ledger: The AgentGov ledger's entries, when the log is anchored.
     :param require_anchors: Count a record no anchor names as a problem.
+    :param skew_seconds: With the ledger, hold every record's instant to the
+        ledger order of its anchor, within this many seconds (§9.4).
     """
     problems: list[str] = []
     records: list[Record] = []
@@ -159,10 +166,47 @@ def verify_store(
         found_problems, anchored, missing = check_anchors(records, entries, log_id)
         problems.extend(found_problems)
         problems.extend(_observed_problems(store, records, entries, log_id))
+        if skew_seconds is not None:
+            anchors: dict[int, LedgerEntry] = {}
+            for entry in entries:
+                memo = parse_memo(entry.memo) if entry.entry_type is EntryType.ANCHOR else None
+                if memo is not None and memo[0] == log_id:
+                    anchors.setdefault(memo[1], entry)
+            problems.extend(ordering_problems(records, anchors, timedelta(seconds=skew_seconds)))
         unanchored = tuple(missing)
         if require_anchors:
             problems.extend(f"record {seq}: no anchor in the ledger names it" for seq in missing)
     return Report(tuple(problems), len(records), count, anchored, unanchored)
+
+
+def ordering_problems(
+    records: Sequence[Record], anchors: Mapping[int, LedgerEntry], skew: timedelta
+) -> list[str]:
+    """V12 (§9.4): each record's instant is no later than its anchor's ledger
+    time, nor earlier than the record before it, by more than ``skew``; and
+    anchors follow the log's order. An anchor proves a lower bound only: the
+    ledger time of the next anchor is the record's upper bound."""
+    problems = []
+    previous: Record | None = None
+    last = 0
+    for record in records:
+        anchor = anchors.get(record.seq)
+        if anchor is not None:
+            if record.issued_at > anchor.timestamp + skew:
+                problems.append(
+                    f"record {record.seq} says {fidu1.format_instant(record.issued_at)}, after its "
+                    f"anchor's ledger time {fidu1.format_instant(anchor.timestamp)}"
+                )
+            if anchor.sequence < last:
+                problems.append(f"record {record.seq} is anchored before its predecessor")
+            last = anchor.sequence
+        if previous is not None and record.issued_at < previous.issued_at - skew:
+            problems.append(
+                f"record {record.seq} says {fidu1.format_instant(record.issued_at)}, before "
+                f"record {previous.seq}"
+            )
+        previous = record
+    return problems
 
 
 def _observed_problems(

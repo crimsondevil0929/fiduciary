@@ -705,7 +705,14 @@ def _verify(args: argparse.Namespace) -> int:
     if ledger is not None:
         ledger.refresh()
         entries = ledger.audit_trail()
-    report = verify_store(store, service_key=key, pinned=config.pinned(), ledger=entries)
+    skew = config.skew_seconds if args.skew is None else args.skew
+    report = verify_store(
+        store,
+        service_key=key,
+        pinned=config.pinned(),
+        ledger=entries,
+        skew_seconds=skew if entries is not None else None,
+    )
     for problem in report.problems:
         _out(f"FAIL {problem}")
     anchored = f", {report.anchored} anchored" if entries is not None else ", no ledger given"
@@ -1125,6 +1132,35 @@ def _export_bundle(args: argparse.Namespace) -> int:
     return OK
 
 
+def _verify_bundle(args: argparse.Namespace) -> int:
+    """§9.3: exit 0 passes; 1 usage; 2 unreadable; 3 to 9 the first failing
+    check's class. Needs no database and no network (F9-3)."""
+    from fiduciary.bundle import BundleError, TrustedKeys, verify_bundle
+
+    if not fidu1.HASH.fullmatch(args.charter):
+        _err("fiduciary: --charter is the pinned digest: 64 lowercase hex characters")
+        return 1
+    try:
+        data = Path(args.bundle).read_bytes()
+        keys = None
+        if args.keys is not None:
+            keys = TrustedKeys.loads(Path(args.keys).read_bytes())
+        witness = fidu1.key_of(args.witness) if args.witness is not None else None
+    except (OSError, FiduciaryError) as exc:
+        _err(f"fiduciary: {exc}")
+        return 2 if isinstance(exc, OSError) else 1
+    try:
+        report = verify_bundle(
+            data, charter=args.charter, keys=keys, witness=witness, skew_seconds=args.skew
+        )
+    except BundleError as exc:
+        _err(f"fiduciary: {exc}")
+        return 2
+    _out(report.render())
+    _out("PASS" if report.passed else f"FAIL: exit {report.exit_code}")
+    return report.exit_code
+
+
 # --------------------------------------------------------------------------
 # the parser
 # --------------------------------------------------------------------------
@@ -1332,15 +1368,34 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--ledger-signer", help="the ledger's checkpoint key, a [signers.<name>]")
     export.set_defaults(handler=_export_bundle)
 
+    check = commands.add_parser("verify-bundle", help="verify a bundle offline, V1 to V12")
+    check.add_argument("bundle")
+    check.add_argument("--charter", required=True, help="charter version 1's pinned digest")
+    check.add_argument("--keys", help="the keys the auditor pins (keys.json's form)")
+    check.add_argument("--witness", help="a ledger witness's key, ed25519:<hex>")
+    check.add_argument("--skew", type=int, default=5, help="seconds of clock skew (V12)")
+    check.set_defaults(handler=_verify_bundle)
+
     verify = commands.add_parser("verify", help="verify the store, its log and its anchors")
     verify.add_argument("--service-key", help="ed25519:<hex>; the configured key's by default")
+    verify.add_argument(
+        "--skew",
+        type=int,
+        help="seconds an instant may stray from its anchor's ledger time; [bridge] skew_seconds",
+    )
     verify.set_defaults(handler=_verify)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
-    args = parser.parse_args(argv)
+    try:
+        args = parser.parse_args(argv)
+    except SystemExit as exc:
+        words = sys.argv[1:] if argv is None else argv
+        if exc.code == USAGE and "verify-bundle" in words:
+            return 1  # §9.3: a usage error is 1; 2 is a bundle that could not be read
+        raise
     try:
         status: int = args.handler(args)
     except _ExitError as exc:

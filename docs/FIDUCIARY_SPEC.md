@@ -1522,20 +1522,21 @@ interlock already provides:
 ## 9.1 Contents
 
 `fiduciary export-bundle --mandate <id> [--from <seq>] [--to <seq>]` writes a bundle for a
-lineage and its descendants:
+lineage and its descendants. `docs/BUNDLE_FORMAT.md` specifies its bytes.
 
 | Member | Holds |
 |---|---|
-| `manifest.json` | every member's path, type and SHA-256; the lineage; the range; the exporter |
+| `manifest.json` | every member's path, type and SHA-256; the lineage; the range; the ledger cut; the exporter |
 | `charter/` | every charter version, and its approvals |
-| `mandates/` | every version of the lineage, of its ancestors and of its descendants; their approvals; the tool bindings they pin |
+| `mandates/`, `tools/` | every version of the lineage, of its ancestors and of its descendants; their approvals; the tool bindings they pin |
 | `tickets/`, `approvals/`, `warrants/` | every ticket of the lineage; every approval recorded on one, counted or not; every warrant |
-| `log.jsonl` | the FIDU1 records in range, and the records outside it that those name |
-| `ledger/` | every AgentGov entry on the lineage's footprint, meaning its scopes, its satellites and the `fiduciary` anchors. Each entry comes with an RFC 9162 inclusion proof against a signed ledger checkpoint (`publish_checkpoint`, log id `agentgov-ledger:<entry 1>`), that checkpoint's cosignatures, and the checkpoint signer's key. |
+| `log.jsonl`, `intake/` | the FIDU1 log from record 1 to the range's last: each decision in range is taken again from the state every earlier record built. The intake items its approvals answer. |
+| `ledger/` | every AgentGov entry on the lineage's footprint, meaning its scopes, its satellites and the `fiduciary` anchors. Each entry comes with an RFC 9162 inclusion proof against a ledger checkpoint of entries 1 to the anchor of the range's last record, signed by the ledger's checkpoint key (log id `agentgov-ledger:<entry 1>`), and that checkpoint's cosignatures. |
 | `receipts/` | every ARC1 action and delivery receipt of the lineage, as a `ReceiptBundle` with its inclusion proof and checkpoint; the receipt log's key transitions; witness cosignatures |
 | `ilok1/` | the operator log's records that name a warrant of the lineage; the install records that vouch for the registry; key registrations and revocations; the lineage's runtime records (recovery and extension) |
 | `escrow/` | the lineage's escrow chain records, which are digests only. They place each stage in ledger order. |
-| `keys.json` | every public key the bundle is verified under, and where each is pinned |
+| `deployment.json` | what compiling the lineage reads from the deployment: tables, sinks, directives, and its funding scopes' depths |
+| `keys.json` | every public key the bundle is verified under |
 
 - **F9-1.** The bundle carries no row data, payloads, transcripts or secrets. It carries
   only what its source logs carry, which is digests (F4-27, E3-11).
@@ -1549,30 +1550,34 @@ lineage and its descendants:
 
 The bundle is an uncompressed POSIX tar, with members in sorted order, mode 0644, owner 0
 and mtime 0. One lineage over one range therefore exports to identical bytes.
-`manifest.json` is canonical JSON, and an exporter MAY sign it as a FIDU1 `bundle` document.
-The verifier never relies on that signature: it checks every member against its digest, then
-on the member's own terms.
+`manifest.json` is canonical JSON, and an exporter MAY sign it as a FIDU1 `bundle` document
+with the service key. The verifier never relies on that signature: it checks every member
+against its digest, then on the member's own terms. A signature that is present must verify
+(V9).
 
 ## 9.3 `fiduciary verify-bundle`
 
 ```
-fiduciary verify-bundle acme-support.fidb --charter <pinned digest> [--keys keys.json] [--witness <key>]
+fiduciary verify-bundle acme-support.fidb --charter <pinned digest> [--keys keys.json] [--witness <key>] [--skew <seconds>]
 ```
 
-The auditor supplies the charter digest, from outside the bundle. Every key the bundle names
-is checked against what that charter, its successors and the logs register.
+The auditor supplies the charter digest, from outside the bundle. Principals' keys are the
+charters' own, and the pinned digest vouches for them. The service, ledger checkpoint,
+receipt, runtime and operator keys are not in any charter: the auditor pins them with
+`--keys`, and `keys.json` must agree with what is pinned (V1). A role left unpinned is
+verified under `keys.json`'s key, and the report says it is the exporter's statement.
 
 | Check | Holds when | Fails as | Exit |
 |---|---|---|---|
 | V1 schema | every member parses strictly (F3-1) and matches its manifest digest | `malformed` | 3 |
 | V2 charter | the chain from the pinned digest verifies: approvals, quorums, suspensions | `authority` | 5 |
 | V3 lineage | versions link; each issued version carries its quorum; each derived one is ⊑ its parent in force; no equivocation; terms nest | `authority` / `monotonicity` | 5 / 6 |
-| V4 compiled policy | `compile` over the bundle's documents gives the compiled digest each `mandate.bound` names, and every receipt meets F6-7 (and F6-8 after U-1) | `policy` | 6 |
+| V4 compiled policy | `compile` over the bundle's documents gives the compiled digest each `mandate.bound` names, and every receipt meets F6-7, and F6-8 when the manifest says the exporter's checker digests are canonical (U-1) | `policy` | 6 |
 | V5 receipts | agentgov's `verify_bundle` passes offline for each receipt: signature, inclusion, witness, key schedule | `signature` / `evidence` | 4 / 8 |
 | V6 ledger | each entry's inclusion proof verifies against a checkpoint signed by the ledger's checkpoint key; each memo the other checks rely on is in a verified entry | `evidence` | 8 |
 | V7 completeness | every ledger entry on the footprint, every receipt, and every ILOK1 operator act on the lineage's messages is explained (see below). Anything else is named, and labeled break-glass when its key is declared so. | `ambient` | 7 |
 | V8 warrants | each warrant's basis is recomputed (§7.3, §7.4); each is executed once; its intent precedes its `not_after`; each step's evidence matches the resolution's targets, heads and amounts | `authority` / `time` | 5 / 9 |
-| V9 records | the FIDU1 log verifies: sequence, links, and signatures under the service key the charter pins | `signature` | 4 |
+| V9 records | the FIDU1 log verifies: sequence, links, and signatures under the service key; a signed manifest's signature holds | `signature` | 4 |
 | V10 anchors | every FIDU1 record in range is anchored, and every anchor names a record the log holds with that hash | `evidence` | 8 |
 | V11 revocation | no receipt of the lineage commits, and no delivery is made, after its revocation's trip sequence. Plans in flight at the trip, by `STAGE_OPENED` order, must show no commit. | `revocation` | 9 |
 | V12 ordering | every instant the service wrote agrees with the ledger order of its anchor, within the configured skew | `time` | 9 |
@@ -1591,7 +1596,8 @@ The other exit codes:
 - exit 1 is a usage error;
 - exit 2 is a bundle the verifier could not read.
 
-A failing run prints every check, not only the first that fails.
+A failing run prints every check, not only the first that fails. It exits with the code of
+the first failing check in the order V1 to V12.
 
 - **F9-3.** `verify-bundle` needs no network and no database. Beyond the standard library,
   it imports only `fiduciary`, `interlock` and `agentgov`. The format is specified so that

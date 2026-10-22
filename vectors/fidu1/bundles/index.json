@@ -1,0 +1,838 @@
+[
+  {
+    "about": "no tar at all: exit 2",
+    "charter": "8f8f4380046fbfdb37033b6037969d818cae439b78b110ed26183ec1381dce15",
+    "checks": [],
+    "exit_code": 2,
+    "file": "unreadable-not-a-tar.fidb",
+    "findings": [],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "unreadable-not-a-tar",
+    "sha256": "550a6a87961646c07f30bf2104f172993fb15d7007a36a67fffc33648d5cd94b",
+    "skew_seconds": 5,
+    "unreadable": "not a bundle: invalid header",
+    "witness": null
+  },
+  {
+    "about": "keys.json edited; its digest no longer matches",
+    "charter": "8f8f4380046fbfdb37033b6037969d818cae439b78b110ed26183ec1381dce15",
+    "checks": [
+      "V1"
+    ],
+    "exit_code": 3,
+    "file": "v1-byte-changed.fidb",
+    "findings": [
+      "V1 malformed: member keys.json does not match its manifest digest"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v1-byte-changed",
+    "sha256": "26afac942943f7af06c284a74e97c1434123edd0c554d40d61c2f926e90b7833",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "deployment.json deleted",
+    "charter": "8f8f4380046fbfdb37033b6037969d818cae439b78b110ed26183ec1381dce15",
+    "checks": [
+      "V1",
+      "V4"
+    ],
+    "exit_code": 3,
+    "file": "v1-member-deleted.fidb",
+    "findings": [
+      "V1 malformed: member deployment.json is listed and missing",
+      "V4 policy: no deployment.json: the compiled policy cannot be recomputed",
+      "V4 policy: receipt 545bcb85-403c-4347-b925-c11b5495b478: no version 1 of 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31 was bound to issue it"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v1-member-deleted",
+    "sha256": "e40a55c315912e719737fcaba40689e24a31e49a3537fdc9411b0f2205222581",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a member twice",
+    "charter": "8f8f4380046fbfdb37033b6037969d818cae439b78b110ed26183ec1381dce15",
+    "checks": [
+      "V1"
+    ],
+    "exit_code": 3,
+    "file": "v1-member-duplicated.fidb",
+    "findings": [
+      "V1 malformed: member approvals/cc0b4a0757b0c92bcb98f9816186e3407ca9a80ec833088d45234dd63d52e85b.json appears 2 times"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v1-member-duplicated",
+    "sha256": "d76c17c137caf6a2033b0fe3433593a357a0fd443507bf2df67395c751c4f689",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "two members swapped",
+    "charter": "8f8f4380046fbfdb37033b6037969d818cae439b78b110ed26183ec1381dce15",
+    "checks": [
+      "V1"
+    ],
+    "exit_code": 3,
+    "file": "v1-members-out-of-order.fidb",
+    "findings": [
+      "V1 malformed: the members are not in sorted order (\u00a79.2)"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v1-members-out-of-order",
+    "sha256": "e297dbedbcdd16a9b6c771fd2d7b542f7a9a64b55d823d404a5b00b6f061428c",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a record in range that no ledger anchor names",
+    "charter": "2c53b4358f48d00b450563e8816f969cfe01f29f08a2563325607f2a94d4ceb6",
+    "checks": [
+      "V10"
+    ],
+    "exit_code": 8,
+    "file": "v10-unanchored-record.fidb",
+    "findings": [
+      "V10 evidence: record 11 is in range, and no anchor names it"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v10-unanchored-record",
+    "sha256": "f9f5d97670d5fbce34e9728dfaf2c3116d700c1d59efb87c24316e20bd3ac058",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a plan committed on the lineage's chain after its revocation's trip",
+    "charter": "2c718b651437c4129c8ab0904a4c9f31e9e15133205f17d8b044ea85d5ed51c5",
+    "checks": [
+      "V7",
+      "V11"
+    ],
+    "exit_code": 7,
+    "file": "v11-commit-after-revocation.fidb",
+    "findings": [
+      "V7 ambient: ledger entry 21 (circuit_reset) on support-agent: a reset no warrant of the lineage names",
+      "V11 revocation: plan plan-09b5ea6fa296 committed at ledger 21, after the trip at 19 (G7)",
+      "V11 revocation: receipt 5db03974-99d5-46ba-95de-3194db4b6aa7 commits after the trip at 19"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v11-commit-after-revocation",
+    "sha256": "cedc61168fc3342ec004da6c305f1b8c959c098c32ff1436669df7c02c18a8d8",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "records stamped five minutes ahead of their anchors",
+    "charter": "c38030cf092c8d47cac4f7baff770dd0470a6b9bc73f5898519ec1b9c57b48cd",
+    "checks": [
+      "V12"
+    ],
+    "exit_code": 9,
+    "file": "v12-records-ahead-of-the-ledger.fidb",
+    "findings": [
+      "V12 time: record 11 says 2026-10-22T13:04:17.901891Z, after its anchor's ledger time 2026-10-22T12:59:17.903925Z",
+      "V12 time: record 12 says 2026-10-22T13:04:17.904307Z, after its anchor's ledger time 2026-10-22T12:59:17.905734Z"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v12-records-ahead-of-the-ledger",
+    "sha256": "20a7464c8ab9571206f5cadcdc1f48e019a10c887743ed1cda9d09784ff54191",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a charter digest the bundle does not hold",
+    "charter": "0000000000000000000000000000000000000000000000000000000000000000",
+    "checks": [
+      "V2"
+    ],
+    "exit_code": 5,
+    "file": "v2-wrong-pinned-charter.fidb",
+    "findings": [
+      "V2 authority: the bundle holds no charter with the pinned digest 0000000000000000"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v2-wrong-pinned-charter",
+    "sha256": "785c37c6a2009311e2c15fe2151d242d3c88dd9a969f11022043b5584295abc8",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a child whose envelope is past what its parent delegates",
+    "charter": "3c2953e7960836746f6503c18f3fd6963a624bb045f222134d1182591d9f3a01",
+    "checks": [
+      "V3"
+    ],
+    "exit_code": 6,
+    "file": "v3-child-broader-than-parent.fidb",
+    "findings": [
+      "V3 monotonicity: record 11 (mandate.issued): its rules refuse it now: mandate d36d88a88263ed80 does not refine its parent: budget.envelope: is 60.00000000, above the parent's 50.00000000"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v3-child-broader-than-parent",
+    "sha256": "8fc24599b6f9f4c144e18efd380023686af2dc0ffe73e1950b1e57ef8dde89aa",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a quorum mandate issued on one approval of two",
+    "charter": "71f432101be0efe8505a13b7c1070d7853c03783e9cebb27a3a4900f25b6b654",
+    "checks": [
+      "V3"
+    ],
+    "exit_code": 5,
+    "file": "v3-mandate-one-approval-short.fidb",
+    "findings": [
+      "V3 authority: record 6 (mandate.issued): its rules refuse it now: mandate 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31 version 1 needs 2 approvals; 1 count"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v3-mandate-one-approval-short",
+    "sha256": "5eeb8ca296e301ef81627185277566cae886587288a19a6c24ef981c9359cbf7",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a deployment whose directive text the bound version does not compile from",
+    "charter": "9a2bc7da39a6af147bb107c22f026cfaf6849c4769c89fae85e4aeda6f068f75",
+    "checks": [
+      "V4"
+    ],
+    "exit_code": 6,
+    "file": "v4-other-deployment.fidb",
+    "findings": [
+      "V4 policy: record 8: the bound version does not compile: recovery.directives[stop-retrying]: its text does not hash to its sha256",
+      "V4 policy: receipt 64ffae2f-b04d-4b62-9ee8-ff3d4fa41d65: no version 1 of 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31 was bound to issue it"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v4-other-deployment",
+    "sha256": "e3d1468ce26c47474b072a492cfc0187b20315f811747fdfa13639ecdc5042e3",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "receipts verified under a key that did not sign them",
+    "charter": "bee7c1bd8871096fdaf939ee539cc473ee47157ba9424dc8bda03f2bbc5cb2b1",
+    "checks": [
+      "V1",
+      "V5"
+    ],
+    "exit_code": 3,
+    "file": "v5-other-receipt-key.fidb",
+    "findings": [
+      "V1 malformed: keys.json names other receipt keys than the pinned ones",
+      "V5 signature: receipt 46445c5f-7f6c-4dd5-a8e9-0f6e212b4283: receipt signature: the receipt was signed by key b6e1a10c27035771, which is not among the keys given (fc044d1d3ae96861)"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v5-other-receipt-key",
+    "sha256": "fe7964c033a5936a76b3d68e63880e1ec0d09763dec0270e8b002eb543d4904a",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a ledger checkpoint verified under a key that did not sign it",
+    "charter": "de2d493365ec20079a47973bfc0f5e1894ff0edc710ac3fcc4f8b0fa5e74524f",
+    "checks": [
+      "V1",
+      "V6",
+      "V10"
+    ],
+    "exit_code": 3,
+    "file": "v6-other-ledger-key.fidb",
+    "findings": [
+      "V1 malformed: keys.json names another ledger key than the pinned one",
+      "V6 evidence: the checkpoint is not signed by the ledger's key: the checkpoint was signed by key 126396707de8ce96, which is not among the keys given (fc044d1d3ae96861)",
+      "V10 evidence: record 1 is in range, and no anchor names it",
+      "V10 evidence: record 2 is in range, and no anchor names it",
+      "V10 evidence: record 3 is in range, and no anchor names it",
+      "V10 evidence: record 4 is in range, and no anchor names it",
+      "V10 evidence: record 5 is in range, and no anchor names it",
+      "V10 evidence: record 6 is in range, and no anchor names it",
+      "V10 evidence: record 7 is in range, and no anchor names it",
+      "V10 evidence: record 8 is in range, and no anchor names it",
+      "V10 evidence: record 9 is in range, and no anchor names it",
+      "V10 evidence: record 10 is in range, and no anchor names it"
+    ],
+    "keys": {
+      "ledger": "ed25519:03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v6-other-ledger-key",
+    "sha256": "7a898b14e57f7e811f16932450983f54654b02fdc743da53d3c0fd3a4e306467",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a witness required, and no cosignature of it",
+    "charter": "cfed17708cfce6b4afde4c2fb76b485469b49fe0008c04b7203cf4367106f099",
+    "checks": [
+      "V6"
+    ],
+    "exit_code": 8,
+    "file": "v6-witness-never-cosigned.fidb",
+    "findings": [
+      "V6 evidence: no cosignature of the checkpoint by the witness: no cosignature from witness key fc044d1d3ae96861 for log 'agentgov-ledger:31645a55907f5adf6bd9b99c4a0ab10d78c664c11b92fc84d09a475a794a4e7d' at size 17: the checkpoint was never witnessed"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v6-witness-never-cosigned",
+    "sha256": "62153684ba3fef605c1833587e332fbd99ea230af1c65c43163ec612b2ac2be6",
+    "skew_seconds": 5,
+    "witness": "ed25519:03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
+  },
+  {
+    "about": "the same, by a key the charter declares break-glass: labeled",
+    "charter": "cf18416c637f686eaa16d0cb1e80d6cd80fbc58ee660a8eca6ec4d2b2de88fb3",
+    "checks": [
+      "V7"
+    ],
+    "exit_code": 7,
+    "file": "v7-break-glass-release.fidb",
+    "findings": [
+      "V7 ambient [break-glass]: operator record 1 (release) by key 56dd14b5b8c694bd acts on the lineage's messages under no warrant of it"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+        "night-shift": "ed25519:01b2d28269a074b8c0d6fbceaa52586815ab73a551d566e4579320d98644c7f1"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v7-break-glass-release",
+    "sha256": "84e4a39c6047c1a7be93d1a654e82adef673ec37d16dc7fe163c3b62f4dabccc",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "an operator releases a held message under no warrant",
+    "charter": "44be8d799f42d0bbd2b6ffceec5f8b5600b005984616dceb979af83fb042c091",
+    "checks": [
+      "V7"
+    ],
+    "exit_code": 7,
+    "file": "v7-manual-release.fidb",
+    "findings": [
+      "V7 ambient: operator record 1 (release) by key a6a17e3b834c9950 acts on the lineage's messages under no warrant of it"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v7-manual-release",
+    "sha256": "45dc86c26fd9f67acebf2bb196bd8be9faf69b3a6c7aef33e190e03d4c0c6216",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "the subject's halt lifted with no warrant",
+    "charter": "a73d18e0bc4ca2a8db104e70dfa4de9a4c436aae32b675be2e548e04a4ec9b6e",
+    "checks": [
+      "V7"
+    ],
+    "exit_code": 7,
+    "file": "v7-raw-reset.fidb",
+    "findings": [
+      "V7 ambient: ledger entry 19 (circuit_reset) on support-agent: a reset no warrant of the lineage names"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v7-raw-reset",
+    "sha256": "bf4a65fe3a967941ae4eec67ebc9343f0fbd97af4d94be0fb029b5769a310afc",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a delegation from the subject that no binding records",
+    "charter": "40134dfd9ea85a484d9622316fb781ba6b743970e4d390504e32e2ca2e7b384b",
+    "checks": [
+      "V7"
+    ],
+    "exit_code": 7,
+    "file": "v7-unmandated-delegation.fidb",
+    "findings": [
+      "V7 ambient: ledger entry 18 (allocation) on support-agent: a delegation no binding of the lineage records"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v7-unmandated-delegation",
+    "sha256": "a09ccdf646afbbe4902b2a38cacd28b2942fb8f887c95ae11c71c9a891c61099",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a plan committed on the lineage's engine that no pinned tool built",
+    "charter": "ae12195a41e98c168418db87bfec87babf38f7882507f911b5ff4818d3ab4dd1",
+    "checks": [
+      "V7"
+    ],
+    "exit_code": 7,
+    "file": "v7-unmandated-plan.fidb",
+    "findings": [
+      "V7 ambient: plan plan-ea2f2712852c on 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31's chain was admitted for '', no pinned tool's call"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v7-unmandated-plan",
+    "sha256": "096fc6c762920c0640be2755ff9935bb178c7e71d00d9bb081ed4004fe78c8fb",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a warrant executed after its not_after",
+    "charter": "81c0c7546e78240c20a41767136bede7d99e4840fb94ad548420207f1f19a7c9",
+    "checks": [
+      "V8"
+    ],
+    "exit_code": 9,
+    "file": "v8-executed-after-not-after.fidb",
+    "findings": [
+      "V8 time: record 15 (execution.intent): its rules refuse it now: warrant 0005e785-4ef5-5d87-a786-83434f4a5ea8 expired at 2026-10-22T12:59:17.376994Z"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v8-executed-after-not-after",
+    "sha256": "27187f404953afce911e0def1b8643fa3fc093dd83a44709116a44fb40d22d3d",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "an autonomous warrant for a ticket its rule does not admit",
+    "charter": "7d44cb75f9e74302f2a2b5a31c1cb81230a8c7fb506042ad408bc98da7207135",
+    "checks": [
+      "V8"
+    ],
+    "exit_code": 5,
+    "file": "v8-false-rule-predicate.fidb",
+    "findings": [
+      "V8 authority: record 11 (warrant.formed): its rules refuse it now: auto rule 'trim-refused' does not admit this ticket"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v8-false-rule-predicate",
+    "sha256": "023a8dda5b05d7bff5499ac3e0c9f5db735aa2ca252565fb5cab57722b94751a",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a step acting on a message whose head moved after the ticket (U-4)",
+    "charter": "0d88659ca8800188b1b75de557a03d384cd435c635421be809bc0d1b9eac3778",
+    "checks": [
+      "V7",
+      "V8"
+    ],
+    "exit_code": 7,
+    "file": "v8-head-moved.fidb",
+    "findings": [
+      "V7 ambient: ledger entry 23 (circuit_reset) on support-agent: a reset no warrant of the lineage names",
+      "V7 ambient: operator record 1 (release) by key a6a17e3b834c9950 acts on the lineage's messages under no warrant of it",
+      "V8 authority: record 16: step 1 acted on message c2ae872f-953b-4ea3-ae80-477425429124 at a head the ticket did not observe (F7-15, U-4)"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v8-head-moved",
+    "sha256": "7e73590d1d861319a6c27df879d9285246382ca219d05f94731b8350225cd132",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a release warrant formed on one approval of two",
+    "charter": "7f65eb4d3c87e6ea6d69cc75242b820a8d6882674a94343b9c554c7cacf589c9",
+    "checks": [
+      "V8"
+    ],
+    "exit_code": 5,
+    "file": "v8-warrant-one-approval-short.fidb",
+    "findings": [
+      "V8 authority: record 13 (warrant.formed): its rules refuse it now: warrant for ticket 7862a631-f68e-4fa6-8d4f-599a0638c08d (release) needs 2 approvals; 1 count"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v8-warrant-one-approval-short",
+    "sha256": "f75507465778eb26321528cc10d2dd1c173832291a64ca2455b997cf11350afb",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "record 2's sequence edited, and the manifest rewritten to match, unsigned",
+    "charter": "8f8f4380046fbfdb37033b6037969d818cae439b78b110ed26183ec1381dce15",
+    "checks": [
+      "V9",
+      "V10"
+    ],
+    "exit_code": 4,
+    "file": "v9-log-edited-manifest-rewritten.fidb",
+    "findings": [
+      "V9 signature: record 3: the record's signature does not verify: it was altered",
+      "V9 signature: record 3: expected 2: records lost or moved",
+      "V9 signature: record 3: expected 4: records lost or moved",
+      "V9 signature: record 3: does not link to the record before it",
+      "V10 evidence: the ledger anchors record 2 of log 'fiduciary' (entry 4), which the log does not hold: it was truncated"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v9-log-edited-manifest-rewritten",
+    "sha256": "869f69ce85fd6cd101f0c76bc1d5ec7bacd59c3c275a0a9a87cf541fbc0bdf80",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a manifest signed by a key other than the service's",
+    "charter": "f8f82736fa4a744a044b170186a43654f24037fb9ce5036b22468faf2a1ee0c1",
+    "checks": [
+      "V9"
+    ],
+    "exit_code": 4,
+    "file": "v9-manifest-signed-by-another.fidb",
+    "findings": [
+      "V9 signature: manifest.json: the bundle was signed by key fc044d1d3ae96861, not by the key pinned for its signer (a6a17e3b834c9950)"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v9-manifest-signed-by-another",
+    "sha256": "02d7e6fefa2e8d97d2e334157232c951c0d62b737e91377fe28e899713d03c52",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a log verified under a service key that signed none of it",
+    "charter": "71d67224b9269b7d252881b74dfc5a8f83c586659e60f7ebfe490b8d7787c42c",
+    "checks": [
+      "V9"
+    ],
+    "exit_code": 4,
+    "file": "v9-other-service-key.fidb",
+    "findings": [
+      "V9 signature: record 1: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)",
+      "V9 signature: record 2: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)",
+      "V9 signature: record 3: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)",
+      "V9 signature: record 4: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)",
+      "V9 signature: record 5: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)",
+      "V9 signature: record 6: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)",
+      "V9 signature: record 7: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)",
+      "V9 signature: record 8: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)",
+      "V9 signature: record 9: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)",
+      "V9 signature: record 10: the record was signed by key a6a17e3b834c9950, not by the key pinned for its signer (fc044d1d3ae96861)"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8"
+    },
+    "name": "v9-other-service-key",
+    "sha256": "e8e7cd56a1d9c4885b1e7d996e33a3586e98529b888e22fd42ffee5efa742cff",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a held message released by warrant: its reset's anchor, its operator intents",
+    "charter": "8f8f4380046fbfdb37033b6037969d818cae439b78b110ed26183ec1381dce15",
+    "checks": [],
+    "exit_code": 0,
+    "file": "valid-held-release.fidb",
+    "findings": [],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "valid-held-release",
+    "sha256": "5aff5eddb9b66f51096c71a41bec7fc4e39017fb38b6ec57f54809f3dc9b5d31",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a refund, a rule-repaired refusal, a passthrough lookup and two model calls",
+    "charter": "b6c41b6628d62e0f43f2c9b34554771e5fa06136bcc36f06f9374e4186bfb4de",
+    "checks": [],
+    "exit_code": 0,
+    "file": "valid-lineage-at-work.fidb",
+    "findings": [],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "valid-lineage-at-work",
+    "sha256": "49bdb478fe466ad60a64c540455d782094c852099356cc1ec3f8c7fe70b2c825",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "recovery, a quote, an extension granted by two approvals, billing moved back",
+    "charter": "6aed1746643e674b6a44c4e81ca9867821d8b92e009e30eba1387f9edf642495",
+    "checks": [],
+    "exit_code": 0,
+    "file": "valid-phase-4-lifecycle.fidb",
+    "findings": [],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "valid-phase-4-lifecycle",
+    "sha256": "76db966995f4d48251a0b653dae92997ca13a896d1a32fe68603d80bdac2643c",
+    "skew_seconds": 5,
+    "witness": null
+  }
+]

@@ -13,7 +13,7 @@ import copy
 import re
 import sqlite3
 import uuid
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -255,6 +255,7 @@ def build(
     *,
     ledger: Callable[[], BudgetManager] | None = None,
     tools: Sequence[ToolBinding] = (),
+    charter: Mapping[str, Any] | None = None,
 ) -> Generator[World, None, None]:
     """A world on ``backend``, its fiduciary store ``store``; its AgentGov
     ledger a SQLite file, or what ``ledger`` opens (a shared one). ``tools``
@@ -289,14 +290,15 @@ def build(
         def substrate() -> Any:
             return PostgresSubstrate(stage_dsn, tables=deploy.table_specs())
 
-    charter = Charter.from_json(
-        e.charter_json(deployment={"ledger": genesis, "label": "test"}), signed=False
+    adopted = Charter.from_json(
+        e.charter_json(deployment={"ledger": genesis, "label": "test"}, **(charter or {})),
+        signed=False,
     ).signed(e.signer("cfo"))
     log = Log(store, e.SERVICE, ledger=governor, clock=clock)
-    authority = Authority(log, pinned=charter.digest)
-    authority.propose(charter)
-    approve(store, e.PRINCIPALS, "charter", charter.digest, **window(clock))
-    authority.adopt_charter(charter.digest)
+    authority = Authority(log, pinned=adopted.digest)
+    authority.propose(adopted)
+    approve(store, e.PRINCIPALS, "charter", adopted.digest, **window(clock))
+    authority.adopt_charter(adopted.digest)
     receipts = ReceiptLog(
         "fiduciary-receipts", Ed25519Signer(bytes(32)), path=tmp / "receipts.jsonl"
     )
@@ -317,7 +319,7 @@ def build(
         clock,
         governor,
         store,
-        charter,
+        adopted,
         log,
         authority,
         binder,

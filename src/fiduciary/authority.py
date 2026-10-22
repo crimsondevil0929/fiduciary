@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -70,7 +70,7 @@ from fiduciary.log import Log
 from fiduciary.refines import delegation_problems, refines
 from fiduciary.store import ApprovalRow, State, Store
 
-__all__ = ["BUILTIN_TOOLS", "REFUSAL_CODES", "Authority", "Decide", "replay"]
+__all__ = ["BUILTIN_TOOLS", "REFUSAL_CODES", "Authority", "Decide", "replay", "replay_each"]
 
 BUILTIN_TOOLS: Final = ("fiduciary_request", "fiduciary_ticket_status")
 """The two tools every session lists beside its pinned bindings (F8-4)."""
@@ -1293,22 +1293,32 @@ def replay(
 ) -> list[str]:
     """Take every recorded decision again, from the state before its record,
     and name each record the rules would not have written as it is."""
+    return [
+        problem
+        for _, _, problem in replay_each(records, store, pinned=pinned, service_key=service_key)
+        if problem is not None
+    ]
+
+
+def replay_each(
+    records: Sequence[Record], store: Store, *, pinned: str, service_key: Verifier
+) -> Iterator[tuple[Record, State, str | None]]:
+    """Each record, the state before it, and why its rules would not have
+    written it as it is (``None`` when they would)."""
     decide = Decide(store, pinned, service_key)
     intake = dict(store.intake())
-    problems: list[str] = []
     state = State()
     for record in records:
+        problem = None
         try:
             expected = _expected(decide, state, record, intake)
         except FiduciaryError as exc:
-            problems.append(f"record {record.seq} ({record.kind}): its rules refuse it now: {exc}")
+            problem = f"record {record.seq} ({record.kind}): its rules refuse it now: {exc}"
         else:
             if expected is not None and expected != record.content:
-                problems.append(
-                    f"record {record.seq} ({record.kind}): its rules write another body"
-                )
+                problem = f"record {record.seq} ({record.kind}): its rules write another body"
+        yield record, state, problem
         state.apply(record)
-    return problems
 
 
 def _expected(
