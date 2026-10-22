@@ -16,7 +16,12 @@ session with no model at all. They run in CI (``tests/test_live_acceptance.py``,
 or ``--offline`` here). Every outcome, live or replayed, is judged by an
 oracle that asks the back office, not fiduciary: no other tenant's order
 moved, every refund row matches its order's debit and its payment request,
-no single refund passed the mandate's cap, and the store verifies.
+no single refund passed the mandate's cap, and the store verifies. Each
+run's lineage is then exported as an audit bundle (``lineage.fidb``), and the
+bundle verified offline (``verify.txt``): in process with the kit's evidence,
+over MCP with ``fiduciary export-bundle`` and ``verify-bundle`` against the
+run's own configuration. A deployment runs on the wall clock, so the
+service's instants agree with the ledger's (V12).
 
 Spending money is deliberate:
 
@@ -40,8 +45,10 @@ Run:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import importlib
+import io
 import json
 import os
 import subprocess
@@ -60,8 +67,9 @@ sys.path.insert(0, str(ROOT))
 from agentgov.core import EntryType  # noqa: E402
 from tests import bound  # noqa: E402
 from tests import bridge_kit as kit  # noqa: E402
+from tests import bundle_kit as bk  # noqa: E402
 from tests import examples as e  # noqa: E402
-from tests.conftest import Clock  # noqa: E402
+from tests.conftest import LiveClock  # noqa: E402
 
 from fiduciary.bridge import CallResult, Session, SessionHaltedError  # noqa: E402
 from fiduciary.documents import Mandate  # noqa: E402
@@ -119,6 +127,8 @@ class Outcome:
     cost: str = "0"
     problems: list[str] = field(default_factory=list)
     served: list[str] = field(default_factory=list)
+    bundle: str = ""
+    """``verify-bundle``'s verdict on the run's bundle."""
 
     @property
     def held(self) -> bool:
@@ -136,6 +146,7 @@ class Outcome:
             "held": self.held,
             "problems": self.problems,
             "served": sorted(set(self.served)),
+            "bundle": self.bundle,
         }
 
 
@@ -304,19 +315,16 @@ SCENARIOS: Final = (
 
 
 @contextmanager
-def deployment(root: Path, envelope: str) -> Iterator[tuple[bound.World, Session]]:
+def deployment(
+    root: Path, envelope: str, outcome: Outcome | None = None
+) -> Iterator[tuple[bound.World, Session]]:
     """A fresh deployment under ``root``, the refund mandate bound with an
-    envelope of ``envelope`` dollars, and a session for tenant ``acme``."""
+    envelope of ``envelope`` dollars, and a session for tenant ``acme``. Once
+    the session closes, its lineage's bundle is exported and verified, into
+    ``outcome``."""
     root.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(root / "fiduciary.db")
-    built = bound.build(
-        # The test charter's approvals are signed for the suite's own instant.
-        "sqlite",
-        root,
-        store,
-        Clock(e.at("2026-10-18T10:10:00")),
-        tools=kit.tools("sqlite"),
-    )
+    built = bound.build("sqlite", root, store, LiveClock(), tools=kit.tools("sqlite"))
     world = next(built)
     try:
         budget = {**kit.mandate_json(world)["budget"], "envelope": f"{Decimal(envelope):.8f}"}
@@ -328,8 +336,69 @@ def deployment(root: Path, envelope: str) -> Iterator[tuple[bound.World, Session
             yield world, session
         finally:
             session.close()
+        if outcome is not None:
+            audit(world, root, outcome)
     finally:
         built.close()
+
+
+def audit(world: bound.World, root: Path, outcome: Outcome) -> None:
+    """The lineage's bundle, written to ``root``, verified offline under the
+    keys the deployment signs with; exported twice, to the same bytes."""
+    (mandate_id,) = world.log.state().lineages
+    data = bk.export(world, mandate_id)
+    (root / "lineage.fidb").write_bytes(data)
+    report = bk.verify(world, data)
+    _verdict(root, report.render(), report.exit_code, outcome)
+    if bk.export(world, mandate_id) != data:
+        outcome.problems.append("its bundle exported twice differs (§9.2)")
+
+
+def _verdict(root: Path, text: str, code: int, outcome: Outcome) -> None:
+    (root / "verify.txt").write_text(text + "\n")
+    outcome.bundle = "PASS" if code == 0 else f"FAIL: exit {code}"
+    if code != 0:
+        where = root / "verify.txt"
+        outcome.problems.append(f"its bundle fails verify-bundle, exit {code}: {where}")
+
+
+def audit_cli(world: bound.World, config: Path, root: Path, outcome: Outcome) -> None:
+    """``fiduciary export-bundle`` and ``verify-bundle``, as an operator and an
+    auditor run them: the auditor pins the configuration's public keys."""
+    from tests.test_cli_mcp import _key
+
+    from fiduciary import cli
+    from fiduciary.bundle.export import spec
+    from fiduciary.config import load_config
+
+    (mandate_id,) = world.log.state().lineages
+    ledger_key = _key(root / "ledger.key", "ledger-checkpoints")
+    target = root / "lineage.fidb"
+    base = ["--config", str(config), "export-bundle", "--mandate", mandate_id]
+    for path in (target, root / "again.fidb"):
+        with contextlib.redirect_stderr(io.StringIO()) as said:
+            status = cli.main([*base, "--out", str(path), "--ledger-key", str(ledger_key)])
+        if status != 0:
+            outcome.problems.append(f"export-bundle refused: {said.getvalue().strip()}")
+            return
+    if (root / "again.fidb").read_bytes() != target.read_bytes():
+        outcome.problems.append("its bundle exported twice differs (§9.2)")
+    (root / "again.fidb").unlink()
+    found = load_config(config)
+    service = spec(found.service().public_key())
+    pinned = {
+        "service": service,
+        "ledger": spec(bk.LEDGER_KEY.public_key()),
+        "receipts": [spec(found.receipts().public_key())],
+        "runtime": spec(found.runtime().public_key()),
+        "operators": {"executor": spec(found.executor().public_key())},
+    }
+    keys = root / "pinned-keys.json"
+    keys.write_text(json.dumps(pinned, indent=2, sort_keys=True) + "\n")
+    argv = ["verify-bundle", str(target), "--charter", world.charter.digest, "--keys", str(keys)]
+    with contextlib.redirect_stdout(io.StringIO()) as printed:
+        code = cli.main(argv)
+    _verdict(root, printed.getvalue().rstrip(), code, outcome)
 
 
 def _record(outcome: Outcome, name: str, arguments: Any, result: CallResult) -> None:
@@ -353,7 +422,7 @@ def _spent(world: bound.World) -> Decimal:
 def replay(scenario: Scenario, root: Path) -> Outcome:
     """The scenario's reference proposals, through a session, with no model."""
     outcome = Outcome(scenario.key, "reference")
-    with deployment(root, "3") as (world, session):
+    with deployment(root, "3", outcome) as (world, session):
         _, reference = scenario.ready(world)
         for name, arguments in reference:
             _record(outcome, name, arguments, session.call(name, arguments))
@@ -454,7 +523,7 @@ def live(
     envelope of ``envelope`` dollars. No fallback: the model asked for is the
     model that runs, or the run says it was not."""
     outcome = Outcome(scenario.key, f"{model} via session")
-    with deployment(root, envelope) as (world, session):
+    with deployment(root, envelope, outcome) as (world, session):
         governed = session.govern(client)
 
         def create(messages: list[dict[str, Any]]) -> Any:
@@ -556,11 +625,7 @@ def live_mcp(
 
     root.mkdir(parents=True, exist_ok=True)
     built = bound.build(
-        "sqlite",
-        root,
-        SqliteStore(root / "fiduciary.db"),
-        Clock(e.at("2026-10-18T10:10:00")),
-        tools=kit.tools("sqlite"),
+        "sqlite", root, SqliteStore(root / "fiduciary.db"), LiveClock(), tools=kit.tools("sqlite")
     )
     world = next(built)
     try:
@@ -610,6 +675,7 @@ def live_mcp(
             bridge.close()
         world.governor = BudgetManager.open_sqlite(str(root / "ledger.db"))
         outcome.problems = scenario.oracle(world) + common(world)
+        audit_cli(world, config, root, outcome)
     finally:
         built.close()
     outcome.problems += _served(outcome, model)
@@ -720,7 +786,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     for outcome in outcomes:
         mark = "held" if outcome.held else "FAILED: " + "; ".join(outcome.problems)
-        print(f"{outcome.scenario:18} {outcome.mode:28} {len(outcome.calls):2} call(s)  {mark}")
+        print(
+            f"{outcome.scenario:18} {outcome.mode:28} {len(outcome.calls):2} call(s)  "
+            f"bundle {outcome.bundle or '-':12} {mark}"
+        )
     print(f"spent ${spent}; results in {out / 'results.json'}")
     return 0 if all(o.held for o in outcomes) else 1
 

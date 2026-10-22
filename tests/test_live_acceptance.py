@@ -120,6 +120,9 @@ def test_the_live_loop_against_a_stand_in(suite: ModuleType, tmp_path: Path) -> 
         True,
         False,
     ]
+    assert outcome.bundle == "PASS"  # the run's lineage, exported and verified offline
+    assert (tmp_path / "lineage.fidb").exists()
+    assert "V12 ordering: ok" in (tmp_path / "verify.txt").read_text()
 
 
 def test_another_model_serving_the_run_is_named(suite: ModuleType, tmp_path: Path) -> None:
@@ -151,6 +154,9 @@ def test_the_mcp_loop_against_a_stand_in(suite: ModuleType, tmp_path: Path) -> N
         "fiduciary_ticket_status",
     }
     assert 0 < float(outcome.cost) < 0.1
+    assert outcome.bundle == "PASS", (tmp_path / "verify.txt").read_text()
+    pinned = json.loads((tmp_path / "pinned-keys.json").read_text())
+    assert set(pinned) == {"service", "ledger", "receipts", "runtime", "operators"}
     stopped = suite.live_mcp(
         scenario,
         tmp_path / "poor",
