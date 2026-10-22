@@ -192,7 +192,9 @@ class McpServer:
             else:
                 text = result.render()
                 if result.value is not None and result.outcome == "served":
-                    text = json.dumps(result.value, sort_keys=True)
+                    # The sentence a session gives, and the value it carries.
+                    value = json.dumps(result.value, sort_keys=True)
+                    text = f"{text}\n{value}" if text else value
                 content = [{"type": "text", "text": text or result.outcome}]
                 error = not result.ok
             return {"content": content, "isError": error}

@@ -370,3 +370,20 @@ def test_an_upstream_that_will_not_run_is_refused(tmp_path: Path) -> None:
         Upstream([])
     with pytest.raises(McpError, match=r"closed its pipe|did not answer"):
         Upstream([sys.executable, "-c", "pass"], timeout=5)
+
+
+def test_a_built_in_answers_in_words_and_in_value(fid: Fiduciary) -> None:
+    """Over MCP as in a session: the sentence, then the value it carries."""
+    session = _session(fid)
+    server = McpServer(session)
+    asked = session.call("adjust_orders", {"first": 1, "second": 2, "amount": "1.00"})
+    assert asked.ticket is not None
+    found = _call(
+        server,
+        1,
+        "tools/call",
+        {"name": "fiduciary_ticket_status", "arguments": {"ticket_id": asked.ticket.ticket_id}},
+    )
+    words, value = found["result"]["content"][0]["text"].split("\n")
+    assert words.startswith(f"Ticket {asked.ticket.ticket_id} (refused) is ")
+    assert json.loads(value)["ticket_id"] == asked.ticket.ticket_id
