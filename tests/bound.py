@@ -13,7 +13,7 @@ import copy
 import re
 import sqlite3
 import uuid
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -242,9 +242,11 @@ def build(
     clock: Clock,
     *,
     ledger: Callable[[], BudgetManager] | None = None,
+    tools: Sequence[ToolBinding] = (),
 ) -> Generator[World, None, None]:
     """A world on ``backend``, its fiduciary store ``store``; its AgentGov
-    ledger a SQLite file, or what ``ledger`` opens (a shared one)."""
+    ledger a SQLite file, or what ``ledger`` opens (a shared one). ``tools``
+    are deployed beside the refund and lookup bindings."""
     from interlock.substrate import SqliteSubstrate
 
     cleanups: list[Callable[[], None]] = []
@@ -286,9 +288,9 @@ def build(
     receipts = ReceiptLog(
         "fiduciary-receipts", Ed25519Signer(bytes(32)), path=tmp / "receipts.jsonl"
     )
-    deployment = deploy.deployment(
-        ledger=genesis, tools={tool(backend).digest: tool(backend), e.lookup().digest: e.lookup()}
-    )
+    deployed = {tool(backend).digest: tool(backend), e.lookup().digest: e.lookup()}
+    deployed.update({t.digest: t for t in tools})
+    deployment = deploy.deployment(ledger=genesis, tools=deployed)
     binder = Binder(
         authority,
         governor,

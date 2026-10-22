@@ -46,7 +46,7 @@ from interlock.exceptions import (
     InterlockError,
     OutboundRequestError,
 )
-from interlock.extension import BudgetGuard, ExtensionRequest
+from interlock.extension import BudgetGuard
 from interlock.operators import Operator, OperatorLog, OperatorRefusedError
 from interlock.records import Keyring, RecordLog, SignedRecord
 from interlock.recovery import breaker_reason, spent_out
@@ -136,6 +136,9 @@ class Executor:
         configuration names them; the executor's alone by default.
     :param guard: The :class:`BudgetGuard` that issued the quotes that
         extension tickets name. It holds them in memory (F7-14, U-3).
+    :param guard_for: The guard of a lineage, by ``mandate_id``, where each
+        lineage quotes through its own (the bridge's: margin and ttl are each
+        mandate's). Asked before ``guard``.
     :param runtime_records: The guard's ILOK1 record log: an open
         :class:`RecordLog`, or its path, read without a claim. The guard's own
         by default.
@@ -156,6 +159,7 @@ class Executor:
         executor_signer: Signer | None = None,
         operator_keyring: Keyring | None = None,
         guard: BudgetGuard | None = None,
+        guard_for: Callable[[str], BudgetGuard | None] | None = None,
         runtime_records: RecordLog | Path | str | None = None,
         runtime_signer: Signer | None = None,
         claim_timeout: float = 30.0,
@@ -180,6 +184,7 @@ class Executor:
         self._executor_signer = executor_signer
         self._operator_keyring = operator_keyring
         self._guard = guard
+        self._guard_for = guard_for
         self._runtime_records = (
             runtime_records
             if runtime_records is None or isinstance(runtime_records, RecordLog)
@@ -556,8 +561,13 @@ class Executor:
         self, idx: int, kind: str, reason: str, ticket: Ticket, step: Mapping[str, Any]
     ) -> _Step:
         quote_id = str(step["quote"])
-        quote = self._pending_quote(quote_id)
-        if quote is None:
+        guard = self._guard_of(ticket.mandate.mandate_id)
+        quote = (
+            None
+            if guard is None
+            else next((q for q in guard.pending() if q.quote_id == quote_id), None)
+        )
+        if guard is None or quote is None:
             return _Step(
                 False,
                 why=f"quote_lost: the guard holds no quote {quote_id}, which a restart loses "
@@ -570,10 +580,9 @@ class Executor:
                 why=f"quote {quote_id} is signed as {quote.record.record_hash[:16]}, not the "
                 f"record the ticket observed",
             )
-        assert self._guard is not None
         if kind == "decline":
             try:
-                declined = self._guard.decline(
+                declined = guard.decline(
                     quote, declined_by=reason, reason="declined under a warrant"
                 )
             except (ExtensionError, InterlockError, ValueError) as exc:
@@ -595,7 +604,7 @@ class Executor:
                 f"{mandate.extension.max_total})",
             )
         try:
-            grant = self._guard.grant(quote, approved_by=reason, amount=amount)
+            grant = guard.grant(quote, approved_by=reason, amount=amount)
         except (ExtensionError, InterlockError, ValueError) as exc:
             return _Step(False, why=str(exc))
         return _Step(
@@ -611,10 +620,9 @@ class Executor:
             },
         )
 
-    def _pending_quote(self, quote_id: str) -> ExtensionRequest | None:
-        if self._guard is None:
-            return None
-        return next((q for q in self._guard.pending() if q.quote_id == quote_id), None)
+    def _guard_of(self, mandate_id: str) -> BudgetGuard | None:
+        found = None if self._guard_for is None else self._guard_for(mandate_id)
+        return found if found is not None else self._guard
 
     @staticmethod
     def _granted(state: State, mandate_digest: str) -> Decimal:

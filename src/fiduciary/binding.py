@@ -218,6 +218,11 @@ class Binder:
     def decide(self) -> Decide:
         return self._authority.decide
 
+    @property
+    def deployment(self) -> Deployment:
+        """The deployment snapshot every compilation reads."""
+        return self._deployment
+
     def engine(self, mandate_id: str) -> MandateEngine:
         found = self._engines.get(mandate_id)
         if found is None:

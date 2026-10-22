@@ -34,11 +34,12 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
 from agentgov.receipts.signing import Signer, Verifier
 
 from fiduciary import fidu1
+from fiduciary.checkers import admits_scope
 from fiduciary.documents import (
     Approval,
     Charter,
@@ -69,7 +70,20 @@ from fiduciary.log import Log
 from fiduciary.refines import delegation_problems, refines
 from fiduciary.store import ApprovalRow, State, Store
 
-__all__ = ["Authority", "Decide", "replay"]
+__all__ = ["BUILTIN_TOOLS", "REFUSAL_CODES", "Authority", "Decide", "replay"]
+
+BUILTIN_TOOLS: Final = ("fiduciary_request", "fiduciary_ticket_status")
+"""The two tools every session lists beside its pinned bindings (F8-4)."""
+REFUSAL_CODES: Final = (
+    "arguments",  # outside the binding's schema, or the canonical domain (F4-13)
+    "max_open",  # the lineage's open tickets are at escalation.max_open (F7-2)
+    "model",  # a model the mandate does not list, or no price is configured for
+    "revoked",  # a tool a recovery step revoked
+    "tenant",  # a binding that stamps the session's tenant, in a session with none
+    "unpinned",  # no binding the version pins, and no built-in (F4-16)
+    "velocity",  # past governance.max_calls in governance.seconds (F6-5)
+)
+"""Why a session refused a call before anything was built or metered."""
 
 
 def _load(store: Store, digest: str, cls: type[Document]) -> Any:
@@ -967,6 +981,104 @@ class Decide:
         if kind == "execution.applied" and len(results) != len(steps):
             raise AuthorityError("execution.applied names a result for every step")
 
+    # -- bridge sessions (§8.1, §4.7) --------------------------------------------
+
+    def open_session(
+        self,
+        state: State,
+        session_id: str,
+        mandate_id: str,
+        tenant: str | None,
+        trajectory: str,
+        now: datetime,
+    ) -> dict[str, Any]:
+        """The ``session.opened`` body: a session of the lineage's version in
+        force, bound and within its term, for a tenant its data admits,
+        billing its subject scope."""
+        try:
+            uuid.UUID(session_id)
+        except ValueError as exc:
+            raise AuthorityError(f"session id {session_id!r} is no uuid") from exc
+        if state.session_status(session_id) is not None:
+            raise AuthorityError(f"session {session_id} is opened already")
+        if state.status(mandate_id) != "bound":
+            raise AuthorityError(
+                f"lineage {mandate_id} is {state.status(mandate_id) or 'not issued'}: a session "
+                f"runs only under a bound version in force"
+            )
+        head = state.head(mandate_id)
+        bound = state.bound.get(mandate_id)
+        assert head is not None and bound is not None
+        if bound["mandate"] != head[1]:
+            raise AuthorityError(
+                f"lineage {mandate_id}'s version {head[0]} is issued and not yet bound"
+            )
+        mandate = self.head_mandate(state, mandate_id)
+        if not mandate.not_before <= now < mandate.not_after:
+            raise AuthorityError(
+                f"mandate {mandate_id} version {mandate.version} is outside its term at "
+                f"{fidu1.format_instant(now)}"
+            )
+        for value, what in ((tenant, "a tenant"), (trajectory, "a trajectory")):
+            if value is not None and not fidu1.TEXT.fullmatch(value):
+                raise AuthorityError(f"{value!r} is not {what}: 1 to 512 printable characters")
+        allowed = mandate.data.tenants
+        if tenant is not None and allowed is not None and tenant not in allowed:
+            raise AuthorityError(f"tenant {tenant!r} is not one mandate {mandate_id} admits")
+        return {
+            "session": session_id,
+            "mandate": mandate.digest,
+            "mandate_id": mandate_id,
+            "version": mandate.version,
+            "tenant": tenant,
+            "trajectory": trajectory,
+            "scope": mandate.subject.scope,
+        }
+
+    def _open_session(self, state: State, session_id: str) -> dict[str, Any]:
+        if state.session_status(session_id) != "open":
+            raise AuthorityError(
+                f"session {session_id} is {state.session_status(session_id) or 'not opened'}"
+            )
+        return state.sessions[session_id][0][1]
+
+    def refuse_call(
+        self, state: State, session_id: str, tool: str | None, code: str
+    ) -> dict[str, Any]:
+        """The ``session.refused`` body: a call refused before anything was
+        built or metered. It names a tool only when the tool is one the
+        session's version pins, or a built-in: any other name is the agent's
+        text, which no record holds (F4-27)."""
+        opened = self._open_session(state, session_id)
+        if code not in REFUSAL_CODES:
+            raise AuthorityError(f"{code!r} is no refusal code")
+        if tool is not None and tool not in BUILTIN_TOOLS:
+            mandate: Mandate = _load(self.store, str(opened["mandate"]), Mandate)
+            if tool not in {pin.name for pin in mandate.tools.bindings}:
+                raise AuthorityError(f"tool {tool!r} is pinned by no version this session runs")
+        return {
+            "session": session_id,
+            "mandate_id": opened["mandate_id"],
+            "tool": tool,
+            "code": code,
+        }
+
+    def close_session(self, state: State, session_id: str, scopes: Sequence[str]) -> dict[str, Any]:
+        """The ``session.closed`` body: every scope the session billed, in
+        order, each its subject's or a satellite's (F8-8)."""
+        opened = self._open_session(state, session_id)
+        subject = str(opened["scope"])
+        listed = list(scopes)
+        if not listed or listed[0] != subject:
+            raise AuthorityError(f"session {session_id} billed {subject!r} first")
+        strays = [scope for scope in listed if not admits_scope(subject, scope)]
+        if strays or len(set(listed)) != len(listed):
+            raise AuthorityError(
+                f"session {session_id} names scope(s) {', '.join(strays) or 'twice'}, outside "
+                f"its subject {subject!r} and its satellites (F8-8)"
+            )
+        return {"session": session_id, "mandate_id": opened["mandate_id"], "scopes": listed}
+
     def _amend_warrant_approvals(
         self, state: State, mandate_id: str, digest: str, now: datetime
     ) -> list[str]:
@@ -1247,7 +1359,23 @@ def _expected(
     if kind in ("execution.applied", "execution.refused", "execution.abandoned"):
         decide.execution_outcome(state, kind, body)
         return None
-    return None  # later phases' kinds: replayed by the phase that writes them
+    if kind == "session.opened":
+        return decide.open_session(
+            state,
+            str(body["session"]),
+            str(body["mandate_id"]),
+            None if body.get("tenant") is None else str(body["tenant"]),
+            str(body["trajectory"]),
+            record.issued_at,
+        )
+    if kind == "session.refused":
+        tool = body.get("tool")
+        return decide.refuse_call(
+            state, str(body["session"]), None if tool is None else str(tool), str(body["code"])
+        )
+    if kind == "session.closed":
+        return decide.close_session(state, str(body["session"]), list(body["scopes"]))
+    raise AuthorityError(f"no rule writes a {kind} record")
 
 
 def _with_trips(expected: dict[str, Any], body: Mapping[str, Any]) -> dict[str, Any]:

@@ -68,6 +68,7 @@ PROJECTIONS: Final[Mapping[str, tuple[str, ...]]] = {
         "seq",
     ),
     "executions": ("warrant", "event", "detail", "seq"),
+    "sessions": ("session_id", "mandate_id", "event", "detail", "seq"),
 }
 """Each projection table and its columns, in order. Every column is text or an
 integer; ``seq`` is the record a row follows from."""
@@ -209,6 +210,20 @@ def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
                 (body["warrant"], exec_event, exec_detail, record.seq),
             )
         ]
+    if kind in ("session.opened", "session.refused", "session.closed"):
+        session_event = kind.split(".")[1]
+        if session_event == "opened":
+            session_detail = str(body["mandate"])
+        elif session_event == "refused":
+            session_detail = str(body["code"])
+        else:
+            session_detail = " ".join(str(s) for s in body["scopes"])
+        return [
+            (
+                "sessions",
+                (body["session"], body["mandate_id"], session_event, session_detail, record.seq),
+            )
+        ]
     return []
 
 
@@ -327,6 +342,8 @@ class State:
     """Each warrant's execution records: ``(event, body, seq)``, in order."""
     record_times: dict[int, datetime] = field(default_factory=dict)
     """Each record's ``issued_at`` timestamp by ``seq``."""
+    sessions: dict[str, list[tuple[str, dict[str, Any], int]]] = field(default_factory=dict)
+    """Each bridge session's records: ``(event, body, seq)``, in order."""
     hashes: dict[int, str] = field(default_factory=dict)
     """Each signed record's hash by ``seq``: what a ticket's ``observed.log`` names."""
     head_seq: int = 0
@@ -414,6 +431,9 @@ class State:
             elif table == "executions":
                 warrant_digest, event, _, seq = row
                 self.executions.setdefault(warrant_digest, []).append((event, dict(body), seq))
+            elif table == "sessions":
+                session_id, _, event, _, seq = row
+                self.sessions.setdefault(session_id, []).append((event, dict(body), seq))
 
     @property
     def charter(self) -> tuple[int, str] | None:
@@ -525,6 +545,13 @@ class State:
         if not events:
             return None
         return events[-1][0]
+
+    def session_status(self, session_id: str) -> str | None:
+        """``open`` or ``closed``; ``None`` for no session."""
+        events = self.sessions.get(session_id)
+        if not events:
+            return None
+        return "closed" if any(event == "closed" for event, _, _ in events) else "open"
 
     def open_intents(self) -> list[tuple[str, dict[str, Any], int]]:
         """Every ``(warrant_digest, intent_body, seq)`` with no outcome yet."""

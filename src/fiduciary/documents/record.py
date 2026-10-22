@@ -37,6 +37,7 @@ RECORD_KINDS: Final = frozenset(
         "execution.refused",
         "execution.abandoned",
         "session.opened",
+        "session.refused",
         "session.closed",
     }
 )

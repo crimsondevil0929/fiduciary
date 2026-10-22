@@ -220,11 +220,11 @@ def test_sqlite_refuses_a_store_of_another_version(tmp_path: Path) -> None:
     SqliteStore(tmp_path / "f.db").close()
 
     raw = sqlite3.connect(tmp_path / "f.db")
-    for earlier in ("1", "2"):
+    for earlier in ("1", "2", "3"):
         raw.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (earlier,))
         raw.commit()
         SqliteStore(tmp_path / "f.db").close()
-        assert raw.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == ("3",)
+        assert raw.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == ("4",)
     raw.execute("UPDATE meta SET value = '99' WHERE key = 'schema'")
     raw.commit()
     raw.close()
@@ -264,15 +264,19 @@ def test_write_transactions_wait_for_each_other(store: Store) -> None:
 
 
 _V3: tuple[str, ...] = ("tickets", "warrants", "executions")
+_V4: tuple[str, ...] = ("sessions",)
 
 
-@pytest.mark.parametrize(("earlier", "absent"), [(1, ("lineage", *_V3)), (2, _V3)])
+@pytest.mark.parametrize(
+    ("earlier", "absent"),
+    [(1, ("lineage", *_V3, *_V4)), (2, (*_V3, *_V4)), (3, _V4)],
+)
 def test_an_earlier_store_upgrades_in_place(
     world: Authority, earlier: int, absent: tuple[str, ...]
 ) -> None:
-    """A version 1 or 2 store, with its log, opens as version 3: the tables
-    later versions add are created, the service may write them, and the log
-    verifies as before (F10-1)."""
+    """A version 1, 2 or 3 store, with its log, opens as version 4: the
+    tables later versions add are created, the service may write them, and
+    the log verifies as before (F10-1)."""
     store = world.log.store
     before = store.rows("mandates")
     if isinstance(store, SqliteStore):
@@ -305,7 +309,7 @@ def test_an_earlier_store_upgrades_in_place(
                 assert granted == (True,), table
         upgraded = PostgresStore(need_postgres(), schema=schema)
     try:
-        assert version == ("3",)
+        assert version == ("4",)
         assert upgraded.rows("mandates") == before
         for table in absent:
             assert upgraded.rows(table) == []
@@ -314,7 +318,9 @@ def test_an_earlier_store_upgrades_in_place(
         )
         assert report.ok, report.problems
         with pytest.raises(RuntimeError), upgraded.transaction():
-            upgraded.insert_row("executions", ("a" * 64, "intent", "1", 99))
+            for table in absent:
+                width = len(PROJECTIONS[table])
+                upgraded.insert_row(table, ("a",) * (width - 1) + (99,))
             raise RuntimeError("written, and rolled back")
     finally:
         upgraded.close()

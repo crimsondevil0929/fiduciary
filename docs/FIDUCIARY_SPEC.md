@@ -796,7 +796,8 @@ Fiduciary's own acts are records in a hash-chained, signed log. It is built as I
 | `ticket.lapsed`, `ticket.declined` | the ticket digest |
 | `execution.intent` | the warrant digest, its steps in order, and each step's precondition |
 | `execution.applied`, `execution.refused`, `execution.abandoned` | the intent; and per step what it reached: ILOK1 intent and outcome hashes, ledger entry ids, plan hashes and receipt ids |
-| `session.opened`, `session.closed` | a bridge session: its mandate version, tenant, trajectory and billing scope |
+| `session.opened`, `session.closed` | a bridge session: its mandate version, tenant, trajectory and billing scope; at its close, every scope it billed, in order |
+| `session.refused` | a call the session refused before anything was built or metered: the refusal's code, and the tool only when a version the session runs pins it, or it is a built-in |
 
 - **F4-26.** Hashing and anchoring follow ILOK1:
   - A record's hash is the SHA-256 of the canonical bytes of the whole signed record.
@@ -1413,6 +1414,27 @@ billing scope. It is recorded (`session.opened`) before its first call.
 - **F8-3.** A refused plan, a quote and the end of a recovery escalate as §7.1 says, and the
   result says so: it names the ticket's id, its class and its deadline. It never says the
   bound's value, or who the approvers are.
+  - A warrant that a rule forms as the ticket is raised is executed in the session's own
+    process, which holds the proposal or the quote it names (F7-14).
+  - A session waiting on its `extension` ticket asks once: a halt while the ticket is open, or
+    its warrant unexecuted, names that ticket again and quotes nothing more.
+- **F8-12.** A session refuses a call before anything is built or metered, and records the
+  refusal (`session.refused`), when:
+  - no binding the lineage's version in force pins has its name, and it is no built-in
+    (`unpinned`);
+  - its arguments fall outside the binding's schema or the canonical domain, or exceed 16 KiB
+    as canonical JSON (`arguments`);
+  - the binding stamps the session's tenant, and the session has none (`tenant`);
+  - a recovery step revoked it (`revoked`);
+  - it is past `governance.max_calls` in `governance.seconds`, counting model calls and tool
+    calls alike (`velocity`);
+  - a model call names a model the mandate does not list, or one with no configured price
+    (`model`);
+  - a trigger finds the lineage at `escalation.max_open` (`max_open`).
+
+  The record holds no agent text: a tool name is recorded only when a version the session
+  runs pins it. A plan the engine refuses is recorded by interlock instead, in its ARC1
+  receipt and its escrow chain.
 
 ## 8.2 MCP
 
@@ -1462,6 +1484,13 @@ interlock already provides:
 - **F8-9.** A safety halt (one whose reason is not `spent_out`) is never answered with
   money. Interlock's `BudgetGuard` refuses to quote it, and fiduciary raises no extension
   ticket for it. Its only exits are recovery's rungs and a `reset_safety` warrant.
+  - A recovery that has answered a safety halt ends with its reserve. When the reserve runs
+    out, interlock's recovery may still sign a quote for more; fiduciary never escalates it.
+  - With no recovery policy, a spent-out halt is quoted on the billing scope directly, and a
+    grant moves billing to the `{scope}/ext-N` it funded.
+  - The lineage's recovery runtime is opened at its first halt, and adopted from the runtime
+    log by every later session: a session's close never closes it, so what a step tightened
+    stays tightened.
 
 ## 8.4 Trust boundary
 
@@ -1691,7 +1720,9 @@ digest = "<sha256 of charter version 1>"               # the root of authority
 signer = "kms-fiduciary"                               # [signers.<name>], or key = "service.key"
 
 [executor]
-key = "executor.key"                                   # an [operators.keys] key; not AWS KMS before U-2
+key    = "executor.key"                                # an [operators.keys] key; not AWS KMS before U-2
+log    = "operators.ilok1"                             # else interlock.toml's [operators] log
+outbox = "postgresql://interlock_admin@db/acme"        # the outbox, as the installer (or the SQLite file)
 
 [runtime]
 records = "runtime.jsonl"                              # the ILOK1 log of recovery and extension records
@@ -1704,7 +1735,20 @@ signer = "kms-receipts"                                # ARC1 1.2 signs digests:
 [bridge]
 http         = "127.0.0.1:8765"
 skew_seconds = 5
+
+[bridge.handlers]                                      # each passthrough tool's implementation
+lookup_order = "acme.tools:lookup_order"
+
+[bridge.pricing.claude-opus-5-5]                       # dollars per million tokens, for models
+input = "4"                                            # AgentGov does not price: an allowlisted
+output = "20"                                          # model with no price is never called
+cache_read = "0.20"
+cache_write = "5"
 ```
+
+The executor reads interlock's operator log under the keyring `interlock.toml` trusts (its
+`[operators.keys]`, and the keys its log registered since), and the executor key must be one
+of them.
 
 ## 10.6 Command line
 
@@ -1998,6 +2042,7 @@ it. Unless a row says otherwise, every row runs on SQLite and on PostgreSQL. The
 | F8-1 to F8-3: sessions | 4 | end to end; the sanitized feedback test |
 | F8-4 to F8-7: MCP | 4 | protocol conformance tests over stdio and HTTP; the proxy's refusal |
 | F8-8, F8-9: the billing scope; safety halts | 4 | the recovery and extension flow; a safety halt is never quoted |
+| F8-12: refusals before anything is built | 4 | the adversarial agent suite; the session record replay tests |
 | F8-10, F8-11: the trust boundary | 4 | in process, a session refuses to start without the setting |
 | F9-1: no row data | 5, 6 | the security audit |
 | F9-2, F9-3: self-contained, offline, specified | 5 | the offline run; golden bundles; byte-identical exports |
