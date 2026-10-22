@@ -1495,9 +1495,13 @@ interlock already provides:
     out, interlock's recovery may still sign a quote for more; fiduciary never escalates it.
   - With no recovery policy, a spent-out halt is quoted on the billing scope directly, and a
     grant moves billing to the `{scope}/ext-N` it funded.
-  - The lineage's recovery runtime is opened at its first halt, and adopted from the runtime
-    log by every later session: a session's close never closes it, so what a step tightened
-    stays tightened.
+  - The lineage's recovery runtime is opened at its first halt and shared by every session
+    that halts while it is open. The last of those sessions to close closes it: an unsettled
+    step's hold is voided, and the unused reserve returns to the scope that funded it.
+  - Interlock's runtime follows one transcript, so while one session is in recovery another
+    session's step is refused; that session's halt stands, though its calls bill the shared
+    reserve. Interlock 1.0.2 does not reopen a closed recovery (U-6): a later halt of the
+    lineage is answered as if it had no recovery policy.
 
 ## 8.4 Trust boundary
 
@@ -1968,6 +1972,7 @@ in that package. None is worked around here.
 | U-3 | interlock | `BudgetGuard` keeps quotes in memory, and grants only those it issued, so a restart loses every open quote. The fix is to adopt unanswered, unexpired quotes from the record log. | F7-14 (Phase 3) | Extension tickets lapse on a restart. |
 | U-4 | interlock | `Operator` reads each target's head itself when it signs its intent, so a caller cannot require the heads its principals saw. The fix is to accept `expected_heads=`, and to refuse on a mismatch before signing. | G5, F7-15 (Phase 3) | The mismatch is recorded and named, not prevented. |
 | U-5 | agentgov | `reset(scope)` always writes the memo `operator reset`, so nothing in the entry can name a warrant. The fix is to accept `memo=`. | §7.6, `reset` | The warrant's anchor immediately precedes the reset, in one transaction. |
+| U-6 | interlock | A `RecoveryRuntime` whose `recovery.closed` record exists refuses to adopt its scope, and nothing funds `{scope}/recovery` again, so a lineage recovers once. The fix is to let a closed recovery be reopened, funding a fresh reserve under a new opening record. | F8-9 (Phase 4, amended in 0.5.0) | After the lineage's recovery closes, a spent-out halt is quoted on the billing scope, and any other halt stands. |
 
 ---
 

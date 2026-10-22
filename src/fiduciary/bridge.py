@@ -431,6 +431,8 @@ class Fiduciary:
         self._lock = threading.RLock()
         self._guards: dict[str, BudgetGuard] = {}
         self._recoveries: dict[str, RecoveryRuntime] = {}
+        self._recovering: dict[str, set[str]] = {}
+        """Each lineage's sessions that billed its recovery: the last to close closes it."""
         self._escalation = Escalation(authority, governor, checkpoint=checkpoint)
         self._executor = Executor(
             binder,
@@ -531,17 +533,25 @@ class Fiduciary:
             self._guards[mandate_id] = found
             return found
 
-    def recovery(self, mandate_id: str, tools: Sequence[str], trajectory: str) -> RecoveryRuntime:
+    def recovery(
+        self, mandate_id: str, tools: Sequence[str], trajectory: str, *, session: str = ""
+    ) -> RecoveryRuntime:
         """The lineage's recovery runtime: opened on its first halt, funding
-        ``{scope}/recovery``, and adopted from the runtime log by every later
-        session, so a restart never loosens what a step tightened.
+        ``{scope}/recovery``, and shared by every session that halts while it
+        is open, so a step's tightening holds for all of them. ``session``
+        names the session that bills it; the last of them to close closes it
+        (:meth:`release_recovery`).
 
         :raises RecoveryError: When the mandate has no recovery policy, no
-            runtime log is configured, or the reserve cannot be funded.
+            runtime log is configured, the reserve cannot be funded, or the
+            lineage's recovery was closed (interlock 1.0.2 does not reopen
+            one; §12, U-6).
         """
         with self._lock:
             found = self._recoveries.get(mandate_id)
             if found is not None:
+                if session:
+                    self._recovering.setdefault(mandate_id, set()).add(session)
                 return found
             engine = self._binder.engine(mandate_id)
             policy = engine.compiled.recovery
@@ -557,11 +567,30 @@ class Fiduciary:
                 guard=self.guard(mandate_id),
             )
             self._recoveries[mandate_id] = found
+            if session:
+                self._recovering.setdefault(mandate_id, set()).add(session)
             return found
 
     def recovering(self, mandate_id: str) -> RecoveryRuntime | None:
         with self._lock:
             return self._recoveries.get(mandate_id)
+
+    def release_recovery(self, mandate_id: str, session: str) -> None:
+        """``session`` bills the lineage's recovery no more. When no session
+        does, close it: an unsettled step's hold is voided, and the unused
+        reserve, and what any grant left, returns to the scope it came from
+        rather than standing on ``{scope}/recovery``."""
+        with self._lock:
+            users = self._recovering.get(mandate_id)
+            if users is None or session not in users:
+                return
+            users.discard(session)
+            if users:
+                return
+            del self._recovering[mandate_id]
+            runtime = self._recoveries.pop(mandate_id, None)
+        if runtime is not None:
+            runtime.close()
 
     # -- sessions -------------------------------------------------------------------
 
@@ -783,12 +812,15 @@ class Session:
         return [self._summary(t, state) for t in sorted(self._tickets)]
 
     def close(self) -> None:
-        """Record ``session.closed``, naming every scope the session billed."""
+        """Record ``session.closed``, naming every scope the session billed;
+        the last session billing the lineage's recovery closes it, returning
+        its unused reserve."""
         with self._lock:
             if self._closed:
                 return
             self._closed = True
         self._breaker.close()
+        self._fid.release_recovery(self.mandate_id, self.session_id)
         log = self._fid.log
         with log.store.transaction():
             now = log.now()
@@ -1124,7 +1156,9 @@ class Session:
             )
         tools = list(self._bindings())
         try:
-            recovery = self._fid.recovery(self.mandate_id, tools, self.trajectory)
+            recovery = self._fid.recovery(
+                self.mandate_id, tools, self.trajectory, session=self.session_id
+            )
         except (RecoveryError, AgentGovError) as exc:
             return self._unrecovered(
                 trip, f"This task is halted ({trip.kind.value}): {type(exc).__name__}."

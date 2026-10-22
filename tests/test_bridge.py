@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator, Mapping
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -336,4 +337,64 @@ def test_spent_out_without_recovery_is_quoted_and_granted_beside_the_subject(
     assert session.billing_scope == f"{bound.SCOPE}/ext-1"
     session.close()
     assert world.log.records()[-1].content["scopes"] == [bound.SCOPE, f"{bound.SCOPE}/ext-1"]
+    _verify(world)
+
+
+def test_the_last_session_to_close_returns_the_recovery_reserve(world: bound.World) -> None:
+    """A recovery shared by two sessions stays open while either bills it; the
+    last to close closes it, and the unused reserve goes back to ``support``,
+    which funded it, instead of standing on ``{scope}/recovery``."""
+    governance = {**kit.mandate_json(world)["governance"], "max_calls": 2}
+    world.issue_and_bind(kit.mandate(world, governance=governance))
+    fid = kit.fiduciary(world)
+    recovery_scope = f"{bound.SCOPE}/recovery"
+    support = world.governor.available("support")
+    sessions = [fid.session(bound.SCOPE, tenant="acme") for _ in range(2)]
+    for n, session in enumerate(sessions):
+        model = session.govern(FakeAnthropic())
+        turns = [
+            [{"role": "user", "content": f"Batch {n}-{k}: post {'pqr'[k] * 8}."}] for k in range(3)
+        ]
+        for turn in turns[:2]:
+            model.messages.create(model="claude-opus-5-5", max_tokens=1000, messages=turn)
+        with pytest.raises(SessionHaltedError) as halted:  # runaway: into recovery
+            model.messages.create(model="claude-opus-5-5", max_tokens=1000, messages=turns[2])
+        if n == 0:
+            model.messages.create(
+                model="claude-opus-5-5", max_tokens=1000, messages=list(halted.value.messages or ())
+            )
+        else:
+            # Interlock's runtime follows one transcript: a second session's
+            # step is refused, though it bills the same reserve from now on.
+            assert halted.value.messages is None and "Recovery refused" in str(halted.value)
+        assert session.billing_scope == recovery_scope
+    world.governor.refresh()
+    reserve = world.governor.available(recovery_scope)
+    assert Decimal(0) < reserve < Decimal("5")
+    assert world.governor.available("support") == support - Decimal("5")
+
+    sessions[0].close()
+    assert fid.recovering(sessions[1].mandate_id) is not None  # the other still bills it
+    sessions[1].close()
+    assert fid.recovering(sessions[1].mandate_id) is None
+    world.governor.refresh()
+    assert world.governor.available(recovery_scope) == 0
+    assert world.governor.available("support") == support - Decimal("5") + reserve
+    records = fid._runtime_records.records()  # type: ignore[union-attr]
+    (closed,) = [r for r in records if r.kind == "recovery.closed"]
+    assert Decimal(closed.body["returned"]) == reserve
+
+    # Interlock does not reopen a closed recovery (U-6): a later session's
+    # safety halt stands, unrecovered and unquoted.
+    later = fid.session(bound.SCOPE, tenant="acme")
+    model = later.govern(FakeAnthropic())
+    world.governor.trip(bound.SCOPE, "operator stop")
+    with pytest.raises(SessionHaltedError) as stood:
+        model.messages.create(
+            model="claude-opus-5-5",
+            max_tokens=100,
+            messages=[{"role": "user", "content": "Go on."}],
+        )
+    assert stood.value.messages is None and stood.value.ticket is None
+    later.close()
     _verify(world)
