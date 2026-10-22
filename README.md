@@ -212,6 +212,43 @@ records = "runtime.jsonl"            # the guard's ILOK1 log of quotes and grant
 key     = "runtime.key"
 ```
 
+## An agent's session
+
+A session is one mandate version in force, one tenant, one trajectory and one billing
+scope, recorded before its first call. With the deployment above bound, and
+`in_process = "tool-calls-only"` in `fiduciary.toml` (an agent that runs code it writes is
+bridged out of process instead):
+
+```python
+from fiduciary import Fiduciary
+
+fid = Fiduciary.from_config("fiduciary.toml")
+with fid.session("support-agent", tenant="acme") as session:
+    tools = session.tool_definitions()  # the pinned bindings, as the Messages API takes them
+    result = session.call(
+        "refund_order", {"order_id": 7, "amount": "12.50", "payment_intent": "pi_0000000007"}
+    )
+    print(result.outcome)  # committed; or refused, with interlock's sanitized feedback
+fid.close()
+```
+
+`session.govern(anthropic.Anthropic())` meters the model's own calls on the session's
+billing scope, under the mandate's breaker, ceilings and model allowlist. A halt is
+answered by interlock's recovery runtime, and a spent reserve raises an `extension` ticket
+for the principals. Out of process, the same session speaks MCP:
+
+```
+fiduciary mcp serve --mandate support-agent --tenant acme                        # stdio
+fiduciary mcp serve --mandate support-agent --tenant acme --http 127.0.0.1:8765 \
+    --token-file session.token                                                  # Streamable HTTP
+fiduciary mcp proxy --mandate support-agent --tenant acme -- <upstream MCP server command>
+```
+
+The agent sees the bindings the mandate pins and two built-ins (`fiduciary_request`, to
+ask the principals for an undo or an amendment, and `fiduciary_ticket_status`), and no way
+to approve anything. A binding can be written in code with `fiduciary.Tool`, and pinned
+with `fiduciary tool digest module:name`.
+
 ## Tests
 
 ```

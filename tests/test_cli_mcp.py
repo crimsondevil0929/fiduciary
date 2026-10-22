@@ -6,9 +6,11 @@ recorded, and the store verifies afterwards (§8.2, §10.5, F8-11)."""
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 import signal
+import ssl
 import subprocess
 import sys
 import time
@@ -26,7 +28,7 @@ from tests import bound
 from tests import bridge_kit as kit
 from tests import examples as e
 from tests.conftest import PG_DSN, Clock
-from tests.test_mcp import UPSTREAM, _post
+from tests.test_mcp import UPSTREAM, _certificate, _post
 
 ROOT = Path(__file__).resolve().parents[1]
 ENTRY = "from fiduciary.cli import main_entry; main_entry()"
@@ -43,9 +45,10 @@ def _key(path: Path, name: str) -> Path:
     return path
 
 
-def _configure(world: bound.World) -> Path:
+def _configure(world: bound.World, *, top: str = "") -> Path:
     """Write the deployment's files, then let go of what the test process
-    holds: the engine's chain, the ledger's one writer."""
+    holds: the engine's chain, the ledger's one writer. ``top`` leads
+    ``fiduciary.toml``."""
     world.issue_and_bind(kit.mandate(world))
     world.binder.close()
     world.governor.close()
@@ -79,20 +82,27 @@ def _configure(world: bound.World) -> Path:
     )
     (tmp / "interlock.toml").write_text(substrate + tables + sinks)
     service = _key(tmp / "service.key", "service")
+    outbox = world.back_office
+    if world.backend != "sqlite":  # the installer's DSN, as a URI
+        from psycopg.conninfo import conninfo_to_dict
+
+        assert PG_DSN is not None
+        outbox = f"{PG_DSN.rsplit('/', 1)[0]}/{conninfo_to_dict(outbox)['dbname']}"
     if isinstance(world.store, SqliteStore):
         database = f'database = "{world.store.path}"\n'
     else:
         database = f'database = "{PG_DSN}"\nschema = "{world.store.schema}"\n'  # type: ignore[attr-defined]
     config = tmp / "fiduciary.toml"
     config.write_text(
-        database
+        top
+        + database
         + f'ledger = "{tmp / "ledger.db"}"\n'
         + f'interlock = "{tmp / "interlock.toml"}"\n'
         + f'[charter]\ndigest = "{world.charter.digest}"\n'
         + f'[service]\nkey = "{service}"\n'
         + f"[binding]\ntools = {json.dumps(tools)}\n"
         + f'directives = ["{tmp / "stop.txt"}"]\nchains = "{tmp / "chains"}"\n'
-        + f'[executor]\nkey = "{service}"\n'
+        + f'[executor]\nkey = "{service}"\noutbox = "{outbox}"\n'
         + f'[runtime]\nrecords = "{tmp / "runtime.jsonl"}"\nkey = "{service}"\n'
         + f'[receipts]\nlog = "{tmp / "bridge-receipts.jsonl"}"\n'
         + '[bridge.handlers]\nlookup_order = "tests.bridge_kit:lookup"\n'
@@ -241,3 +251,99 @@ def test_mcp_commands_refuse_what_they_cannot_serve(world: bound.World) -> None:
     ):
         run = _run(_command(config, *extra), b"")
         assert run.returncode != 0 and message in run.stderr.decode(), (extra, run.stderr)
+
+
+def _pipes(monkeypatch: pytest.MonkeyPatch, data: bytes) -> io.BytesIO:
+    out = io.BytesIO()
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(data)))
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(out, write_through=True))
+    return out
+
+
+def test_the_commands_in_process(
+    world: bound.World, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same commands, run in this process: the service turns between
+    messages, the proxy's upstream, and the HTTP listener's token file."""
+    from fiduciary import mcp as mcp_module
+    from fiduciary.cli import main
+
+    config = _configure(world)
+    monkeypatch.setattr(mcp_module, "SERVICE_SECONDS", 0.0)
+    out = _pipes(monkeypatch, _messages(("lookup_order", {"order_id": 9})))
+    assert main(["--config", str(config), "mcp", "serve", "--mandate", bound.SCOPE]) == 0
+    answers = {a["id"]: a for a in map(json.loads, out.getvalue().splitlines())}
+    assert answers[1]["result"]["isError"] is False
+
+    log = world.tmp / "upstream.log"
+    monkeypatch.setenv("UPSTREAM_LOG", str(log))
+    out = _pipes(monkeypatch, _messages(("lookup_order", {"order_id": 3})))
+    command = [
+        "--config",
+        str(config),
+        "mcp",
+        "proxy",
+        "--mandate",
+        bound.SCOPE,
+        "--tenant",
+        "acme",
+    ]
+    assert main([*command, "--", sys.executable, UPSTREAM]) == 0
+    assert json.loads(out.getvalue().splitlines()[1])["result"]["content"][0]["text"] == (
+        "order 3: open"
+    )
+
+    served: list[int] = []
+
+    def serve_once_and_stop(self: Any) -> None:
+        self.start()
+        token = (world.tmp / "in-process.token").read_text().strip()
+        ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        try:
+            served.append(_post(self.address, ping, token=token)[0])
+        finally:
+            self.stop()
+
+    monkeypatch.setattr(mcp_module, "SERVICE_SECONDS", 0.05)
+    monkeypatch.setattr(mcp_module.HttpBridge, "serve_forever", serve_once_and_stop)
+    http = ["--http", "127.0.0.1:0", "--token-file", str(world.tmp / "in-process.token")]
+    assert main(["--config", str(config), "mcp", "serve", "--mandate", bound.SCOPE, *http]) == 0
+    assert served == [200]
+    cert, key = _certificate(world.tmp)
+    trusted = ssl.create_default_context(cafile=str(cert))
+
+    def serve_over_tls(self: Any) -> None:
+        self.start()
+        token = (world.tmp / "tls.token").read_text().strip()
+        ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        try:
+            served.append(_post(self.address, ping, token=token, context=trusted)[0])
+        finally:
+            self.stop()
+
+    monkeypatch.setattr(mcp_module.HttpBridge, "serve_forever", serve_over_tls)
+    tls = ["--http", "127.0.0.1:0", "--token-file", str(world.tmp / "tls.token")]
+    tls += ["--tls-cert", str(cert), "--tls-key", str(key)]
+    assert main(["--config", str(config), "mcp", "serve", "--mandate", bound.SCOPE, *tls]) == 0
+    assert served == [200, 200]
+    monkeypatch.setattr(mcp_module.HttpBridge, "serve_forever", lambda self: self.stop())
+    assert (
+        main(
+            [
+                "--config",
+                str(config),
+                "mcp",
+                "serve",
+                "--mandate",
+                bound.SCOPE,
+                "--http",
+                "127.0.0.1:0",
+            ]
+        )
+        == 0
+    )
+    assert "bearer token" in capsys.readouterr().err
+    assert (
+        main(["--config", str(world.tmp / "missing.toml"), "mcp", "serve", "--mandate", "x"]) == 2
+    )
+    _verified(world)
