@@ -566,16 +566,25 @@ def _close_all(opened: list[Callable[[], None]]) -> None:
 def _outbox(target: str, opened: list[Callable[[], None]]) -> Any:
     """Interlock's outbox operations: a SQLite back office, or a PostgreSQL
     connection as the installer."""
+    import sqlite3
+
     from interlock.deliveries import operations
+    from interlock.exceptions import InterlockError
 
-    if is_dsn(target):
-        import psycopg
+    try:
+        if is_dsn(target):
+            import psycopg
 
-        conn = psycopg.connect(target, autocommit=True)
-        opened.append(conn.close)
-        return operations(conn)
-    from interlock.sqlite_outbox import OPERATOR, SqliteOutboxStore
+            try:
+                conn = psycopg.connect(target, autocommit=True)
+            except psycopg.Error as exc:
+                raise ConfigError(f"[executor] outbox: {exc}") from exc
+            opened.append(conn.close)
+            return operations(conn)
+        from interlock.sqlite_outbox import OPERATOR, SqliteOutboxStore
 
-    store = SqliteOutboxStore(target, writes=OPERATOR)
+        store = SqliteOutboxStore(target, writes=OPERATOR)
+    except (OSError, sqlite3.Error, InterlockError) as exc:
+        raise ConfigError(f"[executor] outbox {target}: {exc}") from exc
     opened.append(store.close)
     return operations(store)
