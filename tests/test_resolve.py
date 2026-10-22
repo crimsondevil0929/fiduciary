@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 from interlock import PlanBuilder
+from interlock.chain import EscrowChain, RecordType
 from interlock.deliveries import OutboxOperations
 from interlock.exceptions import RecordIntegrityError
 from interlock.operators import Operator, OperatorLog
@@ -265,6 +266,66 @@ def test_a_repair_is_read_from_its_chain_when_no_engine_is_open(world: bound.Wor
     assert resolved.kind == "execution.applied"
     (result,) = resolved.content["results"]
     assert result["proposal"] == repair.proposal.content_hash() and result["receipt"] is None
+    _verify(world)
+
+
+class _KilledError(BaseException):
+    """A process killed mid-call: nothing below it catches this."""
+
+
+def test_an_open_commit_intent_leaves_the_warrant_open_until_it_settles(
+    world: bound.World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Killed after the substrate committed the proposal and before the chain
+    recorded COMMITTED: the stage's COMMIT_INTENT is open, so what the step
+    reached is unknown, and the intent stays open. Once the engine's recovery
+    answers it from the commit marker, resolve() records the execution."""
+    raw = world.mandate_json()
+    raw["escalation"] = {"max_open": 5, "ttl_seconds": 3600, "auto": []}
+    mandate = Mandate.from_json(raw, signed=False).signed(e.signer("cfo"))
+    world.issue_and_bind(mandate)
+    esc = Escalation(world.authority, world.governor)
+    plan = _two_tenant_plan(world)
+    refused = world.execute(mandate, plan)
+    repair = world.binder.engine(mandate.mandate_id).engine.repair(plan)
+    tk, _ = esc.raise_refused(mandate.mandate_id, repair, receipt=refused.receipt)
+    assert tk is not None and repair.proposal is not None
+    warrant = _approve_ticket(world, esc, tk, "accept_repair", principals=("cfo",))
+
+    append = EscrowChain.append
+
+    def killed_at_committed(chain: EscrowChain, record_type: RecordType, **kw: Any) -> Any:
+        if record_type is RecordType.COMMITTED:
+            raise _KilledError("killed between the substrate's commit and its record")
+        return append(chain, record_type, **kw)
+
+    monkeypatch.setattr(EscrowChain, "append", killed_at_committed)
+    executor = Executor(world.binder)
+    executor.register_proposal(repair.proposal)
+    with pytest.raises(_KilledError):
+        executor.execute(warrant)
+    monkeypatch.setattr(EscrowChain, "append", append)
+    chain = world.tmp / "chains" / f"{mandate.mandate_id}.chain"
+    assert [r.record_type for r in EscrowChain.load(chain).unresolved_intents()] == [
+        RecordType.COMMIT_INTENT
+    ]
+
+    reader = Binder(
+        world.authority,
+        world.governor,
+        deployment=world.binder._deployment,
+        chains=world.tmp / "chains",
+    )  # the command line's: it reads the chain, and cannot ask the substrate
+    assert Executor(reader).resolve() == []
+    assert world.log.state().execution_status(warrant.digest) == "intent"
+
+    world.binder.engine(mandate.mandate_id).close()  # the dead process's engine
+    assert world.binder.resume() == [mandate.mandate_id]  # recovers: the marker is present
+    assert not EscrowChain.load(chain).unresolved_intents()
+    (resolved,) = Executor(world.binder).resolve()
+    assert resolved.kind == "execution.applied"
+    (result,) = resolved.content["results"]
+    assert result["proposal"] == repair.proposal.content_hash()
     _verify(world)
 
 
