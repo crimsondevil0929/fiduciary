@@ -10,7 +10,7 @@ measured consequence satisfies its checkers. Fiduciary says who decided those li
 on whose authority, and who approved an exception. It records each answer as a signed
 document that anyone holding the public keys can verify.
 
-`docs/FIDUCIARY_SPEC.md` is the specification. This is **0.4.0**, Phase 4 of its
+`docs/FIDUCIARY_SPEC.md` is the specification. This is **0.5.0**, Phase 5 of its
 roadmap:
 - Phase 1 (0.1.0) gave the FIDU1 format, the documents, the order on mandates, the log
   and its two stores, and the command line.
@@ -18,9 +18,28 @@ roadmap:
   and binds it to a deployment.
 - Phase 3 (0.3.0) escalates what a mandate does not allow to its principals, and
   executes their decision exactly once.
-- Phase 4 bridges an agent to it, in process or over MCP.
+- Phase 4 (0.4.0) bridges an agent to it, in process or over MCP.
+- Phase 5 exports a lineage as an audit bundle, which anyone verifies offline.
 
-The audit bundle is Phase 5.
+## What 0.5.0 adds
+
+- **The audit bundle** (`fiduciary export-bundle`, `fiduciary.bundle`). One file holds a
+  lineage's authority, its acts and the evidence for both:
+  - the signed log and its documents;
+  - the ledger entries the lineage touched, each with an inclusion proof;
+  - its receipts, its interlock records and its escrow chain.
+
+  It carries no row data, payloads, transcripts or secrets. The same lineage over the same
+  range always exports to the same bytes. See [Auditing a lineage](#auditing-a-lineage).
+- **`fiduciary verify-bundle`**, which checks a bundle with no database and no network:
+  - it takes every decision again by the service's rules;
+  - it traces every act on the lineage's ledger footprint to the authority that allowed
+    it, and names what nothing allowed;
+  - it holds each warrant to what the systems recorded, and each instant to the ledger's
+    order.
+
+  `docs/BUNDLE_FORMAT.md` specifies the format, and `vectors/fidu1/bundles/` holds golden
+  bundles that pin every check and exit code.
 
 ## What 0.4.0 adds
 
@@ -265,6 +284,39 @@ ask the principals for an undo or an amendment, and `fiduciary_ticket_status`), 
 to approve anything. A binding can be written in code with `fiduciary.Tool`, and pinned
 with `fiduciary tool digest module:name`.
 
+## Auditing a lineage
+
+The operator exports a lineage. The ledger's checkpoint key signs the checkpoint its
+inclusion proofs verify against:
+
+```
+fiduciary export-bundle --mandate support-agent --ledger-key ledger.key --out support-agent.fidb
+```
+
+The auditor verifies it anywhere, with the charter digest and the deployment's public keys
+obtained from outside the bundle:
+
+```
+fiduciary verify-bundle support-agent.fidb --charter <digest> --keys keys.json
+```
+
+`verify-bundle` prints V1 to V12 and every finding. It exits 0 on a pass. Otherwise it
+exits with the first failing check's code:
+
+| Exit | Failure |
+|---|---|
+| 1 | a usage error |
+| 2 | a file that is no bundle |
+| 3 | malformed |
+| 4 | a bad signature |
+| 5 | authority |
+| 6 | monotonicity or policy |
+| 7 | an ambient act no authority explains |
+| 8 | missing evidence |
+| 9 | revocation or time |
+
+An act by a key the charter declares break-glass is still named, and labeled so.
+
 ## Tests
 
 ```
@@ -302,6 +354,10 @@ signing inputs, a chain of records, and invalid documents, each with the error i
 fail with. `scripts/make_vectors.py` regenerates them, and the tests require them
 unchanged. An implementation in another language that reproduces them reads and signs
 FIDU1 as this one does.
+
+`vectors/fidu1/bundles/` holds golden audit bundles, each with the verdict it must reach
+(`index.json`). They are recorded rather than generated, because a bundle is stamped by the
+wall clock; `scripts/make_bundles.py` records them anew.
 
 ## License
 

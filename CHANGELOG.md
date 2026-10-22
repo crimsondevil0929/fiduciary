@@ -6,6 +6,66 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [0.5.0]
+
+Phase 5 of `docs/FIDUCIARY_SPEC.md` §11: the audit bundle. A lineage's authority, its
+acts and the evidence for both leave the deployment as one file, which an auditor checks
+offline against a charter digest they pinned themselves.
+
+### Added
+
+- **`fiduciary export-bundle --mandate <id> [--from] [--to] --out <b.fidb>`**
+  (`fiduciary.bundle.export_bundle`). A deterministic tar (sorted members, mode 0644,
+  owner 0, mtime 0), so one lineage over one range exports to identical bytes (§9.2). It
+  holds:
+  - the log from record 1, with every document, tool binding and intake item it names;
+  - the lineage's ledger footprint, with RFC 9162 inclusion proofs against a signed
+    checkpoint (`agentgov-ledger:<entry 1>`) and witnesses' cosignatures;
+  - the lineage's ARC1 receipts as receipt bundles;
+  - its ILOK1 runtime and operator records, and its escrow chains;
+  - what compiling it reads from the deployment, and the keys it verifies under.
+
+  It carries no row data, payloads, transcripts or secrets (F9-1). A bundle is never
+  overwritten.
+- **`fiduciary verify-bundle <b.fidb> --charter <digest> [--keys] [--witness] [--skew]`**
+  (`fiduciary.bundle.verify_bundle`). V1 to V12 (§9.3), with no database and no network
+  (F9-3). Every check and every finding is printed. The exit code is the first failing
+  check's: 0 pass, 1 usage, 2 unreadable, 3 malformed, 4 signature, 5 authority,
+  6 monotonicity or policy, 7 ambient, 8 evidence, 9 revocation or time.
+  - Every decision in the log is taken again by the service's own rules, from the state
+    before it.
+  - Every act on the lineage's ledger footprint must trace to a bind, a plan, a session's
+    metered call, a recovery or extension record, or a warrant's step. Anything else is
+    named as ambient, and labeled break-glass when a charter declares its key so.
+  - Each warrant step's evidence is checked against the systems' records, including a
+    message head that moved after its ticket (U-4).
+  - No commit or delivery may follow a revocation's trip.
+- **`docs/BUNDLE_FORMAT.md`**, the format specified for an implementation in another
+  language, and **`vectors/fidu1/bundles/`**: 30 golden bundles, three valid and the
+  others failing each check and exit code, each with its recorded verdict
+  (`scripts/make_bundles.py`).
+- `fiduciary verify --skew`, defaulting to `[bridge] skew_seconds`: how far an instant may
+  stray from its anchor's ledger time.
+- The live acceptance suite runs on the wall clock, and exports and verifies each run's
+  bundle, in process and over MCP. It also runs a sixth scenario, `ask-the-principals`.
+  It never falls back to another model, and `--max-cost` is a hard cap (default $2.00).
+
+### Changed
+
+- Every metered call bills under a memo that names its session and what it was
+  (`FIDU1 session <id> model <model>`, `... tool <name>`), recovery's included, so an
+  auditor can place each one in the session's life.
+- A refused call's feedback names the steps a repair keeps and drops. A repair is offered
+  only when no dropped step depends on a kept one. A committed call names its plan and
+  the queued requests.
+- An MCP built-in's result carries the sentence and the JSON value, as a session's does.
+
+### Fixed
+
+- The last session to close a lineage's recovery closes its runtime: an unsettled step's
+  hold is voided, and the unused reserve returns to its funding scope (F8-9). Interlock
+  does not reopen a closed recovery (U-6, §12).
+
 ## [0.4.0]
 
 Phase 4 of `docs/FIDUCIARY_SPEC.md` §11: the bridge. An agent acts through a session, in
