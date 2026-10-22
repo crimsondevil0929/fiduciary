@@ -6,6 +6,77 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [0.4.0]
+
+Phase 4 of `docs/FIDUCIARY_SPEC.md` §11: the bridge. An agent acts through a session, in
+process or over MCP, and every call it makes is bound by the mandate's pinned bindings,
+metered, counted, and escalated to the principals when it reaches a boundary.
+
+### Added
+
+- **Sessions** (`fiduciary.bridge`). `Fiduciary.from_config` (or from its parts), and
+  `Fiduciary.session(mandate, tenant=...)`, recorded before its first call. A session's
+  methods are `call`, `govern`, `tool_definitions`, `tickets` and `close`, and nothing
+  else (F8-1). In process, a session starts only with `in_process = "tool-calls-only"`
+  (F8-10).
+  - `call` resolves the tool against the bindings the version in force pins (F4-16),
+    validates its arguments against the binding's schema and the canonical domain before
+    anything is built (F4-13), and builds the plan from the binding alone, its tenant the
+    session's (F4-14, F8-2). A refused plan is repaired, its ticket raised, and a rule's
+    warrant executed in process (F7-14).
+  - Passthrough tools are metered at their price through the lineage's guard, and every
+    call counts against the cognitive breaker and the session's velocity (F4-15, F6-5).
+  - Results carry interlock's sanitized feedback, and an escalation's ticket id, class
+    and deadline; never a bound, a diff, another tenant or an approver (F8-3).
+  - `govern(client)` meters model calls under the allowlist, a configured price,
+    `max_output_tokens` and `per_call`. A halt goes to interlock's `RecoveryRuntime`; a
+    spent reserve's quote raises an extension ticket, and a grant moves billing to the
+    scope it funded (F8-8). A safety halt is never answered with money (F8-9).
+  - A call refused before anything is built is recorded (`session.refused`, F8-12).
+- **The MCP bridge** (`fiduciary.mcp`, `fiduciary mcp serve|proxy`).
+  - `tools/list` is the pinned bindings and two built-ins, `fiduciary_request` and
+    `fiduciary_ticket_status` (F8-4). `tools/call` is `Session.call`; a malformed
+    request is a JSON-RPC error and builds nothing (F8-5). No method, path or tool takes
+    an approval (F7-4).
+  - stdio, and Streamable HTTP: `POST /mcp`, one bearer token per session, loopback or
+    TLS, refusing other paths, methods, sessions and browser origins (F8-6).
+  - The proxy fronts an upstream MCP server and exposes only the tools a passthrough
+    binding pins, each call metered and counted (F8-7).
+  - A bridge process also judges the intake and executes the warrants formed.
+- **`fiduciary.Tool`** writes a binding in code; `fiduciary tool digest module:name`
+  pins it.
+- **Records and store**: `session.opened`, `session.refused` and `session.closed`, each
+  replayed by `verify`. The stores are at version 4, with the `sessions` projection;
+  earlier stores upgrade in place.
+- **Configuration**: `in_process`, `[bridge]` (`http`, `skew_seconds`, `handlers`,
+  `pricing`), `[receipts]`, and `[executor] outbox`.
+- **The live acceptance suite** (`scripts/live_acceptance.py`): business requests to a
+  Claude model through a session, opt-in on `BENCHMARK_API_KEY` and cost-capped, with
+  reference proposals and back-office oracles that run offline in CI.
+
+### Fixed
+
+- **`Ticket.observed` is checked.** Replay refuses a ticket whose `observed.log` is not
+  the head its record follows, and `verify`, given the ledger, names one whose
+  `observed.ledger` the ledger does not hold or that does not precede its anchor (F4-17).
+- **The executor reads interlock's operator log under the keyring `interlock.toml`
+  trusts**, and its key must be one of them. A log holding another operator's records
+  could not be read before.
+- **The executor finds each lineage's own budget guard**, so quotes issued under one
+  mandate's margin and ttl are granted where they were issued.
+
+### Tests
+
+- The end-to-end lifecycle on both stores against AgentGov's `DummyLLM`: a commit, a
+  refusal repaired by rule, the envelope spent, recovery, a quote, a grant by two
+  approvals signed through a fake AWS KMS, and the task finished on the extension.
+- MCP conformance in process, over stdio, over HTTP (with TLS), through the proxy, and
+  as subprocesses from a full `fiduciary.toml`.
+- The adversarial agent suite: SQL in arguments, another tenant's id, floats and
+  oversized strings, unpinned tools, forged approvals, and a ticket storm.
+- The open escrow commit intent path of `resolve()`.
+- The README's session example, run as written.
+
 ## [0.3.0]
 
 Phase 3 of `docs/FIDUCIARY_SPEC.md` §11: escalation tickets, quorum, warrants, their

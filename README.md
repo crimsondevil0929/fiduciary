@@ -10,16 +10,32 @@ measured consequence satisfies its checkers. Fiduciary says who decided those li
 on whose authority, and who approved an exception. It records each answer as a signed
 document that anyone holding the public keys can verify.
 
-`docs/FIDUCIARY_SPEC.md` is the specification. This is **0.3.0**, Phase 3 of its
+`docs/FIDUCIARY_SPEC.md` is the specification. This is **0.4.0**, Phase 4 of its
 roadmap:
 - Phase 1 (0.1.0) gave the FIDU1 format, the documents, the order on mandates, the log
   and its two stores, and the command line.
 - Phase 2 (0.2.0) compiles a mandate into Interlock's checkers and AgentGov's policies,
   and binds it to a deployment.
-- Phase 3 escalates what a mandate does not allow to its principals, and executes their
-  decision exactly once.
+- Phase 3 (0.3.0) escalates what a mandate does not allow to its principals, and
+  executes their decision exactly once.
+- Phase 4 bridges an agent to it, in process or over MCP.
 
-The agent and MCP bridge are Phase 4, and the audit bundle Phase 5.
+The audit bundle is Phase 5.
+
+## What 0.4.0 adds
+
+- **Sessions** (`fiduciary.bridge`). An agent acts through a session: one mandate version
+  in force, one tenant, one trajectory, one billing scope. A call names a binding the
+  mandate pins; its arguments are checked against the binding's schema before anything
+  is built, and the plan is the binding's own, for the session's tenant. A refused plan
+  is repaired and escalated, and a model's calls are metered and recovered from a halt,
+  with an extension ticket when the money runs out. See [An agent's
+  session](#an-agents-session).
+- **The MCP bridge** (`fiduciary mcp serve`, `fiduciary mcp proxy`): over stdio, or
+  Streamable HTTP with one bearer token per session; the proxy fronts another MCP server
+  and exposes only what the mandate pins. Nothing an agent reaches can approve anything.
+- **`fiduciary.Tool`**, for writing a binding in code.
+- **The live acceptance suite**, opt-in and cost-capped, with offline references.
 
 ## What 0.3.0 adds
 
@@ -268,6 +284,15 @@ The crash tests (`tests/test_crash_recovery.py`) run the service as a child proc
 kill it at every checkpoint. The contention test (`tests/test_contention.py`) runs two
 service processes over an AgentGov ledger shared through PostgreSQL, so it needs the
 DSN even when the store under test is SQLite.
+
+`scripts/live_acceptance.py` puts a Claude model in front of a session with business
+requests. It spends money only with `BENCHMARK_API_KEY` set, within each session's envelope
+and `--max-cost`; `--offline` replays its reference proposals, as the tests do:
+
+```
+uv run python scripts/live_acceptance.py --offline
+BENCHMARK_API_KEY=... uv run --with anthropic python scripts/live_acceptance.py --out live-run
+```
 
 `scripts/ilok1_sizes.py --check` measures the ILOK1 records the executor has interlock
 sign, and requires the spec's table (§3.5) to match.
