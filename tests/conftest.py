@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import uuid
 from collections.abc import Callable, Iterator
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,21 @@ class Clock:
 
     def advance(self, **delta: float) -> None:
         self.now += timedelta(**delta)
+
+
+class LiveClock(Clock):
+    """The wall clock, moved on by :meth:`advance`: what a deployment whose
+    instants are held to its ledger's (V12) runs on."""
+
+    def __init__(self) -> None:
+        super().__init__(datetime.now(UTC))
+        self._offset = timedelta(0)
+
+    def __call__(self) -> datetime:
+        return datetime.now(UTC) + self._offset
+
+    def advance(self, **delta: float) -> None:
+        self._offset += timedelta(**delta)
 
 
 @pytest.fixture

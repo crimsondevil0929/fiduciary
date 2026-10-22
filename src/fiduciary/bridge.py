@@ -68,8 +68,8 @@ from agentgov.exceptions import (
     RunawayLoopDetectedError,
 )
 from agentgov.interceptor import (
-    Interceptor,
     ModelPricing,
+    SpendGuard,
     TokenUsage,
     default_usage_extractor,
     pricing_for,
@@ -995,7 +995,7 @@ class Session:
         held: Authorization | None = None
         if binding.price > 0:
             try:
-                found = self._hold(binding.price, f"FIDU1 tool {name} {binding.digest[:16]}")
+                found = self._hold(binding.price, f"FIDU1 session {self.session_id} tool {name}")
             except SessionHaltedError as exc:
                 return CallResult(name, "halted", str(exc), ticket=exc.ticket)
             held = found
@@ -1007,7 +1007,7 @@ class Session:
                 self._fid.governor.void(held, memo=f"tool {name} failed")
             return CallResult(name, "error", "The tool failed; nothing was charged.")
         if held is not None:
-            self._capture(held, binding.price, f"FIDU1 tool {name}")
+            self._capture(held, binding.price, f"FIDU1 session {self.session_id} tool {name}")
         return CallResult(name, "served", "", value=value)
 
     def _hold(self, amount: Decimal, memo: str) -> Authorization:
@@ -1422,19 +1422,25 @@ class GovernedModel:
                 transcript,
                 ceiling,
             )
-        interceptor = Interceptor(
-            fid.governor,
-            session.billing_scope,
-            pricing=pricing,
-            max_output_tokens=ceiling,
-            hold=bounds.per_call,
-            cognitive=session._breaker,
-            trajectory=session._trajectory(),
-        )
+        scope = session.billing_scope
+        memo = f"FIDU1 session {session.session_id} model {model}"
         try:
-            if recovery is not None and session.billing_scope != str(session._opened["scope"]):
-                return self._recovering(fn, args, kwargs, pricing, bounds.per_call)
-            return interceptor.invoke(fn, *args, **kwargs).response
+            if recovery is not None and scope != str(session._opened["scope"]):
+                return self._recovering(fn, args, kwargs, pricing, bounds.per_call, memo)
+            # Checked before any hold, so a call that trips the breaker costs
+            # nothing; metered under a memo that names the session (V7).
+            session._breaker.observe_call(
+                scope,
+                getattr(fn, "__name__", "call"),
+                args,
+                kwargs,
+                trajectory=session._trajectory(),
+            )
+            with SpendGuard(fid.governor, scope, bounds.per_call, memo=memo) as guard:
+                response = fn(*args, **kwargs)
+                guard.settle(_cost(pricing, response))
+            session._breaker.record_result(scope, response, trajectory=session._trajectory())
+            return response
         except SessionHaltedError:
             raise
         except (AgentGovError, InterlockError) as exc:
@@ -1471,17 +1477,18 @@ class GovernedModel:
         kwargs: dict[str, Any],
         pricing: ModelPricing,
         per_call: Decimal,
+        memo: str,
     ) -> Any:
         """A call between steps, billed through the recovery runtime: a quote
         in place of a hold that does not fit."""
         session = self._session
-        held = session._hold(per_call, "call made during recovery")
+        held = session._hold(per_call, memo)
         try:
             response = fn(*args, **kwargs)
         except BaseException:
-            session._fid.governor.void(held, memo="call made during recovery failed")
+            session._fid.governor.void(held, memo=f"{memo}: the call failed")
             raise
-        session._capture(held, _cost(pricing, response), "call made during recovery")
+        session._capture(held, _cost(pricing, response), memo)
         return response
 
 

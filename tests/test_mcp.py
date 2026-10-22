@@ -355,7 +355,7 @@ def test_the_proxy_exposes_only_pinned_upstream_tools(
     metered = [
         en
         for en in world.governor.audit_trail(bound.SCOPE)
-        if en.memo.startswith("FIDU1 tool lookup_order") and en.entry_type.value == "spend"
+        if en.memo.endswith("tool lookup_order") and en.entry_type.value == "spend"
     ]
     assert len(metered) == 1
     refusals = [r.content for r in world.log.records() if r.kind == "session.refused"]

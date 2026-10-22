@@ -165,7 +165,9 @@ def test_a_passthrough_call_is_metered_and_served(world: bound.World) -> None:
     served = session.call("lookup_order", {"order_id": 1})
     assert served.ok and served.value == {"order_id": 1, "status": "open"}
     spends = [
-        en for en in world.governor.audit_trail(bound.SCOPE) if en.memo.startswith("FIDU1 tool")
+        en
+        for en in world.governor.audit_trail(bound.SCOPE)
+        if en.memo.startswith(f"FIDU1 session {session.session_id} tool")
     ]
     assert [str(en.amount) for en in spends if en.entry_type.value == "spend"] == ["0.00100000"]
     for order in (2, 3):

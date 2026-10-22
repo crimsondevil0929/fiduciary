@@ -16,6 +16,7 @@ import uuid
 from collections.abc import Callable, Generator, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from interlock import PlanBuilder
 from interlock.engine import StageResult
 from interlock.types import EffectId, EffectPlan
 
+from fiduciary import fidu1
 from fiduciary.authority import Authority
 from fiduciary.binding import Binder
 from fiduciary.documents import Charter, Mandate, ToolBinding
@@ -46,6 +48,16 @@ RECORD = "INSERT INTO refunds (order_id, tenant, amount) VALUES (:order_id, :ten
 ``CrossEffectAgreement`` compares (SQLite hands a NUMERIC back as a float)."""
 ORDERS = 40
 """Seeded orders: id n is tenant ``acme`` for odd n, ``beta`` for even, each totalling 1000."""
+
+
+def window(clock: Clock) -> dict[str, Any]:
+    """An approval's ``issued_at`` and ``not_after``: signed now, by the
+    world's clock, and good for an hour."""
+    now = clock()
+    return {
+        "issued_at": fidu1.format_instant(now),
+        "not_after": fidu1.format_instant(now + timedelta(hours=1)),
+    }
 
 
 def dialect(backend: str, statement: str) -> str:
@@ -149,7 +161,7 @@ class World:
     def issue(self, mandate: Mandate, approvers: tuple[str, ...] = ("cfo", "head-ops")) -> None:
         self.authority.propose(mandate)
         if mandate.issuance == "quorum":
-            approve(self.store, approvers, "mandate", mandate.digest)
+            approve(self.store, approvers, "mandate", mandate.digest, **window(self.clock))
         self.binder.issue(mandate.digest)
 
     def issue_and_bind(self, mandate: Mandate) -> None:
@@ -283,7 +295,7 @@ def build(
     log = Log(store, e.SERVICE, ledger=governor, clock=clock)
     authority = Authority(log, pinned=charter.digest)
     authority.propose(charter)
-    approve(store, e.PRINCIPALS, "charter", charter.digest)
+    approve(store, e.PRINCIPALS, "charter", charter.digest, **window(clock))
     authority.adopt_charter(charter.digest)
     receipts = ReceiptLog(
         "fiduciary-receipts", Ed25519Signer(bytes(32)), path=tmp / "receipts.jsonl"
