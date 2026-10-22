@@ -20,7 +20,9 @@ no single refund passed the mandate's cap, and the store verifies.
 
 Spending money is deliberate:
 
-- the suite reads ``BENCHMARK_API_KEY`` only, never ``ANTHROPIC_API_KEY``;
+- the suite reads ``BENCHMARK_API_KEY`` only, never ``ANTHROPIC_API_KEY``: from the
+  environment, else from ``.env.benchmark`` at the repository root (ignored by git, and
+  left out of the sdist, as ``live-run/`` is);
 - each session's mandate holds an envelope of ``--envelope`` dollars, and the
   governor halts the model there;
 - ``--max-cost`` stops the run once the scenarios' measured spend reaches it;
@@ -41,6 +43,7 @@ import argparse
 import importlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
@@ -64,6 +67,8 @@ from fiduciary.sqlite import SqliteStore  # noqa: E402
 from fiduciary.verify import verify_store  # noqa: E402
 
 DEFAULT_MODEL: Final = "claude-opus-5-5"
+ENV_FILE = ROOT / ".env.benchmark"
+"""Where the key is read from when the environment has none."""
 MAX_TURNS: Final = 8
 """Fail-safe: bounds each conversation apart from the governor."""
 MAX_TOKENS: Final = 4096
@@ -99,6 +104,7 @@ class Outcome:
     stop: str | None = None
     cost: str = "0"
     problems: list[str] = field(default_factory=list)
+    served: list[str] = field(default_factory=list)
 
     @property
     def held(self) -> bool:
@@ -115,6 +121,7 @@ class Outcome:
             "cost": self.cost,
             "held": self.held,
             "problems": self.problems,
+            "served": sorted(set(self.served)),
         }
 
 
@@ -297,60 +304,279 @@ def replay(scenario: Scenario, root: Path) -> Outcome:
     return outcome
 
 
+def _plain(block: Any) -> Any:
+    """A response content block as JSON, for the transcript."""
+    if hasattr(block, "model_dump"):
+        return block.model_dump(mode="json", exclude_none=True)
+    if isinstance(block, dict):
+        return {k: _plain(v) for k, v in block.items()}
+    if isinstance(block, list):
+        return [_plain(b) for b in block]
+    if hasattr(block, "__dict__"):
+        return {k: _plain(v) for k, v in vars(block).items()}
+    return block
+
+
+ToolCaller = Callable[[str, Any], tuple[str, bool, str]]
+"""A tool call: the text the model is given, whether it is an error, and the outcome."""
+
+
+def converse(
+    outcome: Outcome,
+    request: str,
+    tools: list[dict[str, Any]],
+    create: Callable[[list[dict[str, Any]]], Any],
+    call: ToolCaller,
+    *,
+    transcript: Path,
+    budget: Decimal | None = None,
+    price: Callable[[Any], Decimal] | None = None,
+) -> None:
+    """A manual tool-use loop: the model chooses every call, nothing else
+    does. Every request, response and tool result is written to
+    ``transcript``, for reading what the model was told."""
+    messages: list[dict[str, Any]] = [{"role": "user", "content": request}]
+    log: dict[str, Any] = {"system": SYSTEM, "tools": tools, "events": []}
+    spent = Decimal(0)
+    try:
+        while outcome.turns < MAX_TURNS:
+            if budget is not None and spent >= budget:
+                outcome.halted = "budget"
+                break
+            outcome.turns += 1
+            try:
+                response = create(messages)
+            except SessionHaltedError as exc:
+                outcome.halted = exc.kind
+                log["events"].append({"halted": exc.kind, "said": str(exc)})
+                break
+            if price is not None:
+                spent += price(response)
+            outcome.stop = str(response.stop_reason)
+            outcome.served.append(str(getattr(response, "model", "")))
+            log["events"].append(
+                {"response": [_plain(b) for b in response.content], "stop": outcome.stop}
+            )
+            messages.append({"role": "assistant", "content": response.content})
+            if response.stop_reason != "tool_use":
+                break  # end_turn, max_tokens, or refusal: recorded as it is
+            results = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                text, error, found = call(block.name, block.input)
+                outcome.calls.append(
+                    {
+                        "tool": block.name,
+                        "arguments": block.input,
+                        "outcome": found,
+                        "ok": not error,
+                    }
+                )
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": text,
+                        "is_error": error,
+                    }
+                )
+            log["events"].append({"tool_results": results})
+            messages.append({"role": "user", "content": results})
+    finally:
+        if price is not None:
+            outcome.cost = format(spent, "f")
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text(json.dumps(log, indent=2, sort_keys=True, default=str) + "\n")
+
+
 def live(
     scenario: Scenario, root: Path, client: Any, *, model: str, effort: str, envelope: str
 ) -> Outcome:
-    """The scenario, with a model choosing every call (a manual tool-use loop)."""
-    outcome = Outcome(scenario.key, model)
+    """The scenario through a session: the model's calls governed by it, on an
+    envelope of ``envelope`` dollars. No fallback: the model asked for is the
+    model that runs, or the run says it was not."""
+    outcome = Outcome(scenario.key, f"{model} via session")
     with deployment(root, envelope) as (world, session):
-        # The beta namespace, for the server-side fallback on a refusal.
-        governed = session.govern(client.beta)
-        tools = session.tool_definitions()
-        messages: list[dict[str, Any]] = [{"role": "user", "content": scenario.request}]
-        while outcome.turns < MAX_TURNS:
-            outcome.turns += 1
-            try:
-                response = governed.messages.create(
+        governed = session.govern(client)
+
+        def create(messages: list[dict[str, Any]]) -> Any:
+            return governed.messages.create(
+                model=model,
+                max_tokens=MAX_TOKENS,
+                system=SYSTEM,
+                tools=session.tool_definitions(),
+                messages=messages,
+                output_config={"effort": effort},
+            )
+
+        def call(name: str, arguments: Any) -> tuple[str, bool, str]:
+            result = session.call(name, arguments)
+            text = result.render() or json.dumps(result.value, sort_keys=True)
+            return text or result.outcome, not result.ok, result.outcome
+
+        converse(
+            outcome,
+            scenario.request,
+            session.tool_definitions(),
+            create,
+            call,
+            transcript=root / "transcript.json",
+        )
+        outcome.cost = format(_spent(world), "f")
+        outcome.problems = scenario.oracle(world) + common(world)
+    outcome.problems += _served(outcome, model)
+    return outcome
+
+
+def _served(outcome: Outcome, model: str) -> list[str]:
+    others = sorted({m for m in outcome.served if m and m != model})
+    return [f"served by {', '.join(others)}, not {model}"] if others else []
+
+
+class _Bridge:
+    """``fiduciary mcp serve``, as the agent's peer process, over stdio."""
+
+    def __init__(self, config: Path, stderr: Path) -> None:
+        self._errors = stderr.open("wb")
+        self._process = subprocess.Popen(  # noqa: S603 - this interpreter, running fiduciary
+            [
+                *(sys.executable, "-c", "from fiduciary.cli import main_entry; main_entry()"),
+                *("--config", str(config), "mcp", "serve"),
+                *("--mandate", bound.SCOPE, "--tenant", "acme"),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=self._errors,
+            env={**os.environ, "PYTHONPATH": str(ROOT)},
+        )
+        self._next = 0
+        self.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    def _send(self, message: dict[str, Any]) -> None:
+        assert self._process.stdin is not None
+        self._process.stdin.write(json.dumps(message).encode() + b"\n")
+        self._process.stdin.flush()
+
+    def request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        self._next += 1
+        self._send({"jsonrpc": "2.0", "id": self._next, "method": method, "params": params})
+        assert self._process.stdout is not None
+        while True:
+            line = self._process.stdout.readline()
+            if not line:
+                raise RuntimeError("the bridge closed its pipe")
+            answer: dict[str, Any] = json.loads(line)
+            if answer.get("id") == self._next:
+                return answer
+
+    def close(self) -> None:
+        if self._process.stdin is not None:
+            self._process.stdin.close()
+        self._process.wait(60)
+        self._errors.close()
+
+
+def live_mcp(
+    scenario: Scenario, root: Path, client: Any, *, model: str, effort: str, envelope: str
+) -> Outcome:
+    """The scenario through the MCP surface: the agent holds an MCP connection
+    to ``fiduciary mcp serve`` and nothing else (F8-11). Its model calls are
+    the agent host's own, metered here at Anthropic's rates, within
+    ``envelope``."""
+    from agentgov import BudgetManager
+    from agentgov.interceptor import TokenUsage, default_usage_extractor
+    from tests.test_cli_mcp import _configure
+
+    outcome = Outcome(scenario.key, f"{model} via mcp")
+    rates = kit.PRICING[model]
+
+    def price(response: Any) -> Decimal:
+        usage = default_usage_extractor(response)
+        return rates.cost_of(usage if isinstance(usage, TokenUsage) else TokenUsage())
+
+    root.mkdir(parents=True, exist_ok=True)
+    built = bound.build(
+        "sqlite",
+        root,
+        SqliteStore(root / "fiduciary.db"),
+        Clock(e.at("2026-10-18T10:10:00")),
+        tools=kit.tools("sqlite"),
+    )
+    world = next(built)
+    try:
+        bridge = _Bridge(_configure(world), root / "bridge.stderr")
+        try:
+            listed = bridge.request("tools/list", {})["result"]["tools"]
+            tools = [
+                {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "input_schema": t["inputSchema"],
+                }
+                for t in listed
+            ]
+
+            def create(messages: list[dict[str, Any]]) -> Any:
+                return client.messages.create(
                     model=model,
                     max_tokens=MAX_TOKENS,
                     system=SYSTEM,
                     tools=tools,
                     messages=messages,
                     output_config={"effort": effort},
-                    betas=["server-side-fallback-2026-07-01"],
-                    fallbacks="default",
                 )
-            except SessionHaltedError as exc:
-                outcome.halted = exc.kind
-                break
-            outcome.stop = str(response.stop_reason)
-            messages.append({"role": "assistant", "content": response.content})
-            if response.stop_reason != "tool_use":
-                break
-            results = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                result = session.call(block.name, block.input)
-                _record(outcome, block.name, block.input, result)
-                text = result.render() or json.dumps(result.value, sort_keys=True)
-                results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": text or result.outcome,
-                        "is_error": not result.ok,
-                    }
-                )
-            messages.append({"role": "user", "content": results})
-        outcome.cost = format(_spent(world), "f")
+
+            def call(name: str, arguments: Any) -> tuple[str, bool, str]:
+                answer = bridge.request("tools/call", {"name": name, "arguments": arguments})
+                if "error" in answer:
+                    return str(answer["error"]["message"]), True, "jsonrpc-error"
+                result = answer["result"]
+                text = "\n".join(c.get("text", "") for c in result["content"])
+                return text, bool(result["isError"]), "error" if result["isError"] else "ok"
+
+            converse(
+                outcome,
+                scenario.request,
+                tools,
+                create,
+                call,
+                transcript=root / "transcript.json",
+                budget=Decimal(envelope),
+                price=price,
+            )
+        finally:
+            bridge.close()
+        world.governor = BudgetManager.open_sqlite(str(root / "ledger.db"))
         outcome.problems = scenario.oracle(world) + common(world)
+    finally:
+        built.close()
+    outcome.problems += _served(outcome, model)
     return outcome
 
 
 # --------------------------------------------------------------------------
 # the command
 # --------------------------------------------------------------------------
+
+
+def benchmark_key(env_file: Path | None = None) -> str | None:
+    """``BENCHMARK_API_KEY``: the environment's, else ``env_file``'s
+    ``BENCHMARK_API_KEY=...`` line (``export`` and quotes allowed). Never
+    ``ANTHROPIC_API_KEY``, and never printed."""
+    found = os.environ.get("BENCHMARK_API_KEY")
+    if found:
+        return found
+    try:
+        lines = (env_file or ENV_FILE).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        name, sep, value = line.strip().removeprefix("export ").partition("=")
+        if sep and name.strip() == "BENCHMARK_API_KEY":
+            return value.strip().strip("'\"") or None
+    return None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -360,7 +586,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--effort", default="medium", choices=("low", "medium", "high"))
     parser.add_argument("--envelope", default="1.00", help="each session's envelope, in dollars")
-    parser.add_argument("--max-cost", default="5.00", help="stop once the run has spent this")
+    parser.add_argument("--max-cost", default="2.00", help="never spend past this in a run")
+    parser.add_argument(
+        "--via",
+        default="session",
+        choices=("session", "mcp", "both"),
+        help="drive the model through a session in process, the MCP bridge, or both",
+    )
     parser.add_argument("--out", help="where the deployments and results.json go")
     args = parser.parse_args(argv)
 
@@ -370,7 +602,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     client = None
     if not args.offline:
-        key = os.environ.get("BENCHMARK_API_KEY")
+        key = benchmark_key()
         if not key:
             print(
                 "BENCHMARK_API_KEY is not set. This suite never falls back to "
@@ -389,23 +621,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     outcomes: list[Outcome] = []
     spent = Decimal(0)
+    cap = Decimal(args.max_cost)
+    ways = {"session": [("session", live)], "mcp": [("mcp", live_mcp)]}
+    ways["both"] = ways["session"] + ways["mcp"]
     for scenario in chosen:
-        outcomes.append(replay(scenario, out / scenario.key / "reference"))
         if client is None:
+            outcomes.append(replay(scenario, out / scenario.key / "reference"))
             continue
-        if spent >= Decimal(args.max_cost):
-            print(f"stopped before {scenario.key}: spent {spent}", file=sys.stderr)
-            break
-        found = live(
-            scenario,
-            out / scenario.key / "live",
-            client,
-            model=args.model,
-            effort=args.effort,
-            envelope=args.envelope,
-        )
-        spent += Decimal(found.cost)
-        outcomes.append(found)
+        for way, run in ways[args.via]:
+            # The envelope is what the cap leaves: the cap holds whatever the model does.
+            envelope = min(Decimal(args.envelope), cap - spent)
+            if envelope < Decimal("0.60"):  # one call's hold, with room to settle it
+                print(f"stopped before {scenario.key} via {way}: spent {spent}", file=sys.stderr)
+                break
+            found = run(
+                scenario,
+                out / scenario.key / way,
+                client,
+                model=args.model,
+                effort=args.effort,
+                envelope=format(envelope, "f"),
+            )
+            spent += Decimal(found.cost)
+            outcomes.append(found)
     (out / "results.json").write_text(
         json.dumps(
             {"spent": format(spent, "f"), "outcomes": [o.to_json() for o in outcomes]},
@@ -416,7 +654,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     for outcome in outcomes:
         mark = "held" if outcome.held else "FAILED: " + "; ".join(outcome.problems)
-        print(f"{outcome.scenario:18} {outcome.mode:16} {len(outcome.calls):2} call(s)  {mark}")
+        print(f"{outcome.scenario:18} {outcome.mode:28} {len(outcome.calls):2} call(s)  {mark}")
     print(f"spent ${spent}; results in {out / 'results.json'}")
     return 0 if all(o.held for o in outcomes) else 1
 

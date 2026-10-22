@@ -29,3 +29,7 @@ htmlcov/
 
 # OS metadata
 .DS_Store
+
+# The live acceptance suite's key, and its runs: never committed, never packed
+.env.benchmark
+live-run/
