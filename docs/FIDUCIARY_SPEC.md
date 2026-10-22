@@ -1453,6 +1453,13 @@ billing scope. It is recorded (`session.opened`) before its first call.
     that session alone;
   - the listener speaks TLS, or listens on loopback only;
   - a token authorizes the mandate's tools for its session, and nothing else (A8).
+
+  The bridge serves one endpoint, `POST /mcp`, and answers with `application/json`. It
+  refuses a request with no token or another token (401), one naming another session's
+  `Mcp-Session-Id` (404), any other path (404) or method (405), a body past 1 MiB (413),
+  and a browser request whose `Origin` is not loopback (403), so a loopback listener is
+  not reachable by DNS rebinding. `fiduciary mcp serve --http` writes the token to
+  `--token-file` (mode 0600), or to standard error.
 - **F8-7.** `proxy` fronts an upstream MCP server. An upstream tool is exposed only where
   the mandate pins a `passthrough` binding naming it, and every call to it is metered and
   counted (F4-15). An upstream tool the mandate does not pin is not listed, and a call to it
@@ -1756,12 +1763,12 @@ of them.
 |---|---|
 | `fiduciary charter init`, `show`, `propose`, `adopt` | Write charter versions and adopt them |
 | `fiduciary mandate draft`, `check`, `diff`, `compile`, `propose`, `issue`, `bind`, `derive`, `amend`, `revoke`, `expire`, `show` | Manage mandates. `check` runs `refines` against the parent. `compile` prints the compiled policy and its digest. `derive` signs a child with the service key and issues it. `amend` issues an approved version through the binder (§6.4). `expire` ends every lineage past its term. |
-| `fiduciary tool digest <module:binding>` | Print a binding's canonical document and digest, for pinning |
+| `fiduciary tool digest <module:binding>` | Print a binding's digest, for pinning: a file, or `module:name` (a binding `fiduciary.Tool` built in code) |
 | `fiduciary approve <ticket or document> --key <file>` or `--signer <name>` | Sign an approval on the principal's own machine, from the rendered bytes. Needs no database credential. |
 | `fiduciary tickets list`, `show` | Show open tickets and their evidence, rendered as F7-3 requires |
 | `fiduciary warrant show`, `fiduciary resolve` | Inspect warrants; resolve interrupted executions |
 | `fiduciary serve` | Run the service: binder, escalation, executor, settler, intake and bridge |
-| `fiduciary mcp serve`, `proxy` | Run the MCP bridge |
+| `fiduciary mcp serve`, `proxy` | Run the MCP bridge: one session per process, over stdio, or Streamable HTTP with `--http HOST:PORT` (`--token-file`, `--tls-cert`, `--tls-key`). The process also judges the intake and executes the warrants formed, since it holds the quotes and proposals they name (F7-14). |
 | `fiduciary export-bundle`, `verify-bundle`, `verify` | §9, and live verification of the store |
 
 ---

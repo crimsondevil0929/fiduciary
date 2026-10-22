@@ -484,10 +484,11 @@ def load_config(path: str | Path) -> Config:
 
 
 def _listen(text: str) -> tuple[str, int] | None:
-    """``(host, port)`` from ``HOST:PORT`` (``[::1]:PORT`` for IPv6), or ``None``."""
+    """``(host, port)`` from ``HOST:PORT`` (``[::1]:PORT`` for IPv6; port 0 is any
+    free port), or ``None``."""
     host, _, port = text.rpartition(":")
     host = host[1:-1] if host.startswith("[") and host.endswith("]") else host
-    if not host or not port.isdigit() or not 0 < int(port) < 65536:
+    if not host or not port.isdigit() or not 0 <= int(port) < 65536:
         return None
     return host, int(port)
 

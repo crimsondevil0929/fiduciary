@@ -13,4 +13,26 @@ the specification.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 __version__ = "0.3.0"
+
+__all__ = ["Fiduciary", "Session", "Tool", "__version__"]
+
+if TYPE_CHECKING:
+    from fiduciary.bridge import Fiduciary, Session
+    from fiduciary.tools import Tool
+
+
+def __getattr__(name: str) -> Any:
+    """``Fiduciary``, ``Session`` and ``Tool``, imported when first named: the
+    command line's ``--version`` loads neither interlock nor AgentGov."""
+    if name in ("Fiduciary", "Session"):
+        from fiduciary import bridge
+
+        return getattr(bridge, name)
+    if name == "Tool":
+        from fiduciary.tools import Tool
+
+        return Tool
+    raise AttributeError(f"module 'fiduciary' has no attribute {name!r}")

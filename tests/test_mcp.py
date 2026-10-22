@@ -1,0 +1,370 @@
+"""MCP conformance (§8.2, F8-4 to F8-7, F7-4), on SQLite and PostgreSQL:
+the methods, stdio, Streamable HTTP with a token per session, and the proxy."""
+
+from __future__ import annotations
+
+import datetime as dt
+import http.client
+import io
+import json
+import ssl
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from fiduciary.bridge import Fiduciary, Session
+from fiduciary.mcp import (
+    HttpBridge,
+    McpError,
+    McpServer,
+    Upstream,
+    parse_message,
+    proxy_handlers,
+    serve_stdio,
+)
+from fiduciary.store import Store
+from tests import bound
+from tests import bridge_kit as kit
+from tests import examples as e
+from tests.conftest import Clock
+from tests.test_executor import _verify
+
+UPSTREAM = str(Path(__file__).with_name("upstream_server.py"))
+
+
+@pytest.fixture
+def world(store: Store, tmp_path: Path, clock: Clock) -> Iterator[bound.World]:
+    yield from kit.world(store, tmp_path, clock)
+
+
+@pytest.fixture
+def fid(world: bound.World) -> Fiduciary:
+    world.issue_and_bind(kit.mandate(world))
+    return kit.fiduciary(world, in_process="no")
+
+
+def _session(fid: Fiduciary, tenant: str = "acme") -> Session:
+    return fid.session(bound.SCOPE, tenant=tenant, bridged=True)
+
+
+def _call(server: McpServer, ident: int, method: str, params: Any = None) -> Any:
+    message: dict[str, Any] = {"jsonrpc": "2.0", "id": ident, "method": method}
+    if params is not None:
+        message["params"] = params
+    return server.handle(message)
+
+
+def _chain(world: bound.World) -> int:
+    mandate_id = next(iter(world.log.state().bound))
+    return len(world.binder.engine(mandate_id)._chain.records())
+
+
+REFUND = {"order_id": 7, "amount": "12.50", "payment_intent": "pi_0000000007"}
+
+
+# -- the methods (F8-4, F8-5, F7-4) -------------------------------------------------------
+
+
+def test_tools_list_is_the_pinned_bindings_and_the_built_ins(fid: Fiduciary) -> None:
+    server = McpServer(_session(fid))
+    init = _call(server, 1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}})
+    assert init["result"]["protocolVersion"] == "2025-03-26"
+    assert init["result"]["capabilities"] == {"tools": {"listChanged": False}}
+    later = _call(server, 2, "initialize", {"protocolVersion": "2099-01-01"})
+    assert later["result"]["protocolVersion"] == "2025-06-18"
+    assert server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+    assert server.initialized
+    assert _call(server, 3, "ping")["result"] == {}
+    tools = {t["name"]: t for t in _call(server, 4, "tools/list")["result"]["tools"]}
+    assert set(tools) == {
+        "adjust_orders",
+        "lookup_order",
+        "refund_order",
+        "fiduciary_request",
+        "fiduciary_ticket_status",
+    }
+    refund = kit.refund(fid.binder.deployment.ledger and "sqlite")  # the schema is the same
+    assert tools["refund_order"]["inputSchema"] == dict(refund.input)
+    assert tools["refund_order"]["description"] == refund.description
+    assert tools["lookup_order"]["inputSchema"] == dict(e.lookup().input)
+
+
+def test_a_call_and_a_refusal(world: bound.World, fid: Fiduciary) -> None:
+    server = McpServer(_session(fid))
+    done = _call(server, 1, "tools/call", {"name": "refund_order", "arguments": REFUND})
+    assert done["result"]["isError"] is False
+    assert "committed" in done["result"]["content"][0]["text"]
+    before = _chain(world)
+    # Outside the schema: a float. Refused as a result, before any plan (F8-5).
+    floated = {**REFUND, "order_id": 7.0}
+    refused = _call(server, 2, "tools/call", {"name": "refund_order", "arguments": floated})
+    assert refused["result"]["isError"] is True
+    assert "arguments were refused" in refused["result"]["content"][0]["text"]
+    served = _call(server, 3, "tools/call", {"name": "lookup_order", "arguments": {"order_id": 3}})
+    assert json.loads(served["result"]["content"][0]["text"]) == {"order_id": 3, "status": "open"}
+    assert _chain(world) == before
+    _verify(world)
+
+
+def test_a_malformed_request_is_an_error_and_builds_nothing(
+    world: bound.World, fid: Fiduciary
+) -> None:
+    server = McpServer(_session(fid))
+    before = _chain(world)
+    for params, code in (
+        ({"name": 7, "arguments": {}}, -32602),
+        ({"name": "refund_order", "arguments": [1, 2]}, -32602),
+        ([1], -32602),
+    ):
+        found = _call(server, 1, "tools/call", params)
+        assert found["error"]["code"] == code, found
+    for invalid in (
+        [{"jsonrpc": "2.0"}],
+        {"jsonrpc": "1.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "id": True, "method": "ping"},
+    ):
+        answer = server.handle(invalid)
+        assert answer is not None and answer["error"]["code"] == -32600
+    assert server.handle({"jsonrpc": "2.0", "method": "tools/call"}) is None
+    assert server.handle({"jsonrpc": "1.0", "method": "ping"}) is None
+    with pytest.raises(McpError) as bad:
+        parse_message(b'{"jsonrpc": "2.0", "id": 1, "id": 2}')
+    assert bad.value.code == -32700
+    for text in (b"NaN", b"{", b"\xff", b"x" * (1_048_577)):
+        with pytest.raises(McpError):
+            parse_message(text)
+    assert _chain(world) == before
+    assert [r.kind for r in world.log.records()][-1] == "session.opened"  # nothing recorded
+
+
+def test_no_method_and_no_tool_takes_an_approval(world: bound.World, fid: Fiduciary) -> None:
+    """F7-4: nothing an agent reaches submits, relays or shows an approval."""
+    server = McpServer(_session(fid))
+    intake = list(world.store.intake())
+    for method in (
+        "approvals/submit",
+        "approve",
+        "intake/submit",
+        "tickets/approve",
+        "resources/list",
+        "prompts/list",
+        "sampling/createMessage",
+    ):
+        assert _call(server, 1, method, {})["error"]["code"] == -32601
+    names = {t["name"] for t in _call(server, 2, "tools/list")["result"]["tools"]}
+    assert not {n for n in names if "approv" in n or "warrant" in n or "intake" in n}
+    approval = e.approval("cfo", subject="ticket", digest="a" * 64, resolution="b" * 64).to_json()
+    for name in ("approve", "submit_approval"):
+        found = _call(server, 3, "tools/call", {"name": name, "arguments": approval})
+        assert found["result"]["isError"] is True
+    assert list(world.store.intake()) == intake
+
+
+def test_stdio_serves_a_session_until_its_pipe_closes(fid: Fiduciary) -> None:
+    lines = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "nope"}},
+    ]
+    raw = b"".join(json.dumps(m).encode() + b"\n" for m in lines) + b"\n" + b'{"a": 1, "a": 2}\n'
+    out = io.BytesIO()
+    serve_stdio(McpServer(_session(fid)), io.BytesIO(raw), out)
+    answers = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert [a.get("id") for a in answers] == [1, 2, None]
+    assert answers[1]["result"]["isError"] is True
+    assert answers[2]["error"]["code"] == -32700
+
+
+# -- Streamable HTTP (F8-6) ----------------------------------------------------------------
+
+
+def _post(
+    address: tuple[str, int],
+    body: Any,
+    *,
+    token: str | None = None,
+    headers: dict[str, str] | None = None,
+    path: str = "/mcp",
+    method: str = "POST",
+    context: ssl.SSLContext | None = None,
+) -> tuple[int, dict[str, str], Any]:
+    host, port = address
+    conn = (
+        http.client.HTTPSConnection(host, port, context=context, timeout=10)
+        if context is not None
+        else http.client.HTTPConnection(host, port, timeout=10)
+    )
+    sent = {"Content-Type": "application/json", **(headers or {})}
+    if token is not None:
+        sent["Authorization"] = f"Bearer {token}"
+    data = body if isinstance(body, bytes) else json.dumps(body).encode()
+    conn.request(method, path, body=data if method == "POST" else None, headers=sent)
+    response = conn.getresponse()
+    payload = response.read()
+    conn.close()
+    return (
+        response.status,
+        {k.lower(): v for k, v in response.getheaders()},
+        json.loads(payload) if payload else None,
+    )
+
+
+def test_a_token_opens_its_session_and_nothing_else(world: bound.World, fid: Fiduciary) -> None:
+    with pytest.raises(McpError, match="not loopback"):
+        HttpBridge("0.0.0.0", 0)  # noqa: S104 - refused: the network needs TLS
+    bridge = HttpBridge("127.0.0.1", 0, lock=fid.lock)
+    acme, beta = _session(fid, "acme"), _session(fid, "beta")
+    token_a, token_b = bridge.add(acme), bridge.add(beta)
+    assert token_a != token_b and len(token_a) >= 40
+    bridge.start()
+    try:
+        where = bridge.address
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        status, headers, body = _post(where, init, token=token_a)
+        assert status == 200 and headers["mcp-session-id"] == acme.session_id
+        assert body["result"]["serverInfo"]["name"] == "fiduciary"
+        call = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "refund_order", "arguments": REFUND},
+        }
+        # Order 7 is acme's: acme's token commits it; beta's session is refused it.
+        assert _post(where, call, token=token_a)[2]["result"]["isError"] is False
+        assert _post(where, call, token=token_b)[2]["result"]["isError"] is True
+        assert _post(where, init)[0] == 401
+        assert _post(where, init, token="x" * 43)[0] == 401
+        assert _post(where, init, headers={"Authorization": f"Basic {token_a}"})[0] == 401
+        crossed = {"Mcp-Session-Id": beta.session_id}
+        assert _post(where, init, token=token_a, headers=crossed)[0] == 404
+        assert _post(where, init, token=token_a, path="/approve")[0] == 404
+        assert _post(where, init, token=token_a, path="/intake")[0] == 404
+        for method in ("GET", "DELETE", "PUT"):
+            assert _post(where, init, token=token_a, method=method)[0] == 405
+        evil = {"Origin": "http://evil.example"}
+        assert _post(where, init, token=token_a, headers=evil)[0] == 403
+        local = {"Origin": "http://localhost:3000"}
+        assert _post(where, init, token=token_a, headers=local)[0] == 200
+        note = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+        assert _post(where, note, token=token_a)[0] == 202
+        assert _post(where, b"{", token=token_a)[2]["error"]["code"] == -32700
+        oversized = {"Content-Length": str(1_048_577)}  # refused before a byte is read
+        assert _post(where, b"", token=token_a, headers=oversized)[0] == 413
+    finally:
+        bridge.stop()
+    _verify(world)
+
+
+def _certificate(tmp: Path) -> tuple[Path, Path]:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "fiduciary-test")])
+    now = dt.datetime.now(dt.UTC)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - dt.timedelta(minutes=5))
+        .not_valid_after(now + dt.timedelta(hours=1))
+        .add_extension(
+            x509.SubjectAlternativeName(
+                [x509.IPAddress(__import__("ipaddress").ip_address("127.0.0.1"))]
+            ),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    cert_path, key_path = tmp / "bridge.pem", tmp / "bridge.key"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return cert_path, key_path
+
+
+def test_over_tls_the_bridge_may_listen_beyond_loopback(
+    world: bound.World, fid: Fiduciary, tmp_path: Path
+) -> None:
+    cert, key = _certificate(tmp_path)
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(cert, key)
+    bridge = HttpBridge("127.0.0.1", 0, tls=tls, lock=fid.lock)
+    token = bridge.add(_session(fid))
+    bridge.start()
+    try:
+        client = ssl.create_default_context(cafile=str(cert))
+        ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        status, _, body = _post(bridge.address, ping, token=token, context=client)
+        assert status == 200 and body["result"] == {}
+    finally:
+        bridge.stop()
+    wide = HttpBridge("0.0.0.0", 0, tls=tls)  # noqa: S104 - TLS: permitted
+    wide.stop()
+
+
+# -- the proxy (F8-7) ---------------------------------------------------------------------
+
+
+def test_the_proxy_exposes_only_pinned_upstream_tools(
+    world: bound.World, fid: Fiduciary, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "upstream.log"
+    monkeypatch.setenv("UPSTREAM_LOG", str(log))
+    upstream = Upstream([sys.executable, UPSTREAM])
+    try:
+        assert set(upstream.tools()) == {"lookup_order", "purge_orders"}
+        handlers = proxy_handlers(fid, upstream)
+        assert set(handlers) == {"lookup_order"}
+        for name, handler in handlers.items():
+            fid.register(name, handler)
+        server = McpServer(_session(fid))
+        listed = {t["name"]: t for t in _call(server, 1, "tools/list")["result"]["tools"]}
+        assert "purge_orders" not in listed
+        assert listed["lookup_order"]["description"] == e.lookup().description  # the binding's
+        found = _call(
+            server, 2, "tools/call", {"name": "lookup_order", "arguments": {"order_id": 4}}
+        )
+        assert found["result"] == {
+            "content": [{"type": "text", "text": "order 4: open"}],
+            "isError": False,
+        }
+        purge = _call(server, 3, "tools/call", {"name": "purge_orders", "arguments": {}})
+        assert purge["result"]["isError"] is True
+        with pytest.raises(McpError, match=r"did not answer|refused"):
+            upstream.request("no/such/method", {})
+    finally:
+        upstream.close()
+    calls = [json.loads(line) for line in log.read_text().splitlines()]
+    assert calls == [{"arguments": {"order_id": 4}, "name": "lookup_order"}]
+    world.governor.refresh()
+    metered = [
+        en
+        for en in world.governor.audit_trail(bound.SCOPE)
+        if en.memo.startswith("FIDU1 tool lookup_order") and en.entry_type.value == "spend"
+    ]
+    assert len(metered) == 1
+    refusals = [r.content for r in world.log.records() if r.kind == "session.refused"]
+    assert refusals[-1]["tool"] is None and refusals[-1]["code"] == "unpinned"
+    _verify(world)
+
+
+def test_an_upstream_that_will_not_run_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(McpError, match="cannot run"):
+        Upstream([str(tmp_path / "missing")])
+    with pytest.raises(McpError, match="upstream command"):
+        Upstream([])
+    with pytest.raises(McpError, match=r"closed its pipe|did not answer"):
+        Upstream([sys.executable, "-c", "pass"], timeout=5)

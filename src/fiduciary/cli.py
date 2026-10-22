@@ -1,4 +1,4 @@
-"""The ``fiduciary`` command (``docs/FIDUCIARY_SPEC.md`` §10.6, Phases 1 and 2).
+"""The ``fiduciary`` command (``docs/FIDUCIARY_SPEC.md`` §10.6, Phases 1 to 4).
 
 Exit status: 0 on success; 1 when something is refused or does not verify;
 2 on a usage, configuration or input error.
@@ -957,6 +957,96 @@ def _resolve_cmd(args: argparse.Namespace) -> int:
     return _records(executor.resolve, "no open execution intents")
 
 
+def _bridge(args: argparse.Namespace) -> tuple[Any, Any]:
+    """Fiduciary from the configuration, and the session the agent gets."""
+    from fiduciary.bridge import Fiduciary
+    from fiduciary.config import ConfigError
+
+    path = Path(args.config)
+    if not path.exists():
+        _fail(f"{path}: no such configuration (give --config)")
+    try:
+        fid = _opened(Fiduciary.from_config(path, bridged=True))
+    except (ConfigError, OSError, ValueError) as exc:
+        _fail(str(exc))
+    session = fid.session(
+        args.mandate, tenant=args.tenant, trajectory=args.trajectory, bridged=True
+    )
+    _OPENED.insert(1, session.close)  # closed before the parts it records into
+    return fid, session
+
+
+def _mcp_serve(args: argparse.Namespace) -> int:
+    from fiduciary.mcp import HttpBridge, McpServer, serve_stdio
+
+    fid, session = _bridge(args)
+    if args.http is None:
+        serve_stdio(
+            McpServer(session, lock=fid.lock),
+            sys.stdin.buffer,
+            sys.stdout.buffer,
+            service=fid.serve_once,
+            lock=fid.lock,
+        )
+        return OK
+    from fiduciary.config import _listen
+
+    where = _listen(args.http)
+    if where is None:
+        _fail("--http is HOST:PORT")
+    tls = None
+    if args.tls_cert is not None or args.tls_key is not None:
+        import ssl
+
+        if args.tls_cert is None or args.tls_key is None:
+            _fail("TLS needs --tls-cert and --tls-key")
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(args.tls_cert, args.tls_key)
+    bridge = HttpBridge(where[0], where[1], tls=tls, service=fid.serve_once, lock=fid.lock)
+    token = bridge.add(session)
+    host, port = bridge.address
+    if args.token_file is not None:
+        target = Path(args.token_file)
+        target.touch(mode=0o600, exist_ok=False)
+        target.write_text(token + "\n", encoding="utf-8")
+        _err(f"session {session.session_id}: token written to {target}")
+    else:
+        _err(f"session {session.session_id}: bearer token {token}")
+    scheme = "https" if tls is not None else "http"
+    _err(f"serving {scheme}://{host}:{port}/mcp")
+    import signal
+
+    signal.signal(signal.SIGTERM, lambda *_: bridge.stop())
+    try:
+        bridge.serve_forever()
+    except KeyboardInterrupt:
+        bridge.stop()
+    return OK
+
+
+def _mcp_proxy(args: argparse.Namespace) -> int:
+    from fiduciary.mcp import McpServer, Upstream, proxy_handlers, serve_stdio
+
+    command = list(args.upstream)
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        _fail("give the upstream server's command after --")
+    fid, session = _bridge(args)
+    upstream = Upstream(command)
+    _OPENED.insert(0, upstream.close)
+    for name, handler in proxy_handlers(fid, upstream).items():
+        fid.register(name, handler)
+    serve_stdio(
+        McpServer(session, lock=fid.lock),
+        sys.stdin.buffer,
+        sys.stdout.buffer,
+        service=fid.serve_once,
+        lock=fid.lock,
+    )
+    return OK
+
+
 # --------------------------------------------------------------------------
 # the parser
 # --------------------------------------------------------------------------
@@ -1133,6 +1223,27 @@ def _parser() -> argparse.ArgumentParser:
         "resolve", help="resolve interrupted execution intents from what the target systems hold"
     )
     resolve.set_defaults(handler=_resolve_cmd)
+
+    mcp = commands.add_parser("mcp", help="the MCP bridge").add_subparsers(
+        dest="mcp_command", required=True
+    )
+    for name, helping in (
+        ("serve", "serve one session over stdio, or Streamable HTTP with --http"),
+        ("proxy", "front an upstream MCP server: only the tools the mandate pins"),
+    ):
+        sub = mcp.add_parser(name, help=helping)
+        sub.add_argument("--mandate", required=True, help="the lineage, or its subject scope")
+        sub.add_argument("--tenant", help="the session's tenant")
+        sub.add_argument("--trajectory", help="the session's trajectory")
+        if name == "serve":
+            sub.add_argument("--http", help="HOST:PORT: Streamable HTTP, on loopback or TLS")
+            sub.add_argument("--token-file", help="write the session's bearer token here")
+            sub.add_argument("--tls-cert", help="the listener's certificate chain (PEM)")
+            sub.add_argument("--tls-key", help="the listener's private key (PEM)")
+            sub.set_defaults(handler=_mcp_serve)
+        else:
+            sub.add_argument("upstream", nargs=argparse.REMAINDER, help="-- <command>")
+            sub.set_defaults(handler=_mcp_proxy)
 
     verify = commands.add_parser("verify", help="verify the store, its log and its anchors")
     verify.add_argument("--service-key", help="ed25519:<hex>; the configured key's by default")
