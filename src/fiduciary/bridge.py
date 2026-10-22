@@ -624,10 +624,8 @@ class Fiduciary:
         records = self._escalation.process_intake()
         records.extend(self._executor.resolve())
         state = self.log.state()
-        for digest, row in sorted(state.warrants.items(), key=lambda item: item[1].seq):
+        for digest, _ in sorted(state.warrants.items(), key=lambda item: item[1].seq):
             if state.execution_status(digest) is not None:
-                continue
-            if state.ticket_status(row.ticket_id) != "warranted":
                 continue
             try:
                 records.extend(self._executor.execute(digest))
