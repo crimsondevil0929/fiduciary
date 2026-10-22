@@ -942,12 +942,15 @@ def _resolve_cmd(args: argparse.Namespace) -> int:
     try:
         exec_signer = config.executor()
         run_signer = config.runtime()
+        operator_log = config.operators_log()
+        keyring = config.operator_keyring()
     except (OSError, ValueError, FiduciaryError) as exc:
         _fail(str(exc), REFUSED)
     executor = Executor(  # reads both ILOK1 logs without claiming them
         binder,
-        operator_log=config.operator_log,
+        operator_log=operator_log,
         executor_signer=exec_signer,
+        operator_keyring=keyring,
         runtime_records=config.runtime_records,
         runtime_signer=run_signer,
     )

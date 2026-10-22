@@ -19,12 +19,18 @@
     directives = ["stop-retrying.txt"]                   # directive texts, by their bytes' SHA-256
     chains     = "chains"                                # each lineage's <mandate_id>.chain
 
+    [executor]
+    key = "executor.key"                                 # or signer; an [operators.keys] key
+    log = "operators.ilok1"                              # else interlock.toml's [operators] log
+
 Paths are relative to the file. ``FIDUCIARY_DATABASE`` and ``FIDUCIARY_LEDGER``
 override ``database`` and ``ledger``, which keeps a password out of the file.
 ``interlock`` and ``[binding]`` are the deployment :func:`fiduciary.compiler.compile`
 reads: ``interlock.toml``'s tables and sinks, the tool bindings it runs and the
-directive texts. The keys of later phases (``in_process``, ``[executor]``,
-``[runtime]``, ``[receipts]``, ``[bridge]``) are read when those phases are.
+directive texts. The executor reads interlock's operator log under the
+keyring ``interlock.toml`` trusts (its ``[operators.keys]``, and the keys the
+log registered since), and its own key must be one of them. The keys of later
+phases (``[receipts]``) are read when those phases are.
 """
 
 from __future__ import annotations
@@ -44,6 +50,8 @@ from fiduciary.keys import SignerSpec, open_signer, parse_signers
 if TYPE_CHECKING:
     from agentgov import BudgetManager
     from agentgov.receipts.signing import Signer
+    from interlock.config import InterlockConfig
+    from interlock.records import Keyring
 
     from fiduciary.compiler import Deployment
     from fiduciary.documents import ToolBinding
@@ -122,7 +130,10 @@ class Config:
         return open_signer(self.signers, key=self.service_key, signer=self.service_signer)
 
     def executor(self) -> Signer:
-        """The executor key, which signs ILOK1 operator records (not AWS KMS before U-2, F3-9)."""
+        """The executor key, which signs ILOK1 operator records (not AWS KMS
+        before U-2, F3-9). When ``interlock.toml`` names operators, it must be
+        one of them: interlock refuses a record any other key signs.
+        """
         from fiduciary.executor import ExecutionError, check_ilok1_signer
 
         if self.executor_key is None and self.executor_signer is None:
@@ -133,7 +144,46 @@ class Config:
             check_ilok1_signer(signer, role="executor")
         except ExecutionError as exc:
             raise ConfigError(str(exc)) from exc
+        keyring = self.operator_keyring()
+        if keyring is not None and keyring.verifier(signer.public_key().key_id) is None:
+            raise ConfigError(
+                f"the executor key {signer.public_key().key_id} is no operator of "
+                f"{self.interlock}: add its public half to [operators.keys]"
+            )
         return signer
+
+    def interlock_config(self) -> InterlockConfig:
+        """``interlock.toml``, the deployment fiduciary drives.
+
+        :raises ConfigError: When none is named, or it does not load.
+        """
+        from interlock.config import load_config as load_interlock
+
+        if self.interlock is None:
+            raise ConfigError('interlock names no deployment: set interlock = "interlock.toml"')
+        try:
+            return load_interlock(self.interlock, require_database=False)
+        except (OSError, ValueError) as exc:
+            raise ConfigError(f"{self.interlock}: {exc}") from exc
+
+    def operators_log(self) -> Path | None:
+        """Interlock's operator log: ``[executor] log``, else the one
+        ``interlock.toml``'s ``[operators]`` names."""
+        if self.operator_log is not None or self.interlock is None:
+            return self.operator_log
+        operators = self.interlock_config().operators
+        return None if operators is None else operators.log
+
+    def operator_keyring(self) -> Keyring | None:
+        """Every operator's public key, as interlock trusts them: its
+        ``[operators.keys]``, and the keys its operator log registered since.
+        ``None`` without an ``interlock.toml`` that names operators: the
+        executor then trusts its own key alone."""
+        if self.interlock is None:
+            return None
+        from interlock.wiring import trusted_keyring
+
+        return trusted_keyring(self.interlock_config(), "operator")
 
     def runtime(self) -> Signer:
         """The runtime key, which signs ILOK1 recovery and extension records (F3-9)."""
@@ -156,16 +206,9 @@ class Config:
 
         :raises ConfigError: On a deployment the files do not describe.
         """
-        from interlock.config import load_config as load_interlock
-
         from fiduciary.compiler import Deployment
 
-        if self.interlock is None:
-            raise ConfigError('interlock names no deployment: set interlock = "interlock.toml"')
-        try:
-            found = load_interlock(self.interlock, require_database=False)
-        except (OSError, ValueError) as exc:
-            raise ConfigError(f"{self.interlock}: {exc}") from exc
+        found = self.interlock_config()
         tools = {}
         for target in self.tools:
             tool = load_tool(target)

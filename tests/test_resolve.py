@@ -12,6 +12,7 @@ file when no engine is open.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import uuid
 from collections.abc import Iterator
 from decimal import Decimal
@@ -21,12 +22,14 @@ from typing import Any
 import pytest
 from interlock import PlanBuilder
 from interlock.deliveries import OutboxOperations
-from interlock.operators import Operator
-from interlock.records import RecordKind
+from interlock.exceptions import RecordIntegrityError
+from interlock.operators import Operator, OperatorLog
+from interlock.records import Keyring, RecordKind
 from interlock.relay import DELIVERED, DeliveryResult
 from interlock.types import EffectId
 
 from fiduciary.binding import Binder
+from fiduciary.config import Config, ConfigError
 from fiduciary.documents import Mandate, Warrant
 from fiduciary.documents.ticket import AmendEvidence, HeldEvidence, ProposedMandate
 from fiduciary.escalation import Escalation, EscalationError
@@ -407,3 +410,53 @@ def _amend_evidence(proposed: Mandate) -> AmendEvidence:
         wider=(),
         narrower=(),
     )
+
+
+def test_a_log_of_several_operators_is_read_under_the_configured_keyring(
+    world: bound.World, outbox: OutboxOperations
+) -> None:
+    """Another operator's records in interlock's log: the executor's own key
+    alone cannot read it, and the keyring interlock.toml configures can."""
+    world.issue_and_bind(world.mandate())
+    esc, tk = _held_without_halt(world, outbox)
+    warrant = _approve_ticket(world, esc, tk, "release", principals=("cfo",))
+    op_log = world.tmp / "operators.jsonl"
+    _killed(Executor(world.binder, checkpoint=_stopping("intent")), warrant)
+    service, night = e.SERVICE.public_key(), e.signer("night-ops")
+    keys = {"fiduciary": service.spec(), "night-ops": night.public_key().spec()}
+    acting = OperatorLog(op_log, night, Keyring(keys), ledger=world.governor)
+    try:  # a second node, with its own operator key, acted on the warrant
+        ids = [uuid.UUID(m.message_id) for m in warrant.resolution.messages]
+        Operator(acting, outbox).release(ids, reason=f"FIDU1 warrant {warrant.digest}")
+    finally:
+        acting.close()
+    with pytest.raises(RecordIntegrityError):
+        Executor(world.binder, outbox=outbox, operator_log=op_log).resolve()
+
+    (world.tmp / "interlock.toml").write_text(
+        f'database = "{world.tmp / "unused.db"}"\n'
+        '[[tables]]\nname = "orders"\nprimary_key = "id"\ncolumns = ["tenant"]\n'
+        f'[operators]\nlog = "{op_log}"\n'
+        f'[operators.keys]\nfiduciary = "{service.spec()}"\n"night-ops" = "{keys["night-ops"]}"\n'
+    )
+    for name in ("service", "stranger"):
+        key = world.tmp / f"{name}.key"
+        key.write_text(hashlib.sha256(f"fiduciary-test/{name}".encode()).hexdigest() + "\n")
+        key.chmod(0o600)
+    config = Config(
+        database="unused.db",
+        interlock=world.tmp / "interlock.toml",
+        service_key=world.tmp / "service.key",
+    )
+    assert config.operators_log() == op_log
+    keyring = config.operator_keyring()
+    assert keyring is not None and keyring.verifier(night.public_key().key_id) is not None
+    assert config.executor().public_key().key_id == service.key_id  # an operator of interlock's
+    stranger = dataclasses.replace(config, executor_key=world.tmp / "stranger.key")
+    with pytest.raises(ConfigError, match=r"is no operator of .*\[operators.keys\]"):
+        stranger.executor()
+    (resolved,) = Executor(
+        world.binder, outbox=outbox, operator_log=config.operators_log(), operator_keyring=keyring
+    ).resolve()
+    assert resolved.kind == "execution.applied"
+    _verify(world)
