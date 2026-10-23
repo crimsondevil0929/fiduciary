@@ -425,3 +425,44 @@ def test_charter_version_lookup(authority: Authority) -> None:
     assert decide.charter(authority.log.state(), 1).version == 1
     with pytest.raises(AuthorityError, match="never adopted"):
         decide.charter(authority.log.state(), 7)
+
+
+def test_documents_are_read_once_and_only_as_they_hash(
+    authority: Authority, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A decision reads a document from the store once: a document never
+    changes under its digest. Bytes that do not hash to the digest they are
+    stored under are read again each time, as stored; a cached document is
+    still only the type it is; the least recently read goes past the bound."""
+    from fiduciary.authority import Decide, _Documents
+
+    adopt(authority)
+    store = authority.log.store
+    decide = Decide(store, e.charter().digest, e.SERVICE.public_key(), _Documents(size=1))
+    charter, approval = e.charter(), _approval("cfo")
+    authority.propose(approval)
+    reads: list[str] = []
+    document = store.document
+
+    def counted(digest: str) -> tuple[str, bytes] | None:
+        reads.append(digest)
+        return document(digest)
+
+    monkeypatch.setattr(store, "document", counted)
+    for _ in range(3):
+        assert decide.load(charter.digest, Charter) == charter
+    assert reads == [charter.digest]
+    with pytest.raises(AuthorityError, match="is a charter, not a mandate"):
+        decide.load(charter.digest, Mandate)
+    assert decide.load(approval.digest, Approval) == approval  # the charter goes
+    assert decide.load(charter.digest, Charter) == charter
+    assert reads == [charter.digest, approval.digest, charter.digest]
+
+    def forged(digest: str) -> tuple[str, bytes] | None:
+        reads.append(digest)
+        return ("approval", approval.canonical()) if digest == "f" * 64 else document(digest)
+
+    monkeypatch.setattr(store, "document", forged)
+    for _ in range(2):
+        assert decide.load("f" * 64, Approval) == approval
+    assert reads[-2:] == ["f" * 64] * 2  # not its digest's bytes: never kept

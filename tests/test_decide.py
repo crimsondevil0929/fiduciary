@@ -12,9 +12,8 @@ basis, and executions that do not answer their intent.
 from __future__ import annotations
 
 import copy
-import dataclasses
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -27,7 +26,7 @@ from fiduciary.documents.mandate import AutoRule
 from fiduciary.documents.warrant import RuleBasis, TicketRef, WarrantBasis
 from fiduciary.exceptions import AuthorityError
 from fiduciary.log import Log
-from fiduciary.store import ApprovalRow, State
+from fiduciary.store import State
 from tests import examples as e
 from tests.conftest import Clock, approve
 from tests.test_tamper_escalation import Escalated, _raise, _ticket, escalated_fixture  # noqa: F401
@@ -166,18 +165,19 @@ def test_approvals_that_must_never_count_are_left_out(escalated: Escalated, cloc
     state = log.state()
     seq = state.head_seq
 
-    def row(principal: str, approval: Approval, *, at: int | None = None) -> ApprovalRow:
+    def recorded(before: State, approval: Approval, *, at: datetime | None = None) -> State:
+        """``before``, with ``approval`` recorded at ``at``: as a store written
+        around the service would hold it."""
         log.put(approval)
-        return ApprovalRow(
-            digest=approval.digest,
-            intake=0,
-            principal=principal,
-            decision=approval.decision,
-            subject_type="ticket",
-            subject_digest=ticket.digest,
-            resolution=approval.resolution,
-            seq=seq if at is None else at,
-        )
+        body = {
+            "intake": 0,
+            "approval": approval.digest,
+            "principal": approval.principal,
+            "decision": approval.decision,
+            "subject": approval.subject.to_json(),
+            "resolution": approval.resolution,
+        }
+        return before.after("approval.recorded", body, issued_at=at)
 
     def signed(principal: str, decision: str, *, by: str | None = None, **changes: Any) -> Approval:
         raw = e.approval_json(
@@ -192,40 +192,29 @@ def test_approvals_that_must_never_count_are_left_out(escalated: Escalated, cloc
         return Approval.from_json(raw, signed=False).signed(e.signer(by or principal))
 
     for decision in ("approve", "decline"):
-        crafted = State(
-            **{f.name: copy.deepcopy(getattr(state, f.name)) for f in dataclasses.fields(State)}
-        )
-        crafted.approvals += [
-            row("mallory", signed("mallory", decision)),  # no principal of the roster
-            row(
-                "cfo",
-                signed("cfo", decision, charter={"charter_id": str(uuid.uuid4()), "version": 1}),
-            ),
-            row(
-                "head-ops",
-                signed("head-ops", decision, charter={"charter_id": e.CHARTER_ID, "version": 7}),
-            ),
-            row("security", signed("security", decision, by="mallory")),  # another key
-        ]
+        crafted = state
+        for approval in (
+            signed("mallory", decision),  # no principal of the roster
+            signed("cfo", decision, charter={"charter_id": str(uuid.uuid4()), "version": 1}),
+            signed("head-ops", decision, charter={"charter_id": e.CHARTER_ID, "version": 7}),
+            signed("security", decision, by="mallory"),  # another key
+        ):
+            crafted = recorded(crafted, approval)
         assert authority.decide.count_ticket(crafted, ticket, grant.resolution)[0] == []
         assert authority.decide.count_ticket_declines(crafted, ticket) == []
         # Recorded after one deadline and within the other: each deadline counts alone.
         issued = ticket.not_after - timedelta(hours=1)
-        for approval_until, recorded in (
+        for approval_until, recorded_at in (
             (ticket.not_after + timedelta(hours=1), ticket.not_after + timedelta(seconds=1)),
             (ticket.not_after - timedelta(minutes=10), ticket.not_after - timedelta(minutes=5)),
             (ticket.not_after + timedelta(hours=1), ticket.not_after - timedelta(minutes=5)),
         ):
-            late = State(
-                **{f.name: copy.deepcopy(getattr(state, f.name)) for f in dataclasses.fields(State)}
-            )
             window = {
                 "issued_at": fidu1.format_instant(issued),
                 "not_after": fidu1.format_instant(approval_until),
             }
-            late.approvals.append(row("cfo", signed("cfo", decision, **window)))
-            late.record_times[seq] = recorded
-            in_time = recorded <= ticket.not_after and recorded <= approval_until
+            late = recorded(state, signed("cfo", decision, **window), at=recorded_at)
+            in_time = recorded_at <= ticket.not_after and recorded_at <= approval_until
             expected = 1 if in_time else 0  # the last pair is in time: the control
             assert len(authority.decide.count_ticket(late, ticket, grant.resolution)[0]) == (
                 expected if decision == "approve" else 0
@@ -233,10 +222,7 @@ def test_approvals_that_must_never_count_are_left_out(escalated: Escalated, cloc
             assert len(authority.decide.count_ticket_declines(late, ticket)) == (
                 expected if decision == "decline" else 0
             )
-        suspended = State(
-            **{f.name: copy.deepcopy(getattr(state, f.name)) for f in dataclasses.fields(State)}
-        )
-        suspended.approvals.append(row("cfo", signed("cfo", decision), at=seq + 1))
+        suspended = recorded(state, signed("cfo", decision))  # recorded at seq + 1
         suspended.suspended[("cfo", e.key("cfo"))] = seq  # suspended before the row
         assert authority.decide.count_ticket(suspended, ticket, grant.resolution)[0] == []
         assert authority.decide.count_ticket_declines(suspended, ticket) == []
@@ -492,8 +478,14 @@ def test_execution_records_answer_their_warrant(escalated: Escalated, clock: Clo
     approve(log.store, ("cfo",), "ticket", waiting.digest, resolution=waiting.options[1].digest)
     authority.process_intake()
     (row,) = [w for w in log.state().warrants.values() if w.ticket_id == waiting.ticket_id]
-    crafted = log.state()
-    crafted.ticket_events[waiting.ticket_id].append(
-        ("lapsed", waiting.mandate.digest, crafted.head_seq + 1)
+    crafted = log.state().after(
+        "ticket.lapsed",
+        {
+            "ticket": waiting.digest,
+            "ticket_id": waiting.ticket_id,
+            "mandate": waiting.mandate.digest,
+            "mandate_id": waiting.mandate.mandate_id,
+            "class": waiting.ticket_class,
+        },
     )
     _refuses("is lapsed", decide.execution_intent, crafted, row.digest, clock())

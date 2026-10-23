@@ -637,16 +637,21 @@ class _Metrics(MetricsService):
         self._writer = writer
         self._own_health = health
         self._store: Any = None
+        self._log: Any = None
 
     def bind(self, supervisor: InterlockSupervisor) -> None:
         super().bind(supervisor)
         self._health = self._own_health
 
     def open(self) -> None:
+        from fiduciary.log import Log
+
         super().open()
         self._store = self._writer.config.open_store(
             application_name=self._writer.membership.name("metrics"),
         )
+        # Read only: the sample folds what was appended since the last one.
+        self._log = Log(self._store, self._writer.keys.service)
 
     def step(self) -> float:
         import fiduciary
@@ -661,9 +666,7 @@ class _Metrics(MetricsService):
         return self._every
 
     def _read_log(self) -> None:
-        from fiduciary.store import State
-
-        state = State.of(_read(self._store))
+        state = self._log.state()
         metrics = self.metrics
         metrics.set("fiduciary_log_records", state.head_seq)
         statuses = [state.status(m) for m in state.lineages]
@@ -675,23 +678,15 @@ class _Metrics(MetricsService):
         executions = [state.execution_status(w) or "unexecuted" for w in state.warrants]
         for execution in _EXECUTIONS:
             metrics.set("fiduciary_warrants", executions.count(execution), execution=execution)
-        pending = sum(1 for i, _ in self._store.intake() if i not in state.processed)
+        pending = sum(1 for i in self._store.intake_ids() if i not in state.processed)
         metrics.set("fiduciary_intake_pending", pending)
         self.count("samples")
 
     def close(self) -> None:
         super().close()
-        store, self._store = self._store, None
+        store, self._store, self._log = self._store, None, None
         if store is not None:
             store.close()
-
-
-def _read(store: Any) -> list[Any]:
-    from fiduciary import fidu1
-    from fiduciary.documents import Record
-    from fiduciary.log import LOG_ID
-
-    return [Record.from_json(fidu1.parse(row.data)) for row in store.records(LOG_ID)]
 
 
 # --------------------------------------------------------------------------
@@ -704,14 +699,14 @@ def _execute(executor: Executor, state: State, *, attached: bool, part: Service)
     :data:`ATTACHED` (or is not), oldest first. One another process executes
     now, or that has expired, is left: its claim, and the lapse, answer it."""
     records: list[Any] = []
-    for digest, row in sorted(state.warrants.items(), key=lambda item: item[1].seq):
-        if state.execution_status(digest) is not None or (row.action in ATTACHED) != attached:
+    for row in state.unexecuted_warrants():
+        if (row.action in ATTACHED) != attached:
             continue
         try:
-            records.extend(executor.execute(digest))
+            records.extend(executor.execute(row.digest))
         except FiduciaryError as exc:
             part.count("not_executed")
-            logger.info("%s: warrant %s not executed: %s", part.name, digest[:16], exc)
+            logger.info("%s: warrant %s not executed: %s", part.name, row.digest[:16], exc)
             continue
         part.count("executed")
     return records
@@ -761,28 +756,25 @@ def raise_triggers(fid: Fiduciary) -> list[Any]:
 
 
 def _since(fid: Fiduciary, seq: int) -> list[Any]:
-    return [r for r in fid.log.records() if r.seq > seq]
+    return list(fid.log.records(after=seq))
 
 
 def _named_messages(fid: Fiduciary, state: State) -> set[str]:
     """Every outbox message a live ticket names: one open, or warranted with
     its execution not finished."""
-    from fiduciary.documents import Ticket, loads
+    from fiduciary.documents import Ticket
 
+    live = {row.digest for row in state.open_tickets()}
+    for digest in (*state.unexecuted, *state.open_intent_ids):
+        warrant = state.warrants.get(digest)
+        if warrant is not None and state.ticket_status(warrant.ticket_id) == "warranted":
+            live.add(state.tickets[warrant.ticket_id].digest)
     named: set[str] = set()
-    for row in state.tickets.values():
-        status = state.ticket_status(row.ticket_id)
-        if status == "warranted":
-            (formed,) = [d for ev, d, _ in state.ticket_events[row.ticket_id] if ev == "warranted"]
-            if state.execution_status(formed) not in (None, "intent"):
-                continue
-        elif status != "open":
+    for digest in live:
+        try:
+            ticket = fid.escalation.decide.load(digest, Ticket)
+        except FiduciaryError:
             continue
-        found = fid.log.store.document(row.digest)
-        if found is None:
-            continue
-        ticket = loads(found[1])
-        assert isinstance(ticket, Ticket)
         for option in ticket.options:
             named.update(m.message_id for m in option.resolution.messages or ())
     return named

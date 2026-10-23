@@ -29,12 +29,14 @@ latest decision recorded on the subject.
 from __future__ import annotations
 
 import hashlib
+import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Final
+from typing import Any, Final, TypeVar
 
 from agentgov.receipts.signing import Signer, Verifier
 
@@ -68,7 +70,7 @@ from fiduciary.documents.ticket import (
 from fiduciary.exceptions import AuthorityError, FiduciaryError, MalformedError, SignatureError
 from fiduciary.log import Log
 from fiduciary.refines import delegation_problems, refines
-from fiduciary.store import ApprovalRow, State, Store
+from fiduciary.store import State, Store
 
 __all__ = ["BUILTIN_TOOLS", "REFUSAL_CODES", "Authority", "Decide", "replay", "replay_each"]
 
@@ -86,14 +88,32 @@ REFUSAL_CODES: Final = (
 """Why a session refused a call before anything was built or metered."""
 
 
-def _load(store: Store, digest: str, cls: type[Document]) -> Any:
-    found = store.document(digest)
-    if found is None:
-        raise AuthorityError(f"the store holds no document {digest[:16]}")
-    kind, data = found
-    if kind != cls.TYPE:
-        raise AuthorityError(f"document {digest[:16]} is a {kind}, not a {cls.TYPE}")
-    return cls.loads(data)
+D = TypeVar("D", bound=Document)
+
+
+class _Documents:
+    """Documents read from a store, parsed, by digest: a document never
+    changes under its digest, so one read serves every decision after it.
+    Only bytes that hash to their digest are kept; the least recently used
+    go first past ``size``."""
+
+    def __init__(self, size: int = 4096) -> None:
+        self._found: OrderedDict[str, Document] = OrderedDict()
+        self._size = size
+        self._lock = threading.Lock()
+
+    def get(self, digest: str) -> Document | None:
+        with self._lock:
+            found = self._found.get(digest)
+            if found is not None:
+                self._found.move_to_end(digest)
+            return found
+
+    def put(self, digest: str, document: Document) -> None:
+        with self._lock:
+            self._found[digest] = document
+            if len(self._found) > self._size:
+                self._found.popitem(last=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +125,27 @@ class Decide:
     """The digest of charter version 1, as configuration pins it."""
     service_key: Verifier
     """The key derived mandates are signed with."""
+    _documents: _Documents = field(default_factory=_Documents, repr=False, compare=False)
+
+    def load(self, digest: str, cls: type[D]) -> D:
+        """The document ``digest``, a ``cls``, as the store holds it.
+
+        :raises AuthorityError: When the store holds none, or another type.
+        """
+        found = self._documents.get(digest)
+        if found is None:
+            held = self.store.document(digest)
+            if held is None:
+                raise AuthorityError(f"the store holds no document {digest[:16]}")
+            kind, data = held
+            if kind != cls.TYPE:
+                raise AuthorityError(f"document {digest[:16]} is a {kind}, not a {cls.TYPE}")
+            found = cls.loads(data)
+            if hashlib.sha256(data).hexdigest() == digest:
+                self._documents.put(digest, found)
+        if not isinstance(found, cls):
+            raise AuthorityError(f"document {digest[:16]} is a {found.TYPE}, not a {cls.TYPE}")
+        return found
 
     # -- charters ------------------------------------------------------------------
 
@@ -114,7 +155,7 @@ class Decide:
             raise AuthorityError("no charter is adopted yet")
         for found, digest, _ in reversed(state.charters):
             if version is None or found == version:
-                charter: Charter = _load(self.store, digest, Charter)
+                charter: Charter = self.load(digest, Charter)
                 return charter
         raise AuthorityError(f"charter version {version} was never adopted")
 
@@ -122,7 +163,7 @@ class Decide:
         """The charter an approval names: the one in force, or, before any is,
         the pinned version 1."""
         if state.charter is None:
-            pinned: Charter = _load(self.store, self.pinned, Charter)
+            pinned: Charter = self.load(self.pinned, Charter)
             if (pinned.charter_id, pinned.version) != (charter_id, version):
                 raise AuthorityError(
                     f"no charter is in force, and the approval names charter {charter_id} "
@@ -193,7 +234,7 @@ class Decide:
             status = state.ticket_status(ticket_id)
             if status in ("lapsed", "declined"):
                 raise AuthorityError(f"ticket {subject.digest[:16]} is {status}")
-            ticket: Ticket = _load(self.store, subject.digest, Ticket)
+            ticket: Ticket = self.load(subject.digest, Ticket)
             if now is not None and now > ticket.not_after:
                 raise AuthorityError(
                     f"ticket {subject.digest[:16]} expired at "
@@ -239,7 +280,7 @@ class Decide:
         for principal, row in sorted(state.decisions(subject_type, subject_digest).items()):
             if principal not in allowed or row.decision != "approve":
                 continue
-            approval: Approval = _load(self.store, row.digest, Approval)
+            approval: Approval = self.load(row.digest, Approval)
             if (approval.charter_id, approval.charter_version) != (
                 approvers.charter_id,
                 approvers.version,
@@ -263,7 +304,7 @@ class Decide:
 
         :raises AuthorityError: When it is not the next version, or approvals fall short.
         """
-        charter: Charter = _load(self.store, digest, Charter)
+        charter: Charter = self.load(digest, Charter)
         if state.charter is None:
             if digest != self.pinned or charter.version != 1:
                 raise AuthorityError(
@@ -321,7 +362,7 @@ class Decide:
 
     def issue(self, state: State, digest: str, now: datetime) -> dict[str, Any]:
         """The ``mandate.issued`` body for mandate ``digest``."""
-        mandate: Mandate = _load(self.store, digest, Mandate)
+        mandate: Mandate = self.load(digest, Mandate)
         charter = self.charter(state)
         problems = mandate.charter_problems(charter)
         if problems:
@@ -348,7 +389,7 @@ class Decide:
             if head is None:
                 approvers, quorum, roster = charter, charter.issue_quorum, None
             else:
-                previous: Mandate = _load(self.store, head[1], Mandate)
+                previous: Mandate = self.load(head[1], Mandate)
                 approvers, quorum, roster = (
                     charter,
                     previous.roster.quorum("amend"),
@@ -369,7 +410,7 @@ class Decide:
                 raise AuthorityError(
                     f"its parent lineage is {state.status(mandate.parent.mandate_id)}"
                 )
-            parent: Mandate = _load(self.store, mandate.parent.digest, Mandate)
+            parent: Mandate = self.load(mandate.parent.digest, Mandate)
             found = delegation_problems(mandate, parent)
             if found:
                 raise AuthorityError(
@@ -413,7 +454,7 @@ class Decide:
         head = state.head(mandate_id)
         if head is None:
             raise AuthorityError(f"no lineage {mandate_id} is issued")
-        found: Mandate = _load(self.store, head[1], Mandate)
+        found: Mandate = self.load(head[1], Mandate)
         return found
 
     def bindable(self, state: State, digest: str) -> Mandate:
@@ -433,7 +474,7 @@ class Decide:
             raise AuthorityError(
                 f"its parent lineage {parent} is {state.status(parent)}, not bound"
             )
-        mandate: Mandate = _load(self.store, digest, Mandate)
+        mandate: Mandate = self.load(digest, Mandate)
         return mandate
 
     def rebase(self, state: State, mandate_id: str, parent: str) -> tuple[str, dict[str, Any]]:
@@ -441,7 +482,7 @@ class Decide:
         (F5-7): ``mandate.rebased`` when the child's version in force still
         refines it, ``mandate.suspended`` with every reason when not."""
         child = self.head_mandate(state, mandate_id)
-        new: Mandate = _load(self.store, parent, Mandate)
+        new: Mandate = self.load(parent, Mandate)
         if state.issued.get(parent) != state.parent_lineage(mandate_id):
             raise AuthorityError(f"{parent[:16]} is no version of lineage {mandate_id}'s parent")
         problems = [str(p) for p in delegation_problems(child, new) if p.path != "parent"]
@@ -528,7 +569,7 @@ class Decide:
         """The roster governing ``ticket`` (§7.3 rule 2): the roster of the
         mandate version ``ticket`` names, or, if that lineage is revoked, the
         nearest ancestor in force (or the charter's principals for a root)."""
-        mandate: Mandate = _load(self.store, ticket.mandate.digest, Mandate)
+        mandate: Mandate = self.load(ticket.mandate.digest, Mandate)
         if state.status(mandate.mandate_id) != "revoked":
             return mandate.roster.principals
         current = state.parent_lineage(mandate.mandate_id)
@@ -540,7 +581,7 @@ class Decide:
 
     def raise_ticket(self, state: State, digest: str, now: datetime) -> dict[str, Any]:
         """The ``ticket.raised`` body for ticket ``digest`` (§7.1, F7-1, F7-2)."""
-        ticket: Ticket = _load(self.store, digest, Ticket)
+        ticket: Ticket = self.load(digest, Ticket)
         ticket.verify(self.service_key)
         if ticket.ticket_id in state.tickets or digest in state.tickets_by_digest:
             raise AuthorityError(f"ticket {ticket.ticket_id} is raised already")
@@ -554,12 +595,12 @@ class Decide:
         if ticket.raised_at != now:  # and so before its not_after, which follows raised_at
             raise AuthorityError("ticket raised_at disagrees with its record")
         observed = ticket.observed.log
-        if (observed.seq, observed.hash) != (state.head_seq, state.hashes.get(state.head_seq)):
+        if (observed.seq, observed.hash) != (state.head_seq, state.head_hash):
             raise AuthorityError(
                 f"the ticket observed log record {observed.seq} ({observed.hash[:16]}), not "
                 f"record {state.head_seq}, the head its own record follows"
             )
-        mandate: Mandate = _load(self.store, ticket.mandate.digest, Mandate)
+        mandate: Mandate = self.load(ticket.mandate.digest, Mandate)
         for option in ticket.options:
             expected_quorum = quorum_for_resolution(mandate, ticket, option.resolution)
             if option.quorum != expected_quorum:
@@ -568,7 +609,7 @@ class Decide:
                     f"{expected_quorum}"
                 )
         if isinstance(ticket.evidence, AmendEvidence):
-            proposed: Mandate = _load(self.store, ticket.evidence.proposed.digest, Mandate)
+            proposed: Mandate = self.load(ticket.evidence.proposed.digest, Mandate)
             if (
                 proposed.mandate_id != mandate.mandate_id
                 or proposed.version != mandate.version + 1
@@ -596,7 +637,7 @@ class Decide:
                 )
         evidence_digest = fidu1.digest(ticket.evidence.to_json())
         for open_row in state.open_tickets(ticket.mandate.mandate_id):
-            other: Ticket = _load(self.store, open_row.digest, Ticket)
+            other: Ticket = self.load(open_row.digest, Ticket)
             if (
                 other.ticket_class == ticket.ticket_class
                 and fidu1.digest(other.evidence.to_json()) == evidence_digest
@@ -626,54 +667,34 @@ class Decide:
                 f"resolution {resolution.digest[:16]} is no option or narrowing of "
                 f"ticket {ticket.ticket_id}"
             )
-        current_charter = self.charter(state)
-        roster = self._ticket_roster(state, ticket)
-        allowed = set(roster) & set(current_charter.names)
-        pairs: list[tuple[str, Approval]] = []
-        for principal, row in sorted(state.ticket_decisions(ticket.digest).items()):
-            if principal not in allowed or row.decision != "approve":
-                continue
-            approval: Approval = _load(self.store, row.digest, Approval)
-            if (
-                approval.subject.type != "ticket"
-                or approval.subject.digest != ticket.digest
-                or approval.resolution != resolution.digest
-                or approval.decision != "approve"
-                or approval.charter_id != current_charter.charter_id
-            ):
-                continue
-            try:
-                signing_charter = self.charter(state, approval.charter_version)
-            except AuthorityError:
-                continue
-            key = signing_charter.principal(principal)
-            if key is None or self._suspended_before(state, key.name, key.key, row.seq):
-                continue
-            try:
-                approval.verify(key.public_key)
-            except FiduciaryError:
-                continue
-            recorded_at = state.record_times.get(row.seq, approval.issued_at)
-            if recorded_at > ticket.not_after or recorded_at > approval.not_after:
-                continue
-            pairs.append((row.digest, approval))
-        pairs.sort(key=lambda item: item[0])
-        return [d for d, _ in pairs], [a for _, a in pairs]
+        counted = self._ticket_votes(state, ticket, "approve", resolution)
+        return [d for d, _ in counted], [a for _, a in counted]
 
     def count_ticket_declines(self, state: State, ticket: Ticket) -> list[str]:
         """Digests of the valid roster declines on ``ticket`` (§7.3, F7-7)."""
+        return [d for d, _ in self._ticket_votes(state, ticket, "decline")]
+
+    def _ticket_votes(
+        self, state: State, ticket: Ticket, decision: str, resolution: Resolution | None = None
+    ) -> list[tuple[str, Approval]]:
+        """The ``decision`` approvals of ``ticket`` that count, by digest (§7.3):
+        each principal's latest decision recorded before the ticket ended, from
+        a principal of its roster and of the charter in force, made under that
+        charter with a key not suspended before it was recorded, verifying under
+        that key, and recorded by its own deadline and the ticket's. An
+        approval approves ``resolution``."""
         current_charter = self.charter(state)
-        roster = self._ticket_roster(state, ticket)
-        allowed = set(roster) & set(current_charter.names)
-        declines: list[str] = []
+        allowed = set(self._ticket_roster(state, ticket)) & set(current_charter.names)
+        counted: list[tuple[str, Approval]] = []
         for principal, row in sorted(state.ticket_decisions(ticket.digest).items()):
-            if principal not in allowed or row.decision != "decline":
+            if principal not in allowed or row.decision != decision:
                 continue
-            approval: Approval = _load(self.store, row.digest, Approval)
+            approval = self.load(row.digest, Approval)
             if (
                 approval.subject.type != "ticket"
                 or approval.subject.digest != ticket.digest
-                or approval.decision != "decline"
+                or (resolution is not None and approval.resolution != resolution.digest)
+                or approval.decision != decision
                 or approval.charter_id != current_charter.charter_id
             ):
                 continue
@@ -688,29 +709,26 @@ class Decide:
                 approval.verify(key.public_key)
             except FiduciaryError:
                 continue
-            recorded_at = state.record_times.get(row.seq, approval.issued_at)
+            recorded_at = row.recorded_at or approval.issued_at
             if recorded_at > ticket.not_after or recorded_at > approval.not_after:
                 continue
-            declines.append(row.digest)
-        return sorted(declines)
+            counted.append((row.digest, approval))
+        return sorted(counted, key=lambda item: item[0])
 
     def can_decline_ticket(self, state: State, ticket: Ticket) -> bool:
         """Whether declines make every option of ``ticket`` unreachable (F7-7)."""
         current_charter = self.charter(state)
-        roster = self._ticket_roster(state, ticket)
-        allowed = set(roster) & set(current_charter.names)
-        declines = self.count_ticket_declines(state, ticket)
-        remaining = len(allowed) - len(declines)
+        allowed = set(self._ticket_roster(state, ticket)) & set(current_charter.names)
+        remaining = len(allowed) - len(self.count_ticket_declines(state, ticket))
         return all(remaining < opt.quorum for opt in ticket.options)
 
     def _requeues_so_far(self, state: State, message_id: str) -> int:
         count = 0
-        for row in state.warrants.values():
-            if row.action != "requeue":
-                continue
+        for digest in state.warrants_by_action.get("requeue", ()):
+            row = state.warrants[digest]
             if state.execution_status(row.digest) in ("refused", "abandoned"):
                 continue
-            warrant: Warrant = _load(self.store, row.digest, Warrant)
+            warrant: Warrant = self.load(row.digest, Warrant)
             if any(m.message_id == message_id for m in warrant.resolution.messages):
                 count += 1
         return count
@@ -777,7 +795,7 @@ class Decide:
 
     def form_warrant(self, state: State, warrant_digest: str, now: datetime) -> dict[str, Any]:
         """The ``warrant.formed`` body for warrant ``warrant_digest`` (§4.6, §7.3, §7.4)."""
-        warrant: Warrant = _load(self.store, warrant_digest, Warrant)
+        warrant: Warrant = self.load(warrant_digest, Warrant)
         warrant.verify(self.service_key)
         if warrant.warrant_id in state.warrants_by_id or warrant_digest in state.warrants:
             raise AuthorityError(f"warrant {warrant.warrant_id} is formed already")
@@ -789,7 +807,7 @@ class Decide:
                 f"ticket {ticket_row.ticket_id} is "
                 f"{state.ticket_status(ticket_row.ticket_id)} already"
             )
-        ticket: Ticket = _load(self.store, warrant.ticket.digest, Ticket)
+        ticket: Ticket = self.load(warrant.ticket.digest, Ticket)
         if now > ticket.not_after:
             raise AuthorityError(
                 f"ticket {ticket.ticket_id} expired at {fidu1.format_instant(ticket.not_after)}"
@@ -798,7 +816,7 @@ class Decide:
             raise AuthorityError("warrant formed_at disagrees with its record")
         if ticket.option_for(warrant.resolution) is None:
             raise AuthorityError("the warrant's resolution is no option or narrowing of the ticket")
-        mandate: Mandate = _load(self.store, ticket.mandate.digest, Mandate)
+        mandate: Mandate = self.load(ticket.mandate.digest, Mandate)
         if warrant.basis.rule is not None:
             if warrant.basis.rule.mandate != mandate.digest:
                 raise AuthorityError("the warrant's rule names another mandate")
@@ -860,7 +878,7 @@ class Decide:
             raise AuthorityError(f"no ticket has digest {ticket_digest[:16]}")
         if state.ticket_status(ticket_id) != "open":
             raise AuthorityError(f"ticket {ticket_id} is {state.ticket_status(ticket_id)} already")
-        ticket: Ticket = _load(self.store, ticket_digest, Ticket)
+        ticket: Ticket = self.load(ticket_digest, Ticket)
         if not self.can_decline_ticket(state, ticket):
             raise AuthorityError(f"ticket {ticket_id} still has a reachable option")
         return {
@@ -879,7 +897,7 @@ class Decide:
         if ticket_id is None:
             raise AuthorityError(f"no ticket has digest {ticket_digest[:16]}")
         status = state.ticket_status(ticket_id)
-        ticket: Ticket = _load(self.store, ticket_digest, Ticket)
+        ticket: Ticket = self.load(ticket_digest, Ticket)
         if status == "open":
             if now < ticket.not_after:
                 raise AuthorityError(
@@ -895,7 +913,7 @@ class Decide:
             ]
             execution = state.execution_status(warrant_digest)
             if execution is None:
-                warrant: Warrant = _load(self.store, warrant_digest, Warrant)
+                warrant: Warrant = self.load(warrant_digest, Warrant)
                 if now < warrant.not_after:
                     raise AuthorityError(
                         f"ticket {ticket_id}'s warrant runs until "
@@ -923,12 +941,12 @@ class Decide:
             raise AuthorityError(
                 f"warrant {warrant_digest[:16]} already has an execution.intent (F7-12)"
             )
-        warrant: Warrant = _load(self.store, warrant_digest, Warrant)
+        warrant: Warrant = self.load(warrant_digest, Warrant)
         if now >= warrant.not_after:
             raise AuthorityError(
                 f"warrant {warrant.warrant_id} expired at {fidu1.format_instant(warrant.not_after)}"
             )
-        ticket: Ticket = _load(self.store, warrant.ticket.digest, Ticket)
+        ticket: Ticket = self.load(warrant.ticket.digest, Ticket)
         if state.ticket_status(ticket.ticket_id) != "warranted":
             raise AuthorityError(
                 f"ticket {ticket.ticket_id} is {state.ticket_status(ticket.ticket_id)}"
@@ -1049,7 +1067,7 @@ class Decide:
         if code not in REFUSAL_CODES:
             raise AuthorityError(f"{code!r} is no refusal code")
         if tool is not None and tool not in BUILTIN_TOOLS:
-            mandate: Mandate = _load(self.store, str(opened["mandate"]), Mandate)
+            mandate: Mandate = self.load(str(opened["mandate"]), Mandate)
             if tool not in {pin.name for pin in mandate.tools.bindings}:
                 raise AuthorityError(f"tool {tool!r} is pinned by no version this session runs")
         return {
@@ -1084,7 +1102,7 @@ class Decide:
                 continue
             if state.execution_status(row.digest) in ("refused", "abandoned"):
                 continue
-            warrant: Warrant = _load(self.store, row.digest, Warrant)
+            warrant: Warrant = self.load(row.digest, Warrant)
             if (
                 warrant.resolution.mandate == digest
                 and warrant.basis.approvals
@@ -1096,7 +1114,7 @@ class Decide:
     def _children(self, state: State, parent_id: str) -> set[str]:
         children = set()
         for mandate_id, versions in state.lineages.items():
-            first: Mandate = _load(self.store, versions[0][1], Mandate)
+            first: Mandate = self.load(versions[0][1], Mandate)
             if first.parent is not None and first.parent.mandate_id == parent_id:
                 children.add(mandate_id)
         return children
@@ -1174,7 +1192,8 @@ class Authority:
         # Read first, outside the writer's lock: an idle turn takes no lock at
         # all, and a busy one locks once per submission still unanswered.
         answered = self._log.state().processed
-        pending = [(i, d) for i, d in self._log.store.intake() if i not in answered]
+        waiting = [intake for intake in self._log.store.intake_ids() if intake not in answered]
+        pending = self._log.store.submissions(waiting) if waiting else []
         for intake, data in pending:
             with self._log.store.transaction():
                 state = self._log.state()
@@ -1213,24 +1232,13 @@ class Authority:
         if ticket_id is None or state.ticket_status(ticket_id) != "open":
             return None, None
         next_seq = state.head_seq + 1
-        state.approvals.append(
-            ApprovalRow(
-                digest=approval.digest,
-                intake=int(approval_body["intake"]),
-                principal=approval.principal,
-                decision=approval.decision,
-                subject_type="ticket",
-                subject_digest=approval.subject.digest,
-                resolution=approval.resolution,
-                seq=next_seq,
-            )
-        )
-        state.record_times[next_seq] = now
-        ticket: Ticket = _load(self._log.store, approval.subject.digest, Ticket)
+        # Counted as recorded: the state after the approval's own record.
+        state = state.after("approval.recorded", approval_body, issued_at=now)
+        ticket: Ticket = self._decide.load(approval.subject.digest, Ticket)
         if approval.decision == "approve":
             assert approval.resolution is not None
             resolution = self._decide.resolution_for_ticket(ticket, approval.resolution)
-            mandate: Mandate = _load(self._log.store, ticket.mandate.digest, Mandate)
+            mandate: Mandate = self._decide.load(ticket.mandate.digest, Mandate)
             counted, counted_approvals = self._decide.count_ticket(state, ticket, resolution)
             required = quorum_for_resolution(mandate, ticket, resolution)
             if len(counted) >= required:

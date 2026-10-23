@@ -6,6 +6,26 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+### Changed
+
+- **A turn costs what is due, not what the log holds** (F10-1, amended). The service kept
+  every record it had read and folded the whole log each time a decision asked about it,
+  so a writer's turn and each tool call took time in proportion to the log: at 3,000
+  records, 180 ms a turn and 90 ms a call. It now keeps only the folded state, folds what
+  was appended since into a copy (a state once read never changes), and answers each
+  question from an index: open tickets, unexecuted warrants, open intents, each subject's
+  decisions, grants by mandate. At 10,000 records a turn takes 0.03 ms and a call 0.44 ms,
+  as at 300. Memory no longer grows with every record read.
+- **Documents are read once.** A decision reads a charter, mandate, ticket, approval or
+  warrant from the store once, kept by digest (bytes that do not hash to their digest are
+  never kept). `verify` reads afresh each time.
+- **The intake reads what is unanswered.** A turn reads the intake's ids, and then only
+  the submissions no record answers, where it read every submission's bytes.
+- **Nothing due, no lock**, for the binder's expiry too: a turn with no lineage past its
+  term takes no writer lock.
+- Approvals of a ticket and declines of it are counted by one rule (§7.3), where two
+  copies of it were kept in step.
+
 ## [1.0.0]
 
 Phase 6 of `docs/FIDUCIARY_SPEC.md` §11: production. Fiduciary runs as a supervised

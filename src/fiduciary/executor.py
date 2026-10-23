@@ -32,9 +32,9 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 
-from agentgov.core import EntryType
+from agentgov.core import EntryType, LedgerEntry
 from agentgov.exceptions import AgentGovError
 from agentgov.receipts.kms_aws import AwsKmsSigner
 from agentgov.receipts.signing import Signer
@@ -56,11 +56,11 @@ from fiduciary.authority import Authority, Decide
 from fiduciary.binding import Binder
 from fiduciary.documents import (
     MAX_OUTBOX_TARGETS,
+    Document,
     Mandate,
     Record,
     Ticket,
     Warrant,
-    loads,
 )
 from fiduciary.escalation import Escalation
 from fiduciary.exceptions import AuthorityError, FiduciaryError, StoreError
@@ -76,6 +76,8 @@ __all__ = [
     "Executor",
     "check_ilok1_signer",
 ]
+
+D = TypeVar("D", bound=Document)
 
 _OUTBOX_STEPS: Final = ("release", "cancel", "requeue", "compensate", "compensate_late")
 _OPERATOR_OUTCOMES: Final = ("operator.applied", "operator.refused", "operator.abandoned")
@@ -232,13 +234,11 @@ class Executor:
 
     # -- documents ---------------------------------------------------------------
 
-    def _document(self, digest: str, cls: type[Any], what: str) -> Any:
-        raw = self.log.store.document(digest)
-        if raw is None or raw[0] != cls.TYPE:
-            raise AuthorityError(f"no {what} has digest {digest[:16]}")
-        found = loads(raw[1])
-        assert isinstance(found, cls)
-        return found
+    def _document(self, digest: str, cls: type[D], what: str) -> D:
+        try:
+            return self.decide.load(digest, cls)
+        except AuthorityError as exc:
+            raise AuthorityError(f"no {what} has digest {digest[:16]}") from exc
 
     def _warrant(self, warrant_or_digest: Warrant | str, state: State) -> Warrant:
         if isinstance(warrant_or_digest, Warrant):
@@ -353,37 +353,41 @@ class Executor:
                 if not done.ok:
                     return [
                         intent,
-                        *self._refused(intent, done.why, results, mismatches, lapse=done.lost),
+                        *self._refused(body, intent.seq, done.why, results, mismatches, done.lost),
                     ]
                 assert done.result is not None
                 results.append(done.result)
                 self._checkpoint(f"acted:{step['step']}")
-            applied = self._outcome("execution.applied", intent, results, mismatches)
+            applied = self._outcome("execution.applied", body, intent.seq, results, mismatches)
             self._checkpoint("applied")
             return [intent, applied]
 
     def _outcome(
         self,
         kind: str,
-        intent: Record,
+        intent: Mapping[str, Any],
+        seq: int,
         results: list[dict[str, Any]],
         mismatches: list[dict[str, Any]],
         **extra: Any,
     ) -> Record:
-        (record,) = self._outcomes([(kind, self._outcome_body(intent, results, mismatches, extra))])
+        body = self._outcome_body(intent, seq, results, mismatches, extra)
+        (record,) = self._outcomes([(kind, body)])
         return record
 
     @staticmethod
     def _outcome_body(
-        intent: Record,
+        intent: Mapping[str, Any],
+        seq: int,
         results: list[dict[str, Any]],
         mismatches: list[dict[str, Any]],
         extra: Mapping[str, Any],
     ) -> dict[str, Any]:
+        """The outcome of the intent ``seq``, whose body is ``intent``."""
         fixed = ("warrant", "warrant_id", "ticket", "ticket_id", "mandate", "mandate_id", "action")
         return {
-            **{name: intent.content[name] for name in fixed},
-            "intent": intent.seq,
+            **{name: intent[name] for name in fixed},
+            "intent": seq,
             **extra,
             "results": results,
             "mismatches": mismatches,
@@ -396,27 +400,27 @@ class Executor:
             for kind, body in entries:
                 if kind.startswith("execution."):
                     self.decide.execution_outcome(state, kind, body)
-                    state = state.after(kind, body)
+                    state = state.after(kind, body, issued_at=now)
             return self.log.append_all(entries, issued_at=now)
 
     def _refused(
         self,
-        intent: Record,
+        intent: Mapping[str, Any],
+        seq: int,
         why: str,
         results: list[dict[str, Any]],
         mismatches: list[dict[str, Any]],
-        *,
         lapse: bool,
     ) -> list[Record]:
         """``execution.refused``; and, for a quote or a repair proposal this
         process no longer holds, the ticket's lapse in the same transaction:
         the agent asks again (F7-14)."""
-        body = self._outcome_body(intent, results, mismatches, {"why": why[:512]})
+        body = self._outcome_body(intent, seq, results, mismatches, {"why": why[:512]})
         entries = [("execution.refused", body)]
         if lapse:
             with self.log.store.transaction():
                 now = self.log.now()
-                after = self.log.state().after("execution.refused", body)
+                after = self.log.state().after("execution.refused", body, issued_at=now)
                 entries.append(
                     ("ticket.lapsed", self.decide.lapse_ticket(after, body["ticket"], now))
                 )
@@ -506,7 +510,7 @@ class Executor:
                 governor.reset(scope)
         except AgentGovError as exc:
             return _Step(False, why=str(exc))
-        found = self._reset_reached(idx, reason, scope)
+        found = self._reset_after(idx, scope, anchor)
         if found.status != "reached":
             return _Step(
                 False, why=f"the reset after anchor {anchor.sequence} is not in the ledger"
@@ -604,7 +608,7 @@ class Executor:
         mandate: Mandate = self._document(ticket.mandate.digest, Mandate, "mandate")
         if mandate.extension is None:
             return _Step(False, why="the mandate allows no extension")
-        granted = self._granted(self.log.state(), mandate.digest)
+        granted = self.log.state().granted(mandate.digest)
         if amount > mandate.extension.max_grant or granted + amount > mandate.extension.max_total:
             return _Step(
                 False,
@@ -632,21 +636,6 @@ class Executor:
     def _guard_of(self, mandate_id: str) -> BudgetGuard | None:
         found = None if self._guard_for is None else self._guard_for(mandate_id)
         return found if found is not None else self._guard
-
-    @staticmethod
-    def _granted(state: State, mandate_digest: str) -> Decimal:
-        """What warrants granted under ``mandate_digest`` so far, by quorum or rule."""
-        return sum(
-            (
-                Decimal(row.amount)
-                for row in state.warrants.values()
-                if row.mandate_digest == mandate_digest
-                and row.action == "grant"
-                and row.amount is not None
-                and state.execution_status(row.digest) == "applied"
-            ),
-            Decimal("0.00000000"),
-        )
 
     # -- resolving (§7.5 F7-13, §10.4) -------------------------------------------
 
@@ -692,13 +681,11 @@ class Executor:
             if found.status != "reached":
                 why = found.why or f"step {step['step']} ({step['kind']}) left no evidence"
                 break
-        state = self.log.state()
-        if state.execution_status(warrant_digest) != "intent":
+        if self.log.state().execution_status(warrant_digest) != "intent":
             return None  # another process resolved it first
-        intent = next(r for r in self.log.records() if r.seq == seq)
         if why:
-            return self._outcome("execution.abandoned", intent, results, mismatches, why=why)
-        return self._outcome("execution.applied", intent, results, mismatches)
+            return self._outcome("execution.abandoned", body, seq, results, mismatches, why=why)
+        return self._outcome("execution.applied", body, seq, results, mismatches)
 
     def _inspect(self, warrant_digest: str, mandate_id: str, step: Mapping[str, Any]) -> _Found:
         idx, kind = int(step["step"]), str(step["kind"])
@@ -787,7 +774,11 @@ class Executor:
         anchor = next((e for e in governor.audit_trail("fiduciary") if e.memo == memo), None)
         if anchor is None:
             return _Found("missing")
-        following = governor.entries(after=anchor.sequence, limit=1)
+        return self._reset_after(idx, scope, anchor)
+
+    def _reset_after(self, idx: int, scope: str, anchor: LedgerEntry) -> _Found:
+        """The reset step reached when the entry after its anchor resets ``scope``."""
+        following = self.governor.entries(after=anchor.sequence, limit=1)
         if (
             not following
             or following[0].entry_type is not EntryType.CIRCUIT_RESET

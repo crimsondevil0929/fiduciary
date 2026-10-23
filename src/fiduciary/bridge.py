@@ -658,12 +658,9 @@ class Fiduciary:
         session."""
         records = self._escalation.process_intake()
         records.extend(self._executor.resolve())
-        state = self.log.state()
-        for digest, _ in sorted(state.warrants.items(), key=lambda item: item[1].seq):
-            if state.execution_status(digest) is not None:
-                continue
+        for warrant in self.log.state().unexecuted_warrants():
             try:
-                records.extend(self._executor.execute(digest))
+                records.extend(self._executor.execute(warrant.digest))
             except FiduciaryError:
                 continue  # expired, or executing elsewhere: lapse and resolve answer it
         return records
@@ -1077,10 +1074,8 @@ class Session:
 
     @staticmethod
     def _unexecuted(state: State, ticket_id: str) -> bool:
-        return any(
-            row.ticket_id == ticket_id and state.execution_status(digest) in (None, "intent")
-            for digest, row in state.warrants.items()
-        )
+        warrant = state.warrant_of(ticket_id)
+        return warrant is not None and state.execution_status(warrant) in (None, "intent")
 
     def _capture(self, held: Authorization, cost: Decimal, memo: str) -> None:
         try:
@@ -1274,17 +1269,19 @@ class Session:
         for ticket_id, summary in list(self._tickets.items()):
             if summary.ticket_class != "extension" or ticket_id in self._granted:
                 continue
-            if state.ticket_status(ticket_id) != "warranted":
+            digest = state.warrant_of(ticket_id)
+            if (
+                state.ticket_status(ticket_id) != "warranted"
+                or digest is None
+                or state.execution_status(digest) != "applied"
+            ):
                 continue
-            for digest, row in state.warrants.items():
-                if row.ticket_id != ticket_id or state.execution_status(digest) != "applied":
-                    continue
-                (_, applied, _) = state.executions[digest][-1]
-                for result in applied.get("results", ()):
-                    if result.get("kind") == "grant":
-                        self._extend(str(result["scope"]), str(result["grant_id"]), result)
-                with self._lock:
-                    self._granted.add(ticket_id)
+            (_, applied, _) = state.executions[digest][-1]
+            for result in applied.get("results", ()):
+                if result.get("kind") == "grant":
+                    self._extend(str(result["scope"]), str(result["grant_id"]), result)
+            with self._lock:
+                self._granted.add(ticket_id)
 
     def _extend(self, scope: str, grant_id: str, result: Mapping[str, Any]) -> None:
         recovery = self._fid.recovering(self.mandate_id)

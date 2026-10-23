@@ -20,7 +20,7 @@ refuse it even to their owner (F10-2). The database holds no secret (F10-3).
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from typing import TYPE_CHECKING, Any, Final
 
@@ -356,6 +356,17 @@ class PostgresStore(Store):
         rows = self._execute(f"SELECT id, body FROM {self._s}.intake ORDER BY id").fetchall()
         for row in rows:
             yield int(row[0]), bytes(row[1])
+
+    def intake_ids(self) -> list[int]:
+        rows = self._execute(f"SELECT id FROM {self._s}.intake ORDER BY id").fetchall()
+        return [int(row[0]) for row in rows]
+
+    def submissions(self, ids: Collection[int]) -> list[tuple[int, bytes]]:
+        rows = self._execute(
+            f"SELECT id, body FROM {self._s}.intake WHERE id = ANY(%s) ORDER BY id",
+            (sorted(set(ids)),),
+        ).fetchall()
+        return [(int(row[0]), bytes(row[1])) for row in rows]
 
     def close(self) -> None:
         self._conn.close()

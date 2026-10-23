@@ -16,7 +16,7 @@ import hashlib
 import os
 import sqlite3
 import sys
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -33,6 +33,8 @@ SCHEMA_VERSION: Final = 4
 executions. 4: 0.4.0, bridge sessions. Upgrading adds the tables, which an
 earlier log holds nothing for."""
 _PROTECTED: Final = ("documents", "log", "intake")
+_BATCH: Final = 500
+"""Ids per query: within SQLite's bound on a statement's parameters."""
 
 
 def _sha256(data: bytes | None) -> str | None:
@@ -281,6 +283,21 @@ class SqliteStore(Store):
     def intake(self) -> Iterator[tuple[int, bytes]]:
         for row in self._conn.execute("SELECT id, body FROM intake ORDER BY id").fetchall():
             yield int(row[0]), bytes(row[1])
+
+    def intake_ids(self) -> list[int]:
+        return [int(r[0]) for r in self._conn.execute("SELECT id FROM intake ORDER BY id")]
+
+    def submissions(self, ids: Collection[int]) -> list[tuple[int, bytes]]:
+        wanted = sorted(set(ids))
+        found: list[tuple[int, bytes]] = []
+        for start in range(0, len(wanted), _BATCH):
+            batch = wanted[start : start + _BATCH]
+            marks = ", ".join("?" for _ in batch)
+            rows = self._conn.execute(
+                f"SELECT id, body FROM intake WHERE id IN ({marks}) ORDER BY id", batch
+            ).fetchall()
+            found += [(int(row[0]), bytes(row[1])) for row in rows]
+        return found
 
     def close(self) -> None:
         self._conn.close()

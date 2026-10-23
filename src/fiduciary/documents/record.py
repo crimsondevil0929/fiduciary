@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar, Final, Protocol
 
 from agentgov.receipts.signing import Signer
 
@@ -14,7 +14,7 @@ from fiduciary.documents._base import Document
 from fiduciary.exceptions import MalformedError
 from fiduciary.fidu1 import Fields, Signature
 
-__all__ = ["ANCHOR_PREFIX", "LOG_ID", "RECORD_KINDS", "Record", "anchor_memo"]
+__all__ = ["ANCHOR_PREFIX", "LOG_ID", "RECORD_KINDS", "Linked", "Record", "anchor_memo"]
 
 RECORD_KINDS: Final = frozenset(
     {
@@ -119,7 +119,20 @@ class Record(Document):
         return record.signed(signer)
 
 
-def anchor_memo(record: Record) -> str:
+class Linked(Protocol):
+    """A record by its place in its log: a :class:`Record`, or a row of a store."""
+
+    @property
+    def log(self) -> str: ...
+
+    @property
+    def seq(self) -> int: ...
+
+    @property
+    def hash(self) -> str: ...
+
+
+def anchor_memo(record: Linked) -> str:
     """The AgentGov ``ANCHOR`` memo committing the ledger to ``record``:
     ``FIDU1 <log> <seq> <hash>``."""
     return f"{ANCHOR_PREFIX}{record.log} {record.seq} {record.hash}"

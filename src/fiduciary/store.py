@@ -16,13 +16,12 @@ the service takes, it takes from the state.
 from __future__ import annotations
 
 import abc
-import copy
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Final
+from typing import Any, Final, TypeVar
 
 from fiduciary import fidu1
 from fiduciary.documents import Record
@@ -72,6 +71,9 @@ PROJECTIONS: Final[Mapping[str, tuple[str, ...]]] = {
 }
 """Each projection table and its columns, in order. Every column is text or an
 integer; ``seq`` is the record a row follows from."""
+
+K = TypeVar("K")
+T = TypeVar("T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -278,6 +280,9 @@ class ApprovalRow:
     subject_digest: str
     resolution: str | None
     seq: int
+    recorded_at: datetime | None = None
+    """When the record that recorded it was written: quorum holds an approval
+    to its deadlines at this instant (§7.3)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,15 +311,29 @@ class WarrantRow:
     seq: int
 
 
+def _added(table: dict[K, list[T]], key: K, item: T) -> None:
+    """Add ``item`` to ``table[key]``, a new list: a list a copy shares is
+    never changed in place (:meth:`State.copy`)."""
+    table[key] = [*table.get(key, ()), item]
+
+
 @dataclass(slots=True)
 class State:
-    """What the log says, as of its last record."""
+    """What the log says, as of its last record.
+
+    It is folded from the log one record at a time (:meth:`apply`), and holds
+    an index for each question a decision asks: what is open, what is
+    unexecuted, who decided what. So a question costs what its answer holds,
+    not what the log does. :meth:`copy` is cheap: no list a dictionary here
+    holds is changed in place, only replaced, so a copy shares them.
+    """
 
     charters: list[tuple[int, str, int]] = field(default_factory=list)
     """Each adopted charter version: ``(version, digest, seq)``, in order."""
     suspended: dict[tuple[str, str], int] = field(default_factory=dict)
     """``(principal, key)`` to the record that suspended it."""
-    approvals: list[ApprovalRow] = field(default_factory=list)
+    approvals: dict[tuple[str, str], list[ApprovalRow]] = field(default_factory=dict)
+    """Each subject's recorded approvals, by ``(subject type, digest)``, in order."""
     lineages: dict[str, list[tuple[int, str, str, int]]] = field(default_factory=dict)
     """Each lineage's issued versions: ``(version, digest, issuance, seq)``."""
     processed: set[int] = field(default_factory=set)
@@ -340,13 +359,25 @@ class State:
     """``warrant_id`` to warrant digest."""
     executions: dict[str, list[tuple[str, dict[str, Any], int]]] = field(default_factory=dict)
     """Each warrant's execution records: ``(event, body, seq)``, in order."""
-    record_times: dict[int, datetime] = field(default_factory=dict)
-    """Each record's ``issued_at`` timestamp by ``seq``."""
     sessions: dict[str, list[tuple[str, dict[str, Any], int]]] = field(default_factory=dict)
     """Each bridge session's records: ``(event, body, seq)``, in order."""
-    hashes: dict[int, str] = field(default_factory=dict)
-    """Each signed record's hash by ``seq``: what a ticket's ``observed.log`` names."""
     head_seq: int = 0
+    head_hash: str | None = None
+    """The last record's hash: what a ticket's ``observed.log`` names. ``None``
+    before the first record, and after a record :meth:`after` simulates."""
+    head_time: datetime | None = None
+    """The last record's ``issued_at``."""
+    # -- indexes, each kept by apply() ---------------------------------------------
+    ticket_ends: dict[str, tuple[int, str]] = field(default_factory=dict)
+    """Each ticket's terminal events: the first one's ``seq``, and the last event."""
+    open_ticket_ids: dict[str, None] = field(default_factory=dict)
+    """Tickets raised with no terminal event."""
+    unexecuted: dict[str, None] = field(default_factory=dict)
+    """Warrants formed with no execution record."""
+    open_intent_ids: dict[str, None] = field(default_factory=dict)
+    """Warrants whose one execution record is its intent."""
+    warrants_by_action: dict[str, dict[str, None]] = field(default_factory=dict)
+    """Each resolution action's warrants, by digest."""
 
     @classmethod
     def of(cls, records: Sequence[Record]) -> State:
@@ -355,16 +386,26 @@ class State:
             state.apply(record)
         return state
 
-    def after(self, kind: str, body: dict[str, Any]) -> State:
-        """A copy of this state with a record of ``kind`` applied: what the
-        next decision written in the same log transaction is taken from."""
-        found = copy.deepcopy(self)
+    def copy(self) -> State:
+        """A state that :meth:`apply` may advance while this one stays as it is."""
+        values: dict[str, Any] = {}
+        for item in fields(State):
+            value = getattr(self, item.name)
+            values[item.name] = value.copy() if isinstance(value, (dict, list, set)) else value
+        values["warrants_by_action"] = {a: dict(d) for a, d in self.warrants_by_action.items()}
+        return State(**values)
+
+    def after(self, kind: str, body: dict[str, Any], *, issued_at: datetime | None = None) -> State:
+        """A copy of this state with a record of ``kind`` applied, written at
+        ``issued_at`` (the last record's instant by default): what the next
+        decision written in the same log transaction is taken from."""
+        found = self.copy()
         found.apply(
             Record(
                 log="fiduciary",
                 seq=self.head_seq + 1,
                 kind=kind,
-                issued_at=self.record_times.get(self.head_seq, datetime.now(UTC)),
+                issued_at=issued_at or self.head_time or datetime.now(UTC),
                 content=body,
                 prev=fidu1.GENESIS,
             )
@@ -373,9 +414,9 @@ class State:
 
     def apply(self, record: Record) -> None:
         self.head_seq = record.seq
-        self.record_times[record.seq] = record.issued_at
-        if record.signature is not None:  # a record simulated by after() has no hash yet
-            self.hashes[record.seq] = record.hash
+        self.head_time = record.issued_at
+        # a record simulated by after() has no hash yet
+        self.head_hash = record.hash if record.signature is not None else None
         body = record.content
         for table, row in rows_for(record):
             if table == "charters":
@@ -383,57 +424,100 @@ class State:
             elif table == "suspensions":
                 self.suspended[(row[1], row[2])] = row[3]
             elif table == "mandates":
-                self.lineages.setdefault(row[0], []).append((row[1], row[2], row[3], row[4]))
+                _added(self.lineages, row[0], (row[1], row[2], row[3], row[4]))
                 self.issued[row[2]] = row[0]
                 if body.get("parent"):
                     self.parents[row[0]] = str(body["parent"])
             elif table == "lineage":
-                self.events.setdefault(row[0], []).append((row[1], row[2], row[3], row[4]))
+                _added(self.events, row[0], (row[1], row[2], row[3], row[4]))
                 if row[1] == "rebased":
                     self.parents[row[0]] = row[3]
                 elif row[1] == "bound":
                     self.bound[row[0]] = dict(body)
             elif table == "approvals":
-                self.approvals.append(ApprovalRow(*row))
+                digest, intake, principal, decision, kind, subject, resolution, seq = row
+                approval = ApprovalRow(
+                    digest,
+                    intake,
+                    principal,
+                    decision,
+                    kind,
+                    subject,
+                    resolution,
+                    seq,
+                    recorded_at=record.issued_at,
+                )
+                _added(self.approvals, (kind, subject), approval)
                 self.processed.add(int(body["intake"]))
             elif table == "refusals":
                 self.processed.add(int(body["intake"]))
             elif table == "tickets":
-                ticket_id, digest, mandate_id, ticket_class, event, detail, seq = row
-                if event == "raised":
-                    self.tickets[ticket_id] = TicketRow(
-                        ticket_id=ticket_id,
-                        digest=digest,
-                        mandate_id=mandate_id,
-                        mandate_digest=detail,
-                        ticket_class=ticket_class,
-                        seq=seq,
-                    )
-                    self.tickets_by_digest[digest] = ticket_id
-                self.ticket_events.setdefault(ticket_id, []).append((event, detail, seq))
+                self._ticket(*row)
             elif table == "warrants":
-                warrant_id, digest, ticket_id, ticket_digest, action, res_digest, _, seq = row
-                self.warrants[digest] = WarrantRow(
-                    warrant_id=warrant_id,
-                    digest=digest,
-                    ticket_id=ticket_id,
-                    ticket_digest=ticket_digest,
-                    mandate_id=str(body["mandate_id"]),
-                    mandate_digest=str(body["mandate"]),
-                    ticket_class=str(body["class"]),
-                    action=action,
-                    resolution_digest=res_digest,
-                    basis=dict(body["basis"]),
-                    amount=None if body.get("amount") is None else str(body["amount"]),
-                    seq=seq,
-                )
-                self.warrants_by_id[warrant_id] = digest
+                self._warrant(row, body)
             elif table == "executions":
                 warrant_digest, event, _, seq = row
-                self.executions.setdefault(warrant_digest, []).append((event, dict(body), seq))
+                if warrant_digest in self.executions:
+                    self.open_intent_ids.pop(warrant_digest, None)
+                elif event == "intent":
+                    self.open_intent_ids[warrant_digest] = None
+                self.unexecuted.pop(warrant_digest, None)
+                _added(self.executions, warrant_digest, (event, dict(body), seq))
             elif table == "sessions":
                 session_id, _, event, _, seq = row
-                self.sessions.setdefault(session_id, []).append((event, dict(body), seq))
+                _added(self.sessions, session_id, (event, dict(body), seq))
+
+    def _ticket(
+        self,
+        ticket_id: str,
+        digest: str,
+        mandate_id: str,
+        ticket_class: str,
+        event: str,
+        detail: str,
+        seq: int,
+    ) -> None:
+        if event == "raised":
+            self.tickets[ticket_id] = TicketRow(
+                ticket_id=ticket_id,
+                digest=digest,
+                mandate_id=mandate_id,
+                mandate_digest=detail,
+                ticket_class=ticket_class,
+                seq=seq,
+            )
+            self.tickets_by_digest[digest] = ticket_id
+            if ticket_id not in self.ticket_ends:
+                self.open_ticket_ids[ticket_id] = None
+        else:  # warranted, lapsed or declined: every other event ends a ticket
+            first = self.ticket_ends.get(ticket_id, (seq, event))[0]
+            self.ticket_ends[ticket_id] = (first, event)
+            self.open_ticket_ids.pop(ticket_id, None)
+        _added(self.ticket_events, ticket_id, (event, detail, seq))
+
+    def _warrant(self, row: tuple[Any, ...], body: Mapping[str, Any]) -> None:
+        warrant_id, digest, ticket_id, ticket_digest, action, res_digest, _, seq = row
+        before = self.warrants.get(digest)
+        if before is not None and before.action != action:
+            self.warrants_by_action[before.action].pop(digest, None)
+        self.warrants_by_action.setdefault(action, {})[digest] = None
+        self.warrants[digest] = WarrantRow(
+            warrant_id=warrant_id,
+            digest=digest,
+            ticket_id=ticket_id,
+            ticket_digest=ticket_digest,
+            mandate_id=str(body["mandate_id"]),
+            mandate_digest=str(body["mandate"]),
+            ticket_class=str(body["class"]),
+            action=action,
+            resolution_digest=res_digest,
+            basis=dict(body["basis"]),
+            amount=None if body.get("amount") is None else str(body["amount"]),
+            seq=seq,
+        )
+        self.warrants_by_id[warrant_id] = digest
+        if digest not in self.executions:
+            self.unexecuted[digest] = None
 
     @property
     def charter(self) -> tuple[int, str] | None:
@@ -490,34 +574,28 @@ class State:
 
     def decisions(self, subject_type: str, subject_digest: str) -> dict[str, ApprovalRow]:
         """Each principal's latest recorded decision on a subject (F7-3, rule 6)."""
-        latest: dict[str, ApprovalRow] = {}
-        for row in self.approvals:
-            if (row.subject_type, row.subject_digest) == (subject_type, subject_digest):
-                latest[row.principal] = row
-        return latest
+        return {
+            row.principal: row for row in self.approvals.get((subject_type, subject_digest), ())
+        }
 
     def ticket_status(self, ticket_id: str) -> str | None:
         """``open``, ``warranted``, ``lapsed`` or ``declined``; ``None`` for no ticket."""
         if ticket_id not in self.tickets:
             return None
-        events = [e[0] for e in self.ticket_events.get(ticket_id, ())]
-        terminal = [e for e in events if e in TICKET_TERMINAL]
-        return terminal[-1] if terminal else "open"
+        ended = self.ticket_ends.get(ticket_id)
+        return "open" if ended is None else ended[1]
 
     def ticket_terminal_seq(self, ticket_id: str) -> int | None:
         """The first ``seq`` at which ``ticket_id`` became terminal, or ``None``."""
-        for event, _, seq in self.ticket_events.get(ticket_id, ()):
-            if event in TICKET_TERMINAL:
-                return seq
-        return None
+        ended = self.ticket_ends.get(ticket_id)
+        return None if ended is None else ended[0]
 
     def open_tickets(self, mandate_id: str | None = None) -> list[TicketRow]:
         """Open tickets, optionally filtered to ``mandate_id``, in raised order."""
         found = [
             row
-            for row in self.tickets.values()
-            if self.ticket_status(row.ticket_id) == "open"
-            and (mandate_id is None or row.mandate_id == mandate_id)
+            for row in map(self.tickets.__getitem__, self.open_ticket_ids)
+            if mandate_id is None or row.mandate_id == mandate_id
         ]
         return sorted(found, key=lambda r: r.seq)
 
@@ -530,14 +608,22 @@ class State:
         cutoff = before_seq
         if cutoff is None and ticket_id is not None:
             cutoff = self.ticket_terminal_seq(ticket_id)
-        latest: dict[str, ApprovalRow] = {}
-        for row in self.approvals:
-            if (row.subject_type, row.subject_digest) != ("ticket", ticket_digest):
-                continue
-            if cutoff is not None and row.seq >= cutoff:
-                continue
-            latest[row.principal] = row
-        return latest
+        return {
+            row.principal: row
+            for row in self.approvals.get(("ticket", ticket_digest), ())
+            if cutoff is None or row.seq < cutoff
+        }
+
+    def warrant_of(self, ticket_id: str) -> str | None:
+        """The digest of the warrant formed for ``ticket_id``, if one was."""
+        return next(
+            (
+                detail
+                for event, detail, _ in self.ticket_events.get(ticket_id, ())
+                if event == "warranted"
+            ),
+            None,
+        )
 
     def execution_status(self, warrant_digest: str) -> str | None:
         """``intent``, ``applied``, ``refused`` or ``abandoned``; ``None`` before intent."""
@@ -545,6 +631,10 @@ class State:
         if not events:
             return None
         return events[-1][0]
+
+    def unexecuted_warrants(self) -> list[WarrantRow]:
+        """Every formed warrant with no execution record yet, oldest first."""
+        return sorted(map(self.warrants.__getitem__, self.unexecuted), key=lambda r: r.seq)
 
     def session_status(self, session_id: str) -> str | None:
         """``open`` or ``closed``; ``None`` for no session."""
@@ -555,25 +645,30 @@ class State:
 
     def open_intents(self) -> list[tuple[str, dict[str, Any], int]]:
         """Every ``(warrant_digest, intent_body, seq)`` with no outcome yet."""
-        found = []
-        for warrant_digest, events in self.executions.items():
-            if len(events) == 1 and events[0][0] == "intent":
-                found.append((warrant_digest, events[0][1], events[0][2]))
+        found = [(d, *self.executions[d][0][1:]) for d in self.open_intent_ids]
         return sorted(found, key=lambda item: item[2])
 
-    def auto_extension_total(self, mandate_digest: str) -> Decimal:
-        """Total autonomous extension grant amount recorded for ``mandate_digest`` (F7-11)."""
+    def granted(self, mandate_digest: str, *, rule: bool = False) -> Decimal:
+        """What the warrants to grant under ``mandate_digest`` granted: every
+        one applied; or, with ``rule``, every one an autonomous rule formed
+        and no execution refused or abandoned (F7-11)."""
         total = Decimal("0.00000000")
-        for warrant in self.warrants.values():
+        for digest in self.warrants_by_action.get("grant", ()):
+            warrant = self.warrants[digest]
+            if warrant.mandate_digest != mandate_digest or warrant.amount is None:
+                continue
+            status = self.execution_status(digest)
             if (
-                warrant.mandate_digest == mandate_digest
-                and warrant.action == "grant"
-                and "rule" in warrant.basis
-                and warrant.amount is not None
-                and self.execution_status(warrant.digest) not in ("refused", "abandoned")
+                ("rule" in warrant.basis and status not in ("refused", "abandoned"))
+                if rule
+                else status == "applied"
             ):
                 total += Decimal(warrant.amount)
         return total
+
+    def auto_extension_total(self, mandate_digest: str) -> Decimal:
+        """Total autonomous extension grant amount recorded for ``mandate_digest`` (F7-11)."""
+        return self.granted(mandate_digest, rule=True)
 
 
 # --------------------------------------------------------------------------
@@ -667,6 +762,16 @@ class Store(abc.ABC):
     @abc.abstractmethod
     def intake(self) -> Iterator[tuple[int, bytes]]:
         """Every submission: ``(id, bytes)``, oldest first."""
+
+    def intake_ids(self) -> list[int]:
+        """Every submission's id, oldest first: what the intake has, without
+        reading what each holds."""
+        return [intake for intake, _ in self.intake()]
+
+    def submissions(self, ids: Collection[int]) -> list[tuple[int, bytes]]:
+        """The submissions ``ids`` names: ``(id, bytes)``, oldest first."""
+        wanted = set(ids)
+        return [(intake, data) for intake, data in self.intake() if intake in wanted]
 
     @abc.abstractmethod
     def close(self) -> None: ...

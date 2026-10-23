@@ -27,7 +27,7 @@ from agentgov.receipts.signing import Signer
 
 from fiduciary import fidu1
 from fiduciary.documents import Document, Record, anchor_memo
-from fiduciary.documents.record import ANCHOR_PREFIX
+from fiduciary.documents.record import ANCHOR_PREFIX, Linked
 from fiduciary.exceptions import AnchorError
 from fiduciary.store import State, Store, StoredRecord, rows_for
 
@@ -65,7 +65,7 @@ def parse_memo(memo: str) -> tuple[str, int, str] | None:
 
 
 def check_anchors(
-    records: Sequence[Record], entries: Iterable[LedgerEntry], log: str = LOG_ID
+    records: Sequence[Linked], entries: Iterable[LedgerEntry], log: str = LOG_ID
 ) -> tuple[list[str], int, list[int]]:
     """Hold a log to the ledger's anchors of it.
 
@@ -125,9 +125,9 @@ class Log:
         self._ledger = ledger
         self._scope = scope
         self._clock = clock
-        self._read: list[Record] = []
-        """The records read so far: a record never changes, so only those
-        appended since are read again."""
+        self._state = State()
+        """The state as of the last record read: a record never changes, so
+        only those appended since are read, and folded into a copy."""
         self._reading = threading.Lock()
 
     @property
@@ -145,27 +145,40 @@ class Log:
     def now(self) -> datetime:
         return self._clock()
 
-    def records(self) -> list[Record]:
-        """The log's records, each read strictly. Those read before are kept,
-        and only those appended since are read: the first of them must follow
-        the last kept, by sequence and hash, and a log that is not so (rewritten
-        or cut around the service) is read again whole."""
-        with self._reading:
-            kept = self._read
-            rows = list(self._store.records(self._log_id, after=len(kept)))
-            last = (len(kept), kept[-1].hash if kept else fidu1.GENESIS)
-            follows = (
-                (rows[0].seq, rows[0].prev) == (last[0] + 1, last[1])
-                if rows
-                else self._store.head(self._log_id) == last
-            )
-            if not follows:
-                kept, rows = [], list(self._store.records(self._log_id))
-            self._read = kept + [Record.from_json(fidu1.parse(row.data)) for row in rows]
-            return list(self._read)
+    def records(self, *, after: int = 0) -> list[Record]:
+        """The log's records past sequence ``after``, each read strictly from
+        the store."""
+        return [
+            Record.from_json(fidu1.parse(row.data))
+            for row in self._store.records(self._log_id, after=after)
+        ]
 
     def state(self) -> State:
-        return State.of(self.records())
+        """The state as of the log's last record. The state read before is
+        kept, and only the records appended since are read and folded, into
+        a copy: a state once returned never changes. The record the kept
+        state ends at is read again with them, and must be the one it ends
+        at, and the first new one must follow it, by sequence and hash; a
+        log that is not so (rewritten or cut around the service) is read
+        again whole."""
+        with self._reading:
+            kept = self._state
+            rows = list(self._store.records(self._log_id, after=max(kept.head_seq - 1, 0)))
+            if kept.head_seq:
+                last = (kept.head_seq, kept.head_hash)
+                follows = bool(rows) and (rows[0].seq, rows[0].hash) == last
+                rows = rows[1:]
+                if follows and rows:
+                    follows = (rows[0].seq, rows[0].prev) == (last[0] + 1, last[1])
+                if not follows:
+                    kept, rows = State(), list(self._store.records(self._log_id))
+            if not rows:
+                return kept
+            state = kept.copy()
+            for row in rows:
+                state.apply(Record.from_json(fidu1.parse(row.data)))
+            self._state = state
+            return state
 
     def put(self, document: Document) -> str:
         """Store a document; return its digest."""
@@ -230,7 +243,7 @@ class Log:
 
     # -- anchors ---------------------------------------------------------------
 
-    def _anchor(self, record: Record) -> bool:
+    def _anchor(self, record: Linked) -> bool:
         if self._ledger is None:
             return False
         try:
@@ -250,11 +263,11 @@ class Log:
         if self._ledger is None:
             return 0
         self._ledger.refresh()
-        records = self.records()
+        rows = list(self._store.records(self._log_id))
         problems, _, unanchored = check_anchors(
-            records, self._ledger.audit_trail(self._scope), self._log_id
+            rows, self._ledger.audit_trail(self._scope), self._log_id
         )
         if problems:
             raise AnchorError("; ".join(problems))
-        by_seq = {record.seq: record for record in records}
+        by_seq = {row.seq: row for row in rows}
         return sum(1 for seq in unanchored if self._anchor(by_seq[seq]))

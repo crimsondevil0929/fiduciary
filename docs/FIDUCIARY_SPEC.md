@@ -1667,10 +1667,18 @@ Both stores hold the same tables and enforce the same rules, and every test runs
 
 - **F10-1.** The log is the truth, and the projections follow from it. `fiduciary verify`
   folds the log and compares the result with the projections. A difference means a
-  projection was edited around the service, and `verify` names it. A service keeps the
-  records it has read, and reads only those appended since, each time checking that the
-  first new one follows the last it kept, by sequence and hash; a log that does not is read
-  again whole. `verify` and `verify-bundle` read everything, every time.
+  projection was edited around the service, and `verify` names it.
+
+  A service keeps the state it has folded from the log, not the records, and folds only
+  the records appended since. It reads from the record its state ended at, which must be
+  the one the store holds there, and the first new record must follow it, by sequence and
+  hash; a log that is not so is read again whole. A state once read never changes: what
+  follows is folded into a copy. The state answers each question a decision asks (what is
+  open, what is unexecuted, who decided what) from an index, so a turn of the service
+  costs what is due, not what the log holds. `verify` and `verify-bundle` read
+  everything, every time. *(Amended after the 1.0.0 freeze. 1.0.0 kept every record it
+  had read, and folded the whole log for each question: a turn, and each tool call,
+  took time in proportion to the log.)*
 - **F10-2.** The database enforces append-only:
   - On PostgreSQL, the service role adds to `documents` and `log` only through functions
     that check the link and the sequence. No role may `UPDATE` or `DELETE` either table.

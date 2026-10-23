@@ -8,10 +8,12 @@ writer per log (F10-5).
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -180,7 +182,9 @@ def test_log_append_writes_the_record_its_documents_and_its_rows(
     assert log.records() == [record]
     assert store.document(approval.digest) == ("approval", approval.canonical())
     assert store.rows("approvals") == fold([record])["approvals"]
-    assert log.state().approvals[0].principal == "head-ops"
+    subject = (approval.subject.type, approval.subject.digest)
+    (row,) = log.state().approvals[subject]
+    assert row.principal == "head-ops" and row.recorded_at == clock.now
     assert log.anchor_pending() == 0  # no ledger: nothing to anchor
 
 
@@ -326,36 +330,66 @@ def test_an_earlier_store_upgrades_in_place(
         upgraded.close()
 
 
-def test_a_log_reads_only_what_was_appended_since(
+def test_a_log_folds_only_what_was_appended_since(
     store: Store, clock: Clock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``Log.records`` keeps what it read, and reads past it: another writer's
-    records are seen at the next read; a log whose head is not the last kept
-    (rewritten or cut around the service) is read again whole."""
+    """``Log.state`` keeps the state it folded, and reads from the record it
+    ended at: another writer's records are folded at the next read, into a
+    copy, so a state once returned never changes; a log whose record there is
+    not the one the state ended at (rewritten or cut around the service) is
+    read again whole."""
     first = Log(store, e.SERVICE, clock=clock)
     first.append("approval.refused", _refused(1))
     other = reopen(store)
     try:
         second = Log(other, e.SERVICE, clock=clock)
         second.append("approval.refused", _refused(2))
-        assert [r.content["intake"] for r in first.records()] == [1, 2]
+        kept = first.state()
+        assert kept.processed == {1, 2} and [r.seq for r in first.records()] == [1, 2]
         read: list[int] = []
         records = store.records
 
-        def counted(log: str, *, after: int = 0) -> object:
+        def counted(log: str, *, after: int = 0) -> Iterator[StoredRecord]:
             read.append(after)
             return records(log, after=after)
 
         monkeypatch.setattr(store, "records", counted)
         second.append("approval.refused", _refused(3))
-        assert [r.content["intake"] for r in first.records()] == [1, 2, 3]
-        assert read == [2]  # only past the two it kept
-        monkeypatch.setattr(store, "head", lambda log: (3, "f" * 64))
-        assert [r.content["intake"] for r in first.records()] == [1, 2, 3]
-        assert read == [2, 3, 0]  # the head is not the last kept: read whole
+        found = first.state()
+        assert found.processed == {1, 2, 3} and kept.processed == {1, 2}
+        assert read == [1]  # from the record the kept state ended at
+        assert first.state() is found and read == [1, 2]  # nothing new: the state kept
+        rows = list(records("fiduciary"))
+        rewritten = [*rows[:-1], dataclasses.replace(rows[-1], hash="f" * 64)]
+
+        def forged(log: str, *, after: int = 0) -> Iterator[StoredRecord]:
+            read.append(after)
+            return iter([row for row in rewritten if row.seq > after])
+
+        monkeypatch.setattr(store, "records", forged)
+        assert first.state().processed == {1, 2, 3}
+        assert read == [1, 2, 2, 0]  # not the record the state ended at: read whole
     finally:
         other.close()
 
 
 def _refused(intake: int) -> dict[str, object]:
     return {"intake": intake, "digest": "b" * 64, "why": "a test"}
+
+
+def test_the_intake_is_read_by_id_before_what_it_holds(store: Store) -> None:
+    """A turn of the intake reads which submissions there are, and then only
+    what the unanswered ones hold. A store without its own reads answers
+    from :meth:`Store.intake` (the bundle's store, read only)."""
+    from fiduciary.bundle.verify import _MemoryStore
+
+    submitted = {store.submit(data): data for data in (b"one", b"two", b"three")}
+    ids = sorted(submitted)
+    memory = _MemoryStore({}, [], {i: submitted[i] for i in reversed(ids)})
+    for each in (store, memory):
+        assert each.intake_ids() == ids
+        assert each.submissions([ids[2], ids[0], 999]) == [
+            (ids[0], b"one"),
+            (ids[2], b"three"),
+        ]
+        assert each.submissions([]) == []

@@ -56,7 +56,6 @@ from fiduciary.documents import (
     TicketRef,
     Warrant,
     WarrantBasis,
-    loads,
     warrant_not_after,
 )
 from fiduciary.documents.ticket import (
@@ -151,12 +150,7 @@ class Escalation:
         digest = row.digest if row is not None else ticket_id_or_digest
         if digest not in state.tickets_by_digest:
             raise AuthorityError(f"no raised ticket matches {ticket_id_or_digest!r}")
-        raw = self.log.store.document(digest)
-        if raw is None:
-            raise AuthorityError(f"ticket {digest[:16]} is not in the store")
-        doc = loads(raw[1])
-        assert isinstance(doc, Ticket)
-        return doc
+        return self.decide.load(digest, Ticket)
 
     def warrant(self, warrant_id_or_digest: str, state: State | None = None) -> Warrant:
         """Load a formed :class:`Warrant` by ``warrant_id`` or ``digest``."""
@@ -164,12 +158,7 @@ class Escalation:
         digest = state.warrants_by_id.get(warrant_id_or_digest, warrant_id_or_digest)
         if digest not in state.warrants:
             raise AuthorityError(f"no formed warrant matches {warrant_id_or_digest!r}")
-        raw = self.log.store.document(digest)
-        if raw is None:
-            raise AuthorityError(f"warrant {digest[:16]} is not in the store")
-        doc = loads(raw[1])
-        assert isinstance(doc, Warrant)
-        return doc
+        return self.decide.load(digest, Warrant)
 
     def warrant_for_ticket(
         self, ticket_id_or_digest: str, state: State | None = None
@@ -217,19 +206,22 @@ class Escalation:
             if now >= tk.not_after:
                 body = self.decide.lapse_ticket(state, tk.digest, now)
                 entries.append(("ticket.lapsed", body))
-        for row in state.tickets.values():
-            if (mandate_id is not None and row.mandate_id != mandate_id) or state.ticket_status(
-                row.ticket_id
-            ) != "warranted":
-                continue
-            # A warrant no process executed by its deadline never will be: its
-            # ticket lapses, as silence does (F1-6).
-            (formed,) = [d for ev, d, _ in state.ticket_events[row.ticket_id] if ev == "warranted"]
+        # A warrant no process executed by its deadline never will be: its
+        # ticket lapses, as silence does (F1-6).
+        stale: list[TicketRow] = []
+        for formed in state.unexecuted_warrants():
+            row = state.tickets.get(formed.ticket_id)
             if (
-                state.execution_status(formed) is None
-                and now >= self.warrant(formed, state).not_after
+                row is None
+                or (mandate_id is not None and row.mandate_id != mandate_id)
+                or state.ticket_status(row.ticket_id) != "warranted"
+                or state.warrant_of(row.ticket_id) != formed.digest
             ):
-                entries.append(("ticket.lapsed", self.decide.lapse_ticket(state, row.digest, now)))
+                continue
+            if now >= self.warrant(formed.digest, state).not_after:
+                stale.append(row)
+        for row in sorted(stale, key=lambda r: r.seq):
+            entries.append(("ticket.lapsed", self.decide.lapse_ticket(state, row.digest, now)))
         return entries
 
     def process_intake(self) -> list[Record]:
@@ -315,10 +307,12 @@ class Escalation:
             raised_body = self.decide.raise_ticket(state, ticket.digest, now)
             entries: list[tuple[str, dict[str, object]]] = [("ticket.raised", raised_body)]
             docs: list[Ticket | Warrant] = [ticket]
-            warrant = self._auto_warrant(state, mandate, ticket, now)
+            # A rule's warrant is taken from the state after the ticket's record.
+            raised = state.after("ticket.raised", raised_body, issued_at=now)
+            warrant = self._auto_warrant(raised, mandate, ticket, now)
             if warrant is not None:
                 self.log.put(warrant)
-                warrant_body = self.decide.form_warrant(state, warrant.digest, now)
+                warrant_body = self.decide.form_warrant(raised, warrant.digest, now)
                 entries.append(("warrant.formed", warrant_body))
                 docs.append(warrant)
             self.log.append_all(entries, documents=docs, issued_at=now)
@@ -329,7 +323,7 @@ class Escalation:
         return ticket, warrant
 
     def _auto_warrant(
-        self, state: State, mandate: Mandate, ticket: Ticket, now: datetime
+        self, raised: State, mandate: Mandate, ticket: Ticket, now: datetime
     ) -> Warrant | None:
         for rule in mandate.escalation.auto:
             if rule.ticket_class != ticket.ticket_class:
@@ -340,12 +334,12 @@ class Escalation:
             )
             if option is None:
                 continue
-            if not self.decide.rule_matches(state, mandate, ticket, rule, option.resolution):
+            if not self.decide.rule_matches(raised, mandate, ticket, rule, option.resolution):
                 continue
             not_after = warrant_not_after(ticket, option.resolution, ())
             if now >= not_after:
                 continue
-            next_seq = state.head_seq + 2
+            next_seq = raised.head_seq + 1
             warrant_id = str(
                 uuid.uuid5(
                     uuid.NAMESPACE_OID,
@@ -361,19 +355,6 @@ class Escalation:
                 formed_at=now,
                 not_after=not_after,
             ).signed(self.log.signer)
-            raised_seq = state.head_seq + 1
-            state.tickets[ticket.ticket_id] = TicketRow(
-                ticket_id=ticket.ticket_id,
-                digest=ticket.digest,
-                mandate_id=mandate.mandate_id,
-                mandate_digest=mandate.digest,
-                ticket_class=ticket.ticket_class,
-                seq=raised_seq,
-            )
-            state.tickets_by_digest[ticket.digest] = ticket.ticket_id
-            state.ticket_events.setdefault(ticket.ticket_id, []).append(
-                ("raised", mandate.digest, raised_seq)
-            )
             return warrant
         return None
 

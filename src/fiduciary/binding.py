@@ -478,7 +478,7 @@ class Binder:
             body = self.decide.issue(state, digest, now)
             mandate_id = str(body["mandate_id"])
             entries: list[tuple[str, dict[str, Any]]] = [("mandate.issued", body)]
-            simulated = _after(state, "mandate.issued", body)
+            simulated = state.after("mandate.issued", body, issued_at=now)
             suspended: list[dict[str, Any]] = []
             for child in simulated.descendants(mandate_id):
                 parent = simulated.parent_lineage(child)
@@ -489,7 +489,7 @@ class Binder:
                 entries.append((kind, found))
                 if kind == "mandate.suspended":
                     suspended.append(found)
-                simulated = _after(simulated, kind, found)
+                simulated = simulated.after(kind, found, issued_at=now)
             if suspended:
                 trips = self._trip(state, [str(b["mandate_id"]) for b in suspended], "suspended")
                 for found in suspended:
@@ -527,16 +527,15 @@ class Binder:
             return self._end(state, [("mandate.revoked", body)], "revoked")
 
     def expire(self) -> list[Record]:
-        """Expire every lineage in force whose term has ended, and its descendants."""
+        """Expire every lineage in force whose term has ended, and its
+        descendants. Nothing due, no lock: what is due is found first, and
+        found again under the writer's lock."""
+        if not self._due(self.log.state(), self.log.now()):
+            return []
         with self.log.store.transaction():
             state = self.log.state()
             now = self.log.now()
-            due = {
-                mandate_id
-                for mandate_id in state.lineages
-                if state.in_force(mandate_id)
-                and now >= self.decide.head_mandate(state, mandate_id).not_after
-            }
+            due = self._due(state, now)
             entries: list[tuple[str, dict[str, Any]]] = []
             for mandate_id in sorted(due, key=lambda m: state.lineages[m][0][3]):
                 if _ancestors(state, mandate_id) & due:
@@ -545,6 +544,15 @@ class Binder:
             if not entries:
                 return []
             return self._end(state, entries, "expired", issued_at=now)
+
+    def _due(self, state: State, now: datetime) -> set[str]:
+        """The lineages in force whose version in force has ended its term."""
+        return {
+            mandate_id
+            for mandate_id in state.lineages
+            if state.in_force(mandate_id)
+            and now >= self.decide.head_mandate(state, mandate_id).not_after
+        }
 
     def _end(
         self,
@@ -558,12 +566,12 @@ class Binder:
         simulated = state
         for kind, body in roots:
             entries.append((kind, body))
-            simulated = _after(simulated, kind, body)
+            simulated = simulated.after(kind, body, issued_at=issued_at)
             for child in simulated.descendants(str(body["mandate_id"])):
                 if simulated.in_force(child):
                     found = self.decide.cascade(simulated, child, str(body["mandate"]), kind)
                     entries.append((kind, found))
-                    simulated = _after(simulated, kind, found)
+                    simulated = simulated.after(kind, found, issued_at=issued_at)
         trips = self._trip(state, [str(b["mandate_id"]) for _, b in entries], event)
         for _, body in entries:
             body["trips"] = trips[str(body["mandate_id"])]
@@ -619,9 +627,3 @@ def _ancestors(state: State, mandate_id: str) -> set[str]:
         found.add(current)
         current = state.parent_lineage(current)
     return found
-
-
-def _after(state: State, kind: str, body: dict[str, Any]) -> State:
-    """``state`` with a record of ``kind`` applied: what the next decision in
-    the same transaction is taken from."""
-    return state.after(kind, body)
