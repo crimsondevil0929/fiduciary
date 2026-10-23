@@ -694,8 +694,12 @@ def test_quorum_superseded_decisions_late_approvals_expiry_and_revoked_fallback(
     assert tk_exp is not None
     world.clock.advance(seconds=86401)
     lapsed = escalation.expire_tickets()
-    assert [r.kind for r in lapsed] == ["ticket.lapsed"]
+    # tk's warrant expired too, with no execution: its ticket lapses beside tk_exp (F1-6)
+    assert [r.kind for r in lapsed] == ["ticket.lapsed", "ticket.lapsed"]
+    assert {r.content["ticket_id"] for r in lapsed} == {tk_exp.ticket_id, tk.ticket_id}
     assert world.log.state().ticket_status(tk_exp.ticket_id) == "lapsed"
+    assert world.log.state().ticket_status(tk.ticket_id) == "lapsed"
+    assert escalation.expire_tickets() == []
     _verified(world)
 
 

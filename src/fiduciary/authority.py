@@ -1175,7 +1175,11 @@ class Authority:
         in the same log transaction (F7-7).
         """
         records: list[Record] = []
-        for intake, data in self._log.store.intake():
+        # Read first, outside the writer's lock: an idle turn takes no lock at
+        # all, and a busy one locks once per submission still unanswered.
+        answered = self._log.state().processed
+        pending = [(i, d) for i, d in self._log.store.intake() if i not in answered]
+        for intake, data in pending:
             with self._log.store.transaction():
                 state = self._log.state()
                 if intake in state.processed:

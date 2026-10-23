@@ -194,7 +194,12 @@ class Escalation:
         return self._authority.propose_resolution(resolution)
 
     def expire_tickets(self, mandate_id: str | None = None) -> list[Record]:
-        """Lapse every open ticket whose ``not_after`` is at or before ``now`` (F1-6, F7-7)."""
+        """Lapse every open ticket whose ``not_after`` is at or before ``now``,
+        and every warranted one whose warrant expired with no execution
+        (F1-6, F7-7). Nothing due, no lock: what is due is found first, and
+        found again under the writer's lock."""
+        if not self._expired_entries(self.log.state(), self.log.now(), mandate_id):
+            return []
         with self.log.store.transaction():
             now = self.log.now()
             state = self.log.state()
@@ -212,6 +217,19 @@ class Escalation:
             if now >= tk.not_after:
                 body = self.decide.lapse_ticket(state, tk.digest, now)
                 entries.append(("ticket.lapsed", body))
+        for row in state.tickets.values():
+            if (mandate_id is not None and row.mandate_id != mandate_id) or state.ticket_status(
+                row.ticket_id
+            ) != "warranted":
+                continue
+            # A warrant no process executed by its deadline never will be: its
+            # ticket lapses, as silence does (F1-6).
+            (formed,) = [d for ev, d, _ in state.ticket_events[row.ticket_id] if ev == "warranted"]
+            if (
+                state.execution_status(formed) is None
+                and now >= self.warrant(formed, state).not_after
+            ):
+                entries.append(("ticket.lapsed", self.decide.lapse_ticket(state, row.digest, now)))
         return entries
 
     def process_intake(self) -> list[Record]:

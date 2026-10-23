@@ -209,6 +209,8 @@ class Binder:
         self._row_secret = row_secret
         self._engines: dict[str, MandateEngine] = {}
         self._anchor = LedgerAnchor(governed=governor)
+        self._followed: tuple[int, str] | None = None
+        """The log's head :meth:`follow` last brought the engines up to."""
 
     @property
     def log(self) -> Log:
@@ -283,84 +285,90 @@ class Binder:
         """
         governor = self._governor
         governor.refresh()
-        state = self.log.state()
-        try:
-            mandate = self.decide.bindable(state, digest)
-        except AuthorityError as exc:
-            raise BindingError(str(exc)) from exc
-        compiled = self.compile(digest, state)
-        charter = self.decide.charter(state)
-        first = governor.entry(1)
-        if (
-            charter.deployment.ledger != first.entry_hash
-            or self._deployment.ledger != first.entry_hash
-        ):
-            raise BindingError(
-                "the charter, the deployment and the ledger name different ledgers: a charter "
-                "binds the ledger whose first entry it names"
-            )
-        funded = mandate.subject.funded_from
-        if funded not in governor.scopes():
-            raise BindingError(f"scope {funded!r}, which funds the mandate, is not in the ledger")
-        if governor.halted_by(funded) is not None:
-            raise BindingError(f"scope {funded!r}, which funds the mandate, is halted")
-        policy = governor.policy
-        if not (policy.trip_on_overdraft and policy.trip_on_exhaustion):
-            raise BindingError(
-                "the governor does not trip on overdraft and exhaustion: it is looser than any "
-                "mandate"
-            )
-        depth = compiled.governance.max_depth - (
-            mandate.delegation.max_depth if mandate.delegation else 0
-        )
-        if policy.max_depth < depth:
-            raise BindingError(
-                f"the governor delegates to depth {policy.max_depth}; the subject sits at {depth}"
-            )
-        scope = mandate.subject.scope
-        memo, key = f"FIDU1 bind {digest}", f"fidu1-bind-{digest}"
-        previous = state.bound.get(mandate.mandate_id)
-        entries: list[str] = []
-        try:
-            if previous is None:
-                governor.delegate(
-                    funded, scope, mandate.budget.envelope, memo=memo, idempotency_key=key
+        # Decided, delegated and written under the writer's lock: the state the
+        # decision read is the log's head when its record is written (F10-5).
+        with self.log.store.transaction():
+            state = self.log.state()
+            try:
+                mandate = self.decide.bindable(state, digest)
+            except AuthorityError as exc:
+                raise BindingError(str(exc)) from exc
+            compiled = self.compile(digest, state)
+            charter = self.decide.charter(state)
+            first = governor.entry(1)
+            if (
+                charter.deployment.ledger != first.entry_hash
+                or self._deployment.ledger != first.entry_hash
+            ):
+                raise BindingError(
+                    "the charter, the deployment and the ledger name different ledgers: a charter "
+                    "binds the ledger whose first entry it names"
                 )
-                entries.append(str(governor.find_entries(scope_id=scope, limit=1)[0].entry_id))
-                delegated = mandate.budget.envelope
-            else:
-                delegated = Decimal(str(previous["delegated"]))
-                change = mandate.budget.envelope - delegated
-                if change > 0:
-                    satellite = self._next_extension(scope)
-                    governor.delegate(funded, satellite, change, memo=memo, idempotency_key=key)
-                    entries.append(
-                        str(governor.find_entries(scope_id=satellite, limit=1)[0].entry_id)
+            funded = mandate.subject.funded_from
+            if funded not in governor.scopes():
+                raise BindingError(
+                    f"scope {funded!r}, which funds the mandate, is not in the ledger"
+                )
+            if governor.halted_by(funded) is not None:
+                raise BindingError(f"scope {funded!r}, which funds the mandate, is halted")
+            policy = governor.policy
+            if not (policy.trip_on_overdraft and policy.trip_on_exhaustion):
+                raise BindingError(
+                    "the governor does not trip on overdraft and exhaustion: it is looser than any "
+                    "mandate"
+                )
+            depth = compiled.governance.max_depth - (
+                mandate.delegation.max_depth if mandate.delegation else 0
+            )
+            if policy.max_depth < depth:
+                raise BindingError(
+                    f"the governor delegates to depth {policy.max_depth}; the subject sits at "
+                    f"{depth}"
+                )
+            scope = mandate.subject.scope
+            memo, key = f"FIDU1 bind {digest}", f"fidu1-bind-{digest}"
+            previous = state.bound.get(mandate.mandate_id)
+            entries: list[str] = []
+            try:
+                if previous is None:
+                    governor.delegate(
+                        funded, scope, mandate.budget.envelope, memo=memo, idempotency_key=key
                     )
-                    delegated += change
-                elif change < 0:
-                    amount = min(-change, governor.available(scope))
-                    if amount > 0:
-                        governor.release(scope, amount, memo=memo)
+                    entries.append(str(governor.find_entries(scope_id=scope, limit=1)[0].entry_id))
+                    delegated = mandate.budget.envelope
+                else:
+                    delegated = Decimal(str(previous["delegated"]))
+                    change = mandate.budget.envelope - delegated
+                    if change > 0:
+                        satellite = self._next_extension(scope)
+                        governor.delegate(funded, satellite, change, memo=memo, idempotency_key=key)
                         entries.append(
-                            str(governor.find_entries(scope_id=scope, limit=1)[0].entry_id)
+                            str(governor.find_entries(scope_id=satellite, limit=1)[0].entry_id)
                         )
-                        delegated -= amount
-        except AgentGovError as exc:
-            raise BindingError(f"the ledger refused the envelope: {exc}") from exc
-        chain = None if self._chains is None else self._chains / f"{mandate.mandate_id}.chain"
-        record = self.log.append(
-            "mandate.bound",
-            {
-                "mandate": digest,
-                "mandate_id": mandate.mandate_id,
-                "version": mandate.version,
-                "compiled": compiled.digest,
-                "chain": None if chain is None else chain.name,
-                "delegated": _money(delegated),
-                "entries": entries,
-            },
-        )
+                        delegated += change
+                    elif change < 0:
+                        amount = min(-change, governor.available(scope))
+                        if amount > 0:
+                            governor.release(scope, amount, memo=memo)
+                            entries.append(
+                                str(governor.find_entries(scope_id=scope, limit=1)[0].entry_id)
+                            )
+                            delegated -= amount
+            except AgentGovError as exc:
+                raise BindingError(f"the ledger refused the envelope: {exc}") from exc
+            chain = None if self._chains is None else self._chains / f"{mandate.mandate_id}.chain"
+            record = self.log.append(
+                "mandate.bound",
+                {
+                    "mandate": digest,
+                    "mandate_id": mandate.mandate_id,
+                    "version": mandate.version,
+                    "compiled": compiled.digest,
+                    "chain": None if chain is None else chain.name,
+                    "delegated": _money(delegated),
+                    "entries": entries,
+                },
+            )
         if self._substrate is not None:
             engine = self._engines.get(mandate.mandate_id)
             if engine is None or engine.closed:
@@ -406,6 +414,45 @@ class Binder:
             opened.append(mandate_id)
         return opened
 
+    def follow(self) -> list[str]:
+        """Bring this process's engines up to the log: each lineage bound and
+        in force runs the version it is bound to now, and one that no longer
+        governs runs nothing. What another process wrote (an amendment issued
+        and bound from the command line, a revocation, another node's binding)
+        is taken up here at the next plan boundary (F1-3), as this binder's
+        own are. A log whose head has not moved since is not read again.
+        Returns the lineages whose engine was opened, rebound or closed."""
+        if self._substrate is None:
+            return []
+        head = self.log.store.head(self.log.log_id)
+        if head == self._followed:
+            return []
+        state = self.log.state()
+        changed = []
+        for mandate_id, running in sorted(self._engines.items()):
+            if not running.closed and state.status(mandate_id) != "bound":
+                running.close()
+                changed.append(mandate_id)
+        for mandate_id, bound in sorted(state.bound.items()):
+            digest = str(bound["mandate"])
+            if state.status(mandate_id) != "bound" or state.head(mandate_id) != (
+                int(bound["version"]),
+                digest,
+            ):
+                continue  # ended, or issued and not yet rebound: its binding opens it
+            engine = self._engines.get(mandate_id)
+            if engine is not None and not engine.closed and engine.mandate.digest == digest:
+                continue
+            mandate = self.decide.bindable(state, digest)
+            compiled = self.compile(digest, state)
+            if engine is None or engine.closed:
+                self._open_engine(mandate, compiled)
+            else:
+                engine.rebind(mandate, compiled)
+            changed.append(mandate_id)
+        self._followed = head
+        return changed
+
     def _next_extension(self, scope: str) -> str:
         taken = set(self._governor.scopes())
         n = 1
@@ -421,28 +468,29 @@ class Binder:
         in the same log transaction (F5-7). A bound lineage, and every rebased
         descendant bound, is then rebound to its version in force."""
         self._authority.process_intake()
-        state = self.log.state()
-        now = self.log.now()
-        body = self.decide.issue(state, digest, now)
-        mandate_id = str(body["mandate_id"])
-        entries: list[tuple[str, dict[str, Any]]] = [("mandate.issued", body)]
-        simulated = _after(state, "mandate.issued", body)
-        suspended: list[dict[str, Any]] = []
-        for child in simulated.descendants(mandate_id):
-            parent = simulated.parent_lineage(child)
-            assert parent is not None
-            head = simulated.head(parent)
-            assert head is not None
-            kind, found = self.decide.rebase(simulated, child, head[1])
-            entries.append((kind, found))
-            if kind == "mandate.suspended":
-                suspended.append(found)
-            simulated = _after(simulated, kind, found)
-        if suspended:
-            trips = self._trip(state, [str(b["mandate_id"]) for b in suspended], "suspended")
-            for found in suspended:
-                found["trips"] = trips[str(found["mandate_id"])]
-        records = self.log.append_all(entries, issued_at=now)
+        with self.log.store.transaction():
+            state = self.log.state()
+            now = self.log.now()
+            body = self.decide.issue(state, digest, now)
+            mandate_id = str(body["mandate_id"])
+            entries: list[tuple[str, dict[str, Any]]] = [("mandate.issued", body)]
+            simulated = _after(state, "mandate.issued", body)
+            suspended: list[dict[str, Any]] = []
+            for child in simulated.descendants(mandate_id):
+                parent = simulated.parent_lineage(child)
+                assert parent is not None
+                head = simulated.head(parent)
+                assert head is not None
+                kind, found = self.decide.rebase(simulated, child, head[1])
+                entries.append((kind, found))
+                if kind == "mandate.suspended":
+                    suspended.append(found)
+                simulated = _after(simulated, kind, found)
+            if suspended:
+                trips = self._trip(state, [str(b["mandate_id"]) for b in suspended], "suspended")
+                for found in suspended:
+                    found["trips"] = trips[str(found["mandate_id"])]
+            records = self.log.append_all(entries, issued_at=now)
         for found in suspended:
             self._close(str(found["mandate_id"]))
         final = self.log.state()
@@ -469,28 +517,30 @@ class Binder:
         """Revoke the version in force ``digest`` and every descendant, on the
         revocation quorum of its roster, an ancestor's, or the charter's (F5-8)."""
         self._authority.process_intake()
-        state = self.log.state()
-        body = self.decide.revoke(state, digest)
-        return self._end(state, [("mandate.revoked", body)], "revoked")
+        with self.log.store.transaction():
+            state = self.log.state()
+            body = self.decide.revoke(state, digest)
+            return self._end(state, [("mandate.revoked", body)], "revoked")
 
     def expire(self) -> list[Record]:
         """Expire every lineage in force whose term has ended, and its descendants."""
-        state = self.log.state()
-        now = self.log.now()
-        due = {
-            mandate_id
-            for mandate_id in state.lineages
-            if state.in_force(mandate_id)
-            and now >= self.decide.head_mandate(state, mandate_id).not_after
-        }
-        entries: list[tuple[str, dict[str, Any]]] = []
-        for mandate_id in sorted(due, key=lambda m: state.lineages[m][0][3]):
-            if _ancestors(state, mandate_id) & due:
-                continue  # its ancestor's expiry cascades to it
-            entries.append(("mandate.expired", self.decide.expire(state, mandate_id, now)))
-        if not entries:
-            return []
-        return self._end(state, entries, "expired", issued_at=now)
+        with self.log.store.transaction():
+            state = self.log.state()
+            now = self.log.now()
+            due = {
+                mandate_id
+                for mandate_id in state.lineages
+                if state.in_force(mandate_id)
+                and now >= self.decide.head_mandate(state, mandate_id).not_after
+            }
+            entries: list[tuple[str, dict[str, Any]]] = []
+            for mandate_id in sorted(due, key=lambda m: state.lineages[m][0][3]):
+                if _ancestors(state, mandate_id) & due:
+                    continue  # its ancestor's expiry cascades to it
+                entries.append(("mandate.expired", self.decide.expire(state, mandate_id, now)))
+            if not entries:
+                return []
+            return self._end(state, entries, "expired", issued_at=now)
 
     def _end(
         self,
@@ -514,8 +564,13 @@ class Binder:
         for _, body in entries:
             body["trips"] = trips[str(body["mandate_id"])]
         records = self.log.append_all(entries, issued_at=issued_at)
-        for _, body in entries:
-            self._close(str(body["mandate_id"]))
+        ended = [str(body["mandate_id"]) for _, body in entries]
+
+        def close_ended() -> None:  # once the records stand: a rollback leaves them open
+            for mandate_id in ended:
+                self._close(mandate_id)
+
+        self.log.store.after_commit(close_ended)
         return records
 
     def _trip(self, state: State, lineages: Sequence[str], event: str) -> dict[str, list[int]]:

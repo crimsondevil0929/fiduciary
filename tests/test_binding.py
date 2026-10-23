@@ -638,3 +638,94 @@ def test_expiry_ends_a_term_and_its_descendants(world: World) -> None:
     assert state.status(parent.mandate_id) == state.status(child.mandate_id) == "expired"
     assert world.binder.expire() == []
     _verified(world)
+
+
+def test_a_binder_decides_under_the_writers_lock(world: World, monkeypatch: Any) -> None:
+    """Two binders over one store, the second expiring the lineage just before
+    the first takes the writer's lock: the first decides from what the lock
+    shows it, and writes nothing (F10-5). Read before the lock, it would
+    expire the lineage again."""
+    from fiduciary.authority import Authority
+    from fiduciary.binding import Binder
+    from fiduciary.log import Log
+    from tests.conftest import reopen
+
+    parent = world.mandate()
+    world.issue_and_bind(parent)
+    other_store = reopen(world.store)
+    other = Binder(
+        Authority(
+            Log(other_store, e.SERVICE, ledger=world.governor, clock=world.clock),
+            pinned=world.charter.digest,
+        ),
+        world.governor,
+        deployment=world.binder.deployment,
+    )
+    world.clock.now = e.at("2027-01-01T00:00:00")
+    taken = world.store.transaction
+
+    def first_the_other() -> Any:
+        monkeypatch.setattr(world.store, "transaction", taken)
+        assert [r.kind for r in other.expire()] == ["mandate.expired"]
+        return taken()
+
+    monkeypatch.setattr(world.store, "transaction", first_the_other)
+    try:
+        assert world.binder.expire() == []
+    finally:
+        other_store.close()
+    assert [r.kind for r in world.log.records()].count("mandate.expired") == 1
+    _verified(world)
+
+
+def test_an_idle_turn_takes_no_writers_lock(world: World) -> None:
+    """With every submission answered and nothing due, judging the intake and
+    lapsing tickets read and return: another writer holding the lock does not
+    hold them up (the contention test's stall under coverage, Phase 5)."""
+    import time
+
+    from fiduciary.escalation import Escalation
+    from fiduciary.postgres import PostgresStore
+
+    world.issue_and_bind(world.mandate())
+    escalation = Escalation(world.authority, world.governor)
+    assert escalation.process_intake() == []
+    held = threading.Event()
+    done = threading.Event()
+
+    def hold() -> None:
+        if isinstance(world.store, PostgresStore):
+            import psycopg
+
+            from tests.conftest import need_postgres
+
+            with psycopg.connect(need_postgres()) as conn, conn.transaction():
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                    (f"{world.store.schema}.transaction",),
+                )
+                held.set()
+                done.wait(30)
+            return
+        import sqlite3
+
+        assert isinstance(world.store, SqliteStore)
+        lite = sqlite3.connect(world.store.path, isolation_level=None)
+        try:
+            lite.execute("BEGIN IMMEDIATE")
+            held.set()
+            done.wait(30)
+            lite.execute("ROLLBACK")
+        finally:
+            lite.close()
+
+    holder = threading.Thread(target=hold)
+    holder.start()
+    try:
+        assert held.wait(10)
+        began = time.monotonic()
+        assert escalation.process_intake() == []
+        assert time.monotonic() - began < 2.0
+    finally:
+        done.set()
+        holder.join(30)

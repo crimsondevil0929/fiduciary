@@ -615,6 +615,7 @@ class Fiduciary:
                 "configuration (F8-10): an agent that runs code it writes is bridged out of "
                 "process, over MCP"
             )
+        self._binder.follow()
         state = self.log.state()
         mandate_id = self._lineage(state, mandate)
         session_id = str(uuid.uuid4())
@@ -756,6 +757,7 @@ class Session:
     def call(self, name: str, arguments: Mapping[str, Any]) -> CallResult:
         """Call a tool (F8-2; module docstring)."""
         self._check_open()
+        self._fid.binder.follow()  # what another process bound, at this plan boundary
         self._take_up()
         if name in BUILTIN_TOOLS:
             return self._builtin(name, arguments)

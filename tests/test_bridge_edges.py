@@ -135,7 +135,11 @@ def test_a_call_whose_systems_refuse_says_so_and_changes_nothing(
         result = session.call("adjust_orders", {**adjust, "first": 5, "second": 6})
         assert result.ticket is not None and not result.repaired
 
-    world.binder.engine(session.mandate_id).close()  # the lineage no longer governs
+    from tests.conftest import approve
+
+    head = world.binder.engine(session.mandate_id).mandate.digest
+    approve(world.store, ("cfo", "head-ops"), "revocation", head)
+    world.binder.revoke(head)  # the lineage no longer governs
     assert session.call("refund_order", ORDER_7).outcome == "halted"
     assert world.fetch("SELECT id, total FROM orders ORDER BY id") == before
     _verify(world)
@@ -312,4 +316,55 @@ def test_extension_tickets_past_the_bound_are_recorded(
     )
     assert session._extension(quote) is None  # type: ignore[arg-type]
     assert _refusals(world) == [(None, "max_open")]
+    _verify(world)
+
+
+# -- what another process binds (F1-3) ------------------------------------------------------
+
+
+def test_what_another_process_binds_reaches_a_running_session(world: bound.World) -> None:
+    """A long-running service's engines follow the log (``Binder.follow``): an
+    amendment issued and bound from another process (the command line's
+    binder, over a connection of its own, with no engine) is taken up at the
+    session's next call; a revocation stops the lineage there too."""
+    from fiduciary.authority import Authority
+    from fiduciary.binding import Binder
+    from fiduciary.log import Log
+    from tests.conftest import approve, reopen
+
+    mandate = kit.mandate(world)
+    fid = _fid(world)
+    session = fid.session(bound.SCOPE, tenant="acme")
+    assert session.call("adjust_orders", {"first": 1, "second": 3, "amount": "1.00"}).committed
+    elsewhere = reopen(world.store)
+    command_line = Binder(
+        Authority(
+            Log(elsewhere, e.SERVICE, ledger=world.governor, clock=world.clock),
+            pinned=world.charter.digest,
+        ),
+        world.governor,
+        deployment=world.binder.deployment,
+    )
+    try:
+        raw = kit.mandate_json(world)
+        raw["tools"]["bindings"] = [
+            p for p in raw["tools"]["bindings"] if p["name"] != "adjust_orders"
+        ]
+        raw.update(version=2, prev=mandate.digest)
+        v2 = Mandate.from_json(raw, signed=False).signed(e.signer("cfo"))
+        command_line._authority.propose(v2)
+        approve(world.store, ("cfo", "head-ops"), "mandate", v2.digest, **bound.window(world.clock))
+        command_line.issue(v2.digest)
+        command_line.bind(v2.digest)
+        refused = session.call("adjust_orders", {"first": 1, "second": 3, "amount": "1.00"})
+        assert refused.outcome == "rejected"
+        assert world.binder.engine(mandate.mandate_id).mandate.digest == v2.digest
+
+        approve(world.store, ("cfo", "head-ops"), "revocation", v2.digest)
+        command_line.revoke(v2.digest)
+        stopped = session.call("refund_order", ORDER_7)
+        assert not stopped.committed
+        assert world.binder.engine(mandate.mandate_id).closed
+    finally:
+        elsewhere.close()
     _verify(world)

@@ -1141,6 +1141,15 @@ Then:
 
 `mandate.bound` records what is delegated in all, and the entries written.
 
+A process's engines follow the log, wherever the binding was written: before each session
+call, and at each turn of the service, the binder reads the log's head and, when it has
+moved, rebinds each engine whose lineage is bound to another version, opens one for each
+lineage newly bound, and closes the engine of each lineage that no longer governs. So an
+amendment bound from the command line, or by another node, reaches a running session at
+its next call. *(Amended in 1.0.0: before, only the binder that wrote the binding rebound
+its own engines, and a long-running bridge kept adjudicating under the version it opened
+with.)*
+
 An amendment of a lineage that is bound, or that has descendants, is issued by the binder
 only. It issues the version, rebases or suspends the descendants in the same log
 transaction (F5-7), and rebinds what is bound, parents first. Issued alone, it would leave
@@ -1257,7 +1266,10 @@ hold:
   change nothing.
 - **F7-7.** A ticket becomes `DECLINED` when declines make the quorum unreachable for every
   option: the roster's size, less the principals who declined, falls below each option's
-  quorum. It becomes `LAPSED` at its deadline. Either state is terminal (F1-6).
+  quorum. It becomes `LAPSED` at its deadline. A warranted ticket also lapses when its
+  warrant reaches its `not_after` with no `execution.intent`: nothing will execute it
+  *(amended in 1.0.0; before, such a ticket stayed warranted)*. Either state is terminal
+  (F1-6).
 - **F7-8.** Reducing resolutions need `quorums.reduce` approvals. Granting ones need their
   class's quorum, and every granting quorum is at least `quorums.revoke` (F4-9). Stopping is
   never harder than starting.
@@ -1672,10 +1684,16 @@ Both stores hold the same tables and enforce the same rules, and every test runs
 
 ## 10.3 Concurrency
 
-- **F10-5.** Each FIDU1 log has one writer.
-  - On SQLite, that is `BEGIN IMMEDIATE` and a file claim, as interlock's chains claim
-    theirs.
-  - On PostgreSQL, it is a session-level advisory lock held for the writer's life.
+- **F10-5.** Each FIDU1 log has one writer at a time.
+  - On SQLite, that is `BEGIN IMMEDIATE`.
+  - On PostgreSQL, it is an advisory lock on the schema, taken by every write transaction
+    and held to its end.
+  - Every decision is taken from the state read under that lock, in the transaction that
+    writes its records: what it read is still the head when it writes. A turn with nothing
+    to write takes no lock: it reads first, and locks only for what is due. *(Amended in
+    1.0.0. The binder's `bind`, `issue`, `revoke` and `expire` read their state before the
+    lock, so two processes could both expire a lineage; and every idle turn of the intake
+    took the lock once per submission ever received.)*
   - In a cluster, one node leads the writer role (interlock's `cluster.Leadership`). A node
     that is gone loses the role when the database ends its session.
 - **F10-6.** Locks are taken in one order:
