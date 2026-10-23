@@ -1861,6 +1861,32 @@ written by part. Every label comes from a closed set: never a lineage, a tenant 
   to any key interlock's operators trust. The agents are read again: the sessions of an
   agent no longer named, or named with another token, are closed.
 
+**A cluster** (`[cluster]`, PostgreSQL only) is several `fiduciary serve` processes over one
+store and one ledger. Each is a node, joined through interlock's `cluster.ClusterNode`: its
+session holds the node's advisory lock for the process's life, and the roles it leads.
+
+- **F10-15.** One node leads `fiduciary-writer`; the writer, the triggers and the settler
+  run there. One node leads `fiduciary-executor`; the executor runs there, on connections of
+  its own and a binder with no engines. A node on standby holds no chain, no runtime log, no
+  receipt log and no listener: the writer opens them when its node takes the role, and lets
+  go of all of them the moment the node does not lead it.
+- **F10-16.** A node is gone when the database ends its session: at once when its process is
+  killed; after `session_timeout_seconds` of silence when it freezes. Every connection a
+  node opens is named for it (`interlock-<part>@<node>`). At each heartbeat, every other
+  node ends each connection, to the cluster's database, of a node whose lock no session
+  holds. So a transaction a frozen node holds the writer's lock in, and a warrant's claim
+  it holds, end then. Its connections to other databases (the back office) end their
+  transactions once idle for the same bound.
+- **F10-17.** Leadership decides which node works, never what keeps the work correct. Every
+  decision is taken under the writer's lock (F10-5), and every execution under its warrant's
+  claim, which the executor confirms before each act. A node that thaws mid-step finds its
+  connections ended and its claim gone, and acts no more. What it left is resolved from what
+  the systems hold (F7-13).
+- **What a frozen node delays.** The chains, the runtime log and the operator log are files,
+  claimed by their holder's process. A frozen writer keeps their claims until it thaws (and
+  lets go) or dies. Until then the next leader's writer cannot open them, and backs off. The
+  files are on storage whose locks every node shares.
+
 ---
 
 # 11. Roadmap: 0.1.0 to 1.0.0

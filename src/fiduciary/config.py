@@ -835,7 +835,9 @@ def open_fiduciary(
             opened.append(runtime.close)
         outbox = None
         if config.executor_outbox is not None:
-            outbox = _outbox(config.executor_outbox, opened, named("outbox", "fiduciary-outbox"))
+            outbox = _outbox(
+                config.executor_outbox, opened, named("outbox", "fiduciary-outbox"), bound
+            )
         fid = cls(
             authority,
             binder,
@@ -857,16 +859,34 @@ def open_fiduciary(
     return fid
 
 
+def bounded(dsn: str, application_name: str, idle_timeout: float | None) -> Any:
+    """A PostgreSQL connection of a part's own, autocommit, called
+    ``application_name``. A transaction it leaves idle ``idle_timeout`` seconds
+    is ended by the server: a node of a cluster that froze inside one holds
+    what it locked no longer, in a database its peers do not fence (§10.7)."""
+    import psycopg
+
+    conn = psycopg.connect(dsn, autocommit=True, application_name=application_name)
+    if idle_timeout is not None:
+        milliseconds = max(1, int(idle_timeout * 1000))
+        conn.execute(f"SET idle_in_transaction_session_timeout = {milliseconds}")  # an int
+    return conn
+
+
 def _close_all(opened: list[Callable[[], None]]) -> None:
     for close in reversed(opened):
         close()
 
 
 def _outbox(
-    target: str, opened: list[Callable[[], None]], application_name: str = "fiduciary-outbox"
+    target: str,
+    opened: list[Callable[[], None]],
+    application_name: str = "fiduciary-outbox",
+    idle_timeout: float | None = None,
 ) -> Any:
     """Interlock's outbox operations: a SQLite back office, or a PostgreSQL
-    connection as the installer, called ``application_name``."""
+    connection as the installer, called ``application_name``, whose
+    transactions end once left idle ``idle_timeout`` seconds."""
     import sqlite3
 
     from interlock.deliveries import operations
@@ -877,7 +897,7 @@ def _outbox(
             import psycopg
 
             try:
-                conn = psycopg.connect(target, autocommit=True, application_name=application_name)
+                conn = bounded(target, application_name, idle_timeout)
             except psycopg.Error as exc:
                 raise ConfigError(f"[executor] outbox: {exc}") from exc
             opened.append(conn.close)

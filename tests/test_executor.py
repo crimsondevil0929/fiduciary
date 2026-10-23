@@ -715,6 +715,34 @@ def test_resolve_leaves_an_intent_a_live_executor_claims(world: bound.World) -> 
     _verify(world)
 
 
+def test_an_executor_that_lost_its_claim_acts_no_more(
+    world: bound.World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process frozen with a warrant's claim, and fenced by another node
+    (§10.7), finds the claim gone before its next act: it acts no more, and
+    the intent is resolved from what the systems hold."""
+    world.issue_and_bind(world.mandate())
+    esc = Escalation(world.authority, world.governor)
+    outbox, outbox_conn = _outbox_ops(world)
+    try:
+        tk = _held_ticket(world, esc, outbox)
+        warrant = _approve_ticket(world, esc, tk, "reset")
+        name = f"execution:{warrant.digest}"
+        assert not world.store.holds(name) or isinstance(world.store, SqliteStore)
+        with world.store.claim(name):
+            assert world.store.holds(name)
+        monkeypatch.setattr(type(world.store), "holds", lambda self, log: False)
+        with pytest.raises(ExecutionError, match="no longer holds its claim"):
+            Executor(world.binder).execute(warrant)
+        monkeypatch.undo()
+        assert world.governor.halted_by(bound.SCOPE) == bound.SCOPE  # nothing was reset
+        (resolved,) = Executor(world.binder).resolve()
+        assert resolved.kind == "execution.abandoned"
+    finally:
+        outbox_conn.close()
+    _verify(world)
+
+
 def test_a_reset_acts_only_on_the_scope_it_names(world: bound.World) -> None:
     """AgentGov resets a scope's own breaker. A warrant to reset a scope that
     another scope's breaker now halts is refused, not recorded as applied."""

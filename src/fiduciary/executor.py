@@ -341,6 +341,13 @@ class Executor:
             results: list[dict[str, Any]] = []
             mismatches: list[dict[str, Any]] = []
             for step in body["steps"]:
+                # Each act only while the claim stands: a process that froze
+                # and was fenced (§10.7) finds its claim gone, and acts no more.
+                if not self.log.store.holds(f"execution:{warrant.digest}"):
+                    raise ExecutionError(
+                        f"warrant {warrant.digest[:16]}: this process no longer holds its claim; "
+                        f"its intent is left to resolve()"
+                    )
                 done = self._run_step(warrant, ticket, step)
                 mismatches.extend(done.mismatches)
                 if not done.ok:

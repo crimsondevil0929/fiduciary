@@ -622,6 +622,11 @@ class Store(abc.ABC):
         :raises StoreError: If another process holds it.
         """
 
+    def holds(self, log: str) -> bool:
+        """Whether this process still holds the claim on ``log`` it took. A
+        file claim is held for as long as its descriptor is open."""
+        return True
+
     @abc.abstractmethod
     def put_document(self, digest: str, kind: str, data: bytes) -> None:
         """Store a document's canonical bytes under its digest. Storing it again

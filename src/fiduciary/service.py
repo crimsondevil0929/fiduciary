@@ -796,11 +796,9 @@ def _settler_outbox(writer: _Writer) -> tuple[Any, Callable[[], None]]:
     target = writer.config.executor_outbox
     assert target is not None  # the settler is built only beside it
     if is_dsn(target):
-        import psycopg
+        from fiduciary.config import bounded
 
-        conn = psycopg.connect(
-            target, autocommit=True, application_name=writer.membership.name("settler")
-        )
+        conn = bounded(target, writer.membership.name("settler"), writer.membership.bound)
         return conn, conn.close
     from interlock.sqlite_outbox import SETTLER, SqliteOutboxStore
 
@@ -836,7 +834,9 @@ def _detached_executor(writer: _Writer) -> tuple[Executor, Callable[[], None]]:
         binder = Binder(authority, governor, deployment=config.deployment(governor))
         outbox = None
         if config.executor_outbox is not None:
-            outbox = _outbox(config.executor_outbox, opened, membership.name("outbox"))
+            outbox = _outbox(
+                config.executor_outbox, opened, membership.name("outbox"), membership.bound
+            )
         executor = Executor(
             binder,
             outbox=outbox,

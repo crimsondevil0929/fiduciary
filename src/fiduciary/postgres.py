@@ -277,6 +277,19 @@ class PostgresStore(Store):
     def claim(self, log: str) -> AbstractContextManager[None]:
         return self._claim(log)
 
+    def holds(self, log: str) -> bool:
+        """Whether this connection still holds the claim: a session another
+        node of a cluster ended (it found this one gone, and fenced it) holds
+        nothing, and raises here."""
+        (held,) = self._execute(
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks AS l "
+            "WHERE l.locktype = 'advisory' AND l.pid = pg_catalog.pg_backend_pid() "
+            "AND l.objsubid = 1 AND l.granted "
+            "AND ((l.classid::bigint << 32) | l.objid::bigint) = hashtextextended(%s, 0))",
+            (f"{self._s}.writer:{log}",),
+        ).fetchone()
+        return bool(held)
+
     # -- documents ------------------------------------------------------------
 
     def put_document(self, digest: str, kind: str, data: bytes) -> None:
