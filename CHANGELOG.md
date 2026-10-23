@@ -6,6 +6,83 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.0.0]
+
+Phase 6 of `docs/FIDUCIARY_SPEC.md` §11: production. Fiduciary runs as a supervised
+service, alone or as a cluster on PostgreSQL; every 0.x store upgrades in place; a soak,
+a security audit and a mutation pass hold it to its invariants; and FIDU1, the documents,
+the record kinds and the bundle format are frozen for 1.x.
+
+### Added
+
+- **`fiduciary serve [--node N] [--bridge HOST:PORT] [--metrics HOST:PORT]`**
+  (`fiduciary.service`), every part a service of interlock's supervisor: restarted after
+  an exponential backoff when a step raises, opened again on `SIGHUP`, drained and closed
+  in order on `SIGTERM` (§10.7).
+  - `writer`: the node's engines, guards, recoveries, runtime log and HTTP bridge. Each
+    turn it follows the log, lapses what is due and judges the intake, expires lineages,
+    executes the warrants only it can (`accept_repair`, `amend`, `grant`, `decline`:
+    F10-12), anchors, and closes idle sessions.
+  - `triggers`: `held` and `dead` tickets raised from the outbox (§7.1), never over a
+    message a live ticket names.
+  - `settler`: interlock's settler over each lineage's chain and receipt issuer, so a
+    bundle carries delivery receipts.
+  - `executor`: `resolve()`, then every other formed warrant.
+  - `GET /healthz` (each part's state, the roles this node leads, the bridge's address)
+    and `GET /metrics` (interlock's per-part metrics and fiduciary's: the log, lineages,
+    tickets, warrants, intake, sessions), every label from a closed set.
+- **The bridge serves agents** (`[bridge.agents.<name>]`, F10-13): the configuration holds
+  the SHA-256 of each agent's bearer token; each `initialize` opens a session, `DELETE`
+  ends it, an idle one is closed, and each agent has a bound (`max_sessions`).
+- **Keys reload in place on `SIGHUP`** (F10-14): the service, runtime and receipt keys
+  may not change; the executor's may rotate to a key interlock's operators trust.
+- **A cluster** (`[cluster]`, PostgreSQL only; F10-15 to F10-17): each node joins through
+  interlock's `ClusterNode`; one leads `fiduciary-writer`, one `fiduciary-executor`.
+  A node on standby holds no chain, log claim or listener; one that loses the writer role
+  lets go of everything at once. Every connection is named for its node, so a node found
+  gone is fenced; the executor confirms its claim before each act.
+- **`tests/upgrades/`** and `scripts/make_upgrade_stores.py`: a store written by each 0.x
+  release's own code (schema versions 1 to 4), opened by this one on SQLite and
+  PostgreSQL (F10-18).
+- **`scripts/live_stress_test.py`**, the soak, and `tests/test_soak.py`, scaled down.
+- **`scripts/security_audit.py`** and `tests/test_security_audit.py` (F9-1, F4-27).
+- **`docs/MUTATION_PASS.md`**: 108 mutants over `fidu1`, `refines`, the compiler, quorum
+  counting and `verify_bundle`, every one killed or its code removed.
+- `fiduciary.toml`: `[serve]`, `[metrics]`, `[cluster]`, `[bridge.agents]`, bridge TLS
+  (`tls_cert`, `tls_key`) and `ledger_schema`.
+- `.github/workflows/release.yml`: on a `v*` tag, the checks, then the wheel and sdist
+  built and attached to a GitHub release. It publishes to no index.
+
+### Changed
+
+- **Every decision is taken under the writer's lock** (F10-5 amended). The binder's `bind`,
+  `issue`, `revoke` and `expire` read their state before it, so two processes could both
+  expire a lineage.
+- **An idle turn takes no lock.** The intake read every submission ever received, and
+  took the lock once per submission, folding the whole log under it; ticket lapses alike.
+  This was the Phase 5 contention test's stall under coverage.
+- **Engines follow the log** (`Binder.follow`, §6.4 amended): an amendment bound from the
+  command line or another node reaches a running session at its next call, and a
+  revocation stops it there.
+- **A warranted ticket lapses** when its warrant reaches its `not_after` unexecuted (F7-7
+  amended).
+- **The log is read incrementally**: a service keeps the records it read and reads only
+  those appended since, checking that they follow the last it kept.
+- **V7 explains 0.4's passthrough memo** (`FIDU1 tool <name> <digest>`), as 0.4 wrote it,
+  and only before the ledger's first session-named memo (BUNDLE_FORMAT §4.1).
+- **The specification is the 1.0.0 contract**: its Conformance section states what 1.0.0
+  implements, the status of U-1 to U-6, and each gap's reason; its traceability table
+  gives every requirement's status and tests.
+- Two checks that could not matter are gone: `refines`' verbatim comparison of rules whose
+  identity is the whole rule, and the quorum count's check of a decision row's resolution
+  ahead of the approval's own.
+- `Development Status :: 5 - Production/Stable`.
+
+### Fixed
+
+- An outbox step with no operator log configured is refused, instead of leaving an open
+  intent behind.
+
 ## [0.5.0]
 
 Phase 5 of `docs/FIDUCIARY_SPEC.md` §11: the audit bundle. A lineage's authority, its

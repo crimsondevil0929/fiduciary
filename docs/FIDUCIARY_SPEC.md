@@ -1,12 +1,14 @@
 # Fiduciary: mandates, warrants and compliance proofs
 
-**Status:** specification, design phase. No code exists. Sections 1 to 9 are the
-contract. Section 10 is the architecture `interlock-fiduciary` builds it into, and section 11
-is the roadmap from 0.1.0 to 1.0.0. Section 12 lists what the contract needs from
-`interlock` and `agentgov` that they do not provide yet.
-[Traceability](#traceability) maps each requirement to the phase that builds it and the
-test that will prove it.
-**Applies to:** `interlock-fiduciary` 0.1.0 to 1.0.0, against `interlock-escrow` 1.0.2 and
+**Status:** implemented by `interlock-fiduciary` 1.0.0, and frozen for 1.x
+([Conformance](#conformance-100)). Sections 1 to 9 are the contract. Section 10 is the
+architecture `interlock-fiduciary` builds it into, and section 11 the roadmap it followed
+from 0.1.0 to 1.0.0. Section 12 lists what the contract needs from `interlock` and
+`agentgov` that they do not provide yet. [Conformance](#conformance-100) states what 1.0.0
+implements, and each gap with its reason; [Traceability](#traceability) maps each
+requirement to the phase that built it and the tests that prove it. Where the text was
+amended as it was built, it says so, and in which release.
+**Applies to:** `interlock-fiduciary` 1.x, against `interlock-escrow` 1.0.2 and
 `interlock-agentgov` 1.0.0.
 **Normative language:** MUST, MUST NOT, SHOULD, MAY per RFC 2119.
 
@@ -2132,10 +2134,71 @@ These are listed because they are unresolved, not because they are minor.
   measurable share of the ledger. Batching anchors under a Merkle root would trade latency
   for it.
 
+## Conformance (1.0.0)
+
+`interlock-fiduciary` 1.0.0 implements this document, with the gaps below. Each is stated
+with the reason for it, and what holds meanwhile.
+
+**Frozen for 1.x.** Anything a 1.x release writes verifies under every later 1.x release:
+
+- FIDU1's framing (§3): the value domain, the signing construction, and the domains
+  `FIDU1/<type>/v1` of `charter`, `mandate`, `tool`, `ticket`, `approval`, `warrant`,
+  `record` and `bundle`;
+- each document's schema (§4), and every record kind the log holds (§4.7);
+- the audit bundle's format, `fidb/1` (`docs/BUNDLE_FORMAT.md`), and its exit codes;
+- the store's schema, version 4, which every 0.x store upgrades to in place (F10-18).
+
+A change to any of them is a new domain version (`FIDU1/<type>/v2`) or a new bundle format
+(`fidb/2`), which a later release reads beside the old. The golden vectors
+(`vectors/fidu1/`) and the golden bundles (`vectors/fidu1/bundles/`) hold every release to
+this.
+
+**The upstream gaps (§12), as of 1.0.0.**
+
+| # | Status | What 1.0.0 does meanwhile |
+|---|---|---|
+| U-1 | Fixed on interlock `main` (#20), unreleased: interlock 1.0.3 is held until U-2, U-3 and U-4 ship with it | V4 checks `fiduciary_mandate` exactly, and the other checkers by name (F6-8). A bundle whose manifest says `canonical_digests` is checked strictly. **Partial.** |
+| U-2 | Open | An AWS KMS executor or runtime key is refused; outbox actions are chunked to 8 targets (F3-9). |
+| U-3 | Open | A quote or repair proposal lives in the memory of the process that made it. A restart, or a cluster's writer moving to another node, lapses its ticket (F7-14). The writer executes the warrants that need them (F10-12). |
+| U-4 | Open | A head that moved after the ticket is recorded in `execution.applied` and named by V8 (F7-15): named, not prevented. |
+| U-5 | Open | A reset's anchor precedes it in one AgentGov transaction (§7.6). |
+| U-6 | Open | A lineage recovers once: after its recovery closes, a spent-out halt is quoted on the billing scope, and any other halt stands (F8-9). |
+
+**Limits, by design or measured.**
+
+- **What a bundle claims** (F9-2). It does not claim the outbox's delivery logs, or
+  interlock's `verify_operators`. Operator acts on the lineage's messages are found through
+  its tickets and warrants, and its plans when the exporter has the outbox.
+- **Plans before the bridge.** A lineage that ran plans outside any bridge, as 0.2 and 0.3
+  could only, exports a bundle whose V7 names each such plan (F10-18).
+- **A frozen writer** keeps its chains', runtime log's and operator log's file claims
+  until it thaws or dies, and the next leader's writer waits for them (§10.7). Takeover of
+  a killed writer is at once.
+- **Velocity is per session** (F6-5). Sessions of one lineage are bounded together by the
+  governor's policy.
+- **PostgreSQL versions.** 16 is verified, locally. CI runs 14, 16 and 18; the repository
+  has no remote yet, so CI has never run.
+- **Open questions** (below) stay open: prevention, rather than detection, of a
+  compromised service; quorum liveness; rule thresholds; per-principal redaction; proofs,
+  rather than tests, of semantic monotonicity.
+
+**Phase 6's proofs** (§11), each a file of this repository:
+
+- the service and the cluster: `tests/test_service.py`, `tests/test_cluster.py` (a leader
+  killed; a leader frozen, fenced and thawed; a node's roles in process);
+- the upgrades: `tests/test_upgrade.py` over `tests/upgrades/`, stores each 0.x release
+  wrote itself, on SQLite and PostgreSQL;
+- the soak: `scripts/live_stress_test.py` (minutes long), `tests/test_soak.py` (scaled
+  down);
+- the security audit: `scripts/security_audit.py`, `tests/test_security_audit.py`;
+- the mutation pass over `fidu1`, `refines`, `compiler`, quorum counting and
+  `verify_bundle`: `docs/MUTATION_PASS.md`.
+
 ## Traceability
 
-The table lists every requirement, the phase that builds it, and the test that will prove
-it. Unless a row says otherwise, every row runs on SQLite and on PostgreSQL. The test kinds:
+The table lists every requirement, the phase that built it, the test kind that proves it,
+and its status in 1.0.0 with the test files. Unless a row says otherwise, every row runs on
+SQLite and on PostgreSQL. The test kinds:
 
 - *golden*: the vectors in `vectors/fidu1/`;
 - *property*: a Hypothesis test;
@@ -2143,45 +2206,47 @@ it. Unless a row says otherwise, every row runs on SQLite and on PostgreSQL. The
 - *tamper*: the edit-and-verify tests;
 - *soak*: the Phase 6 run.
 
-| Requirements | Phase | Proven by |
-|---|---|---|
-| F1-1, F1-2: the lifecycle; no fork | 1, 2 | property: the log accepts n+1 only at head n. tamper: a fork is named (V3). |
-| F1-3: amendment at a plan boundary | 2 | integration: the plan in flight keeps its `policy_epoch` |
-| F1-4, F5-7: rebasing and suspension | 2 | integration over a three-level lineage |
-| F1-5, F5-8, F5-9, G7: revocation stops the lineage | 2, 5 | integration: the E3-8 refusal, held messages, satellites tripped. tamper: V11. |
-| F1-6, F1-7: silence refuses; verdicts stand | 3 | lapse tests, per class |
-| F2-1, F2-2, G1: no ambient authority | 3, 5 | V7 ambient-injection tests; soak |
-| F3-1: strict decoding | 1 | golden; per-field mutation sweep |
-| F3-2 to F3-8: framing; Ed25519 only; inputs ≤ 96 bytes; KMS | 1 | golden signing inputs; fake KMS and fake key service; HMAC refused |
-| F3-9: ILOK1 sizes under KMS | 3 | executor guard test; chunking test; the measured table, regenerated by script |
-| F4-1 to F4-6: the charter | 1 | golden; property: adoption and suspension quorums |
-| F4-7 to F4-12: the mandate schema | 1 | golden; strict parsing |
-| F4-13 to F4-16: tool bindings | 1, 4 | golden; the adversarial agent suite |
-| F4-17 to F4-20: tickets | 3 | evidence tests per class; narrowing tests |
-| F4-21 to F4-25: approvals and warrants | 1, 3 | golden; the quorum property test |
-| F4-26, F4-27: the log and its anchors | 1 | tamper: truncation and rewriting; the anchor check |
-| F5-1 to F5-3, G3: the order | 1 | property: preorder; narrowings; widenings named |
-| F5-4 to F5-6: aggregates | 2 | concurrent children against one window; delegation bounds |
-| F5-10, F5-11: semantic monotonicity | 2 | property, offline, for every compiled checker type; the cognitive variant |
-| F6-1, F6-2: `compile` is pure | 2 | eight hash seeds give one digest |
-| F6-3: `compile` fails closed | 2 | an unknown table, sink or binding; a long window name |
-| F6-4, F6-5: always-on checkers; governance | 2 | inspection of the compiled set; per-session governors on PostgreSQL |
-| F6-6 to F6-8, G2: evidence that the policy ran | 2, 5 | V4 over golden bundles; after U-1, every record |
-| F7-1, F7-2: one ticket per evidence; storms | 3 | the fatigue test |
-| F7-3, G8: what you see is what you sign | 3, 4 | the principal client renders from the signed bytes; the quarantine test |
-| F7-4: no approval surface for the agent | 4 | inspection of the MCP and session surfaces; the adversarial suite |
-| F7-5 to F7-8, G4: quorum | 3 | property |
-| F7-9 to F7-11: autonomous rules | 3 | V8 recomputes each rule's predicate; auto totals across a restart |
-| F7-12, F7-13, G5: once, and resolved | 3 | crash; contention |
-| F7-14, F7-15: a lost quote; the head gap | 3 | the restart test; the head-move test (refused after U-4) |
-| F7-16, F7-17: operator log claims; break-glass | 3, 5 | claim contention; V7's break-glass labeling |
-| F8-1 to F8-3: sessions | 4 | end to end; the sanitized feedback test |
-| F8-4 to F8-7: MCP | 4 | protocol conformance tests over stdio and HTTP; the proxy's refusal |
-| F8-8, F8-9: the billing scope; safety halts | 4 | the recovery and extension flow; a safety halt is never quoted |
-| F8-12: refusals before anything is built | 4 | the adversarial agent suite; the session record replay tests |
-| F8-10, F8-11: the trust boundary | 4 | in process, a session refuses to start without the setting |
-| F9-1: no row data | 5, 6 | the security audit |
-| F9-2, F9-3: self-contained, offline, specified | 5 | the offline run; golden bundles; byte-identical exports |
-| F10-1 to F10-4: the stores | 1, 3 | the projection fold; append-only enforcement on both stores; the intake role |
-| F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak |
-| F10-9 to F10-11: crash points | 3 | crash |
+| Requirements | Phase | Proven by | 1.0.0 |
+|---|---|---|---|
+| F1-1, F1-2: the lifecycle; no fork | 1, 2 | property: the log accepts n+1 only at head n. tamper: a fork is named (V3). | Implemented. `test_store.py`, `test_tamper.py` |
+| F1-3: amendment at a plan boundary | 2 | integration: the plan in flight keeps its `policy_epoch` | Implemented; engines follow the log (§6.4). `test_binding.py`, `test_bridge_edges.py` |
+| F1-4, F5-7: rebasing and suspension | 2 | integration over a three-level lineage | Implemented. `test_binding.py` |
+| F1-5, F5-8, F5-9, G7: revocation stops the lineage | 2, 5 | integration: the E3-8 refusal, held messages, satellites tripped. tamper: V11. | Implemented. `test_binding.py`, `test_bundle_checks.py` |
+| F1-6, F1-7: silence refuses; verdicts stand | 3 | lapse tests, per class | Implemented; a warrant expired unexecuted lapses its ticket (F7-7). `test_escalation_quorum.py`, `test_tickets_warrants.py` |
+| F2-1, F2-2, G1: no ambient authority | 3, 5 | V7 ambient-injection tests; soak | Implemented. `test_bundle_checks.py`, `test_soak.py` |
+| F3-1: strict decoding | 1 | golden; per-field mutation sweep | Implemented. `test_vectors.py`, `test_fidu1.py`, `test_documents.py` |
+| F3-2 to F3-8: framing; Ed25519 only; inputs ≤ 96 bytes; KMS | 1 | golden signing inputs; fake KMS and fake key service; HMAC refused | Implemented. `test_signers.py`, `test_vectors.py` |
+| F3-9: ILOK1 sizes under KMS | 3 | executor guard test; chunking test; the measured table, regenerated by script | Partial: U-2. `test_executor.py`, `test_ilok1_sizes.py` |
+| F4-1 to F4-6: the charter | 1 | golden; property: adoption and suspension quorums | Implemented. `test_authority.py`, `test_vectors.py` |
+| F4-7 to F4-12: the mandate schema | 1 | golden; strict parsing | Implemented. `test_documents.py`, `test_vectors.py` |
+| F4-13 to F4-16: tool bindings | 1, 4 | golden; the adversarial agent suite | Implemented. `test_tools.py`, `test_adversarial_agent.py` |
+| F4-17 to F4-20: tickets | 3 | evidence tests per class; narrowing tests | Implemented. `test_tickets_warrants.py` |
+| F4-21 to F4-25: approvals and warrants | 1, 3 | golden; the quorum property test | Implemented. `test_escalation_quorum.py`, `test_decide.py` |
+| F4-26, F4-27: the log and its anchors | 1 | tamper: truncation and rewriting; the anchor check | Implemented. `test_tamper.py`, `test_security_audit.py` |
+| F5-1 to F5-3, G3: the order | 1 | property: preorder; narrowings; widenings named | Implemented. `test_refines.py` |
+| F5-4 to F5-6: aggregates | 2 | concurrent children against one window; delegation bounds | Implemented. `test_binding.py`, `test_soak.py` |
+| F5-10, F5-11: semantic monotonicity | 2 | property, offline, for every compiled checker type; the cognitive variant | Implemented (tested, not proven: Open questions). `test_monotonicity.py` |
+| F6-1, F6-2: `compile` is pure | 2 | eight hash seeds give one digest | Implemented. `test_determinism.py` |
+| F6-3: `compile` fails closed | 2 | an unknown table, sink or binding; a long window name | Implemented. `test_compiler.py` |
+| F6-4, F6-5: always-on checkers; governance | 2 | inspection of the compiled set; per-session governors on PostgreSQL | Implemented; velocity is per session. `test_compiler.py`, `test_bridge.py` |
+| F6-6 to F6-8, G2: evidence that the policy ran | 2, 5 | V4 over golden bundles; after U-1, every record | Partial: U-1. `test_bundle_vectors.py`, `test_compiler.py` |
+| F7-1, F7-2: one ticket per evidence; storms | 3 | the fatigue test | Implemented. `test_executor.py`, `test_service.py` |
+| F7-3, G8: what you see is what you sign | 3, 4 | the principal client renders from the signed bytes; the quarantine test | Implemented. `test_cli_tickets.py` |
+| F7-4: no approval surface for the agent | 4 | inspection of the MCP and session surfaces; the adversarial suite | Implemented. `test_mcp.py`, `test_adversarial_agent.py` |
+| F7-5 to F7-8, G4: quorum | 3 | property | Implemented. `test_escalation_quorum.py`, `test_soak.py` |
+| F7-9 to F7-11: autonomous rules | 3 | V8 recomputes each rule's predicate; auto totals across a restart | Implemented. `test_bundle_checks.py`, `test_executor.py` |
+| F7-12, F7-13, G5: once, and resolved | 3 | crash; contention | Implemented. `test_crash_recovery.py`, `test_contention.py`, `test_soak.py` |
+| F7-14, F7-15: a lost quote; the head gap | 3 | the restart test; the head-move test (refused after U-4) | Partial: U-3, U-4. `test_executor.py`, `test_bundle_checks.py` |
+| F7-16, F7-17: operator log claims; break-glass | 3, 5 | claim contention; V7's break-glass labeling | Implemented. `test_executor.py`, `test_bundle_checks.py` |
+| F8-1 to F8-3: sessions | 4 | end to end; the sanitized feedback test | Implemented. `test_bridge.py`, `test_bridge_lifecycle.py` |
+| F8-4 to F8-7: MCP | 4 | protocol conformance tests over stdio and HTTP; the proxy's refusal | Implemented; agents' sessions over HTTP (F10-13). `test_mcp.py`, `test_cli_mcp.py`, `test_service.py` |
+| F8-8, F8-9: the billing scope; safety halts | 4 | the recovery and extension flow; a safety halt is never quoted | Partial: U-6. `test_bridge.py`, `test_bridge_edges.py` |
+| F8-12: refusals before anything is built | 4 | the adversarial agent suite; the session record replay tests | Implemented. `test_adversarial_agent.py`, `test_sessions.py` |
+| F8-10, F8-11: the trust boundary | 4 | in process, a session refuses to start without the setting | Implemented. `test_bridge.py` |
+| F9-1: no row data | 5, 6 | the security audit | Implemented. `test_security_audit.py`, `test_bundle_export.py` |
+| F9-2, F9-3: self-contained, offline, specified | 5 | the offline run; golden bundles; byte-identical exports | Implemented, with the limits above. `test_bundle_tamper.py`, `test_bundle_vectors.py` |
+| F10-1 to F10-4: the stores | 1, 3 | the projection fold; append-only enforcement on both stores; the intake role | Implemented. `test_store.py`, `test_postgres.py`, `test_upgrade.py` |
+| F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak | Implemented. `test_contention.py`, `test_cluster.py`, `test_soak.py` |
+| F10-9 to F10-11: crash points | 3 | crash | Implemented. `test_crash_recovery.py` |
+| F10-12 to F10-17: the service and the cluster | 6 | process tests: a part restarted, a key reload refused, a leader killed and frozen | Implemented. `test_service.py`, `test_cluster.py`, `test_soak.py` |
+| F10-18: upgrades in place | 6 | stores each 0.x release wrote, on both stores | Implemented. `test_upgrade.py` |

@@ -10,8 +10,8 @@ measured consequence satisfies its checkers. Fiduciary says who decided those li
 on whose authority, and who approved an exception. It records each answer as a signed
 document that anyone holding the public keys can verify.
 
-`docs/FIDUCIARY_SPEC.md` is the specification. This is **0.5.0**, Phase 5 of its
-roadmap:
+`docs/FIDUCIARY_SPEC.md` is the specification. This is **1.0.0**, the end of its
+roadmap; its format, documents, records and bundles are frozen for 1.x:
 - Phase 1 (0.1.0) gave the FIDU1 format, the documents, the order on mandates, the log
   and its two stores, and the command line.
 - Phase 2 (0.2.0) compiles a mandate into Interlock's checkers and AgentGov's policies,
@@ -19,7 +19,29 @@ roadmap:
 - Phase 3 (0.3.0) escalates what a mandate does not allow to its principals, and
   executes their decision exactly once.
 - Phase 4 (0.4.0) bridges an agent to it, in process or over MCP.
-- Phase 5 exports a lineage as an audit bundle, which anyone verifies offline.
+- Phase 5 (0.5.0) exports a lineage as an audit bundle, which anyone verifies offline.
+- Phase 6 runs it as a supervised service, alone or as a cluster on PostgreSQL.
+
+## What 1.0.0 adds
+
+- **`fiduciary serve`** (`fiduciary.service`), the service under interlock's supervisor:
+  each part restarted after a backoff when it fails, keys opened again on `SIGHUP`, every
+  part drained on `SIGTERM`, and `/healthz` and `/metrics` on a listener of their own. The
+  parts follow the log, judge approvals, lapse and expire what is due, raise tickets for
+  held and dead messages, execute warrants, receipt deliveries, and serve agents' sessions
+  over MCP. See [Running the service](#running-the-service).
+- **A cluster**, on PostgreSQL: several nodes over one store and one ledger, one leading the
+  writer and one the executor. A node killed hands its roles over at once; one frozen is
+  fenced once its session falls silent, and none acts twice.
+- **Every 0.x store upgrades in place**, proven on stores each earlier release wrote
+  itself (`tests/upgrades/`).
+- **Proofs at production scale**: a soak of a cluster under load, forgeries, a killed and a
+  frozen node, and edits around the service (`scripts/live_stress_test.py`); a security
+  audit that no secret, row, payload, transcript or agent text reaches a hash, a log or a
+  bundle (`scripts/security_audit.py`); and a mutation pass (`docs/MUTATION_PASS.md`).
+- **The freeze**: what 1.x writes verifies under every later 1.x. The specification's
+  Conformance section states what 1.0.0 implements, and each gap left by the upstream
+  changes it waits on.
 
 ## What 0.5.0 adds
 
@@ -317,6 +339,49 @@ exits with the first failing check's code:
 
 An act by a key the charter declares break-glass is still named, and labeled so.
 
+## Running the service
+
+`fiduciary serve` runs everything above as one service, from the same `fiduciary.toml`,
+with a few tables more:
+
+```toml
+[serve]
+every_seconds = 1                 # a turn of the writer and the executor
+
+[metrics]
+listen = "127.0.0.1:9465"         # GET /metrics and /healthz
+
+[bridge]
+http = "127.0.0.1:8765"           # tls_cert and tls_key, beyond loopback
+
+[bridge.agents.support-desk]      # an agent's sessions: initialize opens one
+mandate = "support-agent"
+tenant = "acme"
+token_sha256 = "<sha256 of the agent's bearer token>"
+```
+
+```
+fiduciary serve
+kill -HUP <pid>                   # open every key again, in place
+```
+
+Several services over one PostgreSQL store and ledger are a cluster, each started with its
+own node name:
+
+```toml
+[cluster]
+heartbeat_seconds = 1
+session_timeout_seconds = 10
+```
+
+```
+fiduciary serve --node fiduciary-0
+fiduciary serve --node fiduciary-1
+```
+
+One node leads the writer: it holds the engines and serves the agents. One leads the
+executor. The others stand by, and `/healthz` says which roles each holds.
+
 ## Tests
 
 ```
@@ -336,6 +401,26 @@ The crash tests (`tests/test_crash_recovery.py`) run the service as a child proc
 kill it at every checkpoint. The contention test (`tests/test_contention.py`) runs two
 service processes over an AgentGov ledger shared through PostgreSQL, so it needs the
 DSN even when the store under test is SQLite.
+
+The service and cluster tests (`tests/test_service.py`, `tests/test_cluster.py`) run
+`fiduciary serve` as processes: a node is killed, and one is frozen and thawed. The
+upgrade tests (`tests/test_upgrade.py`) open stores each 0.x release wrote;
+`scripts/make_upgrade_stores.py` records them anew from each release's own code.
+
+The soak runs a cluster for minutes against live PostgreSQL, then holds the database, the
+ledger and the logs to every invariant; `tests/test_soak.py` runs it for forty seconds:
+
+```
+uv run python scripts/live_stress_test.py --dsn postgresql://user:pw@localhost:5432/postgres --minutes 5
+```
+
+The security audit plants a canary for every kind of sensitive value, records the input of
+every hash and signature, crawls every column, file and bundle member, and exits 0 only
+when nothing leaked:
+
+```
+uv run python scripts/security_audit.py --dsn postgresql://user:pw@localhost:5432/postgres
+```
 
 `scripts/live_acceptance.py` puts a Claude model in front of a session with business
 requests. It spends money only with `BENCHMARK_API_KEY` set, within each session's envelope

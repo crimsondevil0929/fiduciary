@@ -33,3 +33,6 @@ htmlcov/
 # The live acceptance suite's key, and its runs: never committed, never packed
 .env.benchmark
 live-run/
+
+# The soak's runs (scripts/live_stress_test.py --out): never committed, never packed
+soak/

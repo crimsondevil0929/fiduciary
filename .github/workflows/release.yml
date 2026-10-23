@@ -1,0 +1,104 @@
+name: Release
+
+# On a version tag: every check of ci.yml, then the wheel and the sdist, built
+# once, with a CycloneDX SBOM of everything they install and a GitHub build
+# provenance attestation (`gh attestation verify`), attached to a GitHub
+# release. It publishes to no package index: interlock-fiduciary is released
+# here only. Publishing to PyPI, when its owner decides to, is one more job:
+# trusted publishing, as interlock-escrow's release.yml does.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: every check
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: build the distributions and their SBOM
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: The tag names the version in pyproject.toml and fiduciary.__version__
+        run: |
+          declared=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          module=$(python3 -c "import ast; tree = ast.parse(open('src/fiduciary/__init__.py').read()); print(next(n.value.value for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, 'id', '') == '__version__' for t in n.targets)))")
+          if [ "v$declared" != "$GITHUB_REF_NAME" ] || [ "$module" != "$declared" ]; then
+            echo "::error::tag $GITHUB_REF_NAME, pyproject.toml $declared, fiduciary.__version__ $module"
+            exit 1
+          fi
+
+      - name: Build, failing on packaging warnings
+        run: |
+          set -o pipefail
+          # The log goes outside the checkout: the sdist packs the source tree.
+          uv build 2>&1 | tee "${{ runner.temp }}/build.log"
+          if grep -i '^warning' "${{ runner.temp }}/build.log"; then
+            echo "::error::uv build emitted packaging warnings"
+            exit 1
+          fi
+
+      - name: The wheel installs into a bare environment and runs
+        run: |
+          uv venv "${{ runner.temp }}/bare" --python 3.12
+          uv pip install --python "${{ runner.temp }}/bare/bin/python" dist/*.whl
+          "${{ runner.temp }}/bare/bin/fiduciary" --version
+
+      # Every package `pip install 'interlock-fiduciary[...]'` can bring in, at
+      # the versions this release was tested with (uv.lock).
+      - name: Describe the dependencies (CycloneDX)
+        run: |
+          mkdir sbom
+          uv export --frozen --no-dev --all-extras --no-emit-project --no-hashes \
+            --format requirements-txt --output-file sbom/requirements.txt
+          uvx --from cyclonedx-bom==7.4.0 cyclonedx-py requirements sbom/requirements.txt \
+            --output-format JSON --output-file "sbom/interlock-fiduciary-${GITHUB_REF_NAME#v}.cdx.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+
+  github-release:
+    name: GitHub release, attested
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # signing the attestation
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets/
+
+      - name: Attest the distributions' build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: assets/dist/*
+
+      - name: Create the release from the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          if [[ "$GITHUB_REF_NAME" =~ (a|b|rc)[0-9]+$ ]]; then prerelease="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes $prerelease \
+            --title "interlock-fiduciary ${GITHUB_REF_NAME#v}" assets/dist/* assets/sbom/*.cdx.json
