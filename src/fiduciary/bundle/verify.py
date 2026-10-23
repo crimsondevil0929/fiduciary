@@ -136,8 +136,8 @@ class _MemoryStore(Store):
     def insert_record(self, record: StoredRecord) -> None:  # pragma: no cover - read-only
         raise FiduciaryError("a bundle is read-only")
 
-    def records(self, log: str) -> Iterator[StoredRecord]:
-        yield from self._records
+    def records(self, log: str, *, after: int = 0) -> Iterator[StoredRecord]:
+        yield from (r for r in self._records if r.seq > after)
 
     def insert_row(self, table: str, row: tuple[Any, ...]) -> None:  # pragma: no cover
         raise FiduciaryError("a bundle is read-only")

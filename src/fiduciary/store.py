@@ -649,8 +649,8 @@ class Store(abc.ABC):
         """Append a record. The store refuses one that is not the next."""
 
     @abc.abstractmethod
-    def records(self, log: str) -> Iterator[StoredRecord]:
-        """The log's records, in order."""
+    def records(self, log: str, *, after: int = 0) -> Iterator[StoredRecord]:
+        """The log's records past sequence ``after``, in order."""
 
     @abc.abstractmethod
     def insert_row(self, table: str, row: tuple[Any, ...]) -> None:

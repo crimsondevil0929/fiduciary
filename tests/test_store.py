@@ -324,3 +324,38 @@ def test_an_earlier_store_upgrades_in_place(
             raise RuntimeError("written, and rolled back")
     finally:
         upgraded.close()
+
+
+def test_a_log_reads_only_what_was_appended_since(
+    store: Store, clock: Clock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``Log.records`` keeps what it read, and reads past it: another writer's
+    records are seen at the next read; a log whose head is not the last kept
+    (rewritten or cut around the service) is read again whole."""
+    first = Log(store, e.SERVICE, clock=clock)
+    first.append("approval.refused", _refused(1))
+    other = reopen(store)
+    try:
+        second = Log(other, e.SERVICE, clock=clock)
+        second.append("approval.refused", _refused(2))
+        assert [r.content["intake"] for r in first.records()] == [1, 2]
+        read: list[int] = []
+        records = store.records
+
+        def counted(log: str, *, after: int = 0) -> object:
+            read.append(after)
+            return records(log, after=after)
+
+        monkeypatch.setattr(store, "records", counted)
+        second.append("approval.refused", _refused(3))
+        assert [r.content["intake"] for r in first.records()] == [1, 2, 3]
+        assert read == [2]  # only past the two it kept
+        monkeypatch.setattr(store, "head", lambda log: (3, "f" * 64))
+        assert [r.content["intake"] for r in first.records()] == [1, 2, 3]
+        assert read == [2, 3, 0]  # the head is not the last kept: read whole
+    finally:
+        other.close()
+
+
+def _refused(intake: int) -> dict[str, object]:
+    return {"intake": intake, "digest": "b" * 64, "why": "a test"}

@@ -244,10 +244,11 @@ class SqliteStore(Store):
             (record.log, record.seq, record.hash, record.prev, record.kind, record.data),
         )
 
-    def records(self, log: str) -> Iterator[StoredRecord]:
+    def records(self, log: str, *, after: int = 0) -> Iterator[StoredRecord]:
         for row in self._conn.execute(
-            "SELECT log_id, seq, hash, prev, kind, record FROM log WHERE log_id = ? ORDER BY seq",
-            (log,),
+            "SELECT log_id, seq, hash, prev, kind, record FROM log WHERE log_id = ? AND seq > ? "
+            "ORDER BY seq",
+            (log, after),
         ).fetchall():
             yield StoredRecord(
                 str(row[0]), int(row[1]), str(row[2]), str(row[3]), str(row[4]), bytes(row[5])

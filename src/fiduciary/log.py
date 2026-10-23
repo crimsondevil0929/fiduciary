@@ -16,6 +16,7 @@ ledger even though it verifies on its own.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -124,6 +125,10 @@ class Log:
         self._ledger = ledger
         self._scope = scope
         self._clock = clock
+        self._read: list[Record] = []
+        """The records read so far: a record never changes, so only those
+        appended since are read again."""
+        self._reading = threading.Lock()
 
     @property
     def store(self) -> Store:
@@ -141,10 +146,23 @@ class Log:
         return self._clock()
 
     def records(self) -> list[Record]:
-        """The log's records, each read strictly."""
-        return [
-            Record.from_json(fidu1.parse(row.data)) for row in self._store.records(self._log_id)
-        ]
+        """The log's records, each read strictly. Those read before are kept,
+        and only those appended since are read: the first of them must follow
+        the last kept, by sequence and hash, and a log that is not so (rewritten
+        or cut around the service) is read again whole."""
+        with self._reading:
+            kept = self._read
+            rows = list(self._store.records(self._log_id, after=len(kept)))
+            last = (len(kept), kept[-1].hash if kept else fidu1.GENESIS)
+            follows = (
+                (rows[0].seq, rows[0].prev) == (last[0] + 1, last[1])
+                if rows
+                else self._store.head(self._log_id) == last
+            )
+            if not follows:
+                kept, rows = [], list(self._store.records(self._log_id))
+            self._read = kept + [Record.from_json(fidu1.parse(row.data)) for row in rows]
+            return list(self._read)
 
     def state(self) -> State:
         return State.of(self.records())

@@ -58,11 +58,15 @@ def configure(
     bridge: str = "127.0.0.1:0",
     metrics: str = "127.0.0.1:0",
     ledger: str | None = None,
+    bind: bool = True,
+    agents: dict[str, tuple[str, str]] | None = None,
 ) -> Path:
     """The deployment's files, with the service's tables: ``[serve]``,
-    ``[metrics]``, the bridge's listener, and the agent ``desk`` (tenant
-    ``acme``). The relay :data:`RELAY` is registered with interlock."""
-    config = _configure(world, top=top, mandate=mandate, ledger=ledger)
+    ``[metrics]``, the bridge's listener, and the agents (``name: (mandate,
+    token)``, tenant ``acme``; by default ``desk``, of the world's scope).
+    The relay :data:`RELAY` is registered with interlock, and the service's
+    key as its operator."""
+    config = _configure(world, top=top, mandate=mandate, ledger=ledger, bind=bind)
     interlock = world.tmp / "interlock.toml"
     interlock.write_text(
         interlock.read_text()
@@ -70,14 +74,16 @@ def configure(
         + f'[operators]\nlog = "{world.tmp / "operators.jsonl"}"\n'
         + f'[operators.keys]\nfiduciary = "{spec(e.SERVICE.public_key())}"\n'
     )
-    digest = hashlib.sha256(TOKEN.encode()).hexdigest()
     config.write_text(
         config.read_text()
         + serve
         + f'[metrics]\nlisten = "{metrics}"\n'
         + f'[bridge]\nhttp = "{bridge}"\n'
-        + f'[bridge.agents.desk]\nmandate = "{bound.SCOPE}"\ntenant = "acme"\n'
-        + f'token_sha256 = "{digest}"\n'
+        + "".join(
+            f'[bridge.agents.{name}]\nmandate = "{mandate_id}"\ntenant = "acme"\n'
+            f'token_sha256 = "{hashlib.sha256(token.encode()).hexdigest()}"\n'
+            for name, (mandate_id, token) in (agents or {"desk": (bound.SCOPE, TOKEN)}).items()
+        )
         + tail
     )
     return config

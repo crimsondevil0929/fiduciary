@@ -1663,7 +1663,10 @@ Both stores hold the same tables and enforce the same rules, and every test runs
 
 - **F10-1.** The log is the truth, and the projections follow from it. `fiduciary verify`
   folds the log and compares the result with the projections. A difference means a
-  projection was edited around the service, and `verify` names it.
+  projection was edited around the service, and `verify` names it. A service keeps the
+  records it has read, and reads only those appended since, each time checking that the
+  first new one follows the last it kept, by sequence and hash; a log that does not is read
+  again whole. `verify` and `verify-bundle` read everything, every time.
 - **F10-2.** The database enforces append-only:
   - On PostgreSQL, the service role adds to `documents` and `log` only through functions
     that check the link and the sequence. No role may `UPDATE` or `DELETE` either table.

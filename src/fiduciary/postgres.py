@@ -323,11 +323,11 @@ class PostgresStore(Store):
             (record.log, record.seq, record.hash, record.prev, record.kind, record.data),
         )
 
-    def records(self, log: str) -> Iterator[StoredRecord]:
+    def records(self, log: str, *, after: int = 0) -> Iterator[StoredRecord]:
         rows = self._execute(
             f"SELECT log_id, seq, hash, prev, kind, record FROM {self._s}.log"
-            " WHERE log_id = %s ORDER BY seq",
-            (log,),
+            " WHERE log_id = %s AND seq > %s ORDER BY seq",
+            (log, after),
         ).fetchall()
         for row in rows:
             yield StoredRecord(

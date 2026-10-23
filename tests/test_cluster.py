@@ -248,3 +248,31 @@ def test_a_frozen_leader_is_fenced_and_hands_over(shared: Shared) -> None:
     state = _verified(shared)
     opened = [e for events in state.sessions.values() for e, _, _ in events if e == "opened"]
     assert len(opened) == 2
+
+
+def test_a_node_in_process_leads_both_roles_and_lets_them_go(shared: Shared) -> None:
+    """One node, in this process: it joins, leads the writer and the executor
+    (the executor on a stack of its own), serves an agent, and, when the
+    writer role is lost, lets go of everything it held."""
+    config = _config(shared)
+    with sk.serving(config, node="n0") as served:
+        body = served.health()[1]
+        assert body["node"] == "n0"
+        sk.wait_for(
+            lambda: served.health()[1]["roles"]
+            == {"fiduciary-writer": True, "fiduciary-executor": True},
+            what="both roles",
+        )
+        agent = sk.McpClient(served.bridge())
+        agent.initialize()
+        result = agent.call("refund_order", sk.ORDER_7)
+        assert result["content"][0]["text"].startswith("Committed:"), result
+        text = served.metrics()
+        assert 'fiduciary_role{role="fiduciary-executor"} 1' in text
+        # The role resigned under the writer: it lets go, and takes it again.
+        cluster = served.supervisor._cluster
+        assert cluster is not None
+        cluster.resign("fiduciary-writer")
+        sk.wait_for(lambda: served.health()[1]["bridge"] is not None, what="the writer again")
+    state = _verified(shared)
+    assert any(e == "opened" for events in state.sessions.values() for e, _, _ in events)

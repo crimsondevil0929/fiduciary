@@ -46,13 +46,20 @@ def _key(path: Path, name: str) -> Path:
 
 
 def _configure(
-    world: bound.World, *, top: str = "", mandate: Any = None, ledger: str | None = None
+    world: bound.World,
+    *,
+    top: str = "",
+    mandate: Any = None,
+    ledger: str | None = None,
+    bind: bool = True,
 ) -> Path:
     """Write the deployment's files, then let go of what the test process
     holds: the engine's chain, the ledger's one writer. ``top`` leads
-    ``fiduciary.toml``; ``mandate`` is bound in place of the bridge's own;
-    ``ledger`` names a shared ledger in place of the world's SQLite file."""
-    world.issue_and_bind(mandate if mandate is not None else kit.mandate(world))
+    ``fiduciary.toml``; ``mandate`` is bound in place of the bridge's own
+    (``bind=False``: the caller bound what it wants already); ``ledger`` names
+    a shared ledger in place of the world's SQLite file."""
+    if bind:
+        world.issue_and_bind(mandate if mandate is not None else kit.mandate(world))
     world.binder.close()
     world.governor.close()
     tmp = world.tmp
