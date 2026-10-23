@@ -88,6 +88,7 @@ from interlock.recovery import RecoveryRuntime, RecoveryStep, Trip, TripKind
 from interlock.types import EffectId, EffectKind, EffectPlan, OutboundRequest
 
 from fiduciary import fidu1
+from fiduciary._upstream import RECOVERY_REOPENS
 from fiduciary.authority import BUILTIN_TOOLS, Authority
 from fiduciary.binding import Binder, BindingError, MandateEngine
 from fiduciary.documents import Mandate, Ticket, ToolBinding
@@ -545,12 +546,14 @@ class Fiduciary:
         ``{scope}/recovery``, and shared by every session that halts while it
         is open, so a step's tightening holds for all of them. ``session``
         names the session that bills it; the last of them to close closes it
-        (:meth:`release_recovery`).
+        (:meth:`release_recovery`). A halt after that opens it again, on a
+        fresh reserve (``{scope}/recovery/ext-N``), where Interlock reopens a
+        closed recovery (U-6).
 
         :raises RecoveryError: When the mandate has no recovery policy, no
             runtime log is configured, the reserve cannot be funded, or the
-            lineage's recovery was closed (interlock 1.0.2 does not reopen
-            one; §12, U-6).
+            lineage's recovery was closed and Interlock does not reopen one
+            (§12, U-6).
         """
         with self._lock:
             found = self._recoveries.get(mandate_id)
@@ -562,6 +565,7 @@ class Fiduciary:
             policy = engine.compiled.recovery
             if policy is None or self._runtime_records is None:
                 raise RecoveryError(f"mandate {mandate_id} names no recovery policy")
+            reopen: dict[str, Any] = {"reopen": True} if RECOVERY_REOPENS else {}
             found = RecoveryRuntime(
                 self._governor,
                 engine.mandate.subject.scope,
@@ -570,6 +574,7 @@ class Fiduciary:
                 tools=tools,
                 trajectory=trajectory,
                 guard=self.guard(mandate_id),
+                **reopen,
             )
             self._recoveries[mandate_id] = found
             if session:
@@ -1221,11 +1226,15 @@ class Session:
 
     def _safety(self, recovery: RecoveryRuntime) -> bool:
         """Whether the lineage's recovery answers a halt that is not money's:
-        a cognitive trip, a runaway, an operator's or an ancestor's (F8-9)."""
+        a cognitive trip, a runaway, an operator's or an ancestor's (F8-9).
+        Only this recovery's steps count, not a closed one's (U-6)."""
         subject = str(self._opened["scope"])
+        episode: Any = getattr(recovery, "episode", None)
+        since = 0 if episode is None else int(episode.seq)
         return any(
             record.kind == "recovery.step"
             and record.scope == subject
+            and record.seq > since
             and record.body["trip"]["kind"] != TripKind.BUDGET.value
             for record in recovery.records.records()
         )

@@ -41,6 +41,7 @@ import pytest
 from interlock.chain import EscrowChain, RecordType
 from interlock.records import Keyring, RecordLog
 
+from fiduciary._upstream import QUOTES_ADOPTED
 from fiduciary.exceptions import AuthorityError
 from fiduciary.postgres import PostgresStore
 from fiduciary.sqlite import SqliteStore
@@ -68,8 +69,9 @@ KILLS: dict[str, tuple[str, ...]] = {
 }
 KILLS["accept_repair"] = ("raised", "formed", "intent", "acted:0", "applied")  # by rule
 KILLS["release"] = (*BEFORE_INTENT, "intent", "acted:0", "acted:1", "applied")  # reset, release
-LOST_IN_MEMORY = ("accept_repair", "grant", "decline")
-"""What a restart loses: the guard's quotes (U-3), and the repair proposals."""
+LOST_IN_MEMORY = ("accept_repair",) if QUOTES_ADOPTED else ("accept_repair", "grant", "decline")
+"""What a restart loses: the repair proposals, which carry row data no record
+holds (F4-27); and the guard's quotes, where Interlock adopts none (U-3)."""
 
 
 @pytest.fixture

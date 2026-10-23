@@ -106,6 +106,44 @@ jobs:
           sys.exit(0 if lines >= 95 and branches >= 90 else 1)
           EOF
 
+  upstream:
+    # The fixes of the spec's section 12 land on interlock's and AgentGov's main
+    # before a release. Here the tests that need them run, and those of each
+    # fallback skip: the jobs above hold the fallbacks, on the releases uv.lock pins.
+    name: test against interlock and AgentGov main (py3.12, PostgreSQL 16)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fiduciary_admin
+          POSTGRES_PASSWORD: fiduciary
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fiduciary_admin"
+          --health-interval 2s --health-timeout 5s --health-retries 30
+    env:
+      UV_PYTHON: "3.12"
+      FIDUCIARY_TEST_POSTGRES_DSN: postgresql://fiduciary_admin:fiduciary@localhost:5432/postgres
+      FIDUCIARY_REQUIRE_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen --python 3.12
+      - name: Install interlock and AgentGov from main
+        run: >-
+          uv pip install --python .venv/bin/python
+          "interlock-agentgov @ git+https://github.com/crimsondevil0929/agentgov@main"
+          "interlock-escrow @ git+https://github.com/crimsondevil0929/interlock@main"
+      - name: Type-check the package against them (mypy --strict)
+        run: uv run --no-sync mypy src/
+      - name: Tests, both stores
+        run: uv run --no-sync pytest -v
+
   build:
     name: build (wheel + sdist)
     runs-on: ubuntu-latest

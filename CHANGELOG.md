@@ -6,6 +6,24 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+### Added
+
+- **The upstream fixes, where they are installed** (§12). Fiduciary reads which of them
+  the installed interlock and AgentGov provide, from their code (`fiduciary._upstream`),
+  uses each, and holds to its fallback where it is absent: it runs on interlock 1.0.2 and
+  AgentGov 1.0.0 as before, and on the releases that close the gaps.
+  - U-2: an AWS KMS key may be the executor's or the runtime's, its ILOK1 records signed
+    at signature version 2 (F3-9). Outbox actions are still chunked to 8 targets.
+  - U-3: an extension quote survives a restart and the writer moving to another node
+    (F7-14).
+  - U-4: an outbox step at a head that moved after its ticket is refused before anything
+    is signed, where it was recorded and named (F7-15).
+  - U-5: a reset's own entry names its warrant, with no anchor beside it (§7.6). V7 and
+    V8 read either form.
+  - U-6: a lineage's recovery opens again on a fresh reserve, `{scope}/recovery/ext-N`,
+    at a halt after it closed, where a lineage recovered once (F8-9).
+- A CI job runs the suite against interlock's and AgentGov's `main`.
+
 ### Fixed
 
 - **A takeover waits for a frozen writer, healthy** (F10-19). The node that took the

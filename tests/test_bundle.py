@@ -42,6 +42,22 @@ def test_the_phase_4_lifecycle_exports_a_bundle_that_verifies(world: bound.World
     assert report.passed, report.render()
 
 
+def test_a_recovery_closed_and_halted_again_exports_a_bundle_that_verifies(
+    world: bound.World,
+) -> None:
+    """Two sessions share the lineage's recovery and close it; a third halts.
+    Where Interlock reopens a closed recovery (U-6), its fresh reserve on
+    ``{scope}/recovery/ext-1``, the steps it bills and the reserve it returns
+    are each explained (V7); where it does not, the halt stands. The bundle
+    verifies either way."""
+    from tests.test_bridge import test_the_last_session_to_close_returns_the_recovery_reserve
+
+    test_the_last_session_to_close_returns_the_recovery_reserve(world)
+    (mandate_id,) = world.log.state().lineages
+    report = bk.verify(world, bk.export(world, mandate_id))
+    assert report.passed, report.render()
+
+
 def test_a_grant_other_than_the_warrants_is_named(
     world: bound.World, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from agentgov.core import EntryType
 from agentgov.receipts.kms_aws import AwsKmsSigner
 from agentgov.receipts.signing import Ed25519Signer
 from interlock import OutboundRequest, PlanBuilder
@@ -24,6 +25,7 @@ from interlock.relay import DELIVERED, PERMANENT, DeliveryResult, LedgerBreaker,
 from interlock.types import EffectId
 
 from fiduciary import cli, fidu1
+from fiduciary._upstream import EXPECTED_HEADS, ILOK1_DIGESTS, QUOTES_ADOPTED, RESET_MEMO
 from fiduciary.config import ConfigError, load_config
 from fiduciary.documents import Approval, Mandate, Resolution, Ticket, Warrant
 from fiduciary.escalation import Escalation
@@ -153,8 +155,12 @@ def _write_seed_key(path: Path, name: str) -> Path:
 
 
 def test_aws_kms_signer_is_refused_for_executor_and_runtime(
-    world: bound.World,
+    world: bound.World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Where Interlock signs ILOK1 records whole, as 1.0.2 does: an operator or
+    runtime record may exceed the 4,096 bytes KMS signs (F3-9)."""
+    monkeypatch.setattr("fiduciary.executor.ILOK1_DIGESTS", False)
+    monkeypatch.setattr("fiduciary._upstream.ILOK1_DIGESTS", False)
     kms_signer = AwsKmsSigner(
         "arn:aws:kms:us-east-1:111122223333:key/test", client=FakeKms(e.SERVICE)
     )
@@ -174,6 +180,47 @@ def test_aws_kms_signer_is_refused_for_executor_and_runtime(
     )
     with pytest.raises(ConfigError, match="refused before U-2"):
         load_config(cfg_path)
+
+
+def test_aws_kms_signs_executor_and_runtime_records_where_interlock_signs_digests(
+    world: bound.World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where Interlock signs ILOK1 records at signature version 2 (U-2), a key
+    AWS KMS holds signs any record, and is the executor's or runtime's key."""
+    monkeypatch.setattr("fiduciary.executor.ILOK1_DIGESTS", True)
+    monkeypatch.setattr("fiduciary._upstream.ILOK1_DIGESTS", True)
+    kms_signer = AwsKmsSigner(
+        "arn:aws:kms:us-east-1:111122223333:key/test", client=FakeKms(e.SERVICE)
+    )
+    check_ilok1_signer(kms_signer, role="executor")
+    Executor(world.binder, executor_signer=kms_signer, runtime_signer=kms_signer)
+    cfg_path = world.tmp / "kms.toml"
+    cfg_path.write_text(
+        'database = "f.db"\n'
+        '[service]\nkey = "s.key"\n'
+        '[executor]\nsigner = "kms"\n'
+        '[runtime]\nsigner = "kms"\n'
+        '[signers.kms]\ntype = "aws-kms"\nkey_id = "arn:aws:kms:us-east-1:1:key/k"\n'
+    )
+    load_config(cfg_path)
+
+
+@pytest.mark.skipif(not ILOK1_DIGESTS, reason="this Interlock signs ILOK1 records whole (U-2)")
+def test_a_kms_operator_log_signs_an_intent_of_any_size(world: bound.World) -> None:
+    """U-2, end to end: the operator log a KMS key writes signs a record far
+    past 4,096 bytes, at signature version 2, and every message KMS is given
+    is a digest."""
+    kms = FakeKms(e.SERVICE)
+    signer = AwsKmsSigner("arn:aws:kms:us-east-1:111122223333:key/test", client=kms)
+    pub = e.SERVICE.public_key()
+    log = OperatorLog(world.tmp / "kms-op.jsonl", signer, Keyring({pub.key_id: pub}))
+    try:
+        targets = [{"message": str(uuid.uuid4()), "head": "f" * 64} for _ in range(60)]
+        record = log.append(RecordKind.OPERATOR_INTENT, {"action": "release", "targets": targets})
+    finally:
+        log.close()
+    assert len(json.dumps(record.to_json())) > 4096
+    assert record.to_json()["sig"]["sv"] == 2 and max(map(len, kms.messages)) < 100
 
 
 # --------------------------------------------------------------------------
@@ -282,16 +329,17 @@ def test_execute_held_release_with_reset_and_cancel_and_chunking(world: bound.Wo
         )
         assert intent_steps[2]["kind"] == "release" and len(intent_steps[2]["targets"]) == 2
 
-        # Check ledger anchor immediately precedes reset (U-5 / §7.6)
+        # §7.6: the reset names its warrant itself (U-5), or the warrant's
+        # anchor immediately precedes it; one entry names it either way.
         world.governor.refresh()
         trail = list(world.governor.audit_trail())
-        anchor_idx = next(
-            i
-            for i, entry in enumerate(trail)
-            if entry.memo == f"FIDU1 warrant {warrant.digest} reset {bound.SCOPE}"
-        )
-        assert "reset" in str(trail[anchor_idx + 1].entry_type).lower()
-        assert trail[anchor_idx + 1].scope_id == bound.SCOPE
+        memo = f"FIDU1 warrant {warrant.digest} reset {bound.SCOPE}"
+        (named,) = [entry for entry in trail if entry.memo == memo]
+        reset = named if RESET_MEMO else trail[trail.index(named) + 1]
+        assert (reset.entry_type, reset.scope_id) == (EntryType.CIRCUIT_RESET, bound.SCOPE)
+        (result, *_) = records[-1].content["results"]
+        assert result["reset_seq"] == reset.sequence
+        assert ("anchor_seq" in result) is not RESET_MEMO
         assert world.governor.halted_by(bound.SCOPE) is None
 
         # Check both ILOK1 operator intents carry `FIDU1 warrant <digest>`
@@ -481,7 +529,9 @@ def test_execute_extension_grant_decline_and_lost_quote_f7_14(world: bound.World
         for r in runtime_records.records()
     )
 
-    # 3. F7-14 (U-3 fallback): lost quote after restart refuses cleanly and lapses the ticket
+    # 3. F7-14: after a restart, a guard opened over the runtime log adopts the
+    # quote where Interlock does (U-3), and the grant applies; where it does
+    # not, the quote is lost, the execution refused, and the ticket lapses.
     quote3 = guard.quote(bound.SCOPE, Decimal("20.00"), task=bound.SCOPE)
     tk3, _ = esc.raise_extension(mandate.mandate_id, quote3)
     assert tk3 is not None
@@ -496,13 +546,17 @@ def test_execute_extension_grant_decline_and_lost_quote_f7_14(world: bound.World
         runtime_records=runtime_records,
     )
     rec_lost = restarted_executor.execute(w_lost)
-    assert [r.kind for r in rec_lost] == [
-        "execution.intent",
-        "execution.refused",
-        "ticket.lapsed",
-    ]
-    assert "quote_lost" in str(rec_lost[1].content["why"])
-    assert world.log.state().ticket_status(tk3.ticket_id) == "lapsed"
+    if QUOTES_ADOPTED:
+        assert [r.kind for r in rec_lost] == ["execution.intent", "execution.applied"]
+        assert f"{bound.SCOPE}/ext-2" in world.governor.scopes()
+    else:
+        assert [r.kind for r in rec_lost] == [
+            "execution.intent",
+            "execution.refused",
+            "ticket.lapsed",
+        ]
+        assert "quote_lost" in str(rec_lost[1].content["why"])
+        assert world.log.state().ticket_status(tk3.ticket_id) == "lapsed"
     runtime_records.close()
     _verify(world)
 
@@ -533,7 +587,12 @@ def test_execute_amend_warrant_issues_and_rebinds(world: bound.World) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_f7_12_single_intent_expiry_and_f7_15_head_mismatch(world: bound.World) -> None:
+def test_f7_12_single_intent_expiry_and_f7_15_head_mismatch(
+    world: bound.World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Where the operator reads each head itself, as Interlock 1.0.2's does, an
+    act on a head the ticket did not observe is recorded and named (F7-15)."""
+    monkeypatch.setattr("fiduciary.executor.EXPECTED_HEADS", False)
     mandate = world.mandate()
     world.issue_and_bind(mandate)
     esc = Escalation(world.authority, world.governor)
@@ -589,6 +648,57 @@ def test_f7_12_single_intent_expiry_and_f7_15_head_mismatch(world: bound.World) 
         world.clock.advance(seconds=7200)
         with pytest.raises(AuthorityError, match="expired at"):
             executor.execute(w_exp)
+    finally:
+        op_log.close()
+        outbox_conn.close()
+    _verify(world)
+
+
+@pytest.mark.skipif(not EXPECTED_HEADS, reason="this Interlock reads each head itself (U-4)")
+def test_an_act_on_a_head_the_ticket_did_not_observe_is_refused_unsigned(
+    world: bound.World,
+) -> None:
+    """U-4: the operator is given the heads the ticket observed, and refuses
+    before signing anything when one has moved: the execution is refused, no
+    ILOK1 intent names the warrant, and the message is free for a new ticket
+    (F7-15)."""
+    mandate = world.mandate()
+    world.issue_and_bind(mandate)
+    esc = Escalation(world.authority, world.governor)
+    outbox, outbox_conn = _outbox_ops(world)
+    op_log = _op_log(world)
+    executor = Executor(world.binder, escalation=esc, outbox=outbox, operator_log=op_log)
+    try:
+        assert world.execute(mandate, world.refund_plan(1, "10.00")).committed
+        world.governor.trip(bound.SCOPE, "spend envelope exhausted")
+        _run_relay(world, DeliveryResult(outcome=DELIVERED, detail="ok"))
+        tk, _ = esc.raise_held(mandate.mandate_id, outbox)
+        assert tk is not None
+        warrant = _approve_ticket(world, esc, tk, "release")
+        world.governor.reset(bound.SCOPE)
+        pub = e.SERVICE.public_key()
+        other_log = OperatorLog(world.tmp / "other-op.jsonl", e.SERVICE, Keyring({pub.key_id: pub}))
+        try:
+            mid = uuid.UUID(tk.evidence.messages[0].message_id)  # type: ignore[union-attr]
+            Operator(other_log, outbox).release([mid], reason="ambient release")
+        finally:
+            other_log.close()
+        world.governor.trip(bound.SCOPE, "spend envelope exhausted")
+        _run_relay(world, DeliveryResult(outcome=DELIVERED, detail="ok"))
+
+        records = executor.execute(warrant)
+        assert [r.kind for r in records[:2]] == ["execution.intent", "execution.refused"]
+        assert "not the state the action was decided on" in records[1].content["why"]
+        assert not records[1].content["mismatches"]
+        assert not [
+            r
+            for r in op_log.records()
+            if r.kind == "operator.intent"
+            and r.body.get("reason") == f"FIDU1 warrant {warrant.digest}"
+        ]
+        assert world.outbox_states() == ["held"]
+        again, _ = esc.raise_held(mandate.mandate_id, outbox)
+        assert again is not None and again.ticket_id != tk.ticket_id
     finally:
         op_log.close()
         outbox_conn.close()

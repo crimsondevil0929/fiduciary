@@ -7,9 +7,12 @@ Every formed :class:`~fiduciary.documents.Warrant` executes in two phases:
    is touched, and before the warrant's ``not_after`` (F7-12). It names the
    warrant's digest and its steps in order, each with the precondition its
    ticket observed (:func:`~fiduciary.documents.execution_steps`): outbox
-   actions are chunked to at most 8 targets (F3-9, U-2).
+   actions are chunked to at most 8 targets (F3-9).
 2. Each step acts on Interlock or AgentGov, binding ``FIDU1 warrant <digest>``
-   into whatever that system signs or hashes (§7.6, F2-2).
+   into whatever that system signs or hashes (§7.6, F2-2). Where the installed
+   Interlock takes them (U-4), an outbox action is given the heads its ticket
+   observed, and is refused before anything is signed if one has moved; where
+   AgentGov takes one (U-5), a reset's own entry names the warrant too.
 3. ``execution.applied`` or ``execution.refused`` follows.
 
 A warrant's execution holds a claim on it (``execution:<digest>``) from its
@@ -27,7 +30,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -52,6 +55,7 @@ from interlock.records import Keyring, RecordLog, SignedRecord
 from interlock.recovery import breaker_reason, spent_out
 from interlock.types import EffectPlan, PlanId
 
+from fiduciary._upstream import EXPECTED_HEADS, ILOK1_DIGESTS, RESET_MEMO
 from fiduciary.authority import Authority, Decide
 from fiduciary.binding import Binder
 from fiduciary.documents import (
@@ -64,7 +68,7 @@ from fiduciary.documents import (
 )
 from fiduciary.escalation import Escalation
 from fiduciary.exceptions import AuthorityError, FiduciaryError, StoreError
-from fiduciary.log import Log
+from fiduciary.log import ANCHOR_SCOPE, Log
 from fiduciary.store import State
 
 if TYPE_CHECKING:
@@ -88,12 +92,13 @@ class ExecutionError(FiduciaryError):
 
 
 def check_ilok1_signer(signer: Signer | None, *, role: str = "executor") -> None:
-    """Refuse an :class:`AwsKmsSigner` for an ILOK1 log, which interlock signs
-    whole (F3-9, U-2)."""
-    if isinstance(signer, AwsKmsSigner):
+    """Refuse an :class:`AwsKmsSigner` for an ILOK1 log the installed Interlock
+    signs whole (F3-9). One that signs records at signature version 2, a
+    digest (U-2), signs any record through it."""
+    if isinstance(signer, AwsKmsSigner) and not ILOK1_DIGESTS:
         raise ExecutionError(
-            f"the {role} key may not be an AWS KMS signer before U-2 (F3-9): "
-            f"ILOK1 signs whole records, which can exceed KMS's 4,096-byte RAW limit"
+            f"the {role} key may not be an AWS KMS signer before U-2 (F3-9): this "
+            f"Interlock signs ILOK1 records whole, which can exceed KMS's 4,096-byte RAW limit"
         )
 
 
@@ -137,7 +142,9 @@ class Executor:
     :param operator_keyring: Every operator's public key, as interlock's
         configuration names them; the executor's alone by default.
     :param guard: The :class:`BudgetGuard` that issued the quotes that
-        extension tickets name. It holds them in memory (F7-14, U-3).
+        extension tickets name. It holds them in memory; one opened over the
+        runtime log since adopts those still open, where Interlock does (F7-14,
+        U-3).
     :param guard_for: The guard of a lineage, by ``mandate_id``, where each
         lineage quotes through its own (the bridge's: margin and ttl are each
         mandate's). Asked before ``guard``.
@@ -504,17 +511,25 @@ class Executor:
                 why=f"scope {scope!r} is now halted for a reason other than money, which a "
                 f"warrant to reset a spent-out halt cannot lift",
             )
+        memo = f"{reason} reset {scope}"
+        reset: Any = governor.reset
         try:
-            with governor.transaction():  # nothing interleaves: the anchor precedes the reset
-                anchor = governor.anchor("fiduciary", f"{reason} reset {scope}")
-                governor.reset(scope)
+            with governor.transaction():  # nothing interleaves between its entries
+                mark = len(governor.ledger)
+                if RESET_MEMO:  # U-5: the reset's own entry names the warrant
+                    reset(scope, memo=memo)
+                    anchor = None
+                else:  # the warrant's anchor immediately precedes the reset
+                    anchor = governor.anchor(ANCHOR_SCOPE, memo)
+                    reset(scope)
         except AgentGovError as exc:
             return _Step(False, why=str(exc))
-        found = self._reset_after(idx, scope, anchor)
+        if anchor is None:
+            found = self._reset_named(idx, scope, memo, governor.entries(after=mark, limit=10))
+        else:
+            found = self._reset_after(idx, scope, anchor)
         if found.status != "reached":
-            return _Step(
-                False, why=f"the reset after anchor {anchor.sequence} is not in the ledger"
-            )
+            return _Step(False, why=f"the reset of {scope!r} is not in the ledger: {found.why}")
         return _Step(True, found.result)
 
     def _outbox_step(
@@ -540,15 +555,21 @@ class Executor:
                 registry = self._binder.compile(head[1], state).sinks
             except FiduciaryError as exc:
                 return _Step(False, why=str(exc))
+        # U-4: the operator acts only at the heads the ticket observed.
+        seen: dict[str, Any] = (
+            {"expected_heads": {uuid.UUID(m): head for m, head in expected.items()}}
+            if EXPECTED_HEADS
+            else {}
+        )
         try:
             with self._open_operator_log() as op_log:
                 op = Operator(op_log, self._outbox)
                 if kind == "release":
-                    outcome = op.release(ids, reason=reason)
+                    outcome = op.release(ids, reason=reason, **seen)
                 elif kind == "cancel":
-                    outcome = op.cancel(ids[0], reason=reason)
+                    outcome = op.cancel(ids[0], reason=reason, **seen)
                 elif kind == "requeue":
-                    outcome = op.requeue(ids[0], reason=reason)
+                    outcome = op.requeue(ids[0], reason=reason, **seen)
                 else:
                     outcome = op.compensate(
                         ids,
@@ -557,6 +578,7 @@ class Executor:
                         reason=reason,
                         registry=registry,
                         now=self.log.now(),
+                        **seen,
                     )
         except (OperatorRefusedError, OutboundRequestError, InterlockError) as exc:
             return _Step(False, why=str(exc))
@@ -583,8 +605,8 @@ class Executor:
         if guard is None or quote is None:
             return _Step(
                 False,
-                why=f"quote_lost: the guard holds no quote {quote_id}, which a restart loses "
-                f"(F7-14, U-3)",
+                why=f"quote_lost: the guard holds no quote {quote_id}: a restart loses it, "
+                f"where Interlock adopts no quote (F7-14, U-3), and so does its expiry",
                 lost=True,
             )
         if quote.record.record_hash != step["record_hash"]:
@@ -771,10 +793,35 @@ class Executor:
         governor = self.governor
         governor.refresh()
         memo = f"{reason} reset {scope}"
-        anchor = next((e for e in governor.audit_trail("fiduciary") if e.memo == memo), None)
+        named = self._reset_named(idx, scope, memo, governor.audit_trail(scope))
+        if named.status == "reached":
+            return named  # U-5's form: the reset names the warrant
+        anchor = next((e for e in governor.audit_trail(ANCHOR_SCOPE) if e.memo == memo), None)
         if anchor is None:
             return _Found("missing")
         return self._reset_after(idx, scope, anchor)
+
+    @staticmethod
+    def _reset_named(idx: int, scope: str, memo: str, entries: Iterable[LedgerEntry]) -> _Found:
+        """The reset step reached when one of ``entries`` resets ``scope`` and
+        names its warrant itself (U-5)."""
+        for entry in entries:
+            if (
+                entry.entry_type is EntryType.CIRCUIT_RESET
+                and entry.scope_id == scope
+                and entry.memo == memo
+            ):
+                return _Found(
+                    "reached",
+                    {
+                        "step": idx,
+                        "kind": "reset",
+                        "scope": scope,
+                        "reset_seq": entry.sequence,
+                        "reset_id": str(entry.entry_id),
+                    },
+                )
+        return _Found("missing", why="no reset names the warrant")
 
     def _reset_after(self, idx: int, scope: str, anchor: LedgerEntry) -> _Found:
         """The reset step reached when the entry after its anchor resets ``scope``."""
@@ -911,7 +958,8 @@ def _head_mismatches(
     step: int, expected: Mapping[str, str], intent: SignedRecord
 ) -> list[dict[str, Any]]:
     """The targets whose head the ILOK1 intent signed is not the one the ticket
-    observed: an act on a state no principal saw (F7-15, until U-4)."""
+    observed: an act on a state no principal saw (F7-15). With U-4 there are
+    none: the operator refuses such an act before it signs anything."""
     found = []
     for target in intent.body.get("targets", ()):
         message, signed = str(target["message"]), str(target["head"])

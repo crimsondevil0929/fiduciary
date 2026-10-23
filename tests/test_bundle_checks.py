@@ -426,11 +426,13 @@ def test_an_execution_after_the_warrant_expired_is_named(
 
 
 def test_a_step_at_a_head_the_ticket_did_not_observe_is_named(
-    world: bound.World, held: _Held
+    world: bound.World, held: _Held, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Between the ticket and the warrant's execution, the message was
     released by hand and held again: the step acts on a head the principals
-    never saw (F7-15, U-4)."""
+    never saw (F7-15), as it can where the operator reads each head itself,
+    without U-4."""
+    monkeypatch.setattr("fiduciary.executor.EXPECTED_HEADS", False)
     warrant = _approve_ticket(world, held.escalation, held.ticket, "release")
     world.governor.reset(bound.SCOPE)
     log = _operator_log(world)

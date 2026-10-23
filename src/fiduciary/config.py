@@ -293,9 +293,10 @@ class Config:
         return open_signer(self.signers, key=self.service_key, signer=self.service_signer)
 
     def executor(self) -> Signer:
-        """The executor key, which signs ILOK1 operator records (not AWS KMS
-        before U-2, F3-9). When ``interlock.toml`` names operators, it must be
-        one of them: interlock refuses a record any other key signs.
+        """The executor key, which signs ILOK1 operator records: AWS KMS only
+        with an Interlock that signs them at signature version 2 (U-2, F3-9).
+        When ``interlock.toml`` names operators, it must be one of them:
+        interlock refuses a record any other key signs.
         """
         from fiduciary.executor import ExecutionError, check_ilok1_signer
 
@@ -541,11 +542,13 @@ def load_config(path: str | Path) -> Config:
     signer = service.get("signer")
     exec_signer = executor.get("signer")
     run_signer = runtime.get("signer")
+    from fiduciary._upstream import ILOK1_DIGESTS
+
     for role_name, sec_signer in (("executor", exec_signer), ("runtime", run_signer)):
-        if sec_signer is not None and signers[sec_signer].type == "aws-kms":
+        if sec_signer is not None and signers[sec_signer].type == "aws-kms" and not ILOK1_DIGESTS:
             raise ConfigError(
                 f"{where}: [{role_name}] signer {sec_signer!r} is aws-kms, which is refused "
-                f"before U-2 (F3-9)"
+                f"before U-2 (F3-9): this Interlock signs ILOK1 records whole"
             )
     in_process = raw.get("in_process", "no")
     if in_process not in ("no", "tool-calls-only"):

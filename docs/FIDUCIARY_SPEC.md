@@ -261,7 +261,7 @@ Three claims, stated so they can be falsified:
 | G2 | **No unmandated checker weakening.** A plan of a mandated scope is admitted only by an engine that runs at least the compiled checker set of the version in force. | Fiduciary builds the engine from `compile()` alone | V4, per receipt | Until U-1, V4 checks the binding checker's configuration exactly and the others by name. |
 | G3 | **Monotone delegation.** A derived mandate admits no plan, spend, request or escalation resolution that its parent would refuse. Windows and envelopes bound the whole subtree. | `refines()` at derivation and at rebase; AgentGov's delegation invariant | V3 | None known. §5.6 states what is proven, and how. |
 | G4 | **Quorum.** An authority-granting resolution executes only with one of two bases: k valid approvals of exactly that resolution from k distinct roster principals, or a mandated rule whose predicate holds over the ticket's typed evidence. | The service forms warrants only this way | V8 | A3 can execute without a warrant. V7 and V8 detect it; nothing prevents it (the G1 residual). |
-| G5 | **Once, on the approved state, before expiry.** | Two-phase execution; interlock's head checks; AgentGov's idempotency keys | V8 | Until U-4, an outbox action can apply at a head that moved between fiduciary's check and the operator's own read. V8 names it. |
+| G5 | **Once, on the approved state, before expiry.** | Two-phase execution; interlock's head checks; AgentGov's idempotency keys | V8 | Where Interlock lacks U-4, an outbox action can apply at a head that moved between fiduciary's check and the operator's own read; V8 names it. With U-4 the operator refuses it before signing anything. |
 | G6 | **Tamper evidence.** Any edit, deletion, reordering, truncation or fork is detected offline, in fiduciary's log or documents, or in the interlock and AgentGov evidence they name. | — | V1 to V12 | The log's genesis, as with every self-hosted log (E3-5). The ledger anchors bound everything after it. |
 | G7 | **Revocation stops the lineage.** After a revocation's trip is in the ledger, no plan of the lineage commits, and no message of it is delivered. | AgentGov's latching breaker; interlock E3-8, under which a halted scope does not commit; relays holding a halted scope's messages | V11 | A plan whose stage opened before the trip is reported as in flight, and does not commit. |
 | G8 | **What you see is what you sign.** A principal's approval covers the digest of the exact bytes their client rendered. A ticket's summary is rendered from typed evidence, and the agent's own text is quarantined. | The principal client rules (§7.3) | V8, through the resolution digest | A principal who signs without reading. |
@@ -422,11 +422,16 @@ Ed25519ph, whose signatures do not verify as Ed25519.
   A cancel also cancels everything that waits for its target, so the number of rows an
   applied record names is not bounded by its targets. Through AWS KMS an action can sign its
   intent and act, and then fail to sign its outcome. Its intent is left unresolved, and
-  `resolve()` cannot record the outcome either. Until U-2 (ILOK1 digest signing) ships
-  upstream:
-  - fiduciary MUST refuse to start with an `AwsKmsSigner` as its executor key or its
-    runtime records key;
-  - with any other key, it MUST split outbox actions into intents of at most 8 targets.
+  `resolve()` cannot record the outcome either. So:
+  - Where the installed Interlock signs ILOK1 records whole (before U-2), fiduciary MUST
+    refuse to start with an `AwsKmsSigner` as its executor key or its runtime records key.
+    Where it signs them at signature version 2 (U-2: the record's SHA-512, under 100 bytes
+    whatever the record's size), it accepts one, and the log signs at version 2.
+  - It MUST split outbox actions into intents of at most 8 targets, with any key and any
+    Interlock: an execution's steps are part of its intent, which replay recomputes, so
+    they never depend on the Interlock installed.
+
+  *(Amended after the 1.0.0 freeze, which refused an AWS KMS key whatever the Interlock.)*
 
 ---
 
@@ -1346,14 +1351,22 @@ resolution. It runs in two phases, as interlock's operators act:
   outcome: a file lock on SQLite, and a session advisory lock on PostgreSQL. A killed
   process loses it. `resolve()` skips an intent whose claim a live process holds, since
   that process is still acting on it.
-- **F7-14.** `BudgetGuard` keeps quotes in memory, and grants only the quotes it issued. A
-  step that needs a quote this process no longer holds is therefore `refused`, with that
-  reason. Its ticket lapses, and the agent asks again. U-3 removes this limit. A repair
-  proposal is held in memory too, since it carries row data (F4-27). An `accept_repair`
-  step whose proposal a restart lost is refused, and its ticket lapses, in the same way.
-- **F7-15.** Until U-4, after each outbox step fiduciary compares the heads the ILOK1 intent
-  signed with the heads the ticket observed. A mismatch means the action reached a state no
-  principal saw. It is recorded in `execution.applied`, and V8 names it.
+- **F7-14.** A quote is an `extension.quoted` record of the runtime log. Where Interlock
+  adopts quotes (U-3), a `BudgetGuard` opened over that log holds every quote in it that no
+  record answers and that has not expired: a restart, or the writer role moving to another
+  node, loses none, and a quote is answered once, whichever guard answers it. Where it does
+  not, a guard holds only the quotes it issued, in memory; a step that needs a quote this
+  process no longer holds is `refused`, with that reason, its ticket lapses, and the agent
+  asks again. A repair proposal is held in memory either way, since it carries row data
+  (F4-27): an `accept_repair` step whose proposal a restart lost is refused, and its ticket
+  lapses, in the same way.
+- **F7-15.** Where Interlock takes the heads (U-4), the executor gives the operator the
+  heads the ticket observed, and an outbox step at a head that has moved since is refused
+  before anything is signed: `execution.refused`, no ILOK1 intent names the warrant, and
+  the message is free for a new ticket. Where it does not, after each outbox step fiduciary
+  compares the heads the ILOK1 intent signed with the heads the ticket observed. A mismatch
+  means the action reached a state no principal saw. It is recorded in
+  `execution.applied`, and V8 names it, as it names one in any log written so.
 
 ## 7.6 Each resolution against interlock and AgentGov
 
@@ -1361,7 +1374,7 @@ resolution. It runs in two phases, as interlock's operators act:
 |---|---|---|
 | `accept_repair` | `engine.execute(repair.proposal)`, unchanged | The record names the proposal's plan hash, and its receipt names the refused receipt as `repair_of`. |
 | `release` | `Operator.release(ids, reason="FIDU1 warrant <digest>")` | The ILOK1 `operator.intent` body, which the executor signs and AgentGov anchors |
-| `reset` | in one `governor.transaction()`: `anchor("fiduciary", "FIDU1 warrant <digest> reset <scope>")`, then `reset(scope)` | The anchor entry immediately precedes the `CIRCUIT_RESET` entry in the chain, since nothing interleaves inside a transaction. |
+| `reset` | in one `governor.transaction()`: where AgentGov takes a memo (U-5), `reset(scope, memo="FIDU1 warrant <digest> reset <scope>")`; otherwise `anchor("fiduciary", <that memo>)`, then `reset(scope)` | The `CIRCUIT_RESET` entry's own memo; or the anchor entry immediately preceding it, since nothing interleaves inside a transaction. One entry names the warrant either way, and a verifier reads both. |
 | `cancel` | `Operator.cancel(id, reason="FIDU1 warrant <digest>")` | ILOK1, as for `release` |
 | `requeue` | `Operator.requeue(id, reason="FIDU1 warrant <digest>")` | ILOK1 |
 | `compensate`, `compensate_late` | `Operator.compensate(ids, plan_id=, late=, reason="FIDU1 warrant <digest>", registry=compiled sinks)` | ILOK1. The settler credits the compensation under that authority. |
@@ -1516,8 +1529,13 @@ interlock already provides:
     step's hold is voided, and the unused reserve returns to the scope that funded it.
   - Interlock's runtime follows one transcript, so while one session is in recovery another
     session's step is refused; that session's halt stands, though its calls bill the shared
-    reserve. Interlock 1.0.2 does not reopen a closed recovery (U-6): a later halt of the
-    lineage is answered as if it had no recovery policy.
+    reserve.
+  - A halt after the lineage's recovery has closed opens it again, where Interlock reopens
+    a closed recovery (U-6): a fresh reserve, funded as the first was, on
+    `{scope}/recovery/ext-N`, which sessions bill from then on and `fiduciary_mandate`
+    admits; the ladder begins again; and only this recovery's steps decide whether it
+    answers a safety halt. Where it does not, a later halt is answered as if the lineage
+    had no recovery policy.
 
 ## 8.4 Trust boundary
 
@@ -1779,13 +1797,13 @@ digest = "<sha256 of charter version 1>"               # the root of authority
 signer = "kms-fiduciary"                               # [signers.<name>], or key = "service.key"
 
 [executor]
-key    = "executor.key"                                # an [operators.keys] key; not AWS KMS before U-2
+key    = "executor.key"                                # an [operators.keys] key; AWS KMS only with U-2
 log    = "operators.ilok1"                             # else interlock.toml's [operators] log
 outbox = "postgresql://interlock_admin@db/acme"        # the outbox, as the installer (or the SQLite file)
 
 [runtime]
 records = "runtime.jsonl"                              # the ILOK1 log of recovery and extension records
-key     = "runtime.key"                                # not AWS KMS before U-2
+key     = "runtime.key"                                # AWS KMS only with U-2
 
 [receipts]
 log    = "fiduciary-receipts.jsonl"
@@ -1868,7 +1886,9 @@ written by part. Every label comes from a closed set: never a lineage, a tenant 
 
 - **F10-12.** A warrant is executed where what it needs is. An `accept_repair` stages on the
   lineage's engine, an `amend` rebinds it, and a `grant` or `decline` answers a quote the
-  lineage's guard holds in memory (U-3). These are executed by the writer. Every other
+  lineage's guard holds (adopted from the runtime log where Interlock adopts quotes, U-3)
+  and writes the answer to the runtime log, whose one writer is the writer's process. These
+  are executed by the writer. Every other
   resolution is executed by the executor. Either way, the warrant's claim keeps it to one
   execution (F7-12).
 - **F10-13.** The bridge opens sessions for the agents `[bridge.agents]` names. An agent
@@ -2121,10 +2141,16 @@ change after that bumps a domain's version.
 # 12. Upstream prerequisites
 
 These are what fiduciary's contract needs from the packages below it, and what interlock
-1.0.2 and agentgov 1.0.0 do not provide. Each is a change to their public surface, proposed
-in that package. None is worked around here.
+1.0.2 and agentgov 1.0.0 do not provide. Each is a change to their public surface, made in
+that package. None is worked around here.
 
-| # | Package | Gap, as measured or read | Needed by | Until it ships |
+Fiduciary reads which of them the installed packages provide from their code
+(`fiduciary._upstream`), uses each where it is present, and holds to the fallback in the
+last column where it is not. So one release runs on interlock 1.0.2 and agentgov 1.0.0, and
+on the releases that close these. *(Amended after the 1.0.0 freeze, as each was made
+upstream: Conformance gives where.)*
+
+| # | Package | Gap, as measured or read | Needed by | Where it is not installed |
 |---|---|---|---|---|
 | U-1 | interlock | `receipts.checker_records` digests a checker's configuration from the `repr` of its slots. A `frozenset` of strings has a `repr` whose order depends on the hash seed: on 1.0.2, `table_allowlist` over four tables digested four ways under four seeds. A receipt's `decision.checkers` therefore cannot be recomputed in another process. The fix is to encode sets sorted. It changes no plan, diff or verdict hash, only checker configuration digests, which were never reproducible. | F6-8, V4 (Phase 2) | Fixed on interlock `main` (crimsondevil0929/interlock#20, under `[Unreleased]`); ships in the next release. Until fiduciary requires it, V4 checks `fiduciary_mandate` exactly, and the other checkers by name. |
 | U-2 | interlock | ILOK1 records are signed whole. Through AWS KMS, an `operator.applied` record fails past about 24 rows and a `compensate` intent past about 9 targets (§3.5's measurement), and a cancel's cascade is unbounded (F3-9). The fix is to sign ILOK1 records at a digest version, as ARC1 1.2 does. | F3-9 (Phase 3) | Executor and runtime keys on AWS KMS are refused, and outbox actions are chunked to 8 targets. |
@@ -2186,16 +2212,20 @@ A change to any of them is a new domain version (`FIDU1/<type>/v2`) or a new bun
 (`vectors/fidu1/`) and the golden bundles (`vectors/fidu1/bundles/`) hold every release to
 this.
 
-**The upstream gaps (§12), as of 1.0.0.**
+**The upstream gaps (§12).** Each is implemented upstream: U-1 on interlock's `main`
+(#20), U-2, U-3, U-4 and U-6 on its branch `feat/fiduciary-prerequisites`, and U-5 on
+agentgov's branch `feat/reset-memo`, none of them released yet. Fiduciary uses each where
+the installed package provides it, and its suite runs both ways: on interlock 1.0.2 and
+agentgov 1.0.0, and on those branches.
 
-| # | Status | What 1.0.0 does meanwhile |
+| # | With it | Without it, as on interlock 1.0.2 and agentgov 1.0.0 |
 |---|---|---|
-| U-1 | Fixed on interlock `main` (#20), unreleased: interlock 1.0.3 is held until U-2, U-3 and U-4 ship with it | V4 checks `fiduciary_mandate` exactly, and the other checkers by name (F6-8). A bundle whose manifest says `canonical_digests` is checked strictly, but for receipts that precede the lineage's first canonical one, which are noted. Verified against interlock `main`: every 0.x store's bundle passes. **Partial.** |
-| U-2 | Open | An AWS KMS executor or runtime key is refused; outbox actions are chunked to 8 targets (F3-9). |
-| U-3 | Open | A quote or repair proposal lives in the memory of the process that made it. A restart, or a cluster's writer moving to another node, lapses its ticket (F7-14). The writer executes the warrants that need them (F10-12). |
-| U-4 | Open | A head that moved after the ticket is recorded in `execution.applied` and named by V8 (F7-15): named, not prevented. |
-| U-5 | Open | A reset's anchor precedes it in one AgentGov transaction (§7.6). |
-| U-6 | Open | A lineage recovers once: after its recovery closes, a spent-out halt is quoted on the billing scope, and any other halt stands (F8-9). |
+| U-1 | V4 checks every checker's digest, for the receipts from a lineage's first canonical one on. | V4 checks `fiduciary_mandate` exactly, and the other checkers by name (F6-8). A bundle whose manifest says `canonical_digests` is checked strictly, but for receipts that precede the lineage's first canonical one, which are noted. Verified against interlock `main`: every 0.x store's bundle passes. **Partial until fiduciary requires an Interlock with it.** |
+| U-2 | An AWS KMS executor or runtime key signs ILOK1 records at signature version 2 (F3-9). | An AWS KMS executor or runtime key is refused. Outbox actions are chunked to 8 targets either way. |
+| U-3 | A quote survives a restart, and the writer moving to another node (F7-14). | A quote lives in the memory of the process that made it, and a restart lapses its ticket. A repair proposal does either way (F4-27). The writer executes the warrants that need them (F10-12). |
+| U-4 | An outbox step at a head that moved after the ticket is refused before anything is signed (F7-15, G5). | It is recorded in `execution.applied` and named by V8: named, not prevented. |
+| U-5 | A reset's own entry names its warrant (§7.6). | The warrant's anchor precedes the reset in one AgentGov transaction. |
+| U-6 | A lineage's recovery opens again on a fresh reserve at a halt after it closed (F8-9). | A lineage recovers once: after its recovery closes, a spent-out halt is quoted on the billing scope, and any other halt stands. |
 
 **Limits, by design or measured.**
 
@@ -2250,7 +2280,7 @@ SQLite and on PostgreSQL. The test kinds:
 | F2-1, F2-2, G1: no ambient authority | 3, 5 | V7 ambient-injection tests; soak | Implemented. `test_bundle_checks.py`, `test_soak.py` |
 | F3-1: strict decoding | 1 | golden; per-field mutation sweep | Implemented. `test_vectors.py`, `test_fidu1.py`, `test_documents.py` |
 | F3-2 to F3-8: framing; Ed25519 only; inputs ≤ 96 bytes; KMS | 1 | golden signing inputs; fake KMS and fake key service; HMAC refused | Implemented. `test_signers.py`, `test_vectors.py` |
-| F3-9: ILOK1 sizes under KMS | 3 | executor guard test; chunking test; the measured table, regenerated by script | Partial: U-2. `test_executor.py`, `test_ilok1_sizes.py` |
+| F3-9: ILOK1 sizes under KMS | 3 | executor guard test, both ways; chunking test; the measured table, regenerated by script; with U-2, an operator record of any size through KMS | Implemented where U-2 is installed; else the refusal. `test_executor.py`, `test_ilok1_sizes.py` |
 | F4-1 to F4-6: the charter | 1 | golden; property: adoption and suspension quorums | Implemented. `test_authority.py`, `test_vectors.py` |
 | F4-7 to F4-12: the mandate schema | 1 | golden; strict parsing | Implemented. `test_documents.py`, `test_vectors.py` |
 | F4-13 to F4-16: tool bindings | 1, 4 | golden; the adversarial agent suite | Implemented. `test_tools.py`, `test_adversarial_agent.py` |
@@ -2270,11 +2300,11 @@ SQLite and on PostgreSQL. The test kinds:
 | F7-5 to F7-8, G4: quorum | 3 | property | Implemented. `test_escalation_quorum.py`, `test_soak.py` |
 | F7-9 to F7-11: autonomous rules | 3 | V8 recomputes each rule's predicate; auto totals across a restart | Implemented. `test_bundle_checks.py`, `test_executor.py` |
 | F7-12, F7-13, G5: once, and resolved | 3 | crash; contention | Implemented. `test_crash_recovery.py`, `test_contention.py`, `test_soak.py` |
-| F7-14, F7-15: a lost quote; the head gap | 3 | the restart test; the head-move test (refused after U-4) | Partial: U-3, U-4. `test_executor.py`, `test_bundle_checks.py` |
+| F7-14, F7-15: a lost quote; the head gap | 3 | the restart test, both ways; the head-move test: named without U-4, refused unsigned with it | Implemented where U-3 and U-4 are installed; else the fallbacks. `test_executor.py`, `test_bundle_checks.py`, `test_crash_recovery.py` |
 | F7-16, F7-17: operator log claims; break-glass | 3, 5 | claim contention; V7's break-glass labeling | Implemented. `test_executor.py`, `test_bundle_checks.py` |
 | F8-1 to F8-3: sessions | 4 | end to end; the sanitized feedback test | Implemented. `test_bridge.py`, `test_bridge_lifecycle.py` |
 | F8-4 to F8-7: MCP | 4 | protocol conformance tests over stdio and HTTP; the proxy's refusal | Implemented; agents' sessions over HTTP (F10-13). `test_mcp.py`, `test_cli_mcp.py`, `test_service.py` |
-| F8-8, F8-9: the billing scope; safety halts | 4 | the recovery and extension flow; a safety halt is never quoted | Partial: U-6. `test_bridge.py`, `test_bridge_edges.py` |
+| F8-8, F8-9: the billing scope; safety halts | 4 | the recovery and extension flow; a safety halt is never quoted; a recovery closed and halted again, both ways, and its bundle | Implemented where U-6 is installed; else a lineage recovers once. `test_bridge.py`, `test_bridge_edges.py`, `test_bundle.py` |
 | F8-12: refusals before anything is built | 4 | the adversarial agent suite; the session record replay tests | Implemented. `test_adversarial_agent.py`, `test_sessions.py` |
 | F8-10, F8-11: the trust boundary | 4 | in process, a session refuses to start without the setting | Implemented. `test_bridge.py` |
 | F9-1: no row data | 5, 6 | the security audit | Implemented. `test_security_audit.py`, `test_bundle_export.py` |

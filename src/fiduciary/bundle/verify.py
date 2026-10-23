@@ -855,13 +855,14 @@ class _Checks:
             ) != Decimal(str(step.get("amount"))):
                 self.add("V8", "authority", f"{where}: the grant is not the one the warrant names")
         elif kind == "reset":
-            anchor = self.ledger.get(int(result.get("anchor_seq", 0)))
+            memo = f"{reason} reset {step.get('scope')}"
             reset = self.ledger.get(int(result.get("reset_seq", 0)))
-            if (
-                anchor is None
-                or reset is None
-                or anchor.memo != f"{reason} reset {step.get('scope')}"
-            ):
+            if "anchor_seq" not in result:  # U-5: the reset names its warrant itself
+                if reset is None or reset.memo != memo:
+                    self.add("V8", "authority", f"{where}: no reset in the ledger names it")
+                return
+            anchor = self.ledger.get(int(result["anchor_seq"]))
+            if anchor is None or reset is None or anchor.memo != memo:
                 self.add("V8", "authority", f"{where}: its anchor and reset are not in the ledger")
         elif kind == "accept_repair" and str(result.get("record")) not in committed:
             self.add("V8", "authority", f"{where}: the repair's commit is not in the escrow chain")
@@ -1037,8 +1038,11 @@ class _Explained:
         if entry.ref is not None and holds.get(entry.ref):
             return None  # settles or voids a hold that is explained
         if kind is EntryType.CIRCUIT_RESET:
-            before = self.c.ledger.get(entry.sequence - 1)
-            reset = _RESET.fullmatch(before.memo) if before is not None else None
+            # The reset names its warrant (U-5), or the anchor just before it does.
+            reset = _RESET.fullmatch(memo)
+            if reset is None:
+                before = self.c.ledger.get(entry.sequence - 1)
+                reset = _RESET.fullmatch(before.memo) if before is not None else None
             if reset is not None and reset[1] in self.warrants and reset[2] == entry.scope_id:
                 return None
             return "a reset no warrant of the lineage names"

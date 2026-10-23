@@ -14,6 +14,7 @@ import pytest
 from agentgov.interceptor import TokenUsage
 
 from fiduciary import fidu1
+from fiduciary._upstream import RECOVERY_REOPENS
 from fiduciary.bridge import Session, SessionError, SessionHaltedError
 from fiduciary.documents import Mandate
 from fiduciary.store import Store
@@ -386,8 +387,10 @@ def test_the_last_session_to_close_returns_the_recovery_reserve(world: bound.Wor
     (closed,) = [r for r in records if r.kind == "recovery.closed"]
     assert Decimal(closed.body["returned"]) == reserve
 
-    # Interlock does not reopen a closed recovery (U-6): a later session's
-    # safety halt stands, unrecovered and unquoted.
+    # A later session's halt: where Interlock reopens a closed recovery (U-6),
+    # the lineage's recovery opens again on a fresh reserve, and the session
+    # bills it; where it does not, the safety halt stands, unrecovered and
+    # unquoted.
     later = fid.session(bound.SCOPE, tenant="acme")
     model = later.govern(FakeAnthropic())
     world.governor.trip(bound.SCOPE, "operator stop")
@@ -397,8 +400,23 @@ def test_the_last_session_to_close_returns_the_recovery_reserve(world: bound.Wor
             max_tokens=100,
             messages=[{"role": "user", "content": "Go on."}],
         )
-    assert stood.value.messages is None and stood.value.ticket is None
+    if RECOVERY_REOPENS:
+        assert stood.value.messages and later.billing_scope == f"{recovery_scope}/ext-1"
+        (reopened,) = [
+            r
+            for r in fid._runtime_records.records()  # type: ignore[union-attr]
+            if r.kind == "recovery.opened" and (r.body["funding"] or {}).get("reopens")
+        ]
+        assert reopened.body["funding"]["reopens"]["seq"] == closed.seq
+    else:
+        assert stood.value.messages is None and stood.value.ticket is None
     later.close()
+    if RECOVERY_REOPENS:
+        assert world.log.records()[-1].content["scopes"] == [
+            bound.SCOPE,
+            f"{recovery_scope}/ext-1",
+        ]
+        assert world.governor.available(f"{recovery_scope}/ext-1") == 0  # returned on close
     _verify(world)
 
 
