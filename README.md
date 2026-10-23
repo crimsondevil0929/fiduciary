@@ -20,7 +20,21 @@ roadmap; its format, documents, records and bundles are frozen for 1.x:
   executes their decision exactly once.
 - Phase 4 (0.4.0) bridges an agent to it, in process or over MCP.
 - Phase 5 (0.5.0) exports a lineage as an audit bundle, which anyone verifies offline.
-- Phase 6 runs it as a supervised service, alone or as a cluster on PostgreSQL.
+- Phase 6 (1.0.0) runs it as a supervised service, alone or as a cluster on PostgreSQL.
+
+## Since 1.0.0 (unreleased)
+
+- **A turn costs what is due, not what the log holds.** The service keeps the state it has
+  folded, folds only what was appended since, and answers each question from an index: at
+  10,000 records a writer's turn takes 0.03 ms and a tool call 0.44 ms, as at 300.
+  `verify` reads each document once, and takes a third less time.
+- **A takeover waits for a frozen writer's files, healthy**: the node that took the writer
+  role leads, asks for them each turn, and answers `/healthz` with 200 (F10-19).
+- **The upstream fixes, where they are installed** (§12): with the interlock and AgentGov
+  that close them, an AWS KMS executor key, quotes that survive a restart, an outbox act
+  refused before signing at a head that moved, a reset that names its warrant, and a
+  recovery that opens again. On interlock 1.0.2 and AgentGov 1.0.0, the fallbacks as
+  before.
 
 ## What 1.0.0 adds
 
@@ -40,8 +54,8 @@ roadmap; its format, documents, records and bundles are frozen for 1.x:
   audit that no secret, row, payload, transcript or agent text reaches a hash, a log or a
   bundle (`scripts/security_audit.py`); and a mutation pass (`docs/MUTATION_PASS.md`).
 - **The freeze**: what 1.x writes verifies under every later 1.x. The specification's
-  Conformance section states what 1.0.0 implements, and each gap left by the upstream
-  changes it waits on.
+  Conformance section states what 1.0.0 implements, and what each upstream gap changes
+  with the fix installed and without it.
 
 ## What 0.5.0 adds
 
@@ -256,8 +270,10 @@ fiduciary warrant show <warrant_id>
 fiduciary resolve                         # settle executions a crash interrupted
 ```
 
-The executor signs interlock's operator records. Until U-2 ships, its key and the runtime
-records key may not be AWS KMS keys:
+The executor signs interlock's operator records. Its key and the runtime records key may be
+AWS KMS keys only with an Interlock that signs ILOK1 records at signature version 2 (U-2,
+`docs/FIDUCIARY_SPEC.md` §12); fiduciary reads which Interlock it runs on, and refuses one
+otherwise:
 
 ```toml
 [executor]
@@ -382,6 +398,13 @@ fiduciary serve --node fiduciary-1
 One node leads the writer: it holds the engines and serves the agents. One leads the
 executor. The others stand by, and `/healthz` says which roles each holds.
 
+The writer's files (the escrow chains, the runtime, receipt and operator logs) are on
+storage every node reaches and whose locks every node honors: one host's filesystem, or a
+network filesystem whose locks hold across hosts. A writer that freezes keeps their claims
+until it thaws or dies, and the node that took its role waits, healthy, until then. Have
+your supervisor kill a node whose `/healthz` does not answer: that bounds the wait
+(`docs/FIDUCIARY_SPEC.md` F10-19).
+
 ## Tests
 
 ```
@@ -406,6 +429,11 @@ The service and cluster tests (`tests/test_service.py`, `tests/test_cluster.py`)
 `fiduciary serve` as processes: a node is killed, and one is frozen and thawed. The
 upgrade tests (`tests/test_upgrade.py`) open stores each 0.x release wrote;
 `scripts/make_upgrade_stores.py` records them anew from each release's own code.
+
+Fiduciary uses each upstream fix of `docs/FIDUCIARY_SPEC.md` §12 where the installed
+interlock and AgentGov have it, and holds to its fallback where not; the tests of each side
+skip on the other, and the suite passes on both. To run it against their development
+trees: `uv pip install -e ../interlock -e ../agentgov`.
 
 The soak runs a cluster for minutes against live PostgreSQL, then holds the database, the
 ledger and the logs to every invariant; `tests/test_soak.py` runs it for forty seconds:

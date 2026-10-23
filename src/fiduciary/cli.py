@@ -1204,7 +1204,8 @@ def _verify_bundle(args: argparse.Namespace) -> int:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="fiduciary", description="Signed mandates and quorum approvals."
+        prog="fiduciary",
+        description="Mandates, warrants and compliance proofs, over interlock and AgentGov.",
     )
     parser.add_argument("--version", action="version", version=f"fiduciary {__version__}")
     parser.add_argument(
@@ -1320,7 +1321,11 @@ def _parser() -> argparse.ArgumentParser:
     digest.add_argument("target", metavar="FILE|MODULE:NAME")
     digest.set_defaults(handler=_tool_digest)
 
-    approve = commands.add_parser("approve", help="sign an approval of a charter or mandate")
+    approve = commands.add_parser(
+        "approve",
+        help="sign an approval: of a charter, a mandate, a ticket's option, a revocation, or "
+        "a suspension",
+    )
     approve.add_argument("file", help="the document decided on")
     approve.add_argument("--principal", required=True)
     approve.add_argument("--decline", action="store_true")
@@ -1397,7 +1402,8 @@ def _parser() -> argparse.ArgumentParser:
 
     serve = commands.add_parser(
         "serve",
-        help="run the service: binder, intake, triggers, executor, settler and bridge (§10.1)",
+        help="run the service: writer and bridge, triggers, settler, executor and metrics, "
+        "alone or as a node of a cluster (§10.7)",
     )
     serve.add_argument("--node", help="this node's name, in a cluster ([cluster])")
     serve.add_argument("--bridge", help="HOST:PORT for the bridge, over [bridge] http")
