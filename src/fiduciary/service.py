@@ -48,7 +48,9 @@ own, with no engines. The two may be the same node.
   them once its session has been silent for ``session_timeout_seconds``. The
   other nodes then end each of its connections, which are named for it
   (``interlock-<part>@<node>``), so a transaction it froze in holds the
-  writer's lock no longer.
+  writer's lock no longer. Its files' claims no database can end: the node
+  that takes the writer role waits for them, healthy, asking each turn
+  (F10-19).
 - **Leadership decides which node works, never what keeps the work
   correct.** Every decision is taken under the writer's lock, and every
   execution under its warrant's claim (F7-12, F10-8). So a node that thaws in
@@ -447,9 +449,25 @@ class WriterService(_Part):
         self._idle = idle
         self._anchor_every = anchor_every
         self._anchored = 0.0
+        self._waiting = False
 
     def step(self) -> float:
-        fid = self._writer.acquire()
+        try:
+            fid = self._writer.acquire()
+        except Exception as exc:
+            if self._writer.membership.cluster is None or not _claimed(exc):
+                raise
+            # A file the writer opens is claimed by another node's process: one
+            # that froze holds its claims until it thaws (and lets go) or dies
+            # (§10.7). The node leads, and waits for them, asked each turn.
+            self.count("claims_held")
+            if not self._waiting:
+                logger.warning("writer: waiting for a file another process holds: %s", exc)
+                self._waiting = True
+            return self._every
+        if self._waiting:
+            logger.info("writer: the files another process held are this node's now")
+            self._waiting = False
         with fid.lock:
             self.count("followed", len(fid.binder.follow()))
             self.wrote(fid.escalation.process_intake())
@@ -692,6 +710,15 @@ class _Metrics(MetricsService):
 # --------------------------------------------------------------------------
 # what the parts do
 # --------------------------------------------------------------------------
+
+
+def _claimed(exc: BaseException) -> bool:
+    """Whether ``exc`` refused a file because another process claims it: an
+    escrow chain or an ILOK1 log (interlock), or the receipt log (agentgov)."""
+    from agentgov.exceptions import ConcurrentGovernorError
+    from interlock.exceptions import ChainInUseError
+
+    return isinstance(exc, ChainInUseError) or isinstance(exc.__cause__, ConcurrentGovernorError)
 
 
 def _execute(executor: Executor, state: State, *, attached: bool, part: Service) -> list[Any]:

@@ -231,8 +231,20 @@ def test_a_frozen_leader_is_fenced_and_hands_over(shared: Shared) -> None:
         fenced = second.health()["services"]["cluster"]["counters"].get("fenced", 0)
         assert fenced >= 1
 
-        # n1 holds its chains' file claims while it is frozen: n2's writer waits
-        # for them. Thawed, n1 finds its session gone and lets go of everything.
+        # n1 holds its chains' file claims while it is frozen: n2 leads the
+        # writer, and its writer waits for them, healthy, asking each turn.
+        sk.wait_for(lambda: second.leads("fiduciary-writer"), what="n2 taking the writer")
+
+        def waiting() -> bool:
+            body = second.health()
+            writer = body.get("services", {}).get("writer", {})
+            return int(writer.get("counters", {}).get("claims_held", 0)) >= 2
+
+        sk.wait_for(waiting, what="n2's writer waiting for n1's claims", timeout=30)
+        body = second.health()
+        assert body["status"] == "ok" and body["services"]["writer"]["state"] == "running"
+        assert body["bridge"] is None  # nothing is served before the files are n2's
+        # Thawed, n1 finds its session gone and lets go of everything.
         first.process.send_signal(signal.SIGCONT)
 
         def one_writer() -> Node | None:

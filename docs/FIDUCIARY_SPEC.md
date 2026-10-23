@@ -1906,10 +1906,33 @@ session holds the node's advisory lock for the process's life, and the roles it 
   claim, which the executor confirms before each act. A node that thaws mid-step finds its
   connections ended and its claim gone, and acts no more. What it left is resolved from what
   the systems hold (F7-13).
-- **What a frozen node delays.** The chains, the runtime log and the operator log are files,
-  claimed by their holder's process. A frozen writer keeps their claims until it thaws (and
-  lets go) or dies. Until then the next leader's writer cannot open them, and backs off. The
-  files are on storage whose locks every node shares.
+- **F10-19. What a frozen node delays, and what bounds it.** The escrow chains, the runtime
+  log, the receipt log and the operator log are files. Each has one writer at a time, held
+  by an advisory lock beside it for the writing process's life, and no database can fence
+  a file. So:
+  - The files are on storage every node reaches, whose advisory locks every node's kernel
+    honors: a local filesystem, when the nodes are processes of one host, or a network
+    filesystem whose locks hold across hosts (NFSv4's). Never a copy on each node: two
+    writers of one chain would fork it.
+  - A frozen writer keeps the files' claims until it thaws or dies. Killed, it lets go of
+    them with its process, at once. Thawed, it finds its session ended at its next
+    heartbeat or write, and lets go of everything before its next turn (F10-17).
+  - Meanwhile the node that took the writer role leads it, and waits for them. Each turn
+    it asks for the files again; it stays healthy (`/healthz` 200, its writer `running`,
+    counting `claims_held`), serves no session, and logs once which process holds them.
+    It never backs off, so it takes them up within a turn of their release. A writer whose
+    opening fails part-way lets go at once of the chains it had opened.
+  - Nothing is written twice: the frozen node's database transactions are ended at the
+    session timeout (F10-16), and what it left is resolved from what the systems hold
+    (F7-13).
+  - The deployment bounds the delay: a supervisor (systemd's watchdog, Kubernetes'
+    liveness probe) that asks each node's `/healthz` with a timeout, and kills a node that
+    does not answer. A frozen process answers nothing; the node waiting for it answers 200.
+
+  *(Amended after the 1.0.0 freeze. 1.0.0's new leader failed its writer's turn on a file
+  claimed elsewhere, backed off up to `restart_max_seconds`, and answered 503, inviting a
+  supervisor to restart the one healthy node; and a writer whose opening failed part-way
+  held the chains it had opened until they were collected.)*
 
 ---
 
@@ -2181,9 +2204,10 @@ this.
   its tickets and warrants, and its plans when the exporter has the outbox.
 - **Plans before the bridge.** A lineage that ran plans outside any bridge, as 0.2 and 0.3
   could only, exports a bundle whose V7 names each such plan (F10-18).
-- **A frozen writer** keeps its chains', runtime log's and operator log's file claims
-  until it thaws or dies, and the next leader's writer waits for them (§10.7). Takeover of
-  a killed writer is at once.
+- **A frozen writer** keeps its chains', runtime log's, receipt log's and operator log's
+  file claims until it thaws or dies, and the next leader leads and waits for them,
+  healthy (F10-19). A supervisor that kills an unresponsive node bounds the wait. Takeover
+  of a killed writer is at once.
 - **Velocity is per session** (F6-5). Sessions of one lineage are bounded together by the
   governor's policy.
 - **PostgreSQL versions.** 16 is verified, locally. CI runs 14, 16 and 18; the repository
@@ -2258,5 +2282,5 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-1 to F10-4: the stores | 1, 3 | the projection fold; append-only enforcement on both stores; the intake role | Implemented. `test_store.py`, `test_postgres.py`, `test_upgrade.py` |
 | F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak | Implemented. `test_contention.py`, `test_cluster.py`, `test_soak.py` |
 | F10-9 to F10-11: crash points | 3 | crash | Implemented. `test_crash_recovery.py` |
-| F10-12 to F10-17: the service and the cluster | 6 | process tests: a part restarted, a key reload refused, a leader killed and frozen | Implemented. `test_service.py`, `test_cluster.py`, `test_soak.py` |
+| F10-12 to F10-17, F10-19: the service and the cluster | 6 | process tests: a part restarted, a key reload refused, a leader killed and frozen; the new leader waiting, healthy | Implemented. `test_service.py`, `test_cluster.py`, `test_soak.py` |
 | F10-18: upgrades in place | 6 | stores each 0.x release wrote, on both stores | Implemented. `test_upgrade.py` |

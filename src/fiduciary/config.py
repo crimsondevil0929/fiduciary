@@ -838,21 +838,27 @@ def open_fiduciary(
             outbox = _outbox(
                 config.executor_outbox, opened, named("outbox", "fiduciary-outbox"), bound
             )
-        fid = cls(
-            authority,
-            binder,
-            governor,
-            runtime_records=runtime,
-            outbox=outbox,
-            operator_log=config.operators_log(),
-            operator_keyring=config.operator_keyring(),
-            executor_signer=key("executor", config.executor),
-            receipts=receipts,
-            handlers=config.load_handlers(),
-            pricing=config.pricing(),
-            in_process="tool-calls-only" if bridged else config.in_process,
-            on_close=lambda: _close_all(opened),
-        )
+        try:
+            fid = cls(
+                authority,
+                binder,
+                governor,
+                runtime_records=runtime,
+                outbox=outbox,
+                operator_log=config.operators_log(),
+                operator_keyring=config.operator_keyring(),
+                executor_signer=key("executor", config.executor),
+                receipts=receipts,
+                handlers=config.load_handlers(),
+                pricing=config.pricing(),
+                in_process="tool-calls-only" if bridged else config.in_process,
+                on_close=lambda: _close_all(opened),
+            )
+        except BaseException:
+            # The chains the engines it resumed claimed, at once: a takeover
+            # retried in this process finds them free (§10.7).
+            binder.close()
+            raise
     except BaseException:
         _close_all(opened)
         raise

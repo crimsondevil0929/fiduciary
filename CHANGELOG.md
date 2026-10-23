@@ -6,6 +6,18 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+### Fixed
+
+- **A takeover waits for a frozen writer, healthy** (F10-19). The node that took the
+  writer role from one frozen with the files' claims failed its writer's turn on them,
+  backed off up to `restart_max_seconds`, and answered `/healthz` with 503, inviting a
+  supervisor to restart the one healthy node. It now leads and waits, asking each turn,
+  counts `claims_held`, logs which process holds them, and takes them up within a turn of
+  their release.
+- **A writer whose opening fails part-way lets go of the chains it opened**, at once,
+  where they were held until the engines were collected, and a retry in the same process
+  could find its own claims.
+
 ### Changed
 
 - **A turn costs what is due, not what the log holds** (F10-1, amended). The service kept

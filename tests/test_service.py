@@ -297,3 +297,86 @@ def test_fiduciary_serve_reloads_on_sighup_and_drains_on_sigterm(world: bound.Wo
             process.kill()
             process.wait()
     _verified(world)
+
+
+# -- a takeover, in process ---------------------------------------------------------------
+
+
+def test_a_writer_that_fails_to_open_lets_go_of_the_chains_it_opened(
+    world: bound.World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A writer whose opening fails part-way (here, resolving) closes the
+    engines it resumed at once: their chains' claims are free for the next
+    attempt, in this process or another (§10.7)."""
+    from fiduciary.binding import Binder
+    from fiduciary.bridge import Fiduciary
+    from fiduciary.config import open_fiduciary
+    from fiduciary.executor import Executor
+
+    config = sk.configure(world)
+    engines: list[Any] = []
+    resume = Binder.resume
+
+    def resumed(binder: Binder) -> list[str]:
+        opened = resume(binder)
+        engines.extend(binder.engines().values())
+        return opened
+
+    def down(executor: Executor) -> list[Any]:
+        raise RuntimeError("the back office did not answer")
+
+    monkeypatch.setattr(Binder, "resume", resumed)
+    monkeypatch.setattr(Executor, "resolve", down)
+    with pytest.raises(RuntimeError, match="did not answer"):
+        open_fiduciary(Fiduciary, config, bridged=True)
+    assert engines and all(engine.closed for engine in engines)
+    monkeypatch.undo()
+    open_fiduciary(Fiduciary, config, bridged=True).close()  # the chains are free
+
+
+def test_a_writer_waits_for_files_another_node_holds() -> None:
+    """In a cluster, a writer whose files another node's process claims (one
+    that froze, §10.7) leads and waits, asked each turn, and works once they
+    are free. Alone, or for any other failure, it fails, and backs off."""
+    import threading
+    from types import SimpleNamespace
+
+    from agentgov.exceptions import ConcurrentGovernorError, ReceiptLogError
+    from interlock.exceptions import ChainInUseError
+
+    receipts = ReceiptLogError("receipt log r.jsonl is already open for appending")
+    receipts.__cause__ = ConcurrentGovernorError("held")
+    turns: list[int] = []
+
+    def follow() -> list[str]:
+        turns.append(1)
+        return []
+
+    fid = SimpleNamespace(
+        lock=threading.RLock(),
+        binder=SimpleNamespace(follow=follow, expire=list),
+        escalation=SimpleNamespace(process_intake=list),
+        executor=None,
+        log=SimpleNamespace(state=State, anchor_pending=lambda: 0),
+    )
+
+    class Writer:
+        def __init__(self, cluster: Any, *errors: Exception) -> None:
+            self.membership = service_module.Membership(cluster)
+            self.errors = list(errors)
+            self.bridge = None
+
+        def acquire(self) -> Any:
+            if self.errors:
+                raise self.errors.pop(0)
+            return fid
+
+    held = ChainInUseError("escrow chain c is already open for appending (held by pid 7)")
+    writer = Writer(object(), held, receipts)
+    part = service_module.WriterService(writer, every=0.25, idle=60)  # type: ignore[arg-type]
+    assert [part.step() for _ in range(3)] == [0.25] * 3
+    assert part.counters["claims_held"] == 2 and turns == [1]  # waited twice, then worked
+    for alone in (Writer(None, held), Writer(object(), RuntimeError("down"))):
+        part = service_module.WriterService(alone, every=0.25, idle=60)  # type: ignore[arg-type]
+        with pytest.raises((ChainInUseError, RuntimeError)):
+            part.step()
