@@ -1,0 +1,81 @@
+{
+  "description": "Refund part or all of one order.",
+  "effects": [
+    {
+      "after": [],
+      "id": "debit",
+      "kind": "update",
+      "parameters": {
+        "amount": "$.amount",
+        "order_id": "$.order_id"
+      },
+      "stated_rows": 1,
+      "statement": "UPDATE orders SET total = total - CAST(:amount AS NUMERIC) WHERE id = :order_id",
+      "table": "orders"
+    },
+    {
+      "after": [
+        "debit"
+      ],
+      "id": "record",
+      "kind": "insert",
+      "parameters": {
+        "amount": "$.amount",
+        "order_id": "$.order_id"
+      },
+      "stated_rows": 1,
+      "statement": "INSERT INTO refunds (order_id, tenant, amount) SELECT id, tenant, :amount FROM orders WHERE id = :order_id",
+      "table": "refunds"
+    }
+  ],
+  "input": {
+    "additionalProperties": false,
+    "properties": {
+      "amount": {
+        "pattern": "^[0-9]{1,6}\\.[0-9]{2}$",
+        "type": "string"
+      },
+      "order_id": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "payment_intent": {
+        "pattern": "^pi_[A-Za-z0-9]{8,64}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "amount",
+      "order_id",
+      "payment_intent"
+    ],
+    "type": "object"
+  },
+  "kind": "plan",
+  "name": "refund_order",
+  "price": "0.00000000",
+  "requests": [
+    {
+      "after": [
+        "record"
+      ],
+      "compensation": null,
+      "id": "stripe-refund",
+      "operation": "refunds.create",
+      "payload": {
+        "amount": "$.amount",
+        "currency": "usd",
+        "payment_intent": "$.payment_intent"
+      },
+      "sink": "stripe"
+    }
+  ],
+  "sig": {
+    "alg": "ed25519",
+    "key_id": "e44b27e7a3dade89",
+    "signature": "f81e2092837886c03b98e7c0c603ade04e953ca6114e4e6cabb2ac779910098c80b23fe5bba210c43c26239b1f2efa83569d62cdd360ced9b28f458e11fce006"
+  },
+  "tenant": "session",
+  "type": "tool",
+  "v": "FIDU1"
+}

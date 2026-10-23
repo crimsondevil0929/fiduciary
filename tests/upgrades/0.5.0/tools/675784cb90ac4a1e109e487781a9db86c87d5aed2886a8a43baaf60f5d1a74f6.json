@@ -1,0 +1,29 @@
+{
+  "description": "Read one order.",
+  "effects": [],
+  "input": {
+    "additionalProperties": false,
+    "properties": {
+      "order_id": {
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "order_id"
+    ],
+    "type": "object"
+  },
+  "kind": "passthrough",
+  "name": "lookup_order",
+  "price": "0.00100000",
+  "requests": [],
+  "sig": {
+    "alg": "ed25519",
+    "key_id": "e44b27e7a3dade89",
+    "signature": "e068ddd97ddfaf18839690b9c31dc81636cdf231bb4814064fb308c4459430516dad2aff75040f60bb35fa5dbf72e10a2c3d13dc13dc4081fe29f5e446a7290d"
+  },
+  "tenant": "none",
+  "type": "tool",
+  "v": "FIDU1"
+}

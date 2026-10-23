@@ -224,6 +224,7 @@ as ambient:
 | `ILOK1 <log> <seq> <hash>` | a record of that log, sequence and hash in `ilok1/` |
 | `interlock:<head16>` | a record of the lineage's escrow chain with that hash prefix |
 | `FIDU1 session <id> ...` | a session of the lineage, inside the ledger window from its opening's anchor to its close's, on a scope it billed |
+| `FIDU1 tool <name> <d16>` (0.4's form, before memos named their session) | a binding `<name>` with digest prefix `<d16>` that a version of the lineage pins, inside the window of a session of the lineage on a scope it billed, and before the ledger's first `FIDU1 session` memo. After that entry the form is ambient: nothing 0.5 or later writes it. *(Added in 1.0.0, so a lineage served by 0.4 exports a bundle that verifies.)* |
 | a settle or void (`ref` set) | the hold it names, itself explained |
 | `CIRCUIT_RESET` | the entry before it is `FIDU1 warrant <d> reset <scope>`, `d` a warrant of the lineage and `scope` this entry's |
 | `FIDU1 bind <d>` | `d` a version of the lineage, and a line of its transaction named by a `mandate.bound` record |

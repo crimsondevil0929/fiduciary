@@ -1682,6 +1682,15 @@ Both stores hold the same tables and enforce the same rules, and every test runs
   The service verifies each submission, then records it (`approval.recorded`) or refuses it
   (`approval.refused`).
 
+- **F10-18.** A store upgrades in place. Its `meta` row names its schema version: 1 (0.1),
+  2 (0.2), 3 (0.3) or 4 (0.4 to 1.x). Opening an older store with a later release adds what
+  that release's schema has (tables, functions, grants), and raises the version, in one
+  transaction; a newer store than the release is refused. Records are FIDU1 and never
+  change: the log a 0.x release wrote verifies under 1.x, its projections fold as they did,
+  and its lineages export bundles that verify. *(Proven by stores each 0.x release wrote
+  itself, `tests/upgrades/`, on SQLite and PostgreSQL. A plan that 0.2 or 0.3 committed,
+  before the bridge existed, is named by V7: no pinned tool's call admitted it.)*
+
 ## 10.3 Concurrency
 
 - **F10-5.** Each FIDU1 log has one writer at a time.

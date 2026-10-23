@@ -16,6 +16,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -250,6 +251,25 @@ def test_a_plan_no_pinned_tool_built_is_ambient(world: bound.World) -> None:
     _later(fid)
     report = _report(world, mandate)
     _fails(report, "V7", "no pinned tool's call", code=7)
+    _only(report, "V7")
+
+
+def test_a_tool_hold_that_names_no_session_after_named_ones_is_ambient(
+    world: bound.World,
+) -> None:
+    """0.4 metered a passthrough call as ``FIDU1 tool <name> <digest>``; V7
+    explains that form only before memos named their session. Written after,
+    inside a session's life and on its scope, it is ambient."""
+    mandate, fid = _lineage(world)
+    with fid.session(bound.SCOPE, tenant="acme") as session:
+        assert session.call("lookup_order", {"order_id": 7}).ok  # a named memo
+        held = world.governor.authorize(
+            bound.SCOPE, Decimal("0.001"), memo=f"FIDU1 tool lookup_order {e.lookup().digest[:16]}"
+        )
+        world.governor.void(held, memo="released")
+    _later(fid)
+    report = _report(world, mandate)
+    _fails(report, "V7", "after memos began naming theirs", code=7)
     _only(report, "V7")
 
 

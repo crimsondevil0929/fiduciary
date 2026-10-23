@@ -1,0 +1,83 @@
+{
+  "description": "Refund part or all of one order.",
+  "effects": [
+    {
+      "after": [],
+      "id": "debit",
+      "kind": "update",
+      "parameters": {
+        "amount": "$.amount",
+        "order_id": "$.order_id",
+        "tenant": "$session.tenant"
+      },
+      "stated_rows": 1,
+      "statement": "UPDATE orders SET total = total - CAST(:amount AS NUMERIC) WHERE id = :order_id AND tenant = :tenant",
+      "table": "orders"
+    },
+    {
+      "after": [
+        "debit"
+      ],
+      "id": "record",
+      "kind": "insert",
+      "parameters": {
+        "amount": "$.amount",
+        "order_id": "$.order_id",
+        "tenant": "$session.tenant"
+      },
+      "stated_rows": 1,
+      "statement": "INSERT INTO refunds (order_id, tenant, amount) VALUES (:order_id, :tenant, :amount)",
+      "table": "refunds"
+    }
+  ],
+  "input": {
+    "additionalProperties": false,
+    "properties": {
+      "amount": {
+        "pattern": "^[0-9]{1,6}\\.[0-9]{2}$",
+        "type": "string"
+      },
+      "order_id": {
+        "minimum": 1,
+        "type": "integer"
+      },
+      "payment_intent": {
+        "pattern": "^pi_[A-Za-z0-9]{8,64}$",
+        "type": "string"
+      }
+    },
+    "required": [
+      "amount",
+      "order_id",
+      "payment_intent"
+    ],
+    "type": "object"
+  },
+  "kind": "plan",
+  "name": "refund_order",
+  "price": "0.00000000",
+  "requests": [
+    {
+      "after": [
+        "record"
+      ],
+      "compensation": null,
+      "id": "stripe-refund",
+      "operation": "refunds.create",
+      "payload": {
+        "amount": "$.amount",
+        "currency": "usd",
+        "payment_intent": "$.payment_intent"
+      },
+      "sink": "stripe"
+    }
+  ],
+  "sig": {
+    "alg": "ed25519",
+    "key_id": "e44b27e7a3dade89",
+    "signature": "fb97157130a8609d38ea39de5f092d9653862977b07f85d2852c29a7d58315486f4f0a6817aa42a999f27c96c856561dd47ccdfbc06a531951e81fdc400f5c04"
+  },
+  "tenant": "session",
+  "type": "tool",
+  "v": "FIDU1"
+}

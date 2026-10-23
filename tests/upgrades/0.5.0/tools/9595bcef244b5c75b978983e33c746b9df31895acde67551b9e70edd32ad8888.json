@@ -1,0 +1,66 @@
+{
+  "description": "Take the same amount off two orders' totals.",
+  "effects": [
+    {
+      "after": [],
+      "id": "debit-first",
+      "kind": "update",
+      "parameters": {
+        "amount": "$.amount",
+        "first": "$.first"
+      },
+      "stated_rows": 1,
+      "statement": "UPDATE orders SET total = total - CAST(:amount AS NUMERIC) WHERE id = :first",
+      "table": "orders"
+    },
+    {
+      "after": [],
+      "id": "debit-second",
+      "kind": "update",
+      "parameters": {
+        "amount": "$.amount",
+        "second": "$.second"
+      },
+      "stated_rows": 1,
+      "statement": "UPDATE orders SET total = total - CAST(:amount AS NUMERIC) WHERE id = :second",
+      "table": "orders"
+    }
+  ],
+  "input": {
+    "additionalProperties": false,
+    "properties": {
+      "amount": {
+        "pattern": "^[0-9]{1,4}\\.[0-9]{2}$",
+        "type": "string"
+      },
+      "first": {
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "second": {
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "amount",
+      "first",
+      "second"
+    ],
+    "type": "object"
+  },
+  "kind": "plan",
+  "name": "adjust_orders",
+  "price": "0.00000000",
+  "requests": [],
+  "sig": {
+    "alg": "ed25519",
+    "key_id": "e44b27e7a3dade89",
+    "signature": "81a16fec3d01718a55a125b8fd1c7e27a70c5c5c002ef3a8412120ae44ac89cb36b5a85b37e16ae80af4859cac100073ee46285a146539d0355f562690501706"
+  },
+  "tenant": "session",
+  "type": "tool",
+  "v": "FIDU1"
+}

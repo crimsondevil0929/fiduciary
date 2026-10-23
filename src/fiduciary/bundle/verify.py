@@ -79,6 +79,8 @@ _RESERVE: Final = re.compile(r"recovery reserve for (\S+?)(?:, carved out)?")
 _RETURNED: Final = re.compile(r"unused recovery reserve for (\S+) returned")
 _STEP: Final = re.compile(r"recovery step (\d+)(?:: \S+| settled)")
 _TOOL: Final = re.compile(r"(?:repair of plan-[0-9a-f]+: )?FIDU1 tool (\S+) ([0-9a-f]{16})")
+_UNNAMED: Final = re.compile(r"FIDU1 tool (\S+) ([0-9a-f]{16})")
+"""A passthrough call's hold as 0.4 wrote it, before its memo named the session."""
 _TIME_WORDS: Final = ("expired", "runs until", "not_after", "after its deadline")
 
 
@@ -918,6 +920,17 @@ class _Explained:
         }
         self.steps = {int(r.body["step"]) for r in runtime if r.kind == "recovery.step"}
         self.granted = {str(r.body["grant"]): r for r in runtime if r.kind == "extension.granted"}
+        self.pins: set[tuple[str, str]] = set()
+        for mandate_id in lineages:
+            for _, digest, _, _ in state.lineages.get(mandate_id, ()):
+                found = checks.b.docs.get(digest)
+                if found is not None:
+                    mandate = documents.loads(found[1])
+                    assert isinstance(mandate, Mandate)
+                    self.pins.update((p.name, p.digest[:16]) for p in mandate.tools.bindings)
+        named = [e.sequence for e in checks.ledger.values() if _SESSION.match(e.memo)]
+        self.named_from = min(named, default=1 << 62)
+        """The first entry whose memo names its session: 0.4's form only before it."""
         self._verify_ilok1()
         self.sessions = self._sessions()
 
@@ -981,6 +994,19 @@ class _Explained:
             if scopes is not None and entry.scope_id not in scopes:
                 return f"bills a scope session {found[1]} did not"
             return None
+        found = _UNNAMED.fullmatch(memo)
+        if found is not None:
+            # 0.4's form: a pinned tool's call, while a session of the
+            # lineage that billed this scope was open, before any memo
+            # named its session (nothing 0.5 or later writes is in this form).
+            if entry.sequence >= self.named_from:
+                return "a tool's call that names no session, after memos began naming theirs"
+            if (found[1], found[2]) not in self.pins:
+                return f"names tool {found[1]} {found[2]}, which no version of the lineage pins"
+            for start, end, scopes in self.sessions.values():
+                if start <= entry.sequence <= end and (scopes is None or entry.scope_id in scopes):
+                    return None
+            return "a pinned tool's call while no session of the lineage was open"
         if entry.ref is not None and holds.get(entry.ref):
             return None  # settles or voids a hold that is explained
         if kind is EntryType.CIRCUIT_RESET:
