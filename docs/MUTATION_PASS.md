@@ -28,10 +28,11 @@ on SQLite. A mutant is **killed** when pytest exits 1 (a test failed) or hangs; 
 
 ## Result
 
-108 mutants: 23 in fidu1, 28 in refines, 18 in the compiler, 13 in quorum counting, 26 in
-the verifier. The first run killed 90 of 107 (A13 was added after). Of the 17 survivors,
+109 mutants: 23 in fidu1, 28 in refines, 18 in the compiler, 13 in quorum counting, 27 in
+the verifier. The first run killed 90 of 107 (A13 was added after, and V27 with the rule
+for receipts issued before U-1). Of the 17 survivors,
 15 were gaps in the tests, now closed: each is killed by a test added for it. Two were
-code that could not matter, and is gone. The final run killed all 106 mutants whose code
+code that could not matter, and is gone. The final run killed all 107 mutants whose code
 remains.
 
 | Survivor | Mechanism | Now |
@@ -53,6 +54,7 @@ remains.
 | V17 | a session's memo outside its life | killed: a hold naming a closed session (V7) |
 | V20 | an operator act on other messages than its warrant names | killed: a release that acted on one of two (V8) |
 | V26 | a grant other than the warrant's | killed: the guard granting less than the warrant names (V8) |
+| V27 | the allowance for receipts issued before U-1, extended past the first canonical one | killed at once (added with the rule, F6-8) |
 
 The runner (`mutate_phase6.py`) and the per-mutant results are kept with the working notes,
 not in the repository, as interlock's are.

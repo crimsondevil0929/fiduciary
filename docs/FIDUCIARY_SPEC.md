@@ -1184,7 +1184,9 @@ The surface consumed:
     `checker_records` computes for that version's compiled `fiduciary_mandate`.
 - **F6-8.** Once U-1 lands, every checker record the compiled set implies MUST be present,
   with that configuration digest. Extra records are allowed, since an extra checker only
-  tightens (§5.6).
+  tightens (§5.6). A lineage's receipts issued before its deployment's Interlock had U-1
+  precede, in the ledger, its first receipt with canonical set digests: those are held to
+  the rule below, and noted; every receipt after it, to this one. *(Amended in 1.0.0.)*
 
   Until U-1, checkers whose configuration holds a set are checked by name only:
   `TableAllowlist`, `NoDelete`, `SinkAllowlist`, `RecipientAllowlist`, and the others that
@@ -2157,7 +2159,7 @@ this.
 
 | # | Status | What 1.0.0 does meanwhile |
 |---|---|---|
-| U-1 | Fixed on interlock `main` (#20), unreleased: interlock 1.0.3 is held until U-2, U-3 and U-4 ship with it | V4 checks `fiduciary_mandate` exactly, and the other checkers by name (F6-8). A bundle whose manifest says `canonical_digests` is checked strictly. **Partial.** |
+| U-1 | Fixed on interlock `main` (#20), unreleased: interlock 1.0.3 is held until U-2, U-3 and U-4 ship with it | V4 checks `fiduciary_mandate` exactly, and the other checkers by name (F6-8). A bundle whose manifest says `canonical_digests` is checked strictly, but for receipts that precede the lineage's first canonical one, which are noted. Verified against interlock `main`: every 0.x store's bundle passes. **Partial.** |
 | U-2 | Open | An AWS KMS executor or runtime key is refused; outbox actions are chunked to 8 targets (F3-9). |
 | U-3 | Open | A quote or repair proposal lives in the memory of the process that made it. A restart, or a cluster's writer moving to another node, lapses its ticket (F7-14). The writer executes the warrants that need them (F10-12). |
 | U-4 | Open | A head that moved after the ticket is recorded in `execution.applied` and named by V8 (F7-15): named, not prevented. |

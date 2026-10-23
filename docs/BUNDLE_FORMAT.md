@@ -58,7 +58,12 @@ The fields:
   listed member that is missing, fails V1.
 - **`canonical_digests`** says whether the exporter's receipts carry checker
   digests independent of the process's hash seed (interlock U-1). It sets how
-  strictly V4 holds receipts to F6-8.
+  strictly V4 holds receipts to F6-8. When it is set, a receipt anchored before the
+  lineage's first receipt whose set-bearing digests are canonical was issued by an
+  Interlock before U-1: its set-bearing checkers are checked by name, and the report
+  notes it. A receipt anchored after that first canonical one is held to every digest.
+  *(Added in 1.0.0: a lineage served before the upgrade to an Interlock with U-1 still
+  verifies.)*
 - **`range`** is the part of the FIDU1 log the bundle makes claims about
   (V10, V12). `log.jsonl` always holds the whole prefix `1..to`, because a
   decision in range is taken again from the state that every earlier record

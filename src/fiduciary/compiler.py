@@ -702,11 +702,7 @@ def receipt_problems(
             f"policy epoch {receipt.decision.policy_epoch}, not version {compiled.policy_epoch}"
         )
     recorded = {r.name: r.config_hash for r in receipt.decision.checkers}
-    loose = {
-        name
-        for name, cls in ((c.name, type(c).__name__) for c in compiled.engine_checkers())
-        if cls in SET_BEARING
-    }
+    loose = _set_bearing(compiled)
     for record in compiled.checker_records():
         found = recorded.get(record.name)
         if found is None:
@@ -714,3 +710,24 @@ def receipt_problems(
         elif found != record.config_hash and (strict or record.name not in loose):
             problems.append(f"checker {record.name} ran with another configuration")
     return problems
+
+
+def _set_bearing(compiled: CompiledMandate) -> set[str]:
+    """The names of ``compiled``'s checkers whose configuration holds a set."""
+    return {
+        name
+        for name, cls in ((c.name, type(c).__name__) for c in compiled.engine_checkers())
+        if cls in SET_BEARING
+    }
+
+
+def sets_canonical(receipt: Any, compiled: CompiledMandate) -> bool:
+    """Whether every set-bearing checker ``receipt`` records carries the digest
+    ``compiled`` implies here. False for a receipt an Interlock issued before
+    U-1, whose set digests followed its process's hash seed, and for one that
+    ran another set: the two cannot be told apart."""
+    recorded = {r.name: r.config_hash for r in receipt.decision.checkers}
+    loose = _set_bearing(compiled)
+    return all(
+        recorded.get(r.name) == r.config_hash for r in compiled.checker_records() if r.name in loose
+    )

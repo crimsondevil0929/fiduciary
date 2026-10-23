@@ -642,3 +642,57 @@ def test_a_deployment_other_than_the_one_bound_is_named(world: bound.World) -> N
     report = bk.verify(world, data)
     _fails(report, "V4", "does not compile", "its text does not hash", code=6)
     _only(report, "V4")
+
+
+@pytest.mark.parametrize("legacy_first", [True, False])
+def test_receipts_before_u1_are_checked_by_name_only_before_canonical_ones(
+    world: bound.World, monkeypatch: pytest.MonkeyPatch, legacy_first: bool
+) -> None:
+    """Exported under an Interlock that digests sets canonically (U-1), V4 is
+    strict, but for receipts anchored before the lineage's first canonical
+    one: those an Interlock issued before U-1 are checked by name, and noted.
+    A receipt after a canonical one has no such allowance (F6-8). Interlock
+    1.0.2 issues no canonical receipt, so one receipt plays the part."""
+    from agentgov.receipts import ActionReceipt, ReceiptBundle
+
+    from fiduciary.bundle import verify as verifying
+    from tests.test_bundle_tamper import _members, _remanifest, _tar
+
+    mandate, fid = _lineage(world)
+    with fid.session(bound.SCOPE, tenant="acme") as session:
+        _refund(session, 9)
+    _later(fid)
+    members = dict(_members(bk.export(world, mandate.mandate_id)))
+    manifest = fidu1.parse(members["manifest.json"])
+    manifest["canonical_digests"] = True
+    members["manifest.json"] = fidu1.canonical(manifest)
+    data = _tar(_remanifest(sorted(members.items())))
+    seqs = sorted(
+        r.anchors.agentgov.seq
+        for name, body in members.items()
+        if name.startswith("receipts/")
+        and name != "receipts/transitions.json"
+        and isinstance(r := ReceiptBundle.loads(body).receipt, ActionReceipt)
+        and r.anchors.agentgov is not None
+    )
+    assert len(seqs) >= 2
+    legacy = seqs[0] if legacy_first else seqs[-1]
+    from fiduciary.compiler import receipt_problems as problems
+
+    def is_legacy(receipt: Any) -> bool:
+        return bool(receipt.anchors.agentgov.seq == legacy)
+
+    monkeypatch.setattr(verifying, "sets_canonical", lambda r, c: not is_legacy(r))
+
+    def checked(receipt: Any, compiled: Any, *, strict: bool | None = None) -> list[str]:
+        if strict and is_legacy(receipt):  # its set digest is 1.0.2's, not the canonical one
+            return ["checker table_allowlist ran with another configuration"]
+        return problems(receipt, compiled, strict=False)
+
+    monkeypatch.setattr(verifying, "receipt_problems", checked)
+    report = bk.verify(world, data)
+    if legacy_first:
+        assert not report.failed("V4"), report.render()
+        assert any("before U-1" in note for note in report.notes), report.render()
+    else:
+        _fails(report, "V4", "table_allowlist ran with another configuration", code=6)

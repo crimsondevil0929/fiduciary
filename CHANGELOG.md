@@ -46,7 +46,7 @@ the record kinds and the bundle format are frozen for 1.x.
   PostgreSQL (F10-18).
 - **`scripts/live_stress_test.py`**, the soak, and `tests/test_soak.py`, scaled down.
 - **`scripts/security_audit.py`** and `tests/test_security_audit.py` (F9-1, F4-27).
-- **`docs/MUTATION_PASS.md`**: 108 mutants over `fidu1`, `refines`, the compiler, quorum
+- **`docs/MUTATION_PASS.md`**: 109 mutants over `fidu1`, `refines`, the compiler, quorum
   counting and `verify_bundle`, every one killed or its code removed.
 - `fiduciary.toml`: `[serve]`, `[metrics]`, `[cluster]`, `[bridge.agents]`, bridge TLS
   (`tls_cert`, `tls_key`) and `ledger_schema`.
@@ -82,6 +82,10 @@ the record kinds and the bundle format are frozen for 1.x.
 
 - An outbox step with no operator log configured is refused, instead of leaving an open
   intent behind.
+- **V4 under an Interlock with U-1** (found running the suite against interlock `main`):
+  a bundle exported there held every receipt to canonical set digests, so receipts issued
+  before the upgrade failed. Those anchored before the lineage's first canonical receipt
+  are now checked by name for their set-bearing checkers, and noted (F6-8 amended).
 
 ## [0.5.0]
 

@@ -56,7 +56,13 @@ from fiduciary.authority import Decide, replay_each
 from fiduciary.bundle.export import _type_of
 from fiduciary.bundle.format import FORMAT, BundleError, BundleReport, unpack
 from fiduciary.checkers import admits_scope
-from fiduciary.compiler import CompiledMandate, Deployment, compile, receipt_problems
+from fiduciary.compiler import (
+    CompiledMandate,
+    Deployment,
+    compile,
+    receipt_problems,
+    sets_canonical,
+)
 from fiduciary.documents import Charter, Mandate, Record, ToolBinding
 from fiduciary.exceptions import FiduciaryError
 from fiduciary.log import LOG_ID, check_anchors, parse_memo
@@ -620,7 +626,14 @@ class _Checks:
         self.compiled[(mandate_id, mandate.version)] = compiled
 
     def _v4_receipts(self) -> None:
+        """Each action receipt's checkers, against its version's compiled
+        policy. A bundle exported under an Interlock that digests sets
+        canonically (U-1) is checked strictly, but for the receipts anchored
+        before the lineage's first receipt whose set digests are canonical:
+        an Interlock issued those before U-1, and their set-bearing checkers
+        are checked by name, and noted (F6-8)."""
         strict = bool(self.b.manifest.get("canonical_digests"))
+        found = []
         for name, bundle in sorted(self.b.receipts.items()):
             receipt = bundle.receipt
             if not isinstance(receipt, ActionReceipt):
@@ -635,7 +648,21 @@ class _Checks:
                     f"{mandate_id} was bound to issue it",
                 )
                 continue
-            for problem in receipt_problems(receipt, compiled, strict=strict):
+            anchor = receipt.anchors.agentgov
+            found.append((0 if anchor is None else anchor.seq, name, receipt, compiled))
+        canonical = [seq for seq, _, r, c in found if strict and sets_canonical(r, c)]
+        first = min(canonical, default=None)
+        for seq, name, receipt, compiled in found:
+            before = strict and (first is None or seq < first)
+            if before and not sets_canonical(receipt, compiled):
+                self.r.notes.append(
+                    f"receipt {name} records its set-bearing checkers as Interlock digested "
+                    f"them before U-1: they are checked by name"
+                )
+                strictly = False
+            else:
+                strictly = strict
+            for problem in receipt_problems(receipt, compiled, strict=strictly):
                 self.add("V4", "policy", f"receipt {name}: {problem}")
 
     # -- V5 receipts -------------------------------------------------------------------
