@@ -39,7 +39,7 @@ from agentgov.core import EntryType
 from agentgov.receipts import ActionReceipt, Checkpoint, DeliveryReceipt, canonical_bytes
 from agentgov.receipts.merkle import MerkleTree, leaf_hash
 from agentgov.receipts.signing import Signer, Verifier, verifier_of
-from interlock.chain import EscrowChain
+from interlock.chain import EscrowChain, EscrowRecord
 from interlock.records import SignedRecord
 
 from fiduciary import __version__, fidu1
@@ -202,13 +202,13 @@ def export_bundle(
     wanted: set[str] = set()
     for record in records:
         wanted.update(_digests(record.content))
+    # The prefix names nearly every document the store holds: one read.
+    documents = {digest: (kind, data) for digest, kind, data in store.documents()}
     held: dict[str, tuple[str, bytes]] = {}
     while wanted:
         digest = wanted.pop()
-        if digest in held:
-            continue
-        found = store.document(digest)
-        if found is None:
+        found = documents.get(digest)
+        if digest in held or found is None:
             continue
         held[digest] = found
         wanted.update(_digests(json.loads(found[1])))
@@ -256,7 +256,8 @@ def export_bundle(
         if _at(r) <= cut_at and any(admits_scope(s, r.scope) for s in subjects)
     ]
     messages, warrants = _lineage_messages(state, store, lineages, held)
-    plans = _plans(evidence.chains, lineages, cut_at)
+    chains = _chains(evidence.chains, lineages)
+    plans = {str(r.plan_id) for _, kept in chains.values() for r in kept if r.timestamp <= cut_at}
     operators = _operator_records(evidence, cut_at, warrants, messages, plans)
     for name, chosen in (("runtime", runtime), ("operators", operators)):
         members[f"ilok1/{name}.jsonl"] = b"".join(_json(r.to_json()) + b"\n" for r in chosen)
@@ -269,10 +270,11 @@ def export_bundle(
 
     # -- receipts and escrow chains ---------------------------------------------------
     members.update(_receipts(evidence, lineages, cut))
-    for lineage in lineages:
-        chain = _chain_lines(evidence.chains, lineage, cut_at)
-        if chain:
-            members[f"escrow/{lineage}.chain"] = chain
+    for lineage, (path, kept) in chains.items():
+        count = sum(1 for r in kept if r.timestamp <= cut_at)
+        if count:
+            lines = path.read_bytes().splitlines(keepends=True)
+            members[f"escrow/{lineage}.chain"] = b"".join(lines[:count])
 
     # -- the deployment compilation reads, and the keys ------------------------------
     depths = {}
@@ -375,15 +377,15 @@ def _message_ids(value: Any) -> Iterable[str]:
             yield from _message_ids(item)
 
 
-def _plans(chains: Path | None, lineages: Sequence[str], cut_at: datetime) -> set[str]:
-    found: set[str] = set()
+def _chains(
+    chains: Path | None, lineages: Sequence[str]
+) -> dict[str, tuple[Path, tuple[EscrowRecord, ...]]]:
+    """Each lineage's escrow chain, read once: its file and its records."""
+    found: dict[str, tuple[Path, tuple[EscrowRecord, ...]]] = {}
     for lineage in lineages:
         path = None if chains is None else chains / f"{lineage}.chain"
-        if path is None or not path.exists():
-            continue
-        found.update(
-            str(r.plan_id) for r in EscrowChain.load(path).records() if r.timestamp <= cut_at
-        )
+        if path is not None and path.exists():
+            found[lineage] = (path, EscrowChain.load(path).records())
     return found
 
 
@@ -400,6 +402,14 @@ def _operator_records(
     outbox = evidence.outbox
     chosen: list[SignedRecord] = []
     intents: set[str] = set()
+    plan_of: dict[str, str | None] = {}
+
+    def planned(message: str) -> bool:
+        assert outbox is not None
+        if message not in plan_of:
+            plan_of[message] = _plan_of(outbox, message)
+        return plan_of[message] in plans
+
     for record in evidence.operator_records:
         if _at(record) > cut_at:
             continue
@@ -412,7 +422,7 @@ def _operator_records(
             targets = [str(t.get("message")) for t in body.get("targets", ())]
             ours = any(t in messages for t in targets)
             if not ours and outbox is not None:
-                ours = any(_plan_of(outbox, t) in plans for t in targets)
+                ours = any(planned(t) for t in targets)
             if (named is not None and named.group(1) in warrants) or ours:
                 chosen.append(record)
                 intents.add(record.record_hash)
@@ -544,15 +554,6 @@ def _receipts(evidence: Evidence, lineages: Sequence[str], cut: int) -> dict[str
     }
     members["receipts/transitions.json"] = _json([t.to_json() for t in log.transitions()])
     return members
-
-
-def _chain_lines(chains: Path | None, lineage: str, cut_at: datetime) -> bytes:
-    path = None if chains is None else chains / f"{lineage}.chain"
-    if path is None or not path.exists():
-        return b""
-    count = sum(1 for r in EscrowChain.load(path).records() if r.timestamp <= cut_at)
-    lines = path.read_bytes().splitlines(keepends=True)
-    return b"".join(lines[:count])
 
 
 def _keys(evidence: Evidence, held: Mapping[str, tuple[str, bytes]]) -> dict[str, Any]:

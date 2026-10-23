@@ -25,6 +25,13 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
   term takes no writer lock.
 - Approvals of a ticket and declines of it are counted by one rule (§7.3), where two
   copies of it were kept in step.
+- **A document's digest is computed once** (it is frozen), where each use encoded it and
+  hashed it again: `verify` read a record's hash four times. `verify` takes a third less
+  time.
+- **`verify` and `export-bundle` read each document once.** `verify` checked each record's
+  named document with a query of its own after reading every document; the exporter read
+  each document it needed by one query each, each escrow chain twice, and asked the
+  outbox for a message's plan once per operator intent naming it.
 
 ## [1.0.0]
 

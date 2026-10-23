@@ -31,7 +31,7 @@ class Document:
     written), and implements ``_body`` and ``_read``.
     """
 
-    __slots__ = ()
+    __slots__ = ("_digest",)
 
     TYPE: ClassVar[str]
     FIELDS: ClassVar[tuple[str, ...]]
@@ -69,8 +69,14 @@ class Document:
 
     @property
     def digest(self) -> str:
-        """SHA-256 of the canonical bytes of the whole document (§3.3)."""
-        return fidu1.digest(self.to_json())
+        """SHA-256 of the canonical bytes of the whole document (§3.3),
+        computed once: a document is frozen, so its digest never changes."""
+        try:
+            found: str = self._digest  # type: ignore[attr-defined]
+        except AttributeError:
+            found = fidu1.digest(self.to_json())
+            object.__setattr__(self, "_digest", found)
+        return found
 
     @classmethod
     def from_json(cls, raw: object, *, signed: bool = True) -> Self:

@@ -123,8 +123,10 @@ def verify_store(
         previous, expected = record.hash, record.seq + 1
         records.append(record)
     count = 0
+    stored: dict[str, tuple[str, bytes]] = {}
     for digest, kind, data in store.documents():
         count += 1
+        stored[digest] = (kind, data)
         if hashlib.sha256(data).hexdigest() != digest:
             problems.append(f"document {digest[:16]}: its bytes do not hash to its digest")
             continue
@@ -148,7 +150,7 @@ def verify_store(
         named = _NAMED.get(record.kind)
         if named is not None:
             field, kind = named
-            held = store.document(str(record.content.get(field)))
+            held = stored.get(str(record.content.get(field)))
             if held is None or held[0] != kind:
                 problems.append(f"record {record.seq}: names a {kind} the store does not hold")
     implied = fold(records)
@@ -165,7 +167,7 @@ def verify_store(
         entries = list(ledger)
         found_problems, anchored, missing = check_anchors(records, entries, log_id)
         problems.extend(found_problems)
-        problems.extend(_observed_problems(store, records, entries, log_id))
+        problems.extend(_observed_problems(stored, records, entries, log_id))
         if skew_seconds is not None:
             anchors: dict[int, LedgerEntry] = {}
             for entry in entries:
@@ -210,7 +212,10 @@ def ordering_problems(
 
 
 def _observed_problems(
-    store: Store, records: Iterable[Record], entries: list[LedgerEntry], log_id: str
+    stored: Mapping[str, tuple[str, bytes]],
+    records: Iterable[Record],
+    entries: list[LedgerEntry],
+    log_id: str,
 ) -> list[str]:
     """Each ticket's ``observed.ledger`` held to the ledger: the entry it names
     has the hash it names, and precedes the anchor of the ticket's record."""
@@ -224,7 +229,7 @@ def _observed_problems(
     for record in records:
         if record.kind != "ticket.raised":
             continue
-        held = store.document(str(record.content.get("ticket")))
+        held = stored.get(str(record.content.get("ticket")))
         try:
             ticket = documents.loads(held[1]) if held is not None else None
         except FiduciaryError:
