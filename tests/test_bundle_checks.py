@@ -26,6 +26,7 @@ from interlock.operators import Operator, OperatorLog
 from interlock.relay import DELIVERED, DeliveryResult
 
 from fiduciary import fidu1
+from fiduciary._upstream import RESET_MEMO
 from fiduciary.authority import Authority, Decide
 from fiduciary.bridge import Fiduciary, build_plan
 from fiduciary.bundle import BundleReport
@@ -448,6 +449,29 @@ def test_a_step_at_a_head_the_ticket_did_not_observe_is_named(
     report = _report(world, held.mandate)
     _fails(report, "V8", "at a head the ticket did not observe", code=7)
     assert report.failed("V7")  # the hand release and its reset, too
+
+
+@pytest.mark.skipif(not RESET_MEMO, reason="AgentGov writes every reset's memo itself (U-5)")
+def test_a_reset_step_naming_an_entry_that_does_not_name_its_warrant_is_named(
+    world: bound.World, held: _Held, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With U-5 a reset step's result names the reset entry, whose own memo
+    names the warrant. A result naming another entry is named (V8)."""
+    warrant = _approve_ticket(world, held.escalation, held.ticket, "reset")
+    named = Executor._reset_named
+
+    def elsewhere(idx: int, scope: str, memo: str, entries: Any) -> Any:
+        found = named(idx, scope, memo, entries)
+        if found.result is not None:
+            found.result = {**found.result, "reset_seq": found.result["reset_seq"] - 1}
+        return found
+
+    monkeypatch.setattr(Executor, "_reset_named", staticmethod(elsewhere))
+    records = _execute(world, held, warrant)
+    assert records[-1].kind == "execution.applied"
+    _later(held.fid)
+    report = _report(world, held.mandate)
+    _fails(report, "V8", "no reset in the ledger names it", code=5)
 
 
 # -- V11 revocation ----------------------------------------------------------------------

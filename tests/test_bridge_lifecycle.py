@@ -23,6 +23,7 @@ from agentgov.dummy import DummyLLM
 from agentgov.receipts.kms_aws import AwsKmsSigner
 
 from fiduciary import fidu1
+from fiduciary._upstream import RECOVERY_REOPENS
 from fiduciary.bridge import SessionHaltedError
 from fiduciary.documents import Approval
 from fiduciary.store import Store
@@ -31,6 +32,7 @@ from tests import bridge_kit as kit
 from tests import examples as e
 from tests.conftest import Clock
 from tests.fakes import FakeKms
+from tests.test_bridge import FakeAnthropic
 from tests.test_executor import _verify
 
 WORDS = (
@@ -165,4 +167,61 @@ def test_a_session_from_commit_to_extension_and_back(world: bound.World, clock: 
         f"{subject}/recovery",
         f"{subject}/recovery/ext-1",
     ]
+    _verify(world)
+
+
+@pytest.mark.skipif(not RECOVERY_REOPENS, reason="this Interlock does not reopen a recovery (U-6)")
+def test_a_reopened_recovery_answers_by_its_own_halts_alone(world: bound.World) -> None:
+    """U-6, F8-9: a recovery that answered a safety halt, and closed, does not
+    make the next one a safety recovery. The lineage's next halt, its money
+    spent, recovers on a fresh reserve, and when that runs out, its quote
+    goes to the principals."""
+    raw = kit.mandate_json(world)
+    world.issue_and_bind(
+        kit.mandate(
+            world,
+            recovery={**raw["recovery"], "reserve": "1.00000000", "max_steps": 6},
+            budget={**raw["budget"], "envelope": "1.00000000"},
+            delegation=None,
+        )
+    )
+    fid = kit.fiduciary(world)
+
+    # 1. An operator's halt, recovered from until the reserve ends it: no quote.
+    first = fid.session(bound.SCOPE, tenant="acme")
+    world.governor.trip(bound.SCOPE, "operator stop: reviewing this agent")
+    model = first.govern(FakeAnthropic(output_tokens=20_000))
+    transcript: list[dict[str, Any]] = [{"role": "user", "content": "Carry on."}]
+    with pytest.raises(SessionHaltedError):
+        model.messages.create(model="claude-opus-5-5", max_tokens=1024, messages=transcript)
+    ended = None
+    for _ in range(12):
+        try:
+            model.messages.create(model="claude-opus-5-5", max_tokens=1024, messages=transcript)
+        except SessionHaltedError as exc:
+            if exc.messages is None:
+                ended = exc
+                break
+    assert ended is not None and ended.ticket is None
+    first.close()  # the last to bill the recovery: it closes
+    world.governor.reset(bound.SCOPE)
+
+    # 2. A later session spends the envelope out: the recovery opens again,
+    #    and its reserve spent, the guard's quote is the principals' to answer.
+    second = fid.session(bound.SCOPE, tenant="acme")
+    spending = second.govern(
+        DummyLLM("claude-opus-5-5", output_tokens=20_000), model="claude-opus-5-5"
+    )
+    prompt = turns()
+    ticket = None
+    for _ in range(40):
+        try:
+            spending.complete(next(prompt))
+        except SessionHaltedError as exc:
+            if exc.ticket is not None:
+                ticket = exc.ticket
+                break
+    assert ticket is not None and ticket.ticket_class == "extension"
+    assert second.billing_scope == f"{bound.SCOPE}/recovery/ext-1"
+    second.close()
     _verify(world)

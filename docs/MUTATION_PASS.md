@@ -58,3 +58,33 @@ remains.
 
 The runner (`mutate_phase6.py`) and the per-mutant results are kept with the working notes,
 not in the repository, as interlock's are.
+
+## After the 1.0.0 freeze: what moved, and what is new
+
+The pass that made the state incremental moved two mechanisms the 1.0.0 pass held: quorum
+counting, now one rule for approvals and declines (`Decide._ticket_votes`), and each
+principal's decisions, now an index by subject. It added others: the state's indexes, the
+document cache, the incremental fold, the two forms of a reset's evidence (V7, V8), and
+the wiring of each upstream fix. Each was mutated as the 1.0.0 pass mutated, with the
+same runner rules; the targets that need an upstream fix run in a venv that has
+interlock's `feat/fiduciary-prerequisites` and AgentGov's `feat/reset-memo` installed.
+
+| Target | Source | Tests |
+|---|---|---|
+| quorum | `authority.py` (counting), `store.py` (decisions) | as in 1.0.0 |
+| state | `store.py` (the indexes, `copy`), `log.py` (the fold), `authority.py` (the cache) | `test_state.py`, `test_store.py`, `test_decide.py`, `test_authority.py`, `test_escalation_quorum.py` |
+| verify, with U-5 | `bundle/verify.py` (the reset's forms) | `test_bundle_checks.py`, `test_bundle.py`, `test_bundle_tamper.py` |
+| upstream, with each fix | `executor.py`, `bridge.py` | `test_executor.py`, `test_bridge.py`, `test_bridge_lifecycle.py`, `test_bundle.py`, `test_bundle_checks.py`, `test_crash_recovery.py` |
+
+34 mutants: 15 of quorum counting (A02 to A16, the 1.0.0 pass's re-sited and three
+more), 11 of the state (S01 to S11), 2 of the verifier (V28, V29) and 6 of the wiring
+(U01 to U06). The first run killed 32. The two survivors were gaps, each now killed by a
+test added for it:
+
+| Survivor | Mechanism | Now |
+|---|---|---|
+| V29 | V8's check that a reset step's entry names its warrant, where the reset names it itself (U-5) | killed: a step whose result names another entry (`test_bundle_checks.py`) |
+| U06 | only the open recovery's steps decide whether it answers a safety halt (U-6) | killed: a recovery closed after a safety halt, and the next, opened by a spent-out halt, whose quote goes to the principals (`test_bridge_lifecycle.py`) |
+
+The state's mutants were each killed by `tests/test_state.py`, which holds every index to
+the events it folds, over logs in any order, and a copy to leaving its source as it was.
