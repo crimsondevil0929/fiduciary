@@ -45,11 +45,14 @@ def _key(path: Path, name: str) -> Path:
     return path
 
 
-def _configure(world: bound.World, *, top: str = "") -> Path:
+def _configure(
+    world: bound.World, *, top: str = "", mandate: Any = None, ledger: str | None = None
+) -> Path:
     """Write the deployment's files, then let go of what the test process
     holds: the engine's chain, the ledger's one writer. ``top`` leads
-    ``fiduciary.toml``."""
-    world.issue_and_bind(kit.mandate(world))
+    ``fiduciary.toml``; ``mandate`` is bound in place of the bridge's own;
+    ``ledger`` names a shared ledger in place of the world's SQLite file."""
+    world.issue_and_bind(mandate if mandate is not None else kit.mandate(world))
     world.binder.close()
     world.governor.close()
     tmp = world.tmp
@@ -96,7 +99,7 @@ def _configure(world: bound.World, *, top: str = "") -> Path:
     config.write_text(
         top
         + database
-        + f'ledger = "{tmp / "ledger.db"}"\n'
+        + f'ledger = "{ledger or tmp / "ledger.db"}"\n'
         + f'interlock = "{tmp / "interlock.toml"}"\n'
         + f'[charter]\ndigest = "{world.charter.digest}"\n'
         + f'[service]\nkey = "{service}"\n'

@@ -477,6 +477,11 @@ class Fiduciary:
         return self._executor
 
     @property
+    def outbox(self) -> OutboxOperations | None:
+        """Interlock's outbox, as the executor acts on it, or ``None``."""
+        return self._outbox
+
+    @property
     def binder(self) -> Binder:
         return self._binder
 

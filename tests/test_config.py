@@ -273,3 +273,87 @@ def test_an_outbox_that_does_not_open_is_a_configuration_error(tmp_path: Path) -
     with pytest.raises(ConfigError, match="outbox"):
         _outbox("postgresql://nobody@127.0.0.1:1/none", opened)  # type: ignore[arg-type]
     assert opened == []
+
+
+# -- the service's tables (§10.1, §10.3) ------------------------------------------------
+
+_AGENT = f'[bridge.agents.desk]\nmandate = "support-agent"\ntoken_sha256 = "{"c" * 64}"\n'
+
+
+@pytest.mark.parametrize(
+    ("text", "match"),
+    [
+        ("[serve]\nevery_seconds = 0\n", "positive number of seconds"),
+        ("[serve]\nevery_seconds = true\n", "positive number of seconds"),
+        ("[serve]\nnap_seconds = 1\n", "unknown key"),
+        ("[serve]\nrestart_min_seconds = 5\nrestart_max_seconds = 1\n", "at least restart_min"),
+        ("serve = 1\n", r"\[serve\] is a table"),
+        ('[metrics]\nlisten = "nowhere"\n', "HOST:PORT"),
+        ("[cluster]\nnode = 1\n", "node and database are strings"),
+        ('[cluster]\ndatabase = "c.db"\n', "postgresql:// DSN"),
+        ("[cluster]\nheartbeat_seconds = 5\nsession_timeout_seconds = 10\n", "three heartbeat"),
+        ('[bridge]\ntls_cert = "c.pem"\n', "tls_cert and tls_key"),
+        ("[bridge]\nagents = 1\n", "a table of agents"),
+        ('[bridge.agents.desk]\ntoken_sha256 = "x"\n', "mandate names a lineage"),
+        (_AGENT.replace('"c', '"C'), "64 lowercase hex"),
+        (_AGENT + 'tenant = ""\n', "tenant is a name"),
+        (_AGENT + "max_sessions = 0\n", "max_sessions is 1 to 1000"),
+        (_AGENT + _AGENT.replace("desk", "till"), "two agents share a token"),
+        ("ledger_schema = 1\n", "ledger_schema is a name"),
+    ],
+)
+def test_the_service_tables_are_checked(tmp_path: Path, text: str, match: str) -> None:
+    with pytest.raises(ConfigError, match=match):
+        load_config(_write(tmp_path, 'database = "f.db"\n' + text))
+
+
+def test_the_service_tables_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("FIDUCIARY_DATABASE", raising=False)
+    monkeypatch.delenv("FIDUCIARY_LEDGER", raising=False)
+    monkeypatch.delenv("FIDUCIARY_NODE", raising=False)
+    config = load_config(
+        _write(
+            tmp_path,
+            'database = "f.db"\n[serve]\nevery_seconds = 0.5\nidle_seconds = 60\n'
+            '[metrics]\nlisten = "127.0.0.1:0"\n[bridge]\ntls_cert = "c.pem"\ntls_key = "k.pem"\n'
+            + _AGENT
+            + 'tenant = "acme"\nmax_sessions = 2\n',
+        )
+    )
+    assert config.serve.every == 0.5 and config.serve.idle == 60 and config.serve.triggers == 10
+    assert config.metrics_listen == "127.0.0.1:0"
+    assert config.bridge_tls == (tmp_path / "c.pem", tmp_path / "k.pem")
+    (desk,) = config.agents.values()
+    assert (desk.mandate, desk.tenant, desk.max_sessions) == ("support-agent", "acme", 2)
+    assert config.cluster is None and config.cluster_node() is None
+    with pytest.raises(ConfigError, match="configure \\[cluster\\] first"):
+        config.cluster_node("node-1")
+
+
+def test_a_cluster_needs_postgresql_and_a_node(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("FIDUCIARY_DATABASE", raising=False)
+    monkeypatch.delenv("FIDUCIARY_LEDGER", raising=False)
+    monkeypatch.delenv("FIDUCIARY_NODE", raising=False)
+    sqlite = load_config(_write(tmp_path, 'database = "f.db"\nledger = "l.db"\n[cluster]\n'))
+    with pytest.raises(ConfigError, match="names no node"):
+        sqlite.cluster_node()
+    with pytest.raises(ConfigError, match="needs PostgreSQL"):
+        sqlite.cluster_node("node-1")
+    pg = load_config(
+        _write(
+            tmp_path,
+            'database = "postgresql://u@h/db"\nledger = "postgresql://u@h/l"\n'
+            '[cluster]\nnode = "node-1"\nheartbeat_seconds = 1\n',
+        )
+    )
+    node = pg.cluster_node()
+    assert node is not None and node.node == "node-1" and node.session_timeout == 10
+    monkeypatch.setenv("FIDUCIARY_NODE", "node-2")
+    found = pg.cluster_node()
+    assert found is not None and found.node == "node-2"
+    other = pg.cluster_node("node-3")
+    assert other is not None and other.node == "node-3"
+    with pytest.raises(ConfigError, match=r"\[cluster\]"):
+        pg.cluster_node("not a name")

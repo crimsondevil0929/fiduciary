@@ -1055,6 +1055,42 @@ def _mcp_proxy(args: argparse.Namespace) -> int:
     return OK
 
 
+def _serve(args: argparse.Namespace) -> int:
+    """``fiduciary serve``: the supervised service, until ``SIGTERM`` or
+    ``SIGINT``; ``SIGHUP`` opens its keys again."""
+    import asyncio
+    import logging
+    import threading
+
+    from fiduciary.config import ConfigError
+    from fiduciary.service import build_service
+
+    path = Path(args.config)
+    if not path.exists():
+        _fail(f"{path}: no such configuration (give --config)")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    try:
+        supervisor = build_service(
+            str(path), node=args.node, bridge=args.bridge, metrics=args.metrics
+        )
+    except (ConfigError, OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc))
+
+    def announce() -> None:
+        while not supervisor.wait_finished(0.05):
+            port = supervisor.metrics_port
+            if port is not None:
+                _err(f"fiduciary serve: metrics on http://127.0.0.1:{port}/metrics")
+                return
+
+    threading.Thread(target=announce, daemon=True).start()
+    try:
+        asyncio.run(supervisor.run(handle_signals=True))
+    except Exception as exc:  # a node already running, a database out of reach
+        _fail(f"fiduciary serve stopped: {type(exc).__name__}: {exc}", REFUSED)
+    return OK
+
+
 def _export_bundle(args: argparse.Namespace) -> int:
     from agentgov.receipts import ReceiptLog
     from interlock.records import Keyring, RecordLog
@@ -1358,6 +1394,15 @@ def _parser() -> argparse.ArgumentParser:
         else:
             sub.add_argument("upstream", nargs=argparse.REMAINDER, help="-- <command>")
             sub.set_defaults(handler=_mcp_proxy)
+
+    serve = commands.add_parser(
+        "serve",
+        help="run the service: binder, intake, triggers, executor, settler and bridge (§10.1)",
+    )
+    serve.add_argument("--node", help="this node's name, in a cluster ([cluster])")
+    serve.add_argument("--bridge", help="HOST:PORT for the bridge, over [bridge] http")
+    serve.add_argument("--metrics", help="HOST:PORT for /metrics and /healthz, over [metrics]")
+    serve.set_defaults(handler=_serve)
 
     export = commands.add_parser("export-bundle", help="write a lineage's audit bundle (§9)")
     export.add_argument("--mandate", required=True, help="the lineage's mandate_id")

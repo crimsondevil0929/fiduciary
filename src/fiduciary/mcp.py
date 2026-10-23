@@ -19,8 +19,10 @@ Transports:
 - :func:`serve_stdio`: newline-delimited JSON-RPC on a pipe.
 - :class:`HttpBridge`: Streamable HTTP, one endpoint (``/mcp``), ``POST``
   only, answering with ``application/json``. Each session is bound to one
-  bearer token, issued when the session opens and valid for it alone; the
-  listener speaks TLS, or listens on loopback only (F8-6, A8).
+  bearer token, issued when the session opens and valid for it alone, or,
+  under ``fiduciary serve``, to an agent's token and the session id its
+  ``initialize`` was answered with (``DELETE`` ends it); the listener speaks
+  TLS, or listens on loopback only (F8-6, A8).
 
 :class:`Upstream` fronts another MCP server (``fiduciary mcp proxy``): an
 upstream tool is exposed only where the mandate pins a ``passthrough``
@@ -29,9 +31,11 @@ binding of its name, and every call to it is metered and counted (F8-7).
 
 from __future__ import annotations
 
+import hashlib
 import hmac
 import ipaddress
 import json
+import logging
 import secrets
 import select
 import ssl
@@ -39,6 +43,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import IO, Any, Final
 
@@ -49,12 +54,15 @@ from fiduciary.exceptions import FiduciaryError
 __all__ = [
     "MAX_MESSAGE",
     "PROTOCOL_VERSIONS",
+    "Agent",
     "HttpBridge",
     "McpError",
     "McpServer",
     "Upstream",
     "serve_stdio",
 ]
+
+logger = logging.getLogger("fiduciary.mcp")
 
 PROTOCOL_VERSIONS: Final = ("2025-06-18", "2025-03-26", "2024-11-05")
 """The MCP revisions this server speaks, newest first."""
@@ -254,13 +262,42 @@ def _loopback(host: str) -> bool:
         return False
 
 
+@dataclass(frozen=True, slots=True)
+class Agent:
+    """An agent a bridge opens sessions for (``[bridge.agents]``): whoever
+    presents a bearer token whose SHA-256 is ``token_sha256``. Each
+    ``initialize`` without an ``Mcp-Session-Id`` opens a session of its own
+    (``open``), up to ``max_sessions`` at once. The bridge holds the digest,
+    never the token (F10-3)."""
+
+    name: str
+    token_sha256: str
+    open: Callable[[], Session]
+    max_sessions: int = 4
+
+
+@dataclass(slots=True)
+class _Opened:
+    agent: str
+    server: McpServer
+    used: float
+
+
 class HttpBridge:
-    """Sessions over Streamable HTTP (F8-6): ``POST /mcp``, one bearer token
-    per session. Nothing else is served.
+    """Sessions over Streamable HTTP (F8-6): ``POST /mcp``. Nothing else is
+    served, but ``DELETE /mcp``, which ends an agent's session.
+
+    A session is reached two ways:
+
+    - by a bearer token :meth:`add` issued for it alone (``fiduciary mcp
+      serve``);
+    - by an agent's token, and the ``Mcp-Session-Id`` its ``initialize``
+      answered with (``fiduciary serve``, ``agents``).
 
     :param host: Where to listen: a loopback address, unless ``tls`` is given.
     :param tls: The server's TLS context.
     :param service: Called every :data:`SERVICE_SECONDS`, under the lock.
+    :param agents: The agents sessions are opened for, by name.
     :raises McpError: When asked to listen beyond loopback without TLS.
     """
 
@@ -272,6 +309,7 @@ class HttpBridge:
         tls: ssl.SSLContext | None = None,
         service: Callable[[], object] | None = None,
         lock: threading.RLock | None = None,
+        agents: Mapping[str, Agent] | None = None,
     ) -> None:
         if tls is None and not _loopback(host):
             raise McpError(
@@ -280,6 +318,8 @@ class HttpBridge:
             )
         self._lock = lock or threading.RLock()
         self._servers: dict[str, McpServer] = {}
+        self._agents: dict[str, Agent] = dict(agents or {})
+        self._opened: dict[str, _Opened] = {}
         self._service = service
         self._stopped = threading.Event()
         bridge = self
@@ -307,26 +347,45 @@ class HttpBridge:
             def _refuse_method(self) -> None:
                 self._send(405, {"error": "POST /mcp only"}, {"Allow": "POST"})
 
-            do_GET = do_PUT = do_DELETE = do_PATCH = _refuse_method  # noqa: N815
+            do_GET = do_PUT = do_PATCH = _refuse_method  # noqa: N815
 
-            def do_POST(self) -> None:
+            def _admitted(self) -> McpServer | Agent | None:
+                """The caller, or ``None`` with the refusal sent."""
                 if self.path.split("?")[0] != "/mcp":
                     self._send(404, {"error": "not found"})
-                    return
+                    return None
                 origin = self.headers.get("Origin")
                 if origin is not None and not bridge._origin_allowed(origin):
                     self._send(403, {"error": "origin not allowed"})
-                    return
-                server = bridge._authorized(self.headers.get("Authorization"))
-                if server is None:
+                    return None
+                found = bridge._authorized(self.headers.get("Authorization"))
+                if found is None:
                     self._send(
                         401,
-                        {"error": "a bearer token for one session"},
+                        {"error": "a bearer token for one session, or an agent's"},
                         {"WWW-Authenticate": 'Bearer realm="fiduciary"'},
                     )
+                return found
+
+            def do_DELETE(self) -> None:
+                caller = self._admitted()
+                if caller is None:
+                    return
+                if not isinstance(caller, Agent):
+                    self._refuse_method()
                     return
                 sent = self.headers.get("Mcp-Session-Id")
-                if sent is not None and sent != server.session.session_id:
+                if sent is None or not bridge._end(caller, sent):
+                    self._send(404, {"error": "no such session for this agent"})
+                    return
+                self._send(204)
+
+            def do_POST(self) -> None:
+                caller = self._admitted()
+                if caller is None:
+                    return
+                sent = self.headers.get("Mcp-Session-Id")
+                if isinstance(caller, McpServer) and sent not in (None, caller.session.session_id):
                     self._send(404, {"error": "no such session for this token"})
                     return
                 try:
@@ -343,12 +402,43 @@ class HttpBridge:
                 except McpError as exc:
                     self._send(400, _error(None, exc.code, str(exc)))
                     return
+                server = caller
+                if isinstance(caller, Agent):
+                    found = self._agent_server(caller, sent, message)
+                    if found is None:
+                        return
+                    server = found
+                assert isinstance(server, McpServer)
                 answer = server.handle(message)
                 headers = {"Mcp-Session-Id": server.session.session_id}
                 if answer is None:
                     self._send(202, None, headers)
                 else:
                     self._send(200, answer, headers)
+
+            def _agent_server(self, agent: Agent, sent: str | None, message: Any) -> Any:
+                if sent is not None:
+                    found = bridge._served(agent, sent)
+                    if found is None:
+                        self._send(404, {"error": "no such session for this agent"})
+                    return found
+                if not isinstance(message, dict) or message.get("method") != "initialize":
+                    self._send(
+                        400,
+                        _error(
+                            message.get("id") if isinstance(message, dict) else None,
+                            INVALID_REQUEST,
+                            "no Mcp-Session-Id: initialize first",
+                        ),
+                    )
+                    return None
+                try:
+                    return bridge._open(agent)
+                except _FullError as exc:
+                    self._send(429, {"error": str(exc)}, {"Retry-After": "5"})
+                except FiduciaryError as exc:  # the lineage is not bound, or not in force
+                    self._send(403, {"error": str(exc)[:512]})
+                return None
 
         self._http = ThreadingHTTPServer((host, port), Handler)
         self._http.daemon_threads = True
@@ -369,16 +459,90 @@ class HttpBridge:
             self._servers[token] = McpServer(session, lock=self._lock)
         return token
 
-    def _authorized(self, header: str | None) -> McpServer | None:
+    def _authorized(self, header: str | None) -> McpServer | Agent | None:
         if header is None or not header.startswith("Bearer "):
             return None
-        offered = header[len("Bearer ") :].strip()
-        found = None
+        offered = header[len("Bearer ") :].strip().encode()
+        digest = hashlib.sha256(offered).hexdigest().encode()
+        found: McpServer | Agent | None = None
         with self._lock:
             for token, server in self._servers.items():
-                if hmac.compare_digest(token.encode(), offered.encode()):
+                if hmac.compare_digest(token.encode(), offered):
                     found = server
+            for agent in self._agents.values():
+                if hmac.compare_digest(agent.token_sha256.encode(), digest):
+                    found = agent
         return found
+
+    # -- agents' sessions ----------------------------------------------------------------
+
+    def _open(self, agent: Agent) -> McpServer:
+        with self._lock:
+            held = sum(1 for o in self._opened.values() if o.agent == agent.name)
+            if held >= agent.max_sessions:
+                raise _FullError(
+                    f"agent {agent.name} has {held} sessions open, its most: close one first"
+                )
+            session = agent.open()
+            server = McpServer(session, lock=self._lock)
+            self._opened[session.session_id] = _Opened(agent.name, server, time.monotonic())
+            return server
+
+    def _served(self, agent: Agent, session_id: str) -> McpServer | None:
+        with self._lock:
+            found = self._opened.get(session_id)
+            if found is None or found.agent != agent.name:
+                return None
+            found.used = time.monotonic()
+            return found.server
+
+    def _end(self, agent: Agent, session_id: str) -> bool:
+        with self._lock:
+            found = self._opened.get(session_id)
+            if found is None or found.agent != agent.name:
+                return False
+            del self._opened[session_id]
+            _close(found.server.session)
+            return True
+
+    def set_agents(self, agents: Mapping[str, Agent]) -> None:
+        """Serve ``agents`` from now on. The sessions of an agent no longer
+        named, or named with another token, are closed."""
+        with self._lock:
+            kept = {
+                name
+                for name, agent in agents.items()
+                if name in self._agents and self._agents[name].token_sha256 == agent.token_sha256
+            }
+            self._agents = dict(agents)
+            for session_id, opened in list(self._opened.items()):
+                if opened.agent not in kept:
+                    del self._opened[session_id]
+                    _close(opened.server.session)
+
+    def close_idle(self, seconds: float) -> int:
+        """Close every agent's session no request reached for ``seconds``.
+        Returns how many."""
+        cutoff = time.monotonic() - seconds
+        with self._lock:
+            idle = [sid for sid, opened in self._opened.items() if opened.used < cutoff]
+            for session_id in idle:
+                _close(self._opened.pop(session_id).server.session)
+        return len(idle)
+
+    def close_sessions(self) -> None:
+        """Close every agent's session: the bridge is going."""
+        with self._lock:
+            opened, self._opened = self._opened, {}
+            for each in opened.values():
+                _close(each.server.session)
+
+    def open_sessions(self) -> int:
+        """The agents' sessions open now."""
+        with self._lock:
+            return len(self._opened)
+
+    # -- serving ---------------------------------------------------------------------------
 
     @staticmethod
     def _origin_allowed(origin: str) -> bool:
@@ -414,6 +578,19 @@ class HttpBridge:
             self._http.shutdown()
             self._thread.join(5)
         self._http.server_close()
+
+
+class _FullError(FiduciaryError):
+    """An agent holds as many sessions as it may."""
+
+
+def _close(session: Session) -> None:
+    """Close a session the bridge drops; one whose store is gone stays open
+    in the log, as a crash leaves it."""
+    try:
+        session.close()
+    except Exception as exc:  # the store or the ledger is unreachable
+        logger.warning("session %s could not be closed: %s", session.session_id, exc)
 
 
 # --------------------------------------------------------------------------

@@ -23,6 +23,37 @@
     key = "executor.key"                                 # or signer; an [operators.keys] key
     log = "operators.ilok1"                              # else interlock.toml's [operators] log
 
+``fiduciary serve`` reads these too (§10.1, §10.3)::
+
+    [serve]
+    every_seconds = 1                                    # a turn of the writer and executor
+    triggers_seconds = 10                                # the outbox read for held and dead
+    settle_seconds = 5                                   # deliveries receipted
+    idle_seconds = 900                                   # a silent bridged session closes
+    drain_timeout_seconds = 30                           # each shutdown step's bound
+    restart_min_seconds = 0.5                            # a failed part backs off from here...
+    restart_max_seconds = 30                             # ...doubling to here
+
+    [metrics]
+    listen = "127.0.0.1:9465"                            # GET /metrics and /healthz; private
+
+    [cluster]                                            # PostgreSQL only
+    node = "fiduciary-0"                                 # or FIDUCIARY_NODE, or serve --node
+    database = "postgresql://fiduciary_audit@db/acme"    # the node's session: no pooler in
+    heartbeat_seconds = 1                                # transaction mode; else database,
+    session_timeout_seconds = 10                         # or FIDUCIARY_CLUSTER_DATABASE
+
+    [bridge]
+    http = "127.0.0.1:8765"
+    tls_cert = "bridge.pem"                              # beyond loopback, both
+    tls_key = "bridge.key"
+
+    [bridge.agents.support-desk]                         # whom the service opens sessions for
+    mandate = "<mandate_id or subject scope>"
+    tenant = "acme"
+    token_sha256 = "<sha256 of the agent's bearer token>"  # the file holds no secret (F10-3)
+    max_sessions = 4
+
 Paths are relative to the file. ``FIDUCIARY_DATABASE`` and ``FIDUCIARY_LEDGER``
 override ``database`` and ``ledger``, which keeps a password out of the file.
 ``interlock`` and ``[binding]`` are the deployment :func:`fiduciary.compiler.compile`
@@ -53,6 +84,7 @@ if TYPE_CHECKING:
     from agentgov import BudgetManager
     from agentgov.interceptor import ModelPricing
     from agentgov.receipts.signing import Signer
+    from interlock.cluster import ClusterNode
     from interlock.config import InterlockConfig
     from interlock.records import Keyring
 
@@ -61,7 +93,15 @@ if TYPE_CHECKING:
     from fiduciary.documents import ToolBinding
     from fiduciary.store import Store
 
-__all__ = ["Config", "ConfigError", "load_config", "load_tool"]
+__all__ = [
+    "AgentSettings",
+    "ClusterSettings",
+    "Config",
+    "ConfigError",
+    "ServeSettings",
+    "load_config",
+    "load_tool",
+]
 
 _TOP: Final = frozenset(
     {
@@ -78,8 +118,14 @@ _TOP: Final = frozenset(
         "receipts",
         "in_process",
         "bridge",
+        "ledger_schema",
+        "serve",
+        "metrics",
+        "cluster",
     }
 )
+NODE_ENV: Final = "FIDUCIARY_NODE"
+CLUSTER_DATABASE_ENV: Final = "FIDUCIARY_CLUSTER_DATABASE"
 _PRICE_FIELDS: Final = ("input", "output", "cache_read", "cache_write")
 _DECIMAL: Final = re.compile(r"(0|[1-9][0-9]{0,5})(\.[0-9]{1,8})?")
 
@@ -90,6 +136,40 @@ class ConfigError(ValueError):
 
 def is_dsn(text: str) -> bool:
     return text.startswith(("postgresql://", "postgres://"))
+
+
+@dataclass(frozen=True, slots=True)
+class ServeSettings:
+    """``[serve]``: the service's pace and its supervisor's bounds, in seconds."""
+
+    every: float = 1.0
+    triggers: float = 10.0
+    settle: float = 5.0
+    sample: float = 15.0
+    idle: float = 900.0
+    drain_timeout: float = 30.0
+    restart_min: float = 0.5
+    restart_max: float = 30.0
+
+
+@dataclass(frozen=True, slots=True)
+class ClusterSettings:
+    """``[cluster]``: this service as a node of a cluster (§10.3)."""
+
+    node: str = ""
+    database: str = ""
+    heartbeat: float = 1.0
+    session_timeout: float = 10.0
+
+
+@dataclass(frozen=True, slots=True)
+class AgentSettings:
+    """``[bridge.agents.<name>]``: an agent ``fiduciary serve`` opens sessions for."""
+
+    mandate: str
+    token_sha256: str
+    tenant: str | None = None
+    max_sessions: int = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,25 +201,90 @@ class Config:
     skew_seconds: int = 5
     handlers: Mapping[str, str] = field(default_factory=dict)
     prices: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    ledger_schema: str = "agentgov"
+    serve: ServeSettings = field(default_factory=ServeSettings)
+    metrics_listen: str | None = None
+    cluster: ClusterSettings | None = None
+    bridge_tls: tuple[Path, Path] | None = None
+    agents: Mapping[str, AgentSettings] = field(default_factory=dict)
 
-    def open_store(self) -> Store:
-        """The store ``database`` names."""
+    def open_store(
+        self, *, application_name: str = "fiduciary", idle_timeout: float | None = None
+    ) -> Store:
+        """The store ``database`` names. On PostgreSQL its connection is called
+        ``application_name``, and a transaction it leaves idle ends after
+        ``idle_timeout`` seconds."""
         if is_dsn(self.database):
             from fiduciary.postgres import PostgresStore
 
-            return PostgresStore(self.database, schema=self.schema)
+            return PostgresStore(
+                self.database,
+                schema=self.schema,
+                application_name=application_name,
+                idle_timeout=idle_timeout,
+            )
         from fiduciary.sqlite import SqliteStore
 
         return SqliteStore(self.database)
 
-    def open_ledger(self, *, read_only: bool = False) -> BudgetManager | None:
-        """A governor of ``ledger`` (write-capable unless ``read_only``), or ``None``."""
+    def open_ledger(
+        self,
+        *,
+        read_only: bool = False,
+        application_name: str | None = None,
+        idle_timeout: float | None = None,
+    ) -> BudgetManager | None:
+        """A governor of ``ledger`` (write-capable unless ``read_only``), or
+        ``None``. On PostgreSQL, in ``ledger_schema``, its connections called
+        ``application_name``, and a transaction left idle ended after
+        ``idle_timeout`` seconds (AgentGov's default otherwise)."""
         if self.ledger is None:
             return None
-        from interlock.wiring import open_ledger
+        from agentgov import BudgetManager
 
-        governor: BudgetManager = open_ledger(self.ledger, read_only=read_only)
-        return governor
+        if not is_dsn(self.ledger):
+            return BudgetManager.open_sqlite(self.ledger, read_only=read_only)
+        dsn = self.ledger
+        if application_name is not None:
+            from psycopg.conninfo import make_conninfo
+
+            dsn = make_conninfo(dsn, application_name=application_name)
+        extra: dict[str, Any] = {} if idle_timeout is None else {"idle_timeout": idle_timeout}
+        return BudgetManager.open_postgres(
+            dsn, schema=self.ledger_schema, read_only=read_only, **extra
+        )
+
+    def cluster_node(self, node: str | None = None) -> ClusterNode | None:
+        """This service's node, as ``[cluster]`` names it (``node`` over
+        ``FIDUCIARY_NODE`` over the file's); ``None`` alone.
+
+        :raises ConfigError: On a cluster with no name for the node, or not on
+            PostgreSQL.
+        """
+        settings = self.cluster
+        if settings is None:
+            if node is not None:
+                raise ConfigError("--node names a node of a cluster: configure [cluster] first")
+            return None
+        name = node or os.environ.get(NODE_ENV) or settings.node
+        if not name:
+            raise ConfigError(
+                f"[cluster] names no node: set its node, {NODE_ENV}, or serve --node NAME"
+            )
+        if not is_dsn(self.database) or self.ledger is None or not is_dsn(self.ledger):
+            raise ConfigError(
+                "[cluster] needs PostgreSQL: a cluster's nodes share one store and one ledger, "
+                "and meet in the store's database"
+            )
+        dsn = settings.database or os.environ.get(CLUSTER_DATABASE_ENV) or self.database
+        from interlock.cluster import ClusterNode
+
+        try:
+            return ClusterNode(
+                dsn, name, heartbeat=settings.heartbeat, session_timeout=settings.session_timeout
+            )
+        except ValueError as exc:
+            raise ConfigError(f"[cluster]: {exc}") from exc
 
     def service(self) -> Signer:
         """The service key, which signs the log."""
@@ -362,7 +507,11 @@ def load_config(path: str | Path) -> Config:
         ("executor", executor, {"key", "signer", "log", "outbox"}),
         ("runtime", runtime, {"records", "key", "signer"}),
         ("receipts", receipts, {"log", "key", "signer"}),
-        ("bridge", bridge, {"http", "skew_seconds", "handlers", "pricing"}),
+        (
+            "bridge",
+            bridge,
+            {"http", "skew_seconds", "handlers", "pricing", "tls_cert", "tls_key", "agents"},
+        ),
     ):
         if not isinstance(table, dict):
             raise ConfigError(f"{where}: [{name}] is a table")
@@ -432,6 +581,17 @@ def load_config(path: str | Path) -> Config:
     schema = raw.get("schema", "fiduciary")
     if not isinstance(schema, str):
         raise ConfigError(f"{where}: schema is a name")
+    ledger_schema = raw.get("ledger_schema", "agentgov")
+    if not isinstance(ledger_schema, str) or not ledger_schema:
+        raise ConfigError(f"{where}: ledger_schema is a name")
+    bridge_tls = None
+    if "tls_cert" in bridge or "tls_key" in bridge:
+        if "tls_cert" not in bridge or "tls_key" not in bridge:
+            raise ConfigError(f"{where}: [bridge] TLS needs tls_cert and tls_key")
+        bridge_tls = (
+            place(bridge["tls_cert"], "[bridge] tls_cert"),
+            place(bridge["tls_key"], "[bridge] tls_key"),
+        )
     interlock = raw.get("interlock")
     binding = raw.get("binding", {})
     if not isinstance(binding, dict):
@@ -480,7 +640,112 @@ def load_config(path: str | Path) -> Config:
         skew_seconds=skew,
         handlers=dict(handlers),
         prices={model: dict(rates) for model, rates in prices.items()},
+        ledger_schema=ledger_schema,
+        serve=_serve(raw.get("serve", {}), where),
+        metrics_listen=_metrics(raw.get("metrics", {}), where),
+        cluster=_cluster(raw.get("cluster"), where),
+        bridge_tls=bridge_tls,
+        agents=_agents(bridge.get("agents", {}), where),
     )
+
+
+def _seconds(table: Mapping[str, Any], key: str, default: float, where: Path, name: str) -> float:
+    value = table.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        raise ConfigError(f"{where}: [{name}] {key} is a positive number of seconds")
+    return float(value)
+
+
+def _table(raw: object, name: str, allowed: set[str], where: Path) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{where}: [{name}] is a table")
+    extra = sorted(set(raw) - allowed)
+    if extra:
+        raise ConfigError(f"{where}: [{name}] has unknown key(s) {', '.join(extra)}")
+    return raw
+
+
+def _serve(raw: object, where: Path) -> ServeSettings:
+    keys = {
+        "every": "every_seconds",
+        "triggers": "triggers_seconds",
+        "settle": "settle_seconds",
+        "sample": "sample_seconds",
+        "idle": "idle_seconds",
+        "drain_timeout": "drain_timeout_seconds",
+        "restart_min": "restart_min_seconds",
+        "restart_max": "restart_max_seconds",
+    }
+    table = _table(raw, "serve", set(keys.values()), where)
+    defaults = ServeSettings()
+    found = ServeSettings(
+        **{
+            field_name: _seconds(table, key, getattr(defaults, field_name), where, "serve")
+            for field_name, key in keys.items()
+        }
+    )
+    if found.restart_max < found.restart_min:
+        raise ConfigError(f"{where}: [serve] restart_max_seconds is at least restart_min_seconds")
+    return found
+
+
+def _metrics(raw: object, where: Path) -> str | None:
+    table = _table(raw, "metrics", {"listen"}, where)
+    listen = table.get("listen")
+    if listen is not None and (not isinstance(listen, str) or _listen(listen) is None):
+        raise ConfigError(f"{where}: [metrics] listen is HOST:PORT")
+    return listen
+
+
+def _cluster(raw: object, where: Path) -> ClusterSettings | None:
+    if raw is None:
+        return None
+    table = _table(
+        raw,
+        "cluster",
+        {"node", "database", "heartbeat_seconds", "session_timeout_seconds"},
+        where,
+    )
+    node, database = table.get("node", ""), table.get("database", "")
+    if not isinstance(node, str) or not isinstance(database, str):
+        raise ConfigError(f"{where}: [cluster] node and database are strings")
+    if database and not is_dsn(database):
+        raise ConfigError(f"{where}: [cluster] database is a postgresql:// DSN")
+    heartbeat = _seconds(table, "heartbeat_seconds", 1.0, where, "cluster")
+    timeout = _seconds(table, "session_timeout_seconds", 10.0, where, "cluster")
+    if timeout < 3 * heartbeat:
+        raise ConfigError(
+            f"{where}: [cluster] session_timeout_seconds is at least three heartbeat_seconds: "
+            f"a live node must never fall silent for that long"
+        )
+    return ClusterSettings(node, database, heartbeat, timeout)
+
+
+def _agents(raw: object, where: Path) -> dict[str, AgentSettings]:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{where}: [bridge.agents] is a table of agents")
+    found = {}
+    for name, value in raw.items():
+        label = f"bridge.agents.{name}"
+        table = _table(value, label, {"mandate", "tenant", "token_sha256", "max_sessions"}, where)
+        mandate, tenant = table.get("mandate"), table.get("tenant")
+        digest, most = table.get("token_sha256"), table.get("max_sessions", 4)
+        if not isinstance(mandate, str) or not mandate:
+            raise ConfigError(f"{where}: [{label}] mandate names a lineage or its scope")
+        if tenant is not None and (not isinstance(tenant, str) or not tenant):
+            raise ConfigError(f"{where}: [{label}] tenant is a name")
+        if not isinstance(digest, str) or not fidu1.HASH.fullmatch(digest):
+            raise ConfigError(
+                f"{where}: [{label}] token_sha256 is the SHA-256 of the agent's bearer token, "
+                f"64 lowercase hex characters: the file holds no secret (F10-3)"
+            )
+        if isinstance(most, bool) or not isinstance(most, int) or not 1 <= most <= 1000:
+            raise ConfigError(f"{where}: [{label}] max_sessions is 1 to 1000")
+        found[str(name)] = AgentSettings(mandate, digest, tenant, most)
+    digests = [a.token_sha256 for a in found.values()]
+    if len(set(digests)) != len(digests):
+        raise ConfigError(f"{where}: [bridge.agents] two agents share a token")
+    return found
 
 
 def _listen(text: str) -> tuple[str, int] | None:
@@ -493,9 +758,28 @@ def _listen(text: str) -> tuple[str, int] | None:
     return host, int(port)
 
 
-def open_fiduciary(cls: type[Fiduciary], path: str | Path, *, bridged: bool = False) -> Fiduciary:
-    """:meth:`fiduciary.bridge.Fiduciary.from_config`."""
+def open_fiduciary(
+    cls: type[Fiduciary],
+    path: str | Path,
+    *,
+    bridged: bool = False,
+    signers: Mapping[str, Signer] | None = None,
+    node: str | None = None,
+    bound: float | None = None,
+) -> Fiduciary:
+    """:meth:`fiduciary.bridge.Fiduciary.from_config`.
+
+    :param signers: The ``service``, ``executor``, ``runtime`` and
+        ``receipts`` keys, opened already (``fiduciary serve`` holds them, to
+        open them again in place at ``SIGHUP``); else opened from the file.
+    :param node: The node of a cluster this process is: every connection is
+        named for it, ``interlock-<part>@<node>``, so another node can end them
+        once this one is gone.
+    :param bound: Seconds a transaction left idle holds what it locked, on
+        PostgreSQL: a cluster's session timeout.
+    """
     from agentgov.receipts import ReceiptLog
+    from interlock.cluster import connection_name
     from interlock.records import RecordLog
     from interlock.wiring import open_substrate
 
@@ -506,12 +790,24 @@ def open_fiduciary(cls: type[Fiduciary], path: str | Path, *, bridged: bool = Fa
     config = load_config(path)
     if config.ledger is None:
         raise ConfigError("the bridge needs the deployment's AgentGov ledger: set ledger")
+    keys = dict(signers or {})
+
+    def key(name: str, opener: Callable[[], Signer]) -> Signer:
+        return keys[name] if name in keys else opener()
+
+    def named(part: str, alone: str) -> str:
+        return connection_name(part, node, alone)
+
     opened: list[Callable[[], None]] = []
     try:
-        signer = config.service()
-        store = config.open_store()
+        signer = key("service", config.service)
+        store = config.open_store(
+            application_name=named("fiduciary", "fiduciary"), idle_timeout=bound
+        )
         opened.append(store.close)
-        governor = config.open_ledger()
+        governor = config.open_ledger(
+            application_name=None if node is None else named("ledger", ""), idle_timeout=bound
+        )
         assert governor is not None
         opened.append(governor.close)
         log = Log(store, signer, ledger=governor)
@@ -520,23 +816,26 @@ def open_fiduciary(cls: type[Fiduciary], path: str | Path, *, bridged: bool = Fa
         interlock = config.interlock_config()
         receipts = None
         if config.receipts_log is not None:
-            receipts = ReceiptLog("fiduciary-receipts", config.receipts(), path=config.receipts_log)
+            receipts = ReceiptLog(
+                "fiduciary-receipts", key("receipts", config.receipts), path=config.receipts_log
+            )
             opened.append(receipts.close)
+        stage = named("stage", "fiduciary")
         binder = Binder(
             authority,
             governor,
             deployment=deployment,
-            substrate=lambda: open_substrate(interlock, application_name="fiduciary"),
+            substrate=lambda: open_substrate(interlock, application_name=stage),
             chains=config.chains,
             receipts=receipts,
         )
         runtime = None
         if config.runtime_records is not None:
-            runtime = RecordLog(config.runtime(), path=config.runtime_records)
+            runtime = RecordLog(key("runtime", config.runtime), path=config.runtime_records)
             opened.append(runtime.close)
         outbox = None
         if config.executor_outbox is not None:
-            outbox = _outbox(config.executor_outbox, opened)
+            outbox = _outbox(config.executor_outbox, opened, named("outbox", "fiduciary-outbox"))
         fid = cls(
             authority,
             binder,
@@ -545,7 +844,7 @@ def open_fiduciary(cls: type[Fiduciary], path: str | Path, *, bridged: bool = Fa
             outbox=outbox,
             operator_log=config.operators_log(),
             operator_keyring=config.operator_keyring(),
-            executor_signer=config.executor(),
+            executor_signer=key("executor", config.executor),
             receipts=receipts,
             handlers=config.load_handlers(),
             pricing=config.pricing(),
@@ -563,9 +862,11 @@ def _close_all(opened: list[Callable[[], None]]) -> None:
         close()
 
 
-def _outbox(target: str, opened: list[Callable[[], None]]) -> Any:
+def _outbox(
+    target: str, opened: list[Callable[[], None]], application_name: str = "fiduciary-outbox"
+) -> Any:
     """Interlock's outbox operations: a SQLite back office, or a PostgreSQL
-    connection as the installer."""
+    connection as the installer, called ``application_name``."""
     import sqlite3
 
     from interlock.deliveries import operations
@@ -576,7 +877,7 @@ def _outbox(target: str, opened: list[Callable[[], None]]) -> Any:
             import psycopg
 
             try:
-                conn = psycopg.connect(target, autocommit=True)
+                conn = psycopg.connect(target, autocommit=True, application_name=application_name)
             except psycopg.Error as exc:
                 raise ConfigError(f"[executor] outbox: {exc}") from exc
             opened.append(conn.close)

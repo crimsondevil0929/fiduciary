@@ -225,6 +225,10 @@ class Binder:
         """The deployment snapshot every compilation reads."""
         return self._deployment
 
+    def engines(self) -> dict[str, MandateEngine]:
+        """Every engine this binder opened, by lineage, closed ones too."""
+        return dict(self._engines)
+
     def engine(self, mandate_id: str) -> MandateEngine:
         found = self._engines.get(mandate_id)
         if found is None:

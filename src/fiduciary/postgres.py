@@ -180,16 +180,34 @@ class PostgresStore(Store):
 
     :param dsn: Connect as a login role with membership in the service role
         (or the intake role, to only submit; or audit, to only read).
+    :param application_name: What the connection is called. A node of a
+        cluster names it ``interlock-fiduciary@<node>``, so the other nodes can
+        end it once the node is gone (``fiduciary.service``).
+    :param idle_timeout: Seconds a transaction left idle holds the writer's
+        lock before the server ends it: a process that froze inside one holds
+        it no longer. Unbounded when ``None``.
     """
 
-    def __init__(self, dsn: str, *, schema: str = "fiduciary") -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        schema: str = "fiduciary",
+        application_name: str = "fiduciary",
+        idle_timeout: float | None = None,
+    ) -> None:
         import psycopg
 
         self._s = _checked(schema)
         try:
             self._conn: psycopg.Connection[Any] = psycopg.connect(
-                dsn, autocommit=True, application_name="fiduciary"
+                dsn, autocommit=True, application_name=application_name
             )
+            if idle_timeout is not None:
+                milliseconds = max(1, int(idle_timeout * 1000))
+                self._conn.execute(
+                    f"SET idle_in_transaction_session_timeout = {milliseconds}"  # an int
+                )
         except psycopg.Error as exc:
             raise StoreError(f"cannot connect to PostgreSQL: {exc}") from exc
         self._errors = psycopg.Error

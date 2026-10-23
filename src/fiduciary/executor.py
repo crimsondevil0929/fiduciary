@@ -511,6 +511,8 @@ class Executor:
     ) -> _Step:
         if self._outbox is None:
             return _Step(False, why="an outbox resolution needs interlock's outbox operations")
+        if self._operator_log is None:
+            return _Step(False, why="an outbox resolution needs interlock's operator log")
         targets: Sequence[Mapping[str, Any]] = step["targets"]
         ids = [uuid.UUID(str(t["message_id"])) for t in targets]
         expected = {str(t["message_id"]): str(t["head"]) for t in targets}

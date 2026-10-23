@@ -387,3 +387,68 @@ def test_a_built_in_answers_in_words_and_in_value(fid: Fiduciary) -> None:
     words, value = found["result"]["content"][0]["text"].split("\n")
     assert words.startswith(f"Ticket {asked.ticket.ticket_id} (refused) is ")
     assert json.loads(value)["ticket_id"] == asked.ticket.ticket_id
+
+
+def test_an_agents_token_opens_sessions_of_its_own(world: bound.World, fid: Fiduciary) -> None:
+    """``fiduciary serve``'s agents (``[bridge.agents]``): the bridge holds the
+    SHA-256 of each agent's token; every ``initialize`` opens a session, up
+    to the agent's bound; ``DELETE`` ends one; an idle one is closed; an
+    agent dropped at a reload loses its sessions."""
+    import hashlib
+
+    from fiduciary.mcp import Agent
+
+    def agent(name: str, token: str, mandate: str = bound.SCOPE, most: int = 2) -> Agent:
+        return Agent(
+            name,
+            hashlib.sha256(token.encode()).hexdigest(),
+            lambda: fid.session(mandate, tenant="acme", bridged=True),
+            most,
+        )
+
+    desk = agent("desk", "desk-token")
+    bridge = HttpBridge(
+        "127.0.0.1", 0, lock=fid.lock, agents={"desk": desk, "lost": agent("lost", "x", "nope")}
+    )
+    static = bridge.add(_session(fid))
+    bridge.start()
+    try:
+        where = bridge.address
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+        listing = {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+        assert _post(where, listing, token="desk-token")[0] == 400  # initialize first
+        assert _post(where, b"[]", token="desk-token")[0] == 400
+        status, headers, _ = _post(where, init, token="desk-token")
+        first = headers["mcp-session-id"]
+        assert status == 200
+        second = _post(where, init, token="desk-token")[1]["mcp-session-id"]
+        assert first != second and bridge.open_sessions() == 2
+        assert _post(where, init, token="desk-token")[0] == 429  # its bound
+        mine = {"Mcp-Session-Id": first}
+        assert _post(where, listing, token="desk-token", headers=mine)[0] == 200
+        assert _post(where, listing, token="desk-token", headers={"Mcp-Session-Id": "x"})[0] == 404
+        # A session of another lineage that is not in force: refused, nothing opened.
+        assert _post(where, init, token="x")[0] == 403
+        assert _post(where, init, token=static, method="DELETE")[0] == 405
+        assert _post(where, init, token="desk-token", method="DELETE")[0] == 404
+        assert _post(where, init, token="desk-token", method="DELETE", headers=mine)[0] == 204
+        assert _post(where, listing, token="desk-token", headers=mine)[0] == 404
+        assert bridge.close_idle(3600) == 0
+        assert bridge.close_idle(0) == 1 and bridge.open_sessions() == 0
+        third = _post(where, init, token="desk-token")[1]["mcp-session-id"]
+        bridge.set_agents({"desk": desk})  # kept: the same token
+        assert bridge.open_sessions() == 1
+        bridge.set_agents({"desk": agent("desk", "new-token")})  # another token: closed
+        assert bridge.open_sessions() == 0
+        assert (
+            _post(where, listing, token="desk-token", headers={"Mcp-Session-Id": third})[0] == 401
+        )
+        assert _post(where, init, token="new-token")[0] == 200
+        bridge.close_sessions()
+        assert bridge.open_sessions() == 0
+    finally:
+        bridge.stop()
+    state = world.log.state()
+    events = [event for events in state.sessions.values() for event, _, _ in events]
+    assert events.count("opened") == 5 and events.count("closed") == 4  # the static stays
+    _verify(world)

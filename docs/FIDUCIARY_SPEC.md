@@ -1774,6 +1774,29 @@ skew_seconds = 5
 [bridge.handlers]                                      # each passthrough tool's implementation
 lookup_order = "acme.tools:lookup_order"
 
+[bridge.agents.support-desk]                           # whom `fiduciary serve` opens sessions for
+mandate      = "<mandate_id or subject scope>"
+tenant       = "acme"
+token_sha256 = "<sha256 of the agent's bearer token>"  # the digest only: no secret (F10-3)
+max_sessions = 4
+
+[serve]                                                # seconds
+every_seconds = 1                                      # a turn of the writer and the executor
+triggers_seconds = 10                                  # the outbox read for held and dead messages
+settle_seconds = 5                                     # deliveries receipted
+idle_seconds = 900                                     # a silent bridged session is closed
+drain_timeout_seconds = 30
+restart_min_seconds = 0.5                              # a failed part backs off from here,
+restart_max_seconds = 30                               # doubling to here
+
+[metrics]
+listen = "127.0.0.1:9465"                              # GET /metrics and /healthz; a private address
+
+[cluster]                                              # PostgreSQL only (§10.7)
+node = "fiduciary-0"                                   # or FIDUCIARY_NODE, or serve --node
+heartbeat_seconds = 1
+session_timeout_seconds = 10
+
 [bridge.pricing.claude-opus-5-5]                       # dollars per million tokens, for models
 input = "4"                                            # AgentGov does not price: an allowlisted
 output = "20"                                          # model with no price is never called
@@ -1795,9 +1818,48 @@ of them.
 | `fiduciary approve <ticket or document> --key <file>` or `--signer <name>` | Sign an approval on the principal's own machine, from the rendered bytes. Needs no database credential. |
 | `fiduciary tickets list`, `show` | Show open tickets and their evidence, rendered as F7-3 requires |
 | `fiduciary warrant show`, `fiduciary resolve` | Inspect warrants; resolve interrupted executions |
-| `fiduciary serve` | Run the service: binder, escalation, executor, settler, intake and bridge |
+| `fiduciary serve [--node N] [--bridge HOST:PORT] [--metrics HOST:PORT]` | Run the service under a supervisor (§10.7): binder, intake, triggers, executor, settler and bridge. `SIGHUP` opens every key again; `SIGTERM` drains and stops. |
 | `fiduciary mcp serve`, `proxy` | Run the MCP bridge: one session per process, over stdio, or Streamable HTTP with `--http HOST:PORT` (`--token-file`, `--tls-cert`, `--tls-key`). The process also judges the intake and executes the warrants formed, since it holds the quotes and proposals they name (F7-14). |
 | `fiduciary export-bundle`, `verify-bundle`, `verify` | §9, and live verification of the store |
+
+## 10.7 The service
+
+`fiduciary serve` runs each part as a service of interlock's supervisor. Each part's step
+runs on a thread of its own. A step that raises closes the part, which opens again after an
+exponential backoff (`restart_min_seconds`, doubling to `restart_max_seconds`). `SIGTERM`
+drains each part once and closes them in order. `GET /healthz` answers 200 while every part
+runs (or stands by), and 503 otherwise, with each part's state, steps, failures and
+counters, the roles this node leads, and the bridge's address. `GET /metrics` exports
+interlock's per-part metrics and fiduciary's: the log's records, lineages by status,
+tickets by status, warrants by execution, the intake pending, sessions open, and records
+written by part. Every label comes from a closed set: never a lineage, a tenant or a key.
+
+| Part | Does, each turn | Where, in a cluster |
+|---|---|---|
+| `writer` | Holds the node's engines (and their chains), guards, recoveries, runtime log and the HTTP bridge's sessions. Brings its engines up to the log (§6.4); lapses what is due and judges the intake; expires lineages past their term; executes the formed warrants only it can (below); anchors what the ledger missed; closes idle sessions | the writer role's node |
+| `triggers` | Raises `held` tickets for scopes with held messages, and `dead` tickets for dead messages (§7.1), over the lineages in force. A message a live ticket names (open, or warranted and not yet executed) raises nothing | beside the writer |
+| `settler` | Interlock's settler over each lineage's chain and receipt issuer: delivery receipts (§9.1) | beside the writer |
+| `executor` | `resolve()` (F7-13), then every formed warrant that touches only interlock and AgentGov | the executor role's node |
+| `metrics` | `/metrics`, `/healthz`, and a sample of the log | every node |
+
+- **F10-12.** A warrant is executed where what it needs is. An `accept_repair` stages on the
+  lineage's engine, an `amend` rebinds it, and a `grant` or `decline` answers a quote the
+  lineage's guard holds in memory (U-3). These are executed by the writer. Every other
+  resolution is executed by the executor. Either way, the warrant's claim keeps it to one
+  execution (F7-12).
+- **F10-13.** The bridge opens sessions for the agents `[bridge.agents]` names. An agent
+  presents a bearer token whose SHA-256 the configuration holds. Each `initialize` without
+  an `Mcp-Session-Id` opens a session of its own, up to `max_sessions`, and is answered
+  with its id. `DELETE /mcp` with the id ends it. A session silent for `idle_seconds` is
+  closed. A token that opens nothing is refused with 401, a lineage not in force with 403,
+  and an agent at its bound with 429.
+- **F10-14.** `SIGHUP` opens every key again, from the files and key services the
+  configuration names now, and swaps each in place. The engines and the sessions keep
+  running. The service, runtime and receipt keys may not change: the log, the runtime
+  records and the checkpoints are each verified under one key. A reload that names another
+  such key is refused, and the service keeps the keys it has. The executor key may rotate,
+  to any key interlock's operators trust. The agents are read again: the sessions of an
+  agent no longer named, or named with another token, are closed.
 
 ---
 
