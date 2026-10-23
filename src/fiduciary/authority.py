@@ -631,11 +631,7 @@ class Decide:
         allowed = set(roster) & set(current_charter.names)
         pairs: list[tuple[str, Approval]] = []
         for principal, row in sorted(state.ticket_decisions(ticket.digest).items()):
-            if (
-                principal not in allowed
-                or row.decision != "approve"
-                or row.resolution != resolution.digest
-            ):
+            if principal not in allowed or row.decision != "approve":
                 continue
             approval: Approval = _load(self.store, row.digest, Approval)
             if (

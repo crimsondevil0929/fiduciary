@@ -184,9 +184,24 @@ def test_format_instant() -> None:
 def test_key_of_reads_ed25519_keys_only() -> None:
     spec = e.key("cfo")
     assert fidu1.key_of(spec).key_id == e.signer("cfo").key_id
-    for bad in ("hmac-sha256:" + "00" * 32, "ed25519:" + "AB" * 32, "ed25519:00"):
+    for bad in (
+        "hmac-sha256:" + "00" * 32,
+        "ed25519:" + "AB" * 32,
+        "ed25519:00",
+        spec + "00",  # a key and more: the whole spelling, or nothing
+    ):
         with pytest.raises(MalformedError):
             fidu1.key_of(bad)
+
+
+def test_an_integer_past_the_safe_range_is_refused() -> None:
+    """FIDU1 integers are safe integers (§3.1): one past 2**53 - 1 is out of
+    range, as is one past a field's own maximum."""
+    assert fidu1.check_integer(fidu1.MAX_SAFE_INTEGER, "$.n") == fidu1.MAX_SAFE_INTEGER
+    with pytest.raises(MalformedError, match="between"):
+        fidu1.check_integer(fidu1.MAX_SAFE_INTEGER + 1, "$.n")
+    with pytest.raises(MalformedError, match="between 1 and 9"):
+        fidu1.check_integer(10, "$.n", 1, 9)
 
 
 def _fields(value: object, names: tuple[str, ...] = ("x",)) -> Fields:

@@ -191,3 +191,38 @@ def test_verify_bundle_runs_with_no_network_and_no_database(
     )
     assert run.returncode == 0, run.stdout + run.stderr
     assert "V12 ordering: ok" in run.stdout
+
+
+def test_a_member_no_manifest_lists_is_named(world: bound.World, released: bytes) -> None:
+    members = _members(released)
+    extra = sorted([*members, ("notes/extra.txt", b"an extra member\n")])
+    report = _named(world, _tar(extra), "an unlisted member")
+    assert any("not in the manifest" in f.message for f in report.failed("V1")), report.render()
+
+
+def test_a_document_under_another_digest_is_named(world: bound.World, released: bytes) -> None:
+    """A mandate moved to another digest's name, listed there, the manifest
+    re-signed by no one: its name is not its digest (V1)."""
+    members = dict(_members(released))
+    old = next(n for n in members if fidu1.HASH.fullmatch(n.removeprefix("mandates/")[:-5]))
+    new = f"mandates/{'0' * 64}.json"
+    members[new] = members.pop(old)
+    manifest = fidu1.parse(members["manifest.json"])
+    for entry in manifest["members"]:
+        if entry["path"] == old:
+            entry["path"] = new
+    manifest["members"].sort(key=lambda m: m["path"])
+    members["manifest.json"] = fidu1.canonical(manifest)
+    report = _named(world, _tar(_remanifest(sorted(members.items()))), "a renamed document")
+    assert any("not its name's" in f.message for f in report.failed("V1")), report.render()
+
+
+def test_a_bundle_of_another_ledger_than_the_charters_is_named(
+    world: bound.World, released: bytes
+) -> None:
+    members = dict(_members(released))
+    manifest = fidu1.parse(members["manifest.json"])
+    manifest["ledger"]["first"] = "c" * 64
+    members["manifest.json"] = fidu1.canonical(manifest)
+    report = _named(world, _tar(_remanifest(sorted(members.items()))), "another ledger")
+    assert any("binds another ledger" in f.message for f in report.failed("V2")), report.render()

@@ -40,3 +40,29 @@ def test_the_phase_4_lifecycle_exports_a_bundle_that_verifies(world: bound.World
     data = bk.export(world, mandate_id)
     report = bk.verify(world, data)
     assert report.passed, report.render()
+
+
+def test_a_grant_other_than_the_warrants_is_named(
+    world: bound.World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lifecycle, its guard granting a hundred-millionth less than the
+    warrant names: the extension record is not the one the warrant asked for (V8)."""
+    from decimal import Decimal
+
+    from interlock.extension import BudgetGuard
+
+    from tests.test_bridge_lifecycle import test_a_session_from_commit_to_extension_and_back
+
+    grant = BudgetGuard.grant
+
+    def short(self: BudgetGuard, quote: object, **kw: object) -> object:
+        amount = kw.pop("amount")
+        assert isinstance(amount, Decimal)
+        return grant(self, quote, amount=amount - Decimal("0.00000001"), **kw)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(BudgetGuard, "grant", short)
+    test_a_session_from_commit_to_extension_and_back(world, world.clock)
+    (mandate_id,) = world.log.state().lineages
+    report = bk.verify(world, bk.export(world, mandate_id))
+    found = report.failed("V8")
+    assert any("not the one the warrant names" in f.message for f in found), report.render()

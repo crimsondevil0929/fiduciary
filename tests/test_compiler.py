@@ -154,6 +154,29 @@ def test_a_bound_is_the_tighter_of_the_mandates_and_the_installed_sinks() -> Non
     assert (stripe.max_attempts, stripe.max_payload_bytes) == (3, 1024)
 
 
+def test_the_mandates_tighter_bound_narrows_the_installed_sink() -> None:
+    raw = e.mandate_json()
+    raw["outbound"]["sinks"]["stripe"] = {**raw["outbound"]["sinks"]["stripe"], "max_attempts": 2}
+    compiled = _compile(raw)
+    assert compiled.sinks is not None
+    (stripe,) = list(compiled.sinks)
+    assert stripe.max_attempts == 2 < deploy.SINKS[0].max_attempts
+
+
+def test_the_compiled_digest_covers_every_checker() -> None:
+    """The digest a binding records is the SHA-256 of the whole description,
+    checkers included: a checker's bound changed is another policy (F6-6)."""
+    import hashlib
+
+    from fiduciary import fidu1
+
+    compiled = _compile(e.mandate_json())
+    assert compiled.digest == hashlib.sha256(fidu1.canonical(compiled.description)).hexdigest()
+    raw = e.mandate_json()
+    raw["data"] = {**raw["data"], "max_rows": raw["data"]["max_rows"] - 1}
+    assert _compile(raw).digest != compiled.digest
+
+
 def test_windows_are_named_by_lineage_and_inherited() -> None:
     parent = e.mandate()
     child = Mandate.from_json(e.child_json(windows=[]), signed=False)

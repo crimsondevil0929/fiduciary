@@ -209,13 +209,30 @@ def test_approvals_that_must_never_count_are_left_out(escalated: Escalated, cloc
         ]
         assert authority.decide.count_ticket(crafted, ticket, grant.resolution)[0] == []
         assert authority.decide.count_ticket_declines(crafted, ticket) == []
-        late = State(
-            **{f.name: copy.deepcopy(getattr(state, f.name)) for f in dataclasses.fields(State)}
-        )
-        late.approvals.append(row("cfo", signed("cfo", decision)))
-        late.record_times[seq] = ticket.not_after + timedelta(seconds=1)  # recorded after T's
-        assert authority.decide.count_ticket(late, ticket, grant.resolution)[0] == []
-        assert authority.decide.count_ticket_declines(late, ticket) == []
+        # Recorded after one deadline and within the other: each deadline counts alone.
+        issued = ticket.not_after - timedelta(hours=1)
+        for approval_until, recorded in (
+            (ticket.not_after + timedelta(hours=1), ticket.not_after + timedelta(seconds=1)),
+            (ticket.not_after - timedelta(minutes=10), ticket.not_after - timedelta(minutes=5)),
+            (ticket.not_after + timedelta(hours=1), ticket.not_after - timedelta(minutes=5)),
+        ):
+            late = State(
+                **{f.name: copy.deepcopy(getattr(state, f.name)) for f in dataclasses.fields(State)}
+            )
+            window = {
+                "issued_at": fidu1.format_instant(issued),
+                "not_after": fidu1.format_instant(approval_until),
+            }
+            late.approvals.append(row("cfo", signed("cfo", decision, **window)))
+            late.record_times[seq] = recorded
+            in_time = recorded <= ticket.not_after and recorded <= approval_until
+            expected = 1 if in_time else 0  # the last pair is in time: the control
+            assert len(authority.decide.count_ticket(late, ticket, grant.resolution)[0]) == (
+                expected if decision == "approve" else 0
+            )
+            assert len(authority.decide.count_ticket_declines(late, ticket)) == (
+                expected if decision == "decline" else 0
+            )
         suspended = State(
             **{f.name: copy.deepcopy(getattr(state, f.name)) for f in dataclasses.fields(State)}
         )

@@ -273,6 +273,78 @@ def test_a_tool_hold_that_names_no_session_after_named_ones_is_ambient(
     _only(report, "V7")
 
 
+def test_a_reset_another_warrant_names_is_ambient(world: bound.World) -> None:
+    """A reset its anchor attributes to a warrant the lineage never formed."""
+    mandate, fid = _lineage(world)
+    world.governor.trip(bound.SCOPE, "spend envelope exhausted")
+    with world.governor.transaction():
+        world.governor.anchor("fiduciary", f"FIDU1 warrant {'d' * 64} reset {bound.SCOPE}")
+        world.governor.reset(bound.SCOPE)
+    _later(fid)
+    report = _report(world, mandate)
+    _fails(report, "V7", "a reset no warrant of the lineage names", code=7)
+
+
+def test_a_session_memo_outside_the_sessions_life_is_ambient(world: bound.World) -> None:
+    """A hold that names a closed session of the lineage, written after it closed."""
+    mandate, fid = _lineage(world)
+    (session_id,) = world.log.state().sessions
+    held = world.governor.authorize(
+        bound.SCOPE, Decimal("0.001"), memo=f"FIDU1 session {session_id} tool lookup_order"
+    )
+    world.governor.void(held, memo="released")
+    _later(fid)
+    report = _report(world, mandate)
+    _fails(report, "V7", "outside session", code=7)
+
+
+def test_a_version_bound_as_another_compiled_policy_is_named(world: bound.World) -> None:
+    """The deployment the bundle carries compiles the bound version to another
+    policy than the one it was bound as (V4)."""
+    from interlock.outbound import SinkRegistry
+
+    mandate, fid = _lineage(world)
+    _later(fid)
+    deployment = world.binder.deployment
+    tighter = SinkRegistry([dataclasses.replace(spec, max_attempts=2) for spec in deployment.sinks])
+    data = bk.export(
+        world, mandate.mandate_id, deployment=dataclasses.replace(deployment, sinks=tighter)
+    )
+    report = bk.verify(world, data)
+    _fails(report, "V4", "compiles to", code=6)
+
+
+def test_an_operator_act_on_other_messages_than_the_warrants_is_named(
+    world: bound.World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A release that acted on one of the two messages its warrant names (V8)."""
+    mandate, fid = _lineage(world)
+    with fid.session(bound.SCOPE, tenant="acme") as session:
+        _refund(session, 9)
+    escalation = Escalation(world.authority, world.governor)
+    outbox, conn = _outbox_ops(world)
+    try:
+        world.governor.trip(bound.SCOPE, "spend envelope exhausted")
+        _run_relay(world, DeliveryResult(outcome=DELIVERED, detail="ok"))
+        ticket, _ = escalation.raise_held(mandate.mandate_id, outbox)
+        assert ticket is not None
+        assert len(ticket.evidence.messages) == 2  # type: ignore[union-attr]
+        warrant = _approve_ticket(world, escalation, ticket, "release")
+        release = Operator.release
+
+        def fewer(self: Any, ids: Any, **kw: Any) -> Any:
+            return release(self, list(ids)[:1], **kw)
+
+        monkeypatch.setattr(Operator, "release", fewer)
+        _execute(world, _Held(mandate, fid, escalation, outbox, ticket), warrant)
+    finally:
+        conn.close()
+    _later(fid)
+    report = _report(world, mandate)
+    found = report.failed("V8")
+    assert any("acted on other messages" in f.message for f in found), report.render()
+
+
 # -- V8 warrants: formed and executed as the rules allow ---------------------------------
 
 

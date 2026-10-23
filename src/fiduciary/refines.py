@@ -99,8 +99,9 @@ class _Check:
         compare: Callable[[str, T, T], None] | None = None,
         applies: Callable[[T], bool] = lambda rule: True,
     ) -> None:
-        """Every parent rule that still applies is kept, compared with ``compare``
-        (verbatim when there is none)."""
+        """Every parent rule that still applies is kept, compared with ``compare``.
+        Without one, a rule's ``identity`` is the whole rule, so a rule kept
+        but changed is one dropped."""
         mine = {identity(rule): rule for rule in child}
         for rule in parent:
             if not applies(rule):
@@ -111,8 +112,6 @@ class _Check:
                 self.fail(where, "is dropped: a child keeps every rule of its parent")
             elif compare is not None:
                 compare(where, found, rule)
-            elif found != rule:
-                self.fail(where, "differs from the parent's: a child keeps it verbatim")
 
 
 def refines(child: Mandate, parent: Mandate) -> tuple[Problem, ...]:

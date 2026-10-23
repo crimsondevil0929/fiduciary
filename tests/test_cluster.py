@@ -259,8 +259,10 @@ def test_a_node_in_process_leads_both_roles_and_lets_them_go(shared: Shared) -> 
         body = served.health()[1]
         assert body["node"] == "n0"
         sk.wait_for(
-            lambda: served.health()[1]["roles"]
-            == {"fiduciary-writer": True, "fiduciary-executor": True},
+            lambda: (
+                served.health()[1]["roles"]
+                == {"fiduciary-writer": True, "fiduciary-executor": True}
+            ),
             what="both roles",
         )
         agent = sk.McpClient(served.bridge())
