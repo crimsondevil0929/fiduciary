@@ -1,11 +1,16 @@
 name: Release
 
 # On a version tag: every check of ci.yml, then the wheel and the sdist, built
-# once, with a CycloneDX SBOM of everything they install and a GitHub build
-# provenance attestation (`gh attestation verify`), attached to a GitHub
-# release. It publishes to no package index: interlock-fiduciary is released
-# here only. Publishing to PyPI, when its owner decides to, is one more job:
-# trusted publishing, as interlock-escrow's release.yml does.
+# once, published to PyPI by trusted publishing: no API token exists anywhere,
+# PyPI exchanges this workflow's OIDC identity for a short-lived one. Every
+# distribution carries a PEP 740 attestation (PyPI shows and verifies it) and a
+# GitHub build provenance attestation (`gh attestation verify`), and the GitHub
+# release carries a CycloneDX SBOM of everything the package and its extras
+# install: the pipeline of interlock-escrow and interlock-agentgov.
+#
+# Before the first release, register this repository, this workflow
+# (release.yml) and the `pypi` environment as a trusted publisher of
+# interlock-fiduciary on PyPI, and give the environment required reviewers.
 
 on:
   push:
@@ -74,25 +79,44 @@ jobs:
           name: sbom
           path: sbom/
 
-  github-release:
-    name: GitHub release, attested
+  publish:
+    name: publish to PyPI
     needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/interlock-fiduciary/
+    permissions:
+      id-token: write # trusted publishing, and signing the attestations
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Attest the distributions' build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/*
+
+      - name: Publish, with a PEP 740 attestation for each file
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          attestations: true
+
+  github-release:
+    name: GitHub release, with the SBOM
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write # signing the attestation
-      attestations: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/download-artifact@v4
         with:
           path: assets/
-
-      - name: Attest the distributions' build provenance
-        uses: actions/attest-build-provenance@v1
-        with:
-          subject-path: assets/dist/*
 
       - name: Create the release from the tag
         env:
