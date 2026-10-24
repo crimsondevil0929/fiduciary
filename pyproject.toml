@@ -35,6 +35,12 @@ sign = ["interlock-agentgov[sign]>=1.0.0"]
 kms-aws = ["interlock-agentgov[kms-aws]>=1.0.0"]
 # AgentGov's OpenTelemetry metrics, for the governor fiduciary anchors into.
 otel = ["interlock-agentgov[otel]>=1.0.0"]
+# The Cedar policy engine, for the input gateway `fiduciary demo` compares with;
+# without it the demo's built-in evaluator of the same policies decides.
+cedar = ["cedarpy>=4.12"]
+# `fiduciary demo`: it signs as every party of its deployment does, and its gateway
+# evaluates Cedar.
+demo = ["interlock-agentgov[sign]>=1.0.0", "cedarpy>=4.12"]
 
 [build-system]
 requires = ["hatchling"]
@@ -49,6 +55,7 @@ dev = [
     "psycopg[binary]>=3.2",
     "hypothesis>=6.100",
     "cryptography>=42",
+    "cedarpy>=4.12",
 ]
 
 [tool.pytest.ini_options]
@@ -100,4 +107,4 @@ packages = ["src/fiduciary"]
 
 [tool.hatch.build.targets.sdist]
 # Working notes for whoever builds the next phase: untracked, and not part of a release.
-exclude = ["/HANDOFF.md", "/AGENTS.md", "/CLAUDE.md", "/.env.benchmark", "/live-run", "/soak"]
+exclude = ["/HANDOFF.md", "/AGENTS.md", "/CLAUDE.md", "/STRATEGY_AND_MOAT.md", "/.env.benchmark", "/live-run", "/soak"]

@@ -96,6 +96,7 @@ class MandateEngine:
         self._closed = False
         self._staging = 0
         """Plans in flight: a revocation can close the engine from within one."""
+        self._observers: list[Callable[[StageResult], None]] = []
         self._mandate = mandate
         self._compiled = compiled
         self._engine = self._build(compiled)
@@ -152,11 +153,23 @@ class MandateEngine:
                 )
             self._staging += 1
             try:
-                return self._engine.execute(plan, settle_cost=settle_cost)
+                result = self._engine.execute(plan, settle_cost=settle_cost)
+                for observer in self._observers:
+                    observer(result)
+                return result
             finally:
                 self._staging -= 1
                 if self._closed and not self._staging:
                     self._chain.close()  # closed during this plan: it has finished now
+
+    def observe(self, observer: Callable[[StageResult], None]) -> None:
+        """Hand ``observer`` every result this engine returns from now on,
+        committed or refused, before its caller sees it: the operator's view,
+        with the diff and the verdict that a session never passes to an agent
+        (F8-3). An observer that raises fails the call it observed, after the
+        plan's outcome is settled."""
+        with self._lock:
+            self._observers.append(observer)
 
     def rebind(self, mandate: Mandate, compiled: CompiledMandate) -> None:
         """Take up a new version at the next plan boundary."""

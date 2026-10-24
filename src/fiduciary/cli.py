@@ -1176,6 +1176,10 @@ def _verify_bundle(args: argparse.Namespace) -> int:
     if not fidu1.HASH.fullmatch(args.charter):
         _err("fiduciary: --charter is the pinned digest: 64 lowercase hex characters")
         return 1
+    kind = _report_kind(args.report) if args.report is not None else None
+    if args.report is not None and kind is None:
+        _err("fiduciary: --report writes a .html or a .md file")
+        return 1
     try:
         data = Path(args.bundle).read_bytes()
         keys = None
@@ -1192,9 +1196,186 @@ def _verify_bundle(args: argparse.Namespace) -> int:
     except BundleError as exc:
         _err(f"fiduciary: {exc}")
         return 2
+    if args.json or args.report is not None:
+        from fiduciary import report as reports
+        from fiduciary.attest import attest
+
+        pinned = sorted(keys.raw) if keys is not None else []
+        attested = attest(
+            data,
+            report,
+            charter=args.charter,
+            pinned=pinned,
+            witness=witness is not None,
+            skew_seconds=args.skew,
+        )
+        if args.report is not None:
+            page = reports.payload({Path(args.bundle).name: attested})
+            text = reports.html(page) if kind == "html" else reports.markdown(page)
+            try:
+                Path(args.report).write_text(text, encoding="utf-8")
+            except OSError as exc:
+                _err(f"fiduciary: --report: {exc}")
+                return 1
+            _err(f"wrote {args.report}")
+        if args.json:
+            _out(json.dumps(attested, indent=2, sort_keys=True))
+            return report.exit_code
     _out(report.render())
     _out("PASS" if report.passed else f"FAIL: exit {report.exit_code}")
     return report.exit_code
+
+
+def _report_kind(path: str) -> str | None:
+    suffix = Path(path).suffix.lower()
+    if suffix in (".html", ".htm"):
+        return "html"
+    if suffix in (".md", ".markdown"):
+        return "md"
+    return None
+
+
+# --------------------------------------------------------------------------
+# the demo
+# --------------------------------------------------------------------------
+
+
+def _demo(args: argparse.Namespace) -> int:
+    """§10.6: the whole stack, offline, in one command. 0 when every act
+    showed what it shows; 1 when one did not; 2 on a usage error."""
+    import tempfile
+
+    from agentgov.exceptions import SignerUnavailableError
+    from agentgov.receipts.signing import Ed25519Signer
+
+    from fiduciary import demo
+
+    if args.report is not None and not Path(args.report).is_dir():
+        if _report_kind(args.report) is None:
+            _fail("--report is a directory, or a .html or .md file")
+    try:
+        Ed25519Signer.generate()
+    except SignerUnavailableError:
+        _fail(
+            "the demo signs as every party of its deployment does, which needs the "
+            "cryptography package: pip install 'interlock-fiduciary[demo]'"
+        )
+    live = None
+    if args.live:
+        live = _live_model(args)
+    if args.out is not None:
+        root = Path(args.out).resolve()
+        if root.exists() and any(root.iterdir()):
+            _fail(f"{root} is not empty: the demo writes a fresh deployment there")
+    else:
+        root = Path(tempfile.mkdtemp(prefix="fiduciary-demo-"))
+    say = (lambda _: None) if args.quiet else _out
+    say(f"fiduciary demo: a deployment in {root}")
+    say("  an input gateway (Cedar) and the stack (AgentGov, Interlock, Fiduciary), same calls")
+    try:
+        outcome = demo.run(root, live=live, engine=args.gateway, say=say)
+    except ImportError as exc:
+        _fail(f"{exc}: pip install 'interlock-fiduciary[demo]' for the Cedar engine")
+    data = outcome.payload
+    if args.report is not None:
+        from fiduciary import report as reports
+
+        target = Path(args.report)
+        if target.is_dir():
+            target = target / "dashboard.html"
+        kind = _report_kind(str(target))
+        target.write_text(
+            reports.html(data) if kind == "html" else reports.markdown(data), encoding="utf-8"
+        )
+        say(f"wrote {target}")
+    say("")
+    say(f"dashboard   {outcome.dashboard}")
+    say(f"bundles     {root / 'before.fidb'}, {root / 'after.fidb'}")
+    say(
+        f"verify      fiduciary verify-bundle {root / 'after.fidb'} --charter "
+        f"$(cat {root / 'charter.digest'}) --keys {root / 'pinned-keys.json'}"
+    )
+    say(f"explore     fiduciary --config {root / 'fiduciary.toml'} tickets list --all")
+    if data["demo"]["model"]:
+        model = data["demo"]["model"]
+        say(f"live        {model['served']}: {model['turns']} turn(s), ${model['metered']} metered")
+    url = outcome.dashboard.resolve().as_uri()
+    server = None
+    if args.serve is not None:
+        server, url = _serve_dashboard(root, args.serve)
+        say(f"serving     {url} (Ctrl-C stops)")
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(url)
+    if server is not None:
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.server_close()
+    return OK if outcome.held else REFUSED
+
+
+def _live_model(args: argparse.Namespace) -> Any:
+    """The model for act 1: ``BENCHMARK_API_KEY`` from the environment or
+    ``--env-file``, never ``ANTHROPIC_API_KEY`` (spending money is deliberate)."""
+    import importlib
+    import os
+    from decimal import Decimal, InvalidOperation
+
+    from fiduciary.demo import Live
+    from fiduciary.demo.world import PRICING
+
+    key = os.environ.get("BENCHMARK_API_KEY")
+    if not key and args.env_file is not None:
+        try:
+            lines = Path(args.env_file).read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            _fail(f"--env-file: {exc}")
+        for line in lines:
+            name, sep, value = line.strip().removeprefix("export ").partition("=")
+            if sep and name.strip() == "BENCHMARK_API_KEY":
+                key = value.strip().strip("'\"") or None
+    if not key:
+        _fail(
+            "--live needs BENCHMARK_API_KEY (in the environment, or --env-file); it never "
+            "reads ANTHROPIC_API_KEY: spending money is deliberate"
+        )
+    if args.model not in PRICING:
+        _fail(f"no rate is configured for {args.model}: it is never called unmetered")
+    try:
+        cap = Decimal(args.max_cost)
+    except InvalidOperation:
+        _fail("--max-cost is a dollar amount")
+    try:
+        anthropic: Any = importlib.import_module("anthropic")
+    except ImportError:
+        _fail("--live needs the anthropic package: pip install anthropic")
+    client = anthropic.Anthropic(api_key=key, max_retries=3, timeout=180.0)
+    return Live(client, args.model, effort=args.effort, max_cost=cap)
+
+
+def _serve_dashboard(root: Path, where: str) -> tuple[Any, str]:
+    """A loopback HTTP server over the demo's directory."""
+    import functools
+    import http.server
+
+    host, _, port = (where or "127.0.0.1:8740").rpartition(":")
+    host = host or "127.0.0.1"
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        _fail("--serve listens on loopback only: 127.0.0.1:<port>")
+    try:
+        number = int(port)
+    except ValueError:
+        _fail("--serve is HOST:PORT")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
+    try:
+        server = http.server.ThreadingHTTPServer((host, number), handler)
+    except OSError as exc:
+        _fail(f"--serve: {exc}")
+    return server, f"http://{host}:{server.server_address[1]}/dashboard.html"
 
 
 # --------------------------------------------------------------------------
@@ -1425,7 +1606,52 @@ def _parser() -> argparse.ArgumentParser:
     check.add_argument("--keys", help="the keys the auditor pins (keys.json's form)")
     check.add_argument("--witness", help="a ledger witness's key, ed25519:<hex>")
     check.add_argument("--skew", type=int, default=5, help="seconds of clock skew (V12)")
+    check.add_argument(
+        "--json",
+        action="store_true",
+        help="print the attestation as JSON (for a SIEM or GRC system); same exit code",
+    )
+    check.add_argument(
+        "--report", metavar="PATH", help="also write the attestation report: a .html or .md file"
+    )
     check.set_defaults(handler=_verify_bundle)
+
+    demo = commands.add_parser(
+        "demo",
+        help="run the whole stack offline in seven acts, beside an input gateway, and write "
+        "its dashboard",
+    )
+    demo.add_argument("--out", help="the directory to write the deployment into (new or empty)")
+    demo.add_argument(
+        "--report", metavar="DIR|FILE", help="also write the dashboard (.html) or report (.md)"
+    )
+    demo.add_argument(
+        "--serve",
+        nargs="?",
+        const="127.0.0.1:8740",
+        metavar="HOST:PORT",
+        help="serve the dashboard on loopback (127.0.0.1:8740)",
+    )
+    demo.add_argument("--open", action="store_true", help="open the dashboard in a browser")
+    demo.add_argument(
+        "--gateway",
+        default="auto",
+        choices=("auto", "cedarpy", "builtin"),
+        help="the gateway's Cedar engine: cedarpy when installed, or the built-in evaluator",
+    )
+    demo.add_argument(
+        "--live",
+        action="store_true",
+        help="act 1 is worked by a Claude model (BENCHMARK_API_KEY; costs money)",
+    )
+    demo.add_argument("--model", default="claude-opus-5-5")
+    demo.add_argument("--effort", default="medium", choices=("low", "medium", "high"))
+    demo.add_argument(
+        "--max-cost", default="0.50", help="stop the live act once its metered spend reaches this"
+    )
+    demo.add_argument("--env-file", help="read BENCHMARK_API_KEY from this file")
+    demo.add_argument("--quiet", action="store_true", help="print nothing but errors")
+    demo.set_defaults(handler=_demo)
 
     verify = commands.add_parser("verify", help="verify the store, its log and its anchors")
     verify.add_argument("--service-key", help="ed25519:<hex>; the configured key's by default")
