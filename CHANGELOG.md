@@ -4,71 +4,14 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- **The upstream fixes, where they are installed** (§12). Fiduciary reads which of them
-  the installed interlock and AgentGov provide, from their code (`fiduciary._upstream`),
-  uses each, and holds to its fallback where it is absent: it runs on interlock 1.0.2 and
-  AgentGov 1.0.0 as before, and on the releases that close the gaps.
-  - U-2: an AWS KMS key may be the executor's or the runtime's, its ILOK1 records signed
-    at signature version 2 (F3-9). Outbox actions are still chunked to 8 targets.
-  - U-3: an extension quote survives a restart and the writer moving to another node
-    (F7-14).
-  - U-4: an outbox step at a head that moved after its ticket is refused before anything
-    is signed, where it was recorded and named (F7-15).
-  - U-5: a reset's own entry names its warrant, with no anchor beside it (§7.6). V7 and
-    V8 read either form.
-  - U-6: a lineage's recovery opens again on a fresh reserve, `{scope}/recovery/ext-N`,
-    at a halt after it closed, where a lineage recovered once (F8-9).
-- A CI job runs the suite against interlock's and AgentGov's `main`.
-
-### Fixed
-
-- **A takeover waits for a frozen writer, healthy** (F10-19). The node that took the
-  writer role from one frozen with the files' claims failed its writer's turn on them,
-  backed off up to `restart_max_seconds`, and answered `/healthz` with 503, inviting a
-  supervisor to restart the one healthy node. It now leads and waits, asking each turn,
-  counts `claims_held`, logs which process holds them, and takes them up within a turn of
-  their release.
-- **A writer whose opening fails part-way lets go of the chains it opened**, at once,
-  where they were held until the engines were collected, and a retry in the same process
-  could find its own claims.
-
-### Changed
-
-- **A turn costs what is due, not what the log holds** (F10-1, amended). The service kept
-  every record it had read and folded the whole log each time a decision asked about it,
-  so a writer's turn and each tool call took time in proportion to the log: at 3,000
-  records, 180 ms a turn and 90 ms a call. It now keeps only the folded state, folds what
-  was appended since into a copy (a state once read never changes), and answers each
-  question from an index: open tickets, unexecuted warrants, open intents, each subject's
-  decisions, grants by mandate. At 10,000 records a turn takes 0.03 ms and a call 0.44 ms,
-  as at 300. Memory no longer grows with every record read.
-- **Documents are read once.** A decision reads a charter, mandate, ticket, approval or
-  warrant from the store once, kept by digest (bytes that do not hash to their digest are
-  never kept). `verify` reads afresh each time.
-- **The intake reads what is unanswered.** A turn reads the intake's ids, and then only
-  the submissions no record answers, where it read every submission's bytes.
-- **Nothing due, no lock**, for the binder's expiry too: a turn with no lineage past its
-  term takes no writer lock.
-- Approvals of a ticket and declines of it are counted by one rule (§7.3), where two
-  copies of it were kept in step.
-- **A document's digest is computed once** (it is frozen), where each use encoded it and
-  hashed it again: `verify` read a record's hash four times. `verify` takes a third less
-  time.
-- **`verify` and `export-bundle` read each document once.** `verify` checked each record's
-  named document with a query of its own after reading every document; the exporter read
-  each document it needed by one query each, each escrow chain twice, and asked the
-  outbox for a message's plan once per operator intent naming it.
-
 ## [1.0.0]
 
 Phase 6 of `docs/FIDUCIARY_SPEC.md` §11: production. Fiduciary runs as a supervised
 service, alone or as a cluster on PostgreSQL; every 0.x store upgrades in place; a soak,
 a security audit and a mutation pass hold it to its invariants; and FIDU1, the documents,
-the record kinds and the bundle format are frozen for 1.x.
+the record kinds and the bundle format are frozen for 1.x. It uses each upstream fix of
+§12 that the installed interlock and AgentGov provide, and runs on interlock 1.0.2 and
+AgentGov 1.0.0 without them.
 
 ### Added
 
@@ -97,18 +40,38 @@ the record kinds and the bundle format are frozen for 1.x.
   interlock's `ClusterNode`; one leads `fiduciary-writer`, one `fiduciary-executor`.
   A node on standby holds no chain, log claim or listener; one that loses the writer role
   lets go of everything at once. Every connection is named for its node, so a node found
-  gone is fenced; the executor confirms its claim before each act.
+  gone is fenced; the executor confirms its claim before each act. The node that takes the writer role
+  from one frozen with the files' claims leads and waits for them, healthy: it asks each
+  turn, counts `claims_held`, logs which process holds them, and takes them up within a
+  turn of their release (F10-19).
 - **`tests/upgrades/`** and `scripts/make_upgrade_stores.py`: a store written by each 0.x
   release's own code (schema versions 1 to 4), opened by this one on SQLite and
   PostgreSQL (F10-18).
 - **`scripts/live_stress_test.py`**, the soak, and `tests/test_soak.py`, scaled down.
 - **`scripts/security_audit.py`** and `tests/test_security_audit.py` (F9-1, F4-27).
 - **`docs/MUTATION_PASS.md`**: 109 mutants over `fidu1`, `refines`, the compiler, quorum
-  counting and `verify_bundle`, every one killed or its code removed.
+  counting and `verify_bundle`, every one killed or its code removed; and 34 more over the incremental state, quorum
+  counting and the upstream wiring, every one killed.
 - `fiduciary.toml`: `[serve]`, `[metrics]`, `[cluster]`, `[bridge.agents]`, bridge TLS
   (`tls_cert`, `tls_key`) and `ledger_schema`.
 - `.github/workflows/release.yml`: on a `v*` tag, the checks, then the wheel and sdist
-  built and attached to a GitHub release. It publishes to no index.
+  built once and published to PyPI by trusted publishing, each with a PEP 740 attestation
+  and a GitHub build provenance attestation, and a GitHub release with a CycloneDX SBOM:
+  the pipeline interlock and AgentGov release by.
+- **The upstream fixes, where they are installed** (§12). Fiduciary reads which of them
+  the installed interlock and AgentGov provide, from their code (`fiduciary._upstream`),
+  uses each, and holds to its fallback where it is absent.
+  - U-2: an AWS KMS key may be the executor's or the runtime's, its ILOK1 records signed
+    at signature version 2 (F3-9). Outbox actions are still chunked to 8 targets.
+  - U-3: an extension quote survives a restart and the writer moving to another node
+    (F7-14).
+  - U-4: an outbox step at a head that moved after its ticket is refused before anything
+    is signed; without it, the step is recorded and named (F7-15).
+  - U-5: a reset's own entry names its warrant, with no anchor beside it (§7.6). V7 and
+    V8 read either form.
+  - U-6: a lineage's recovery opens again on a fresh reserve, `{scope}/recovery/ext-N`,
+    at a halt after it closed; without it, a lineage recovers once (F8-9).
+- A CI job runs the suite against interlock's and AgentGov's `main`.
 
 ### Changed
 
@@ -117,14 +80,28 @@ the record kinds and the bundle format are frozen for 1.x.
   expire a lineage.
 - **An idle turn takes no lock.** The intake read every submission ever received, and
   took the lock once per submission, folding the whole log under it; ticket lapses alike.
-  This was the Phase 5 contention test's stall under coverage.
+  This was the Phase 5 contention test's stall under coverage. A turn now reads the
+  intake's ids, and the bytes of only the submissions no record answers; the binder's
+  expiry takes no lock when no lineage is past its term.
 - **Engines follow the log** (`Binder.follow`, §6.4 amended): an amendment bound from the
   command line or another node reaches a running session at its next call, and a
   revocation stops it there.
 - **A warranted ticket lapses** when its warrant reaches its `not_after` unexecuted (F7-7
   amended).
-- **The log is read incrementally**: a service keeps the records it read and reads only
-  those appended since, checking that they follow the last it kept.
+- **A turn costs what is due, not what the log holds** (F10-1 amended). A service folded
+  the whole log each time a decision asked about it, so a writer's turn and each tool call
+  took time in proportion to the log. It now keeps only the folded state, reads only the
+  records appended since, checking that they follow what it folded, and folds them into a
+  copy (a state once read never changes). Each question is answered from an index: open
+  tickets, unexecuted warrants, open intents, each subject's decisions, grants by mandate.
+  At 10,000 records a turn takes 0.03 ms and a tool call 0.44 ms, as at 300, and memory
+  does not grow with the records read.
+- **Documents are read once.** A decision reads a charter, mandate, ticket, approval or
+  warrant from the store once, kept by digest (bytes that do not hash to their digest are
+  never kept). `verify` reads afresh each time, but reads each document once, as
+  `export-bundle` does, and a document's digest is computed once (it is frozen).
+- Approvals of a ticket and declines of it are counted by one rule (§7.3), where two
+  copies of it were kept in step.
 - **V7 explains 0.4's passthrough memo** (`FIDU1 tool <name> <digest>`), as 0.4 wrote it,
   and only before the ledger's first session-named memo (BUNDLE_FORMAT §4.1).
 - **The specification is the 1.0.0 contract**: its Conformance section states what 1.0.0
@@ -143,6 +120,9 @@ the record kinds and the bundle format are frozen for 1.x.
   a bundle exported there held every receipt to canonical set digests, so receipts issued
   before the upgrade failed. Those anchored before the lineage's first canonical receipt
   are now checked by name for their set-bearing checkers, and noted (F6-8 amended).
+- **A writer whose opening fails part-way lets go of the chains it opened**, at once,
+  where they were held until the engines were collected, and a retry in the same process
+  could find its own claims.
 
 ## [0.5.0]
 

@@ -431,7 +431,7 @@ Ed25519ph, whose signatures do not verify as Ed25519.
     Interlock: an execution's steps are part of its intent, which replay recomputes, so
     they never depend on the Interlock installed.
 
-  *(Amended after the 1.0.0 freeze, which refused an AWS KMS key whatever the Interlock.)*
+  *(Amended in 1.0.0: before, an AWS KMS key was refused whatever the Interlock.)*
 
 ---
 
@@ -1694,9 +1694,8 @@ Both stores hold the same tables and enforce the same rules, and every test runs
   follows is folded into a copy. The state answers each question a decision asks (what is
   open, what is unexecuted, who decided what) from an index, so a turn of the service
   costs what is due, not what the log holds. `verify` and `verify-bundle` read
-  everything, every time. *(Amended after the 1.0.0 freeze. 1.0.0 kept every record it
-  had read, and folded the whole log for each question: a turn, and each tool call,
-  took time in proportion to the log.)*
+  everything, every time. *(Amended in 1.0.0: before, a service folded the whole log
+  for each question: a turn, and each tool call, took time in proportion to the log.)*
 - **F10-2.** The database enforces append-only:
   - On PostgreSQL, the service role adds to `documents` and `log` only through functions
     that check the link and the sequence. No role may `UPDATE` or `DELETE` either table.
@@ -1949,7 +1948,7 @@ session holds the node's advisory lock for the process's life, and the roles it 
     liveness probe) that asks each node's `/healthz` with a timeout, and kills a node that
     does not answer. A frozen process answers nothing; the node waiting for it answers 200.
 
-  *(Amended after the 1.0.0 freeze. 1.0.0's new leader failed its writer's turn on a file
+  *(Amended in 1.0.0: before, a new leader failed its writer's turn on a file
   claimed elsewhere, backed off up to `restart_max_seconds`, and answered 503, inviting a
   supervisor to restart the one healthy node; and a writer whose opening failed part-way
   held the chains it had opened until they were collected.)*
@@ -2147,8 +2146,8 @@ that package. None is worked around here.
 Fiduciary reads which of them the installed packages provide from their code
 (`fiduciary._upstream`), uses each where it is present, and holds to the fallback in the
 last column where it is not. So one release runs on interlock 1.0.2 and agentgov 1.0.0, and
-on the releases that close these. *(Amended after the 1.0.0 freeze, as each was made
-upstream: Conformance gives where.)*
+on the releases that close these. *(Amended in 1.0.0, as each was made upstream:
+Conformance gives where.)*
 
 | # | Package | Gap, as measured or read | Needed by | Where it is not installed |
 |---|---|---|---|---|

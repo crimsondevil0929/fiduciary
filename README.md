@@ -22,20 +22,6 @@ roadmap; its format, documents, records and bundles are frozen for 1.x:
 - Phase 5 (0.5.0) exports a lineage as an audit bundle, which anyone verifies offline.
 - Phase 6 (1.0.0) runs it as a supervised service, alone or as a cluster on PostgreSQL.
 
-## Since 1.0.0 (unreleased)
-
-- **A turn costs what is due, not what the log holds.** The service keeps the state it has
-  folded, folds only what was appended since, and answers each question from an index: at
-  10,000 records a writer's turn takes 0.03 ms and a tool call 0.44 ms, as at 300.
-  `verify` reads each document once, and takes a third less time.
-- **A takeover waits for a frozen writer's files, healthy**: the node that took the writer
-  role leads, asks for them each turn, and answers `/healthz` with 200 (F10-19).
-- **The upstream fixes, where they are installed** (§12): with the interlock and AgentGov
-  that close them, an AWS KMS executor key, quotes that survive a restart, an outbox act
-  refused before signing at a head that moved, a reset that names its warrant, and a
-  recovery that opens again. On interlock 1.0.2 and AgentGov 1.0.0, the fallbacks as
-  before.
-
 ## What 1.0.0 adds
 
 - **`fiduciary serve`** (`fiduciary.service`), the service under interlock's supervisor:
@@ -46,7 +32,18 @@ roadmap; its format, documents, records and bundles are frozen for 1.x:
   over MCP. See [Running the service](#running-the-service).
 - **A cluster**, on PostgreSQL: several nodes over one store and one ledger, one leading the
   writer and one the executor. A node killed hands its roles over at once; one frozen is
-  fenced once its session falls silent, and none acts twice.
+  fenced once its session falls silent, and none acts twice. The node that takes the
+  writer role from a frozen one leads, asks for its files each turn, and answers
+  `/healthz` with 200 (F10-19).
+- **A turn costs what is due, not what the log holds.** The service keeps the state it has
+  folded, folds only what was appended since, and answers each question from an index: at
+  10,000 records a writer's turn takes 0.03 ms and a tool call 0.44 ms, as at 300.
+  `verify` reads each document once.
+- **The upstream fixes, where they are installed** (§12): with the interlock and AgentGov
+  that close them, an AWS KMS executor key, quotes that survive a restart, an outbox act
+  refused before signing at a head that moved, a reset that names its warrant, and a
+  recovery that opens again. On interlock 1.0.2 and AgentGov 1.0.0, the fallbacks §12
+  states.
 - **Every 0.x store upgrades in place**, proven on stores each earlier release wrote
   itself (`tests/upgrades/`).
 - **Proofs at production scale**: a soak of a cluster under load, forgeries, a killed and a
