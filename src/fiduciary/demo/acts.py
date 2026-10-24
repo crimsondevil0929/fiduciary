@@ -551,7 +551,11 @@ def _children(run: Run) -> list[dict[str, Any]]:
         out.append(entry)
         run.say(
             f"  derive {SCOPE}/{scope} (refund cap ${maximum}): "
-            + ("derived and bound" if entry["derived"] else f"refused: {entry['refused'][:90]}")
+            + (
+                "derived and bound"
+                if entry["derived"]
+                else "refused, wider than its parent: " + "; ".join(wider or [entry["refused"]])
+            )
         )
     return out
 

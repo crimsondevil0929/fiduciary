@@ -55,19 +55,21 @@ Act 2  One flag, a whole settlement batch
   gateway PERMIT; the stage measured 50 rows of 4 tenants; ROLLED BACK, the back office byte-identical: True
 Act 3  Fifty sub-agents, one budget
   50 sessions: the gateway permitted 50 (each within its own $100.00), $4,500.00 in all; the lineage's window committed 5 ($450.00) and refused 45
-  derive support-agent/vip (refund cap $500): refused: ... does not refine its parent: outbound.caps[...]
+  derive support-agent/returns (refund cap $100): derived and bound
+  derive support-agent/billing (refund cap $50): derived and bound
+  derive support-agent/vip (refund cap $500): refused, wider than its parent: outbound.caps[stripe.refunds.create.amount.request].maximum.usd: is 500, above the parent's 200
 Act 4  The relay dies mid-call
   relay-a died after Stripe answered; relay-b recorded the call lost and called again with the same key: Stripe saw 2 requests, made 1 refund
   Stripe's webhook: 200 (verified, bound, attested); a forged one: 401; 6 message(s) delivered in all
 Act 5  The principals decide
-  ticket c17e9ce7 (held): 4 approvals submitted, warrant at 2 of 3; executed: execution.intent, execution.applied; message pending -> delivered
+  ticket bcc47068 (held): 4 approvals submitted, warrant at 2 of 3; executed: execution.intent, execution.applied; message pending -> delivered
 Act 6  The administrator's shortcut
-  the night shift released message 43c32e2c and reset the breaker by hand; the relay delivered it: delivered
+  the night shift released message 18d23c0d and reset the breaker by hand; the relay delivered it: delivered
 Act 7  The auditor
   before.fidb: PASS (0 finding(s)); sockets attempted 0; planted values found 0
   after.fidb: FAIL: exit 7 (2 finding(s)); sockets attempted 0; planted values found 0
-    V7 ambient: ledger entry 233 (circuit_reset) on support-agent: a reset no warrant of the lineage names
-    V7 ambient [break-glass]: operator record 3 (release) by key 94e0120698ffadc2 acts on the lineage's messages under no warrant of it
+    V7 ambient: ledger entry 221 (circuit_reset) on support-agent: a reset no warrant of the lineage names
+    V7 ambient [break-glass]: operator record 3 (release) by key be8d927e6fe8ed05 acts on the lineage's messages under no warrant of it
 ```
 
 Every figure is measured as the run goes: rows read back from the stage, deliveries from
