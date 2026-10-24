@@ -1,8 +1,8 @@
 """What the installed interlock and AgentGov provide beyond the releases
 fiduciary requires (interlock 1.0.2, AgentGov 1.0.0): the upstream gaps of
-``docs/FIDUCIARY_SPEC.md`` §12 that their next releases close. Each is read
-from the installed code itself, so fiduciary uses it where it is present, and
-holds to the fallback §12 states where it is not.
+``docs/FIDUCIARY_SPEC.md`` §12, which interlock 1.0.3 and AgentGov 1.0.1
+close. Each is read from the installed code itself, so fiduciary uses it where
+it is present, and holds to the fallback §12 states where it is not.
 """
 
 from __future__ import annotations

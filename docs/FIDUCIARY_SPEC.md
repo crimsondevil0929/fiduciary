@@ -2146,12 +2146,12 @@ that package. None is worked around here.
 Fiduciary reads which of them the installed packages provide from their code
 (`fiduciary._upstream`), uses each where it is present, and holds to the fallback in the
 last column where it is not. So one release runs on interlock 1.0.2 and agentgov 1.0.0, and
-on the releases that close these. *(Amended in 1.0.0, as each was made upstream:
+on interlock 1.0.3 and agentgov 1.0.1, which close them all. *(Amended in 1.0.0, as each was made upstream:
 Conformance gives where.)*
 
 | # | Package | Gap, as measured or read | Needed by | Where it is not installed |
 |---|---|---|---|---|
-| U-1 | interlock | `receipts.checker_records` digests a checker's configuration from the `repr` of its slots. A `frozenset` of strings has a `repr` whose order depends on the hash seed: on 1.0.2, `table_allowlist` over four tables digested four ways under four seeds. A receipt's `decision.checkers` therefore cannot be recomputed in another process. The fix is to encode sets sorted. It changes no plan, diff or verdict hash, only checker configuration digests, which were never reproducible. | F6-8, V4 (Phase 2) | Fixed on interlock `main` (crimsondevil0929/interlock#20, under `[Unreleased]`); ships in the next release. Until fiduciary requires it, V4 checks `fiduciary_mandate` exactly, and the other checkers by name. |
+| U-1 | interlock | `receipts.checker_records` digests a checker's configuration from the `repr` of its slots. A `frozenset` of strings has a `repr` whose order depends on the hash seed: on 1.0.2, `table_allowlist` over four tables digested four ways under four seeds. A receipt's `decision.checkers` therefore cannot be recomputed in another process. The fix is to encode sets sorted. It changes no plan, diff or verdict hash, only checker configuration digests, which were never reproducible. | F6-8, V4 (Phase 2) | Fixed in interlock 1.0.3 (crimsondevil0929/interlock#20). Where it is not installed, V4 checks `fiduciary_mandate` exactly, and the other checkers by name. |
 | U-2 | interlock | ILOK1 records are signed whole. Through AWS KMS, an `operator.applied` record fails past about 24 rows and a `compensate` intent past about 9 targets (§3.5's measurement), and a cancel's cascade is unbounded (F3-9). The fix is to sign ILOK1 records at a digest version, as ARC1 1.2 does. | F3-9 (Phase 3) | Executor and runtime keys on AWS KMS are refused, and outbox actions are chunked to 8 targets. |
 | U-3 | interlock | `BudgetGuard` keeps quotes in memory, and grants only those it issued, so a restart loses every open quote. The fix is to adopt unanswered, unexpired quotes from the record log. | F7-14 (Phase 3) | Extension tickets lapse on a restart. |
 | U-4 | interlock | `Operator` reads each target's head itself when it signs its intent, so a caller cannot require the heads its principals saw. The fix is to accept `expected_heads=`, and to refuse on a mismatch before signing. | G5, F7-15 (Phase 3) | The mismatch is recorded and named, not prevented. |
@@ -2211,12 +2211,12 @@ A change to any of them is a new domain version (`FIDU1/<type>/v2`) or a new bun
 (`vectors/fidu1/`) and the golden bundles (`vectors/fidu1/bundles/`) hold every release to
 this.
 
-**The upstream gaps (§12).** Each is implemented on its package's `main`, none of them
-released yet: U-1 (crimsondevil0929/interlock#20), U-2, U-3, U-4 and U-6
-(crimsondevil0929/interlock#21) on interlock's, and U-5 (crimsondevil0929/agentgov#8) on
-agentgov's. Fiduciary uses each where the installed package provides it, and its suite
-runs both ways: on interlock 1.0.2 and agentgov 1.0.0, and on both `main`s (CI's
-`upstream` job).
+**The upstream gaps (§12).** Each is released: U-1 (crimsondevil0929/interlock#20), U-2,
+U-3, U-4 and U-6 (crimsondevil0929/interlock#21) in interlock 1.0.3, and U-5
+(crimsondevil0929/agentgov#8) in agentgov 1.0.1. Fiduciary requires interlock 1.0.2 and
+agentgov 1.0.0, uses each fix where the installed package provides it, and its suite runs
+both ways: on the releases it requires (`uv.lock`), and on interlock's and agentgov's
+`main` (CI's `upstream` job).
 
 | # | With it | Without it, as on interlock 1.0.2 and agentgov 1.0.0 |
 |---|---|---|
