@@ -111,7 +111,9 @@ Some rules hold for every member:
 - An ILOK1 line is canonical JSON of the record's `to_json()`. A record signed
   at signature version 2 (`"sv": 2` in its `sig`: interlock's U-2, for a key
   service that limits what it signs) is read and verified by an Interlock that
-  has it; one without it names such a record as unreadable.
+  has it. Where the verifier's Interlock lacks it, the bundle cannot be read
+  there (exit 2, not `malformed`): the verifier names the record and the
+  release that reads it.
 - Escrow chain lines are interlock's own encoding, which a verifier loads with
   interlock's chain reader.
 

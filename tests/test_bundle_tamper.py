@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from fiduciary import fidu1
+from fiduciary._upstream import ILOK1_DIGESTS
 from fiduciary.bundle import BundleReport
 from fiduciary.store import Store
 from tests import bound
@@ -191,6 +192,46 @@ def test_verify_bundle_runs_with_no_network_and_no_database(
     )
     assert run.returncode == 0, run.stdout + run.stderr
     assert "V12 ordering: ok" in run.stdout
+
+
+def _signed_at_version_2(released: bytes) -> tuple[str, bytes]:
+    """``released`` with its first ILOK1 record's ``sig`` saying signature
+    version 2, the manifest rewritten to match: the record as U-2 writes it,
+    but for its signature, which covers version 1."""
+    members = dict(_members(released))
+    path = next(p for p in sorted(members) if p.startswith("ilok1/") and members[p])
+    first, rest = members[path].split(b"\n", 1)
+    record = fidu1.parse(first)
+    record["sig"]["sv"] = 2
+    members[path] = fidu1.canonical(record) + b"\n" + rest
+    return path, _tar(_remanifest(sorted(members.items())))
+
+
+def test_a_record_this_interlock_cannot_read_leaves_the_bundle_unreadable(
+    world: bound.World, released: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verified where the installed Interlock reads signature version 1 only,
+    a record signed at version 2 (U-2: an AWS KMS key's) is no finding about
+    the bundle: the verifier cannot read it (exit 2), and says which record,
+    and which release can."""
+    from fiduciary.bundle import BundleError
+
+    monkeypatch.setattr("fiduciary.bundle.verify.ILOK1_DIGESTS", False)
+    path, data = _signed_at_version_2(released)
+    with pytest.raises(
+        BundleError, match=rf"^{path} line 1 .* version 2, .*interlock-escrow 1\.0\.3"
+    ):
+        bk.verify(world, data)
+
+
+@pytest.mark.skipif(not ILOK1_DIGESTS, reason="this Interlock reads signature version 1 only (U-2)")
+def test_a_record_an_interlock_with_u2_reads_is_checked(
+    world: bound.World, released: bytes
+) -> None:
+    """With U-2 installed the same record is read, and its signature, made
+    over version 1, fails a named check."""
+    _, data = _signed_at_version_2(released)
+    _named(world, data, "a record whose sig says version 2")
 
 
 def test_a_member_no_manifest_lists_is_named(world: bound.World, released: bytes) -> None:

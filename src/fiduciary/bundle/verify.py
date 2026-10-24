@@ -52,6 +52,7 @@ from interlock.outbound import OperationSpec, SinkRegistry, SinkSpec
 from interlock.records import SignedRecord
 
 from fiduciary import documents, fidu1
+from fiduciary._upstream import ILOK1_DIGESTS
 from fiduciary.authority import Decide, replay_each
 from fiduciary.bundle.export import _type_of
 from fiduciary.bundle.format import FORMAT, BundleError, BundleReport, unpack
@@ -279,9 +280,29 @@ def _v1(members: list[tuple[str, bytes]], report: BundleReport) -> _Bundle:
     for path, data in good.items():
         try:
             _parse(path, data, out)
+        except BundleError:
+            raise  # this verifier cannot read it, which is no finding about the bundle
         except Exception as exc:  # each library's parser raises its own errors
             report.add("V1", "malformed", f"member {path} does not parse: {exc}")
     return out
+
+
+def _record(path: str, line: int, raw: Any) -> SignedRecord:
+    """An ILOK1 line, as a record. One signed at a signature version this
+    Interlock does not read (``sv`` in its ``sig``: U-2, for a key service that
+    limits what it signs) leaves the bundle unreadable here (exit 2), not
+    malformed: an Interlock with U-2 reads and verifies it.
+
+    :raises BundleError: On such a record.
+    """
+    sig = raw.get("sig") if isinstance(raw, dict) else None
+    if not ILOK1_DIGESTS and isinstance(sig, dict) and "sv" in sig:
+        raise BundleError(
+            f"{path} line {line} is an ILOK1 record signed at signature version "
+            f"{sig['sv']!r}, which this Interlock does not read: verify the bundle with "
+            "interlock-escrow 1.0.3 or later installed"
+        )
+    return SignedRecord.from_json(raw)
 
 
 def _parse(path: str, data: bytes, out: _Bundle) -> None:
@@ -328,7 +349,8 @@ def _parse(path: str, data: bytes, out: _Bundle) -> None:
         bundle = ReceiptBundle.loads(data)
         out.receipts[path.rsplit("/", 1)[-1].removesuffix(".json")] = bundle
     elif top == "ilok1":
-        records = [SignedRecord.from_json(fidu1.parse(line)) for line in _lines(data)]
+        lines = _lines(data)
+        records = [_record(path, n, fidu1.parse(line)) for n, line in enumerate(lines, 1)]
         (out.runtime if path.endswith("runtime.jsonl") else out.operators).extend(records)
     elif top == "escrow":
         for line in _lines(data):

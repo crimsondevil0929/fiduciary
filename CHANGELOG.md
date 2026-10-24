@@ -62,7 +62,9 @@ AgentGov 1.0.0 without them.
   the installed interlock and AgentGov provide, from their code (`fiduciary._upstream`),
   uses each, and holds to its fallback where it is absent.
   - U-2: an AWS KMS key may be the executor's or the runtime's, its ILOK1 records signed
-    at signature version 2 (F3-9). Outbox actions are still chunked to 8 targets.
+    at signature version 2 (F3-9). Outbox actions are still chunked to 8 targets. A
+    verifier whose Interlock lacks U-2 cannot read a bundle holding such a record (exit
+    2), and names the record and the release that reads it.
   - U-3: an extension quote survives a restart and the writer moving to another node
     (F7-14).
   - U-4: an outbox step at a head that moved after its ticket is refused before anything
