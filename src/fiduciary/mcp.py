@@ -36,6 +36,7 @@ import hmac
 import ipaddress
 import json
 import logging
+import os
 import secrets
 import select
 import ssl
@@ -209,6 +210,57 @@ class McpServer:
         raise McpError(METHOD_NOT_FOUND, f"no method {method}")
 
 
+class _Lines:
+    """The lines of a pipe, read so that ``select`` tells the truth about them.
+
+    A buffered reader reads ahead: two messages written together arrive in one
+    read, and the second waits in the reader's buffer, where ``select`` on the
+    pipe does not see it. A request sent right after a notification would
+    then wait for whatever is written next. So the pipe is read here, by its
+    descriptor, and only an empty buffer waits on ``select``. A reader with no
+    descriptor (a test's ``BytesIO``) is read as it is, and never waited on.
+    """
+
+    def __init__(self, reader: IO[bytes]) -> None:
+        self._reader = reader
+        try:
+            self._fd: int | None = reader.fileno()
+        except (OSError, ValueError):
+            self._fd = None
+        self._held = bytearray()
+        self._ended = False
+
+    def ready(self, timeout: float) -> bool:
+        """Whether a line can be read now, waiting up to ``timeout`` seconds
+        for the pipe when none is held."""
+        if self._fd is None or self._ended or b"\n" in self._held:
+            return True
+        if len(self._held) > MAX_MESSAGE:
+            return True
+        try:
+            ready, _, _ = select.select([self._fd], [], [], timeout)
+        except (OSError, ValueError):
+            return True  # a pipe select cannot wait on (Windows): read, blocking
+        return bool(ready)
+
+    def readline(self) -> bytes:
+        """The next line, at most :data:`MAX_MESSAGE` and one bytes, as
+        ``readline(MAX_MESSAGE + 1)`` reads it; ``b""`` once the pipe closes."""
+        if self._fd is None:
+            return self._reader.readline(MAX_MESSAGE + 1)
+        while b"\n" not in self._held and len(self._held) <= MAX_MESSAGE and not self._ended:
+            chunk = os.read(self._fd, 65536)
+            if chunk:
+                self._held += chunk
+            else:
+                self._ended = True
+        end = self._held.find(b"\n")
+        cut = end + 1 if 0 <= end <= MAX_MESSAGE else min(len(self._held), MAX_MESSAGE + 1)
+        line = bytes(self._held[:cut])
+        del self._held[:cut]
+        return line
+
+
 def serve_stdio(
     server: McpServer,
     reader: IO[bytes],
@@ -221,20 +273,18 @@ def serve_stdio(
     line. ``service`` is called between messages, and when the pipe has been
     idle for :data:`SERVICE_SECONDS`, under ``lock``."""
     lock = lock or threading.RLock()
+    lines = _Lines(reader)
     last = time.monotonic()
     while True:
-        if service is not None and hasattr(reader, "fileno"):
-            try:
-                ready, _, _ = select.select([reader], [], [], SERVICE_SECONDS)
-            except (OSError, ValueError):
-                ready = [reader]
+        if service is not None:
+            ready = lines.ready(SERVICE_SECONDS)
             if not ready or time.monotonic() - last >= SERVICE_SECONDS:
                 with lock:
                     service()
                 last = time.monotonic()
                 if not ready:
                     continue
-        line = reader.readline(MAX_MESSAGE + 1)
+        line = lines.readline()
         if not line:
             return
         if not line.strip():
@@ -619,6 +669,8 @@ class Upstream:
             )
         except OSError as exc:
             raise McpError(INVALID_REQUEST, f"cannot run the upstream: {exc}") from exc
+        assert self._process.stdout is not None
+        self._lines = _Lines(self._process.stdout)
         self.request(
             "initialize",
             {
@@ -643,15 +695,12 @@ class Upstream:
             self._next += 1
             ident = self._next
             self._send({"jsonrpc": "2.0", "id": ident, "method": method, "params": dict(params)})
-            stdout = self._process.stdout
-            assert stdout is not None
             deadline = time.monotonic() + self._timeout
             while True:
                 left = deadline - time.monotonic()
-                ready, _, _ = select.select([stdout], [], [], max(0.0, left))
-                if not ready:
+                if not self._lines.ready(max(0.0, left)):
                     raise McpError(INVALID_REQUEST, f"the upstream did not answer {method}")
-                line = stdout.readline(MAX_MESSAGE + 1)
+                line = self._lines.readline()
                 if not line:
                     raise McpError(INVALID_REQUEST, "the upstream closed its pipe")
                 message = parse_message(line)

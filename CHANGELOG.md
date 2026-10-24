@@ -120,6 +120,14 @@ AgentGov 1.0.0 without them.
   a bundle exported there held every receipt to canonical set digests, so receipts issued
   before the upgrade failed. Those anchored before the lineage's first canonical receipt
   are now checked by name for their set-bearing checkers, and noted (F6-8 amended).
+- **A message written right behind another is answered at once** (`mcp serve`, `mcp
+  proxy`; found by the first CI run). The stdio bridge asked `select` whether the pipe
+  held a message, then read it through a buffered reader, which reads ahead: two messages
+  written together arrived in one read, and the second waited in the buffer, unseen,
+  until something else was written. A client sending `notifications/initialized` and
+  then `tools/list` could wait for its list for good, and the proxy took an upstream's
+  answer written with a notification for silence. Both now read the pipe by its
+  descriptor, and wait on it only when no whole line is held.
 - **A writer whose opening fails part-way lets go of the chains it opened**, at once,
   where they were held until the engines were collected, and a retry in the same process
   could find its own claims.

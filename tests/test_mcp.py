@@ -7,14 +7,19 @@ import datetime as dt
 import http.client
 import io
 import json
+import os
+import select
 import ssl
 import sys
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from fiduciary import mcp as mcp_module
 from fiduciary.bridge import Fiduciary, Session
 from fiduciary.mcp import (
     HttpBridge,
@@ -178,6 +183,93 @@ def test_stdio_serves_a_session_until_its_pipe_closes(fid: Fiduciary) -> None:
     assert [a.get("id") for a in answers] == [1, 2, None]
     assert answers[1]["result"]["isError"] is True
     assert answers[2]["error"]["code"] == -32700
+
+
+def _answers(fd: int, count: int, *, within: float) -> list[Any]:
+    """The first ``count`` lines written to ``fd``, or those written within
+    ``within`` seconds."""
+    held, deadline = b"", time.monotonic() + within
+    while held.count(b"\n") < count:
+        left = deadline - time.monotonic()
+        if left <= 0 or not select.select([fd], [], [], left)[0]:
+            break
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        held += chunk
+    return [json.loads(line) for line in held.splitlines()]
+
+
+def test_stdio_answers_a_request_written_with_the_message_before_it(
+    fid: Fiduciary, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Messages written together arrive in one read. Each is answered at
+    once, not when the next is written or the service's turn comes: a client
+    that sends ``notifications/initialized`` and then ``tools/list`` gets its
+    list (the stand-in MCP loop of ``scripts/live_acceptance.py`` waited on
+    it for good)."""
+    monkeypatch.setattr(mcp_module, "SERVICE_SECONDS", 30.0)
+    into, feed = os.pipe()
+    out, write = os.pipe()
+    reader, writer = os.fdopen(into, "rb"), os.fdopen(write, "wb")
+    turns: list[float] = []
+    serving = threading.Thread(
+        target=serve_stdio,
+        args=(McpServer(_session(fid)), reader, writer),
+        kwargs={"service": lambda: turns.append(time.monotonic())},
+    )
+    serving.start()
+    try:
+        messages = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            {"jsonrpc": "2.0", "id": 3, "method": "ping", "params": {}},
+        ]
+        os.write(feed, b"".join(json.dumps(m).encode() + b"\n" for m in messages))
+        answers = _answers(out, 3, within=10)
+        assert [a["id"] for a in answers] == [1, 2, 3]
+        assert answers[1]["result"]["tools"]
+        assert turns == []  # answered with no turn of the service between
+    finally:
+        os.close(feed)
+        serving.join(10)
+        reader.close()
+        writer.close()
+        os.close(out)
+    assert not serving.is_alive()
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"",
+        b"one\n",
+        b"one\ntwo\n\nthree",
+        b"short\n" + b"x" * 20 + b"\nafter\n",
+        b"y" * 9 + b"\n" + b"z" * 8 + b"\n",
+    ],
+)
+def test_a_pipe_is_read_line_by_line_as_a_buffered_reader_reads_it(
+    data: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pipe's lines are the lines ``readline(MAX_MESSAGE + 1)`` gives,
+    an over-long one cut where it cuts it, then ``b""`` at the end."""
+    monkeypatch.setattr(mcp_module, "MAX_MESSAGE", 8)
+    expected, buffered = [], io.BytesIO(data)
+    while line := buffered.readline(9):
+        expected.append(line)
+    into, feed = os.pipe()
+    with os.fdopen(into, "rb") as reader:
+        lines = mcp_module._Lines(reader)
+        assert lines.ready(0) is False  # nothing written yet
+        os.write(feed, data)
+        os.close(feed)
+        read = []
+        while lines.ready(5) and (line := lines.readline()):
+            read.append(line)
+        assert lines.readline() == b""
+    assert read == expected
 
 
 # -- Streamable HTTP (F8-6) ----------------------------------------------------------------
@@ -361,6 +453,32 @@ def test_the_proxy_exposes_only_pinned_upstream_tools(
     refusals = [r.content for r in world.log.records() if r.kind == "session.refused"]
     assert refusals[-1]["tool"] is None and refusals[-1]["code"] == "unpinned"
     _verify(world)
+
+
+UPSTREAM_IN_ONE_WRITE = """
+import json, os, sys
+for line in sys.stdin:
+    message = json.loads(line)
+    if "id" not in message:
+        continue
+    result = {"tools": [{"name": "lookup_order"}]} if message["method"] == "tools/list" else {}
+    note = {"jsonrpc": "2.0", "method": "notifications/message", "params": {}}
+    answer = {"jsonrpc": "2.0", "id": message["id"], "result": result}
+    os.write(1, (json.dumps(note) + "\\n" + json.dumps(answer) + "\\n").encode())
+"""
+
+
+def test_an_upstream_answer_written_with_a_notification_is_read() -> None:
+    """An upstream that writes a notification and its answer together: the
+    answer, in the reader's buffer behind the notification, is read at once,
+    not taken for silence until the timeout."""
+    began = time.monotonic()
+    upstream = Upstream([sys.executable, "-c", UPSTREAM_IN_ONE_WRITE], timeout=20)
+    try:
+        assert upstream.tools() == ["lookup_order"]
+    finally:
+        upstream.close()
+    assert time.monotonic() - began < 15
 
 
 def test_an_upstream_that_will_not_run_is_refused(tmp_path: Path) -> None:
