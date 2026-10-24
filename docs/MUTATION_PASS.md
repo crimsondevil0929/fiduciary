@@ -66,8 +66,9 @@ counting, now one rule for approvals and declines (`Decide._ticket_votes`), and 
 principal's decisions, now an index by subject. It added others: the state's indexes, the
 document cache, the incremental fold, the two forms of a reset's evidence (V7, V8), and
 the wiring of each upstream fix. Each was mutated as the first pass mutated, with the
-same runner rules; the targets that need an upstream fix run in a venv that has
-interlock's `feat/fiduciary-prerequisites` and AgentGov's `feat/reset-memo` installed.
+same runner rules; the targets that need an upstream fix run in a venv that has the
+interlock and AgentGov branches that closed the gaps installed (since merged:
+crimsondevil0929/interlock#21, crimsondevil0929/agentgov#8).
 
 | Target | Source | Tests |
 |---|---|---|

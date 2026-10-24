@@ -2211,11 +2211,12 @@ A change to any of them is a new domain version (`FIDU1/<type>/v2`) or a new bun
 (`vectors/fidu1/`) and the golden bundles (`vectors/fidu1/bundles/`) hold every release to
 this.
 
-**The upstream gaps (§12).** Each is implemented upstream: U-1 on interlock's `main`
-(#20), U-2, U-3, U-4 and U-6 on its branch `feat/fiduciary-prerequisites`, and U-5 on
-agentgov's branch `feat/reset-memo`, none of them released yet. Fiduciary uses each where
-the installed package provides it, and its suite runs both ways: on interlock 1.0.2 and
-agentgov 1.0.0, and on those branches.
+**The upstream gaps (§12).** Each is implemented on its package's `main`, none of them
+released yet: U-1 (crimsondevil0929/interlock#20), U-2, U-3, U-4 and U-6
+(crimsondevil0929/interlock#21) on interlock's, and U-5 (crimsondevil0929/agentgov#8) on
+agentgov's. Fiduciary uses each where the installed package provides it, and its suite
+runs both ways: on interlock 1.0.2 and agentgov 1.0.0, and on both `main`s (CI's
+`upstream` job).
 
 | # | With it | Without it, as on interlock 1.0.2 and agentgov 1.0.0 |
 |---|---|---|
@@ -2239,8 +2240,8 @@ agentgov 1.0.0, and on those branches.
   of a killed writer is at once.
 - **Velocity is per session** (F6-5). Sessions of one lineage are bounded together by the
   governor's policy.
-- **PostgreSQL versions.** 16 is verified, locally. CI runs 14, 16 and 18; the repository
-  has no remote yet, so CI has never run.
+- **PostgreSQL versions.** CI runs the suite on 14, 16 and 18; 16 is also verified
+  locally.
 - **Open questions** (below) stay open: prevention, rather than detection, of a
   compromised service; quorum liveness; rule thresholds; per-principal redaction; proofs,
   rather than tests, of semantic monotonicity.
