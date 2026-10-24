@@ -4,6 +4,34 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`fiduciary demo`** (`fiduciary.demo`): the whole stack, offline, in one command. It
+  stands a deployment up in a new directory and plays seven acts against it and against an
+  input gateway of Cedar policies, every figure measured as it runs (§10.6). It leaves a
+  self-contained console (`dashboard.html`), the lineage's bundles before and after a
+  break-glass release, their attestation, and a `fiduciary.toml` that the other commands
+  open. `--serve` and `--open` show the console; `--live` puts a Claude model in front of
+  the first act (`BENCHMARK_API_KEY` only, stopped at `--max-cost`).
+- **`fiduciary verify-bundle --json` and `--report <path.html|path.md>`** (F9-4,
+  `fiduciary.attest`, `fiduciary.report`): the attestation, for a SIEM or GRC system and
+  for people. The verdict and every finding are the checks' own; each check names what it
+  proves and the controls its evidence bears on (OWASP ASI 2026, SOC 2, EU AI Act
+  Articles 12 and 14). The HTML is one file that makes no network request and prints to
+  PDF. Exit codes are unchanged.
+- **`MandateEngine.observe(observer)`**: every result a lineage's engine returns, with the
+  diff and the verdict a session never passes to an agent, for an operator's view.
+- **The `cedar` extra** (`cedarpy`), for the demo's gateway.
+- `SECURITY.md`: how to report a vulnerability, what is stored where, the trust boundaries
+  and what is not claimed.
+
+### Changed
+
+- The README opens with the stack and a runnable demo; the release histories it opened
+  with are here.
+
 ## [1.0.0]
 
 Phase 6 of `docs/FIDUCIARY_SPEC.md` §11: production. Fiduciary runs as a supervised

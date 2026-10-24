@@ -1592,7 +1592,7 @@ against its digest, then on the member's own terms. A signature that is present 
 ## 9.3 `fiduciary verify-bundle`
 
 ```
-fiduciary verify-bundle acme-support.fidb --charter <pinned digest> [--keys keys.json] [--witness <key>] [--skew <seconds>]
+fiduciary verify-bundle acme-support.fidb --charter <pinned digest> [--keys keys.json] [--witness <key>] [--skew <seconds>] [--json] [--report <path.html|path.md>]
 ```
 
 The auditor supplies the charter digest, from outside the bundle. Principals' keys are the
@@ -1632,6 +1632,18 @@ The other exit codes:
 
 A failing run prints every check, not only the first that fails. It exits with the code of
 the first failing check in the order V1 to V12.
+
+- **F9-4. Reports.** `--json` prints, in place of the text, an attestation
+  (`fiduciary-attestation/1`, `fiduciary.attest`): the verdict, exit code and every
+  finding exactly as the checks reported them; each check's statement of what it proves and
+  the controls its evidence bears on (the OWASP Top 10 for Agentic Applications 2026, SOC 2
+  common criteria, the EU AI Act's Articles 12 and 14); and a summary of what the bundle
+  holds, read from members V1 already held to their digests. `--report` writes the same
+  attestation as a self-contained HTML console that makes no network request, or as
+  Markdown. Neither decides anything, and neither changes the exit code: a report that
+  cannot be written is a usage error (exit 1), checked before the bundle is read where the
+  path's kind is wrong. The mapping supports an assessment; it is not a certification.
+  *(Added in 1.1.0.)*
 
 - **F9-3.** `verify-bundle` needs no network and no database. Beyond the standard library,
   it imports only `fiduciary`, `interlock` and `agentgov`. The format is specified so that
@@ -1861,7 +1873,8 @@ of them.
 | `fiduciary warrant show`, `fiduciary resolve` | Inspect warrants; resolve interrupted executions |
 | `fiduciary serve [--node N] [--bridge HOST:PORT] [--metrics HOST:PORT]` | Run the service under a supervisor (§10.7): the writer (binder, intake and bridge), triggers, settler, executor and metrics, alone or as a node of a cluster. `SIGHUP` opens every key again; `SIGTERM` drains and stops. |
 | `fiduciary mcp serve`, `proxy` | Run the MCP bridge: one session per process, over stdio, or Streamable HTTP with `--http HOST:PORT` (`--token-file`, `--tls-cert`, `--tls-key`). The process also judges the intake and executes the warrants formed, since it holds the quotes and proposals they name (F7-14). |
-| `fiduciary export-bundle`, `verify-bundle`, `verify` | §9, and live verification of the store |
+| `fiduciary export-bundle`, `verify-bundle`, `verify` | §9, and live verification of the store. `verify-bundle --json` and `--report` write the attestation (F9-4). |
+| `fiduciary demo [--out DIR] [--report DIR\|FILE] [--serve [HOST:PORT]] [--open] [--live]` | Stand up a deployment of its own in a new directory and play seven acts against it and against an input gateway of Cedar policies (`cedarpy` with the `cedar` extra; otherwise a built-in evaluator of the same policies, which says so): a discount whose trigger collapses an order's total, a dispute flag whose trigger reaches four tenants, fifty sub-agent sessions against one lineage's window and a child wider than its parent, a relay killed between the vendor's answer and its record, a held message released on a 2-of-3 warrant, a break-glass release outside any warrant, and both bundles verified with sockets refused and scanned for every row, payload, prompt and secret the deployment holds. Writes the console (`dashboard.html`), both bundles, the attestation and a `fiduciary.toml` the other commands open. Exit 0 when the bundle before the break-glass act verifies, the one after it exits 7, and nothing planted is found; 1 otherwise; 2 on a usage error. `--live` puts a Claude model in front of the first act, reading `BENCHMARK_API_KEY` only, metered and stopped at `--max-cost`. *(Added in 1.1.0.)* |
 
 ## 10.7 The service
 
@@ -2309,6 +2322,7 @@ SQLite and on PostgreSQL. The test kinds:
 | F8-10, F8-11: the trust boundary | 4 | in process, a session refuses to start without the setting | Implemented. `test_bridge.py` |
 | F9-1: no row data | 5, 6 | the security audit | Implemented. `test_security_audit.py`, `test_bundle_export.py` |
 | F9-2, F9-3: self-contained, offline, specified | 5 | the offline run; golden bundles; byte-identical exports | Implemented, with the limits above. `test_bundle_tamper.py`, `test_bundle_vectors.py` |
+| F9-4: reports (`--json`, `--report`) and `fiduciary demo` | after 6 | every golden bundle's exit code and findings through `--json`; the demo's seven acts, measured | Implemented (1.1.0), SQLite. `test_attest.py`, `test_demo.py` |
 | F10-1 to F10-4: the stores | 1, 3 | the projection fold; append-only enforcement on both stores; the intake role | Implemented. `test_store.py`, `test_postgres.py`, `test_upgrade.py` |
 | F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak | Implemented. `test_contention.py`, `test_cluster.py`, `test_soak.py` |
 | F10-9 to F10-11: crash points | 3 | crash | Implemented. `test_crash_recovery.py` |
