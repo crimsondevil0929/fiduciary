@@ -34,11 +34,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASES = {
-    "0.1.0": "90aabb3",
-    "0.2.0": "b8cf195",
-    "0.3.0": "a6e53d3",
-    "0.4.0": "3da342e",
-    "0.5.0": "2a83ebf",
+    "0.1.0": "276314c",
+    "0.2.0": "1c35d9a",
+    "0.3.0": "9ec4e94",
+    "0.4.0": "21f403a",
+    "0.5.0": "1142bbf",
 }
 KEPT = ("postgres.json", "manifest.json", "receipts.jsonl", "operators.jsonl")
 
