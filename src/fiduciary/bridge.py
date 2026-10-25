@@ -1341,7 +1341,7 @@ def _committed(binding: ToolBinding, plan_id: str, feedback: str) -> str:
     lines = [f"Committed: {binding.name} ran as plan {plan_id}."]
     if binding.requests:
         sent = ", ".join(sorted({f"{r.sink} {r.operation}" for r in binding.requests}))
-        lines.append(f"Its outside request(s) ({sent}) are queued; the relay delivers them.")
+        lines.append(f"Outbound request(s) queued for delivery: {sent}.")
     if any(r.compensation is not None for r in binding.requests):
         lines.append(
             "To ask the principals to undo it, call fiduciary_request with kind undo and this "

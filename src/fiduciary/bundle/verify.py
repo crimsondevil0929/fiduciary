@@ -245,7 +245,7 @@ def _v1(members: list[tuple[str, bytes]], report: BundleReport) -> _Bundle:
     out = _Bundle()
     names = [name for name, _ in members]
     if names != sorted(names):
-        report.add("V1", "malformed", "the members are not in sorted order (§9.2)")
+        report.add("V1", "malformed", "the members are not in sorted order")
     for name in sorted({n for n in names if names.count(n) > 1}):
         report.add("V1", "malformed", f"member {name} appears {names.count(name)} times")
     held = dict(members)
@@ -258,7 +258,7 @@ def _v1(members: list[tuple[str, bytes]], report: BundleReport) -> _Bundle:
         if fidu1.canonical(manifest) != raw:
             raise FiduciaryError("manifest.json is not canonical JSON")
         if manifest.get("format") != FORMAT or manifest.get("type") != "bundle":
-            raise FiduciaryError(f"manifest.json is no {FORMAT} manifest")
+            raise FiduciaryError(f"manifest.json is not a {FORMAT} manifest")
         listed = {m["path"]: m for m in manifest["members"]}
     except (FiduciaryError, KeyError, TypeError, AttributeError) as exc:
         report.add("V1", "malformed", f"manifest.json: {exc}")
@@ -270,7 +270,7 @@ def _v1(members: list[tuple[str, bytes]], report: BundleReport) -> _Bundle:
     for path, entry in sorted(listed.items()):
         data = held.get(path)
         if data is None:
-            report.add("V1", "malformed", f"member {path} is listed and missing")
+            report.add("V1", "malformed", f"member {path} is listed in the manifest but missing")
         elif hashlib.sha256(data).hexdigest() != entry.get("sha256"):
             report.add("V1", "malformed", f"member {path} does not match its manifest digest")
         elif entry.get("type") != _type_of(path):
@@ -311,7 +311,9 @@ def _parse(path: str, data: bytes, out: _Bundle) -> None:
         doc = documents.loads(data, signed=True)
         digest = path.rsplit("/", 1)[-1].removesuffix(".json")
         if doc.digest != digest:
-            raise FiduciaryError(f"its digest is {doc.digest[:16]}, not its name's")
+            raise FiduciaryError(
+                f"its digest is {doc.digest[:16]}, which does not match its file name"
+            )
         out.docs[digest] = (doc.TYPE, data)
     elif top == "resolutions":
         resolution = documents.Resolution.read(fidu1.parse(data))
@@ -386,14 +388,19 @@ def _trusted(bundle: _Bundle, keys: TrustedKeys | None, report: BundleReport) ->
     for role in ("service", "ledger", "receipts", "runtime", "operators"):
         if role not in pinned and named.get(role):
             report.notes.append(
-                f"the {role} key(s) are the exporter's statement (keys.json): pin them with --keys"
+                f"the {role} key(s) come from the bundle's own keys.json, not from the auditor: "
+                f"pin them with --keys"
             )
     for role in ("service", "ledger", "runtime", "operators"):
         if role in pinned and role in named and named[role] != pinned[role]:
-            report.add("V1", "malformed", f"keys.json names another {role} key than the pinned one")
+            report.add(
+                "V1", "malformed", f"keys.json has a different {role} key from the pinned one"
+            )
     if "receipts" in pinned and "receipts" in named:
         if sorted(named["receipts"] or ()) != sorted(pinned["receipts"] or ()):
-            report.add("V1", "malformed", "keys.json names other receipt keys than the pinned ones")
+            report.add(
+                "V1", "malformed", "keys.json has different receipt keys from the pinned ones"
+            )
     chosen = {role: pinned.get(role, named.get(role)) for role in named.keys() | pinned.keys()}
     service = chosen.get("service")
     operators = dict(chosen.get("operators") or {})
@@ -431,8 +438,9 @@ def verify_bundle(
     trust = _trusted(bundle, keys, report)
     _Checks(bundle, trust, report, charter, witness, skew_seconds).run()
     report.notes.append(
-        "not claimed (F9-2): the outbox's delivery logs and interlock's verify_operators; "
-        "operator acts are checked on the messages the lineage's tickets and warrants name"
+        "out of scope: the outbox's full delivery logs and Interlock's own operator-log "
+        "check; operator acts are checked on the messages this lineage's tickets and "
+        "warrants reference"
     )
     return report
 
@@ -504,9 +512,13 @@ class _Checks:
             except FiduciaryError as exc:
                 self.add("V9", "signature", f"{where}: {exc}")
             if record.log != LOG_ID:
-                self.add("V9", "signature", f"{where}: names log {record.log!r}")
+                self.add("V9", "signature", f"{where}: belongs to log {record.log!r}")
             if record.seq != expected:
-                self.add("V9", "signature", f"{where}: expected {expected}: records lost or moved")
+                self.add(
+                    "V9",
+                    "signature",
+                    f"{where}: expected record {expected}: records are missing or out of order",
+                )
             if record.prev != previous:
                 self.add("V9", "signature", f"{where}: does not link to the record before it")
             previous, expected = stored.hash, record.seq + 1
@@ -521,7 +533,7 @@ class _Checks:
         manifest = dict(self.b.manifest)
         raw = manifest.pop("sig", None)
         if raw is None:
-            self.r.notes.append("the manifest is not signed: the service did not vouch for it")
+            self.r.notes.append("the manifest is not signed by the service key")
             return
         try:
             fidu1.verify("bundle", manifest, fidu1.Signature.from_json(raw), self.k.service)
@@ -557,7 +569,9 @@ class _Checks:
                 principals.update({p["name"]: p["key"] for p in adopted["principals"]})
         named = self.b.keys.get("principals")
         if named is not None and named != principals:
-            self.add("V2", "authority", "keys.json names other principals' keys than the charters")
+            self.add(
+                "V2", "authority", "keys.json has principal keys that differ from the charter's"
+            )
         return True
 
     # -- replay: V2, V3, V8, and V4's compilations --------------------------------------
@@ -678,8 +692,9 @@ class _Checks:
             before = strict and (first is None or seq < first)
             if before and not sets_canonical(receipt, compiled):
                 self.r.notes.append(
-                    f"receipt {name} records its set-bearing checkers as Interlock digested "
-                    f"them before U-1: they are checked by name"
+                    f"receipt {name} was issued by an Interlock older than 1.0.3, whose "
+                    f"set-valued checker settings do not digest reproducibly: those checkers "
+                    f"are checked by name"
                 )
                 strictly = False
             else:
@@ -739,7 +754,8 @@ class _Checks:
                 )
         elif self.b.cosignatures:
             self.r.notes.append(
-                "the ledger checkpoint's cosignatures were not checked: give --witness"
+                "the ledger checkpoint's cosignatures were not checked: "
+                "pass --witness to check them"
             )
         root = bytes.fromhex(checkpoint.root_hash)
         for entry, index, proof in self.b.entries:
@@ -784,7 +800,7 @@ class _Checks:
         for problem in problems:
             self.add("V10", "evidence", problem)
         for seq in missing:
-            self.add("V10", "evidence", f"record {seq} is in range, and no anchor names it")
+            self.add("V10", "evidence", f"record {seq} is in range but has no ledger anchor")
 
     # -- V7 completeness ---------------------------------------------------------------
 
@@ -834,8 +850,8 @@ class _Checks:
                         "V8",
                         "authority",
                         f"record {seq}: step {mismatch['step']} acted on message "
-                        f"{mismatch['message_id']} at a head the ticket did not observe "
-                        f"(F7-15, U-4)",
+                        f"{mismatch['message_id']} after its delivery log moved past the head "
+                        f"the ticket recorded",
                     )
                 steps = {int(s["step"]): s for s in intent["steps"]}
                 for result in body.get("results", ()):
@@ -881,7 +897,7 @@ class _Checks:
             reset = self.ledger.get(int(result.get("reset_seq", 0)))
             if "anchor_seq" not in result:  # U-5: the reset names its warrant itself
                 if reset is None or reset.memo != memo:
-                    self.add("V8", "authority", f"{where}: no reset in the ledger names it")
+                    self.add("V8", "authority", f"{where}: no reset in the ledger references it")
                 return
             anchor = self.ledger.get(int(result["anchor_seq"]))
             if anchor is None or reset is None or anchor.memo != memo:
@@ -908,7 +924,7 @@ class _Checks:
                         "V11",
                         "revocation",
                         f"plan {step.plan_id} committed at ledger {step.agentgov_sequence}, "
-                        f"after the trip at {trip} (G7)",
+                        f"after the lineage was halted at {trip}",
                     )
             issuer = f"fiduciary:{mandate_id}"
             for name, bundle in sorted(self.b.receipts.items()):
@@ -922,11 +938,15 @@ class _Checks:
                     and receipt.decision.admitted
                 ):
                     self.add(
-                        "V11", "revocation", f"receipt {name} commits after the trip at {trip}"
+                        "V11",
+                        "revocation",
+                        f"receipt {name} commits after the lineage was halted at {trip}",
                     )
                 if isinstance(receipt, DeliveryReceipt):
                     self.add(
-                        "V11", "revocation", f"receipt {name} delivers after the trip at {trip}"
+                        "V11",
+                        "revocation",
+                        f"receipt {name} delivers after the lineage was halted at {trip}",
                     )
 
     # -- V12 ordering ------------------------------------------------------------------
@@ -1025,7 +1045,7 @@ class _Explained:
         if found is not None:
             if (found[1], int(found[2]), found[3]) in self.ilok1:
                 return None
-            return f"anchors ILOK1 record {found[2]} of {found[1]}, which the bundle does not hold"
+            return f"anchors ILOK1 record {found[2]} of log {found[1]}, which is not in the bundle"
         found = _INTERLOCK.fullmatch(memo)
         if found is not None:
             return (
@@ -1037,12 +1057,12 @@ class _Explained:
         if found is not None:
             window = self.sessions.get(found[1])
             if window is None:
-                return f"names session {found[1]}, which the lineage never opened"
+                return f"references session {found[1]}, which this lineage never opened"
             start, end, scopes = window
             if not start <= entry.sequence <= end:
-                return f"is outside session {found[1]}'s life"
+                return f"falls outside the time session {found[1]} was open"
             if scopes is not None and entry.scope_id not in scopes:
-                return f"bills a scope session {found[1]} did not"
+                return f"bills a scope that session {found[1]} did not bill"
             return None
         found = _UNNAMED.fullmatch(memo)
         if found is not None:
@@ -1050,13 +1070,15 @@ class _Explained:
             # lineage that billed this scope was open, before any memo
             # named its session (nothing 0.5 or later writes is in this form).
             if entry.sequence >= self.named_from:
-                return "a tool's call that names no session, after memos began naming theirs"
+                return "tool call with no session reference, after the ledger began recording them"
             if (found[1], found[2]) not in self.pins:
-                return f"names tool {found[1]} {found[2]}, which no version of the lineage pins"
+                return (
+                    f"references tool {found[1]} {found[2]}, which no version of this lineage pins"
+                )
             for start, end, scopes in self.sessions.values():
                 if start <= entry.sequence <= end and (scopes is None or entry.scope_id in scopes):
                     return None
-            return "a pinned tool's call while no session of the lineage was open"
+            return "pinned tool called while no session of this lineage was open"
         if entry.ref is not None and holds.get(entry.ref):
             return None  # settles or voids a hold that is explained
         if kind is EntryType.CIRCUIT_RESET:
@@ -1067,17 +1089,17 @@ class _Explained:
                 reset = _RESET.fullmatch(before.memo) if before is not None else None
             if reset is not None and reset[1] in self.warrants and reset[2] == entry.scope_id:
                 return None
-            return "a reset no warrant of the lineage names"
+            return "circuit reset without an authorizing warrant"
         found = _BIND.fullmatch(memo)
         if found is not None:
             if found[1] in self.versions and self.bound & self._siblings(entry):
                 return None
-            return "a delegation no binding of the lineage records"
+            return "delegation without a recorded binding"
         found = _GRANT.fullmatch(memo)
         if found is not None:
             if found[1] in self.granted and found[2] in self.warrants:
                 return None
-            return "an extension no warrant of the lineage granted"
+            return "extension without an authorizing warrant"
         found = _CARRIED.fullmatch(memo)
         if found is not None:
             return None if found[1] in self.granted else "carried by an extension never granted"
@@ -1095,7 +1117,10 @@ class _Explained:
             for g in self.granted.values()
         ):
             return None
-        return f"'{memo[:80]}' traces to no bind, plan, session, recovery, extension or warrant"
+        return (
+            f"'{memo[:80]}' does not trace to a binding, plan, session, recovery, extension "
+            f"or warrant"
+        )
 
     def _siblings(self, entry: LedgerEntry) -> set[str]:
         """The ids of the entries in ``entry``'s transaction, its own among
@@ -1114,7 +1139,9 @@ class _Explained:
             escrow = receipt.anchors.escrow
             if escrow is None or escrow.head[:16] not in self.prefixes:
                 self.c.add(
-                    "V7", "ambient", f"receipt {name} names no record of the lineage's escrow chain"
+                    "V7",
+                    "ambient",
+                    f"receipt {name} references no record in this lineage's escrow chain",
                 )
 
     def plans(self) -> None:
@@ -1137,7 +1164,7 @@ class _Explained:
                         "V7",
                         "ambient",
                         f"plan {record.plan_id} on {lineage}'s chain was admitted for "
-                        f"'{record.note[:60]}', no pinned tool's call",
+                        f"'{record.note[:60]}', which is not a pinned tool's call",
                     )
 
     def operators(self) -> None:
@@ -1152,8 +1179,8 @@ class _Explained:
             self.c.add(
                 "V7",
                 "ambient",
-                f"operator record {record.seq} ({action}) by key {record.key_id} acts on the "
-                f"lineage's messages under no warrant of it",
+                f"operator record {record.seq} ({action}) by key {record.key_id} acted on the "
+                f"lineage's outbox messages without an authorizing warrant",
                 label,
             )
 

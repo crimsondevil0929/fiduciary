@@ -4,6 +4,26 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Plain wording in everything a person reads.** `verify-bundle` findings and notes,
+  `fiduciary verify` problems, CLI help, the demo's output, the dashboard and the Markdown
+  report now say directly what happened, for example "circuit reset without an
+  authorizing warrant" and "acted on the lineage's outbox messages without an authorizing
+  warrant". Internal requirement codes are no longer shown in output. Exit codes, the
+  failing checks and the bundle format are unchanged; the golden bundles' recorded
+  findings (`vectors/fidu1/bundles/index.json`) carry the new text.
+- The demo's scenarios have descriptive titles ("Order queue: refund and loyalty
+  discount", "Relay crash mid-refund (idempotent recovery)", and so on), and the dashboard
+  labels the zero-payload check and delivery-log head pinning in plain terms.
+- A committed call tells the agent "Outbound request(s) queued for delivery: ...".
+- The demo's Cedar engine is warmed up before the first decision, so the first call's
+  latency is not the engine's start-up.
+- The dashboard explains, next to a live model's reply, that the agent sees only that a
+  limit was exceeded, not the trigger that caused it.
+
 ## [1.1.0] - 2026-10-24
 
 The whole stack, shown and attested. Nothing 1.0.0 writes or reads changes: FIDU1, the

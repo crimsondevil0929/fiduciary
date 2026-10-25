@@ -108,7 +108,7 @@ def test_the_auditor_names_the_break_glass_act_and_finds_no_data(demo: Outcome) 
     assert before["passed"] and before["exit_code"] == 0
     assert after["exit_code"] == 7
     assert any("[break-glass]" in f and "(release)" in f for f in after["findings"])
-    assert any("a reset no warrant of the lineage names" in f for f in after["findings"])
+    assert any("circuit reset without an authorizing warrant" in f for f in after["findings"])
     for verdict in (before, after):
         assert verdict["sockets"] == 0
         assert set(verdict["scan"]["found"].values()) == {0}
@@ -259,7 +259,7 @@ def test_the_command_runs_the_demo_and_writes_reports(tmp_path: Path) -> None:
         )
     assert status == 0
     text = printed.getvalue()
-    assert "Act 7  The auditor" in text and "dashboard" in text
+    assert "Act 7  Offline third-party audit verification" in text and "dashboard" in text
     assert (tmp_path / "r.md").read_text().startswith("# Bundle `after`: BREAK-GLASS DETECTED")
 
 
@@ -533,3 +533,23 @@ def test_the_command_names_what_it_lacks(tmp_path: Path, monkeypatch: pytest.Mon
         port = taken.getsockname()[1]
         with pytest.raises(cli._ExitError, match="--serve:"):
             cli._serve_dashboard(tmp_path, f"127.0.0.1:{port}")
+
+
+def test_the_bundle_and_the_attestation_name_this_release(demo: Outcome) -> None:
+    from fiduciary import __version__
+
+    for name in ("before", "after"):
+        attestation = demo.payload["attestations"][name]
+        assert attestation["bundle"]["exporter"] == f"fiduciary {__version__}"
+        assert attestation["verifier"]["fiduciary"] == __version__
+    assert demo.payload["demo"]["version"] == __version__
+
+
+def test_the_act_titles_are_the_ones_the_console_shows(demo: Outcome) -> None:
+    from fiduciary.demo.acts import TITLES
+
+    acts = demo.payload["demo"]["acts"]
+    assert [a["title"] for a in acts] == list(TITLES.values())
+    page = (demo.root / "dashboard.html").read_text()
+    for title in TITLES.values():
+        assert json.dumps(title)[1:-1] in page

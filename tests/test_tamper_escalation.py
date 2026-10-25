@@ -246,7 +246,7 @@ def test_a_deleted_approval_is_named(escalated: Escalated, ledger: BudgetManager
     _names(
         _verify(store, ledger),
         f"intake {intake} is not in the store",
-        "names a approval the store does not hold",
+        "references an approval that is not in the store",
         "(warrant.formed): its rules refuse it now",
     )
 

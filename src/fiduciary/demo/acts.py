@@ -96,6 +96,15 @@ REFERENCE: Final = (
     ("apply_discount", {"order_id": 9, "percent": 10}),
 )
 MAX_TURNS: Final = 8
+TITLES: Final = {
+    "queue": "Order queue: refund and loyalty discount",
+    "settlement": "Batch settlement cascade (cross-tenant trigger)",
+    "fleet": "Sub-agent fan-out across 50 sessions",
+    "crash": "Relay crash mid-refund (idempotent recovery)",
+    "quorum": "2-of-3 principal quorum approval",
+    "break-glass": "Unauthorized DBA override (break-glass)",
+    "audit": "Offline third-party audit verification",
+}
 FLEET: Final = 50
 FLEET_REFUND: Final = "90.00"
 
@@ -247,8 +256,8 @@ def call(run: Run, session: Session, tool: str, arguments: Mapping[str, Any]) ->
     return _Call(tool, dict(arguments), decision, result, found, unchanged)
 
 
-def _act(run: Run, n: int, key: str, title: str, lede: str, **body: Any) -> dict[str, Any]:
-    act = {"n": n, "key": key, "title": title, "lede": lede, **body}
+def _act(run: Run, n: int, key: str, lede: str, **body: Any) -> dict[str, Any]:
+    act = {"n": n, "key": key, "title": TITLES[key], "lede": lede, **body}
     run.acts.append(act)
     return act
 
@@ -351,24 +360,29 @@ def act_queue(run: Run) -> None:
         run.model["metered"] = f"{spent:.6f}"
     permitted = sum(c.gateway.permitted for c in calls)
     refused = [c for c in calls if c.measured is not None and not c.measured["committed"]]
+    committed = sum(1 for c in calls if c.result is not None and c.result.committed)
     run.say(
-        f"  gateway permitted {permitted} of {len(calls)} call(s); the stack committed "
-        f"{sum(1 for c in calls if c.result is not None and c.result.committed)} and refused "
-        f"{len(refused)}"
+        f"  gateway: {permitted} of {len(calls)} calls permitted. stack: {committed} committed, "
+        f"{len(refused)} rolled back"
     )
     for c in refused:
         assert c.measured is not None
         for row in c.measured["changed"]:
             if "total" in row["changes"]:
                 was, now = row["changes"]["total"]
-                run.say(f"  order {row['id']}: total {was} -> {now}, measured, then rolled back")
+                drop = (Decimal(was) - Decimal(now)) / Decimal(was) * 100 if Decimal(was) else 0
+                run.say(
+                    f"  order {row['id']} total: {was} -> {now} ({drop:.0f}% drop, limit 30%); "
+                    f"rolled back"
+                )
     _act(
         run,
         1,
         "queue",
-        "An everyday queue",
-        "A refund and a loyalty discount. Both calls are well formed and within policy. "
-        "A legacy reprice trigger reads discount_pct as the share the customer pays.",
+        "Two support requests: a $12.50 refund and a 10% loyalty discount. Both calls are "
+        "valid and within policy. A legacy trigger on the orders table treats discount_pct "
+        "as the percentage the customer pays, so a 10% discount reprices the order to 10% "
+        "of its total.",
         mode=mode,
         model=run.model or None,
         request=REQUEST,
@@ -399,18 +413,18 @@ def act_settlement(run: Run) -> None:
         found = call(run, session, "flag_dispute", {"order_id": 13})
     m = found.measured or {}
     run.say(
-        f"  gateway {found.gateway.decision}; the stage measured {m.get('rows')} rows of "
-        f"{len(m.get('tenants', {}))} tenants; "
-        f"{'COMMITTED' if m.get('committed') else 'ROLLED BACK'}"
-        f", the back office byte-identical: {found.unchanged}"
+        f"  gateway: {found.gateway.decision}. stack: {m.get('rows')} rows across "
+        f"{len(m.get('tenants', {}))} tenants (limit 20 rows, 1 tenant); "
+        f"{'committed' if m.get('committed') else 'rolled back'}, "
+        f"back office {'unchanged' if found.unchanged else 'changed'}"
     )
     _act(
         run,
         2,
         "settlement",
-        "One flag, a whole settlement batch",
-        "The agent marks one order of its own tenant disputed. A settlement trigger puts every "
-        "open order of the same batch on hold, across every tenant.",
+        "The agent marks one of its own tenant's orders as disputed. A settlement trigger "
+        "then puts every open order in the same settlement batch on hold, across all four "
+        "tenants.",
         calls=[found.to_json()],
     )
 
@@ -484,19 +498,18 @@ def act_fleet(run: Run) -> None:
     )  # the first measure: what the lineage held before the fleet
     last = next((w for c in reversed(calls) if c.measured for w in c.measured["windows"]), None)
     run.say(
-        f"  {FLEET} sessions: the gateway permitted {permitted} (each within its own "
-        f"${SESSION_LIMIT_CENTS / 100:.2f}), ${asked:,.2f} in all; the lineage's window "
-        f"committed {committed} (${stood:,.2f}) and refused {FLEET - committed}"
+        f"  gateway: {permitted} of {FLEET} sessions permitted (${asked:,.2f}; "
+        f"${SESSION_LIMIT_CENTS / 100:.2f} per-session limit). stack: {committed} committed "
+        f"(${stood:,.2f}), {FLEET - committed} blocked by the $500/24h lineage window"
     )
     children = _children(run)
     _act(
         run,
         3,
         "fleet",
-        "Fifty sub-agents, one budget",
-        f"{FLEET} sub-agent sessions each ask for a ${FLEET_REFUND} refund. A per-session "
-        "temporal policy sees one refund per session. The lineage's window counts every "
-        "session.",
+        f"{FLEET} sub-agent sessions each request a ${FLEET_REFUND} refund. The gateway's "
+        "temporal policy counts refunds per session, so each session stays under its limit. "
+        "The mandate's refund window counts every session of the lineage.",
         sessions=FLEET,
         permitted=permitted,
         committed=committed,
@@ -554,7 +567,7 @@ def _children(run: Run) -> list[dict[str, Any]]:
             + (
                 "derived and bound"
                 if entry["derived"]
-                else "refused, wider than its parent: " + "; ".join(wider or [entry["refused"]])
+                else "refused, exceeds its parent: " + "; ".join(wider or [entry["refused"]])
             )
         )
     return out
@@ -701,20 +714,20 @@ def act_crash(run: Run, stripe: Stripe) -> None:
     delivered = sum(1 for s in world.outbox_states().values() if s == "delivered")
     same_key = sum(1 for r in stripe.requests if r["idempotency_key"] == key)
     run.say(
-        f"  relay-a died after Stripe answered; relay-b recorded the call lost and called again "
-        f"with the same key: Stripe saw {same_key} requests, made {1} refund"
+        f"  relay-a crashed after Stripe processed the refund; relay-b retried with the same "
+        f"idempotency key: {same_key} requests, 1 refund"
     )
     run.say(
-        f"  Stripe's webhook: {good.status} (verified, bound, attested); a forged one: "
-        f"{forged.status}; {delivered} message(s) delivered in all"
+        f"  webhook: signed event accepted ({good.status}), forged event rejected "
+        f"({forged.status}); {delivered} messages delivered"
     )
     _act(
         run,
         4,
         "crash",
-        "The payment API answered; the relay did not live to hear it",
-        "The relay delivering the act 1 refund dies between Stripe's answer and its own "
-        "record. Another relay takes the message over when the lease runs out.",
+        "The relay delivering the refund from act 1 crashes after Stripe processes it but "
+        "before the relay records the response. A second relay picks up the message when "
+        "the first relay's lease expires.",
         message=first,
         died=died,
         log=log,
@@ -784,33 +797,32 @@ def act_quorum(run: Run, stripe: Stripe) -> None:
         )
 
     vote("cfo", "approves the release")
-    vote("cfo", "approves again: one principal counts once")
+    vote("cfo", "approves again; a principal counts once")
     vote(
         "head-ops",
-        "an approval in head-ops' name, signed with a key the charter does not hold",
+        "approval in head-ops' name, signed with a key that is not in the charter",
         signer=world.signers["night-shift"],
     )
     warrant = escalation.warrant_for_ticket(ticket.ticket_id)
     before_warrant = warrant is not None
-    vote("head-ops", "approves the release with their own key: 2 of 3")
+    vote("head-ops", "approves the release with their own key; quorum reached")
     warrant = escalation.warrant_for_ticket(ticket.ticket_id)
     assert warrant is not None, votes
     records = world.fid.executor.execute(warrant)
     state_after = world.outbox_states()[message]
     drain(world, stripe)
+    counted = len({v["principal"] for v in votes if v["counted"]})
     run.say(
         f"  ticket {ticket.ticket_id[:8]} ({ticket.ticket_class}): {len(votes)} approvals "
-        f"submitted, warrant at {release.quorum} of 3; executed: "
-        f"{', '.join(r.kind for r in records)}; message {state_after} -> "
-        f"{world.outbox_states()[message]}"
+        f"submitted, {counted} principals counted, quorum {release.quorum} of 3; warrant "
+        f"executed; message {state_after} -> {world.outbox_states()[message]}"
     )
     _act(
         run,
         5,
         "quorum",
-        "Over the line: the principals decide",
-        "On-call pauses the agent while refund volume is reviewed. The refund it had just "
-        "committed is held at the relay, and a ticket goes to the principals.",
+        "On-call pauses the agent to review refund volume. The relay holds the refund the "
+        "agent had just committed, and the service raises a ticket for the principals.",
         message=message,
         ticket={
             "id": ticket.ticket_id,
@@ -861,17 +873,16 @@ def act_break_glass(run: Run, stripe: Stripe) -> None:
     world.governor.reset(SCOPE)
     drain(world, stripe)
     run.say(
-        f"  the night shift released message {message[:8]} and reset the breaker by hand; "
-        f"the relay delivered it: {world.outbox_states()[message]}"
+        f"  night-shift key released message {message[:8]} and reset the breaker without a "
+        f"warrant; message {world.outbox_states()[message]}"
     )
     _act(
         run,
         6,
         "break-glass",
-        "The administrator's shortcut",
-        "A second refund is held under a second pause. The night shift's database "
-        "administrator releases it by hand and resets the breaker, with no ticket and no "
-        "warrant. The gateway sees nothing: no agent made a call.",
+        "A second refund is held during a second pause. The night-shift database "
+        "administrator releases it and resets the circuit breaker directly, without a "
+        "ticket or warrant. No agent call is involved, so the gateway sees nothing.",
         message=message,
         operator=world.key_id("night-shift"),
         delivered=world.outbox_states()[message],
@@ -1020,9 +1031,9 @@ def act_audit(run: Run, stripe: Stripe) -> None:
             "scan": scan(data, planted),
         }
         run.say(
-            f"  {name}.fidb: {'PASS' if report.passed else f'FAIL: exit {report.exit_code}'}"
-            f" ({len(report.findings)} finding(s)); sockets attempted {len(attempts)}; "
-            f"planted values found {sum(verdicts[name]['scan']['found'].values())}"
+            f"  {name}.fidb: {'PASS' if report.passed else f'FAIL (exit {report.exit_code})'}, "
+            f"{len(report.findings)} findings, {len(attempts)} network calls, "
+            f"{sum(verdicts[name]['scan']['found'].values())} planted values found"
         )
         for finding in report.findings:
             run.say(f"    {finding.render()[:150]}")
@@ -1031,9 +1042,8 @@ def act_audit(run: Run, stripe: Stripe) -> None:
         run,
         7,
         "audit",
-        "The auditor: no network, no data, no trust",
-        "The lineage is exported twice: before the administrator's act and after it. An "
-        "auditor verifies each with sockets refused, holding only the charter's digest and "
+        "The lineage is exported twice, before and after the DBA override. An auditor "
+        "verifies both bundles with networking disabled, using only the charter digest and "
         "the deployment's public keys.",
         verdicts=verdicts,
         conservation="verified",
@@ -1049,14 +1059,14 @@ def run_acts(run: Run) -> None:
     os.environ.setdefault(STRIPE_SECRET_ENV, run.world.webhook_secret)
     run.observe()
     steps: tuple[tuple[str, Callable[[], None]], ...] = (
-        ("Act 1  An everyday queue", lambda: act_queue(run)),
-        ("Act 2  One flag, a whole settlement batch", lambda: act_settlement(run)),
-        ("Act 3  Fifty sub-agents, one budget", lambda: act_fleet(run)),
-        ("Act 4  The relay dies mid-call", lambda: act_crash(run, stripe)),
-        ("Act 5  The principals decide", lambda: act_quorum(run, stripe)),
-        ("Act 6  The administrator's shortcut", lambda: act_break_glass(run, stripe)),
-        ("Act 7  The auditor", lambda: act_audit(run, stripe)),
+        ("queue", lambda: act_queue(run)),
+        ("settlement", lambda: act_settlement(run)),
+        ("fleet", lambda: act_fleet(run)),
+        ("crash", lambda: act_crash(run, stripe)),
+        ("quorum", lambda: act_quorum(run, stripe)),
+        ("break-glass", lambda: act_break_glass(run, stripe)),
+        ("audit", lambda: act_audit(run, stripe)),
     )
-    for title, step in steps:
-        run.say(title)
+    for n, (key, step) in enumerate(steps, 1):
+        run.say(f"Act {n}  {TITLES[key]}")
         step()

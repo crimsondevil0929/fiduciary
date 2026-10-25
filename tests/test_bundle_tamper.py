@@ -255,7 +255,8 @@ def test_a_document_under_another_digest_is_named(world: bound.World, released: 
     manifest["members"].sort(key=lambda m: m["path"])
     members["manifest.json"] = fidu1.canonical(manifest)
     report = _named(world, _tar(_remanifest(sorted(members.items()))), "a renamed document")
-    assert any("not its name's" in f.message for f in report.failed("V1")), report.render()
+    renamed = [f for f in report.failed("V1") if "does not match its file name" in f.message]
+    assert renamed, report.render()
 
 
 def test_a_bundle_of_another_ledger_than_the_charters_is_named(

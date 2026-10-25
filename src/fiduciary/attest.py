@@ -36,25 +36,27 @@ __all__ = ["CONTROLS", "FRAMEWORKS", "PROVES", "SCHEMA", "attest"]
 SCHEMA: Final = "fiduciary-attestation/1"
 
 PROVES: Final[Mapping[str, str]] = {
-    "V1": "The bundle is well formed: every member is listed in the manifest with its "
-    "SHA-256, in canonical form, and nothing else is in it.",
-    "V2": "The charter is the one the auditor pinned, and every principal key comes from it.",
-    "V3": "Every mandate was issued on its quorum, and every derived child only narrows "
-    "its parent.",
-    "V4": "What ran was the policy each mandate compiles to: every receipt names the "
-    "compiled checkers, sinks and windows.",
+    "V1": "The bundle is well formed: every member is listed in the manifest with a matching "
+    "SHA-256, and there are no extra members.",
+    "V2": "The charter matches the digest the auditor pinned, and every principal key comes "
+    "from that charter.",
+    "V3": "Every mandate was issued by its required quorum, and every derived mandate is "
+    "equal to or narrower than its parent.",
+    "V4": "Every receipt names the checkers, sinks and rate windows its mandate compiles to, "
+    "so the policy that ran is the policy that was approved.",
     "V5": "Every adjudicated plan has a signed receipt, included in the receipt log's signed "
     "checkpoint.",
     "V6": "Every ledger entry the lineage touched is included in the ledger's signed "
     "checkpoint, and the entries balance.",
-    "V7": "Every act on the lineage's ledger footprint, its plans and its messages traces to "
-    "an authority the lineage holds; what does not is named.",
-    "V8": "Every warrant formed on its quorum, by principal, before its deadline, and every "
-    "execution did what the warrant said, at what the systems recorded.",
-    "V9": "The log is the service's: every record signed, hash-linked, numbered without a gap.",
-    "V10": "Every record in range is anchored into the ledger, in order.",
-    "V11": "Nothing committed after its lineage was revoked, suspended or expired.",
-    "V12": "Every instant the service wrote agrees with the ledger's order of its anchor.",
+    "V7": "Every act on the lineage's ledger scopes, plans and outbox messages traces to a "
+    "mandate or warrant; anything else is reported.",
+    "V8": "Every warrant was formed by a quorum of distinct principals before its deadline, "
+    "and executed once against the exact ledger and outbox state the principals approved.",
+    "V9": "The log is signed by the service key, hash-linked, and has no gaps.",
+    "V10": "Every log record in range is anchored in the ledger, in order.",
+    "V11": "Nothing committed or was delivered after the lineage was revoked, suspended or "
+    "expired.",
+    "V12": "Every timestamp the service wrote agrees with the ledger order of its anchor.",
 }
 
 FRAMEWORKS: Final[Mapping[str, Mapping[str, str]]] = {
@@ -124,9 +126,9 @@ here: ASI05 (code an agent runs) is outside what a bundle records, and is
 answered by running an agent that writes code out of process (F8-10)."""
 
 PRIVACY: Final = (
-    "F9-1: no member carries row data, payloads, tool arguments, model prompts or "
-    "responses, or secrets. The sources carry digests of those, and the bundle carries "
-    "what the sources carry."
+    "No row data, payloads, tool arguments, prompts, model output or secrets. Logs record "
+    "SHA-256 digests rather than raw payloads; the bundle holds signed policy documents, "
+    "digests, signatures and amounts."
 )
 
 

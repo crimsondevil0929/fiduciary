@@ -60,7 +60,7 @@
     "exit_code": 3,
     "file": "v1-member-deleted.fidb",
     "findings": [
-      "V1 malformed: member deployment.json is listed and missing",
+      "V1 malformed: member deployment.json is listed in the manifest but missing",
       "V4 policy: no deployment.json: the compiled policy cannot be recomputed",
       "V4 policy: receipt 363dbab8-019b-40d3-9bc0-c36d1a67074b: no version 1 of 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31 was bound to issue it"
     ],
@@ -116,7 +116,7 @@
     "exit_code": 3,
     "file": "v1-members-out-of-order.fidb",
     "findings": [
-      "V1 malformed: the members are not in sorted order (\u00a79.2)"
+      "V1 malformed: the members are not in sorted order"
     ],
     "keys": {
       "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
@@ -143,7 +143,7 @@
     "exit_code": 8,
     "file": "v10-unanchored-record.fidb",
     "findings": [
-      "V10 evidence: record 11 is in range, and no anchor names it"
+      "V10 evidence: record 11 is in range but has no ledger anchor"
     ],
     "keys": {
       "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
@@ -171,9 +171,9 @@
     "exit_code": 7,
     "file": "v11-commit-after-revocation.fidb",
     "findings": [
-      "V7 ambient: ledger entry 21 (circuit_reset) on support-agent: a reset no warrant of the lineage names",
-      "V11 revocation: plan plan-186d6d0cf822 committed at ledger 21, after the trip at 19 (G7)",
-      "V11 revocation: receipt d33ece22-9d89-4331-b59d-79525f1b6cee commits after the trip at 19"
+      "V7 ambient: ledger entry 21 (circuit_reset) on support-agent: circuit reset without an authorizing warrant",
+      "V11 revocation: plan plan-186d6d0cf822 committed at ledger 21, after the lineage was halted at 19",
+      "V11 revocation: receipt d33ece22-9d89-4331-b59d-79525f1b6cee commits after the lineage was halted at 19"
     ],
     "keys": {
       "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
@@ -338,7 +338,7 @@
     "exit_code": 3,
     "file": "v5-other-receipt-key.fidb",
     "findings": [
-      "V1 malformed: keys.json names other receipt keys than the pinned ones",
+      "V1 malformed: keys.json has different receipt keys from the pinned ones",
       "V5 signature: receipt 74ccc181-ef96-46f5-9ef4-50aa415bce90: receipt signature: the receipt was signed by key b6e1a10c27035771, which is not among the keys given (fc044d1d3ae96861)"
     ],
     "keys": {
@@ -368,18 +368,18 @@
     "exit_code": 3,
     "file": "v6-other-ledger-key.fidb",
     "findings": [
-      "V1 malformed: keys.json names another ledger key than the pinned one",
+      "V1 malformed: keys.json has a different ledger key from the pinned one",
       "V6 evidence: the checkpoint is not signed by the ledger's key: the checkpoint was signed by key 126396707de8ce96, which is not among the keys given (fc044d1d3ae96861)",
-      "V10 evidence: record 1 is in range, and no anchor names it",
-      "V10 evidence: record 2 is in range, and no anchor names it",
-      "V10 evidence: record 3 is in range, and no anchor names it",
-      "V10 evidence: record 4 is in range, and no anchor names it",
-      "V10 evidence: record 5 is in range, and no anchor names it",
-      "V10 evidence: record 6 is in range, and no anchor names it",
-      "V10 evidence: record 7 is in range, and no anchor names it",
-      "V10 evidence: record 8 is in range, and no anchor names it",
-      "V10 evidence: record 9 is in range, and no anchor names it",
-      "V10 evidence: record 10 is in range, and no anchor names it"
+      "V10 evidence: record 1 is in range but has no ledger anchor",
+      "V10 evidence: record 2 is in range but has no ledger anchor",
+      "V10 evidence: record 3 is in range but has no ledger anchor",
+      "V10 evidence: record 4 is in range but has no ledger anchor",
+      "V10 evidence: record 5 is in range but has no ledger anchor",
+      "V10 evidence: record 6 is in range but has no ledger anchor",
+      "V10 evidence: record 7 is in range but has no ledger anchor",
+      "V10 evidence: record 8 is in range but has no ledger anchor",
+      "V10 evidence: record 9 is in range but has no ledger anchor",
+      "V10 evidence: record 10 is in range but has no ledger anchor"
     ],
     "keys": {
       "ledger": "ed25519:03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
@@ -433,7 +433,7 @@
     "exit_code": 7,
     "file": "v7-break-glass-release.fidb",
     "findings": [
-      "V7 ambient [break-glass]: operator record 1 (release) by key 56dd14b5b8c694bd acts on the lineage's messages under no warrant of it"
+      "V7 ambient [break-glass]: operator record 1 (release) by key 56dd14b5b8c694bd acted on the lineage's outbox messages without an authorizing warrant"
     ],
     "keys": {
       "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
@@ -461,7 +461,7 @@
     "exit_code": 7,
     "file": "v7-manual-release.fidb",
     "findings": [
-      "V7 ambient: operator record 1 (release) by key a6a17e3b834c9950 acts on the lineage's messages under no warrant of it"
+      "V7 ambient: operator record 1 (release) by key a6a17e3b834c9950 acted on the lineage's outbox messages without an authorizing warrant"
     ],
     "keys": {
       "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
@@ -488,7 +488,7 @@
     "exit_code": 7,
     "file": "v7-raw-reset.fidb",
     "findings": [
-      "V7 ambient: ledger entry 19 (circuit_reset) on support-agent: a reset no warrant of the lineage names"
+      "V7 ambient: ledger entry 19 (circuit_reset) on support-agent: circuit reset without an authorizing warrant"
     ],
     "keys": {
       "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
@@ -515,7 +515,7 @@
     "exit_code": 7,
     "file": "v7-unmandated-delegation.fidb",
     "findings": [
-      "V7 ambient: ledger entry 18 (allocation) on support-agent: a delegation no binding of the lineage records"
+      "V7 ambient: ledger entry 18 (allocation) on support-agent: delegation without a recorded binding"
     ],
     "keys": {
       "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
@@ -542,7 +542,7 @@
     "exit_code": 7,
     "file": "v7-unmandated-plan.fidb",
     "findings": [
-      "V7 ambient: plan plan-60f500973fba on 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31's chain was admitted for '', no pinned tool's call"
+      "V7 ambient: plan plan-60f500973fba on 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31's chain was admitted for '', which is not a pinned tool's call"
     ],
     "keys": {
       "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
@@ -624,9 +624,9 @@
     "exit_code": 7,
     "file": "v8-head-moved.fidb",
     "findings": [
-      "V7 ambient: ledger entry 23 (circuit_reset) on support-agent: a reset no warrant of the lineage names",
-      "V7 ambient: operator record 1 (release) by key a6a17e3b834c9950 acts on the lineage's messages under no warrant of it",
-      "V8 authority: record 16: step 1 acted on message cdf639a2-4990-4550-8b33-619525e845ea at a head the ticket did not observe (F7-15, U-4)"
+      "V7 ambient: ledger entry 23 (circuit_reset) on support-agent: circuit reset without an authorizing warrant",
+      "V7 ambient: operator record 1 (release) by key a6a17e3b834c9950 acted on the lineage's outbox messages without an authorizing warrant",
+      "V8 authority: record 16: step 1 acted on message cdf639a2-4990-4550-8b33-619525e845ea after its delivery log moved past the head the ticket recorded"
     ],
     "keys": {
       "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
@@ -682,8 +682,8 @@
     "file": "v9-log-edited-manifest-rewritten.fidb",
     "findings": [
       "V9 signature: record 3: the record's signature does not verify: it was altered",
-      "V9 signature: record 3: expected 2: records lost or moved",
-      "V9 signature: record 3: expected 4: records lost or moved",
+      "V9 signature: record 3: expected record 2: records are missing or out of order",
+      "V9 signature: record 3: expected record 4: records are missing or out of order",
       "V9 signature: record 3: does not link to the record before it",
       "V10 evidence: the ledger anchors record 2 of log 'fiduciary' (entry 4), which the log does not hold: it was truncated"
     ],

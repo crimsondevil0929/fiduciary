@@ -126,7 +126,7 @@ def test_verify_bundle_exit_codes(
     assert cli.main(["verify-bundle", str(tampered), "--charter", pinned]) == 3
     out = capsys.readouterr().out
     assert "member log.jsonl does not match its manifest digest" in out
-    assert "member deployment.json is listed and missing" in out
+    assert "member deployment.json is listed in the manifest but missing" in out
     assert "V9 records: FAILED" in out  # later checks still run and print
     assert out.rstrip().endswith("FAIL: exit 3")
 
