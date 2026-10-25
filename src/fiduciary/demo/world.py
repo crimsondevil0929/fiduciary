@@ -321,9 +321,6 @@ class World:
     def now(self) -> datetime:
         return datetime.now(UTC)
 
-    def key(self, name: str) -> str:
-        return spec(self.signers[name].public_key())
-
     def key_id(self, name: str) -> str:
         return str(self.signers[name].public_key().key_id)
 

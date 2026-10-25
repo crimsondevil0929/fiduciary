@@ -125,3 +125,23 @@ def test_the_html_embeds_its_payload_safely() -> None:
     start = page.index('id="payload">') + len('id="payload">')
     embedded = json.loads(page[start : page.index("</script>", start)])
     assert embedded["attestations"]["bundle"]["notes"][-1].startswith("</script>")
+
+
+def test_what_the_attestation_cannot_read_it_leaves_out() -> None:
+    from fiduciary.attest import _ledger, _lines, _operators, _version
+
+    assert _version("no-such-distribution") == "unknown"
+    assert _lines(b'{"seq": 1}\nnot json\n{"seq": 2}\n') == [{"seq": 1}, {"seq": 2}]
+    from fiduciary.bundle import BundleReport
+
+    assert _operators([], {"operators": {"night": "not a key"}}, BundleReport()) == []
+    entries = [
+        {"entry": {"entry_type": "hold", "scope_id": "a", "amount": "1.5", "entry_id": "h1"}},
+        {"entry": {"entry_type": "hold", "scope_id": "a", "amount": "2", "entry_id": "h2"}},
+        {"entry": {"entry_type": "spend", "scope_id": "a", "amount": "2", "ref": "h2"}},
+        {"entry": {"entry_type": "funding", "scope_id": "b", "amount": "x", "direction": "CR"}},
+    ]
+    ledger = _ledger(entries, ["a"])
+    (row,) = ledger["scopes"]
+    assert (row["scope"], row["held"], row["spent"]) == ("a", "1.50000000", "2.00000000")
+    assert ledger["by_type"] == {"funding": 1, "hold": 2, "spend": 1}

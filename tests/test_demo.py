@@ -366,3 +366,170 @@ def test_the_builtin_evaluator_fails_a_policy_whose_attribute_is_missing() -> No
     assert _policy_id("policy1") == "refund"
     assert _policy_id("policy99") == "policy99"
     assert _policy_id("custom") == "custom"
+
+
+# -- the edges: what an operator, a model or a command can get wrong -----------------
+
+
+def test_a_result_with_nothing_measured_reads_as_nothing() -> None:
+    from fiduciary.demo.acts import measured
+
+    result = SimpleNamespace(
+        diff=None,
+        verdict=None,
+        committed=False,
+        plan=SimpleNamespace(plan_id="plan-0"),
+        chain_head="0" * 64,
+    )
+    found = measured(result)  # type: ignore[arg-type]
+    assert (found["rows"], found["captured"], found["checkers"]) == (0, 0, 0)
+    assert found["findings"] == found["windows"] == found["outbound"] == []
+    assert found["orders_total"] == {"before": "0.00", "after": "0.00"}
+
+
+class _Halting(_Messages):
+    """A model that writes beside its call, calls what the gateway denies, then is halted."""
+
+    def create(self, **kwargs: Any) -> Any:
+        from fiduciary.bridge import SessionHaltedError
+
+        self.requests.append(kwargs)
+        if len(self.requests) > 1:
+            raise SessionHaltedError("budget", "the session's envelope is spent")
+        usage = TokenUsage(input_tokens=500, output_tokens=40)
+        content = [
+            SimpleNamespace(type="text", text="Refunding order 6 as asked."),
+            SimpleNamespace(
+                type="tool_use",
+                id="toolu_1",
+                name="refund_order",
+                input={"order_id": 6, "amount": "10.00", "payment_intent": "pi_0000000006"},
+            ),
+        ]
+        return SimpleNamespace(
+            content=content, stop_reason="tool_use", model=kwargs["model"], usage=usage
+        )
+
+
+def test_the_live_act_records_a_denied_call_and_a_halt(tmp_path: Path) -> None:
+    client = SimpleNamespace(messages=_Halting([]))
+    outcome = run(tmp_path / "halted", live=Live(client, "claude-opus-5-5"), engine="builtin")
+    queue = _act(outcome, "queue")
+    (denied,) = queue["calls"]
+    assert denied["gateway"]["decision"] == "DENY" and denied["outcome"] == "not sent"
+    assert "measured" not in denied
+    assert queue["model"]["halted"] == "budget" and queue["model"]["turns"] == 2
+    assert queue["model"]["answer"] == ""
+    assert outcome.held  # the other acts stand without act 1's refund
+
+
+def test_the_builtin_evaluator_needs_both_sides_of_a_sum() -> None:
+    gateway = Gateway("support-agent", "acme", {5: "acme"}, engine="builtin")
+    # The session's running sum is the gateway's own: without it the policy cannot hold.
+    assert gateway._builtin("refund_order", {"amount_cents": 100}, 5) == ()
+    assert gateway._builtin(
+        "refund_order", {"amount_cents": 100, "session_refunded_cents": 0}, 5
+    ) == ("refund",)
+
+
+def test_the_auditor_sees_no_network_and_the_scan_finds_what_is_there(demo: Outcome) -> None:
+    import socket
+
+    from fiduciary.demo.acts import no_network, scan
+
+    with no_network() as attempts:
+        with pytest.raises(OSError, match="no network"):
+            socket.create_connection(("127.0.0.1", 9))
+    assert len(attempts) == 1
+    assert socket.create_connection is not None and attempts  # restored, and recorded
+    data = (demo.root / "after.fidb").read_bytes()
+    lineage = demo.payload["attestations"]["after"]["bundle"]["lineage"]
+    long = "x" * 8 + lineage + "y" * 8  # longer than 40: its first 32 characters are sought
+    found = scan(data, {"ids": [lineage, "not-in-the-bundle"], "long": [long]})
+    assert found["found"]["ids"] > 1 and found["found"]["long"] == 0  # one hit per member
+    assert all(lineage[:24] in hit for hit in found["hits"]["ids"])
+
+
+def test_a_deployment_is_written_only_into_an_empty_directory(
+    demo: Outcome, tmp_path: Path
+) -> None:
+    from fiduciary.demo.world import build, lookup
+
+    with pytest.raises(FileExistsError, match="not empty"):
+        build(demo.root)
+    handler = lookup(demo.root / "back_office.db")
+    assert handler({"order_id": 5})["status"] == "open"
+    assert handler({"order_id": 9999}) == {"order_id": 9999, "found": False}
+
+
+def test_the_command_reports_serves_opens_and_says_what_ran(
+    demo: Outcome, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import copy
+    import tempfile
+    import webbrowser
+
+    import fiduciary.demo as package
+
+    payload = copy.deepcopy(demo.payload)
+    payload["demo"]["model"] = {"served": "claude-opus-5-5", "turns": 3, "metered": "0.039492"}
+    monkeypatch.setattr(
+        package, "run", lambda root, **kw: Outcome(demo.root, demo.dashboard, payload)
+    )
+    closed: list[bool] = []
+
+    class Server:
+        def serve_forever(self) -> None:
+            raise KeyboardInterrupt
+
+        def server_close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(cli, "_serve_dashboard", lambda root, where: (Server(), "http://x/d"))
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda prefix: str(tmp_path / "made"))
+    opened: list[str] = []
+    monkeypatch.setattr(webbrowser, "open", opened.append)
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    with contextlib.redirect_stdout(io.StringIO()) as printed:
+        assert cli.main(["demo", "--report", str(reports), "--serve", "--open"]) == 0
+    text = printed.getvalue()
+    assert f"a deployment in {tmp_path / 'made'}" in text
+    assert "live        claude-opus-5-5: 3 turn(s), $0.039492 metered" in text
+    assert "serving     http://x/d" in text and opened == ["http://x/d"] and closed == [True]
+    assert (reports / "dashboard.html").read_text().startswith("<!doctype html>")
+    payload["demo"]["acts"][-1]["verdicts"]["before"]["passed"] = False
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert cli.main(["demo", "--quiet", "--out", str(tmp_path / "again")]) == 1
+
+
+def test_the_command_names_what_it_lacks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import socket
+
+    from agentgov.exceptions import SignerUnavailableError
+    from agentgov.receipts.signing import Ed25519Signer
+
+    import fiduciary.demo as package
+
+    def no_cedar(root: Path, **kw: Any) -> Outcome:
+        raise ImportError("No module named 'cedarpy'")
+
+    monkeypatch.setattr(package, "run", no_cedar)
+    argv = ["demo", "--quiet", "--gateway", "cedarpy", "--out", str(tmp_path / "a")]
+    with contextlib.redirect_stderr(io.StringIO()) as err:
+        assert cli.main(argv) == 2
+    assert "interlock-fiduciary[demo]" in err.getvalue()
+
+    def unsigned() -> Any:
+        raise SignerUnavailableError("no cryptography")
+
+    monkeypatch.setattr(Ed25519Signer, "generate", staticmethod(unsigned))
+    with contextlib.redirect_stderr(io.StringIO()) as err:
+        assert cli.main(["demo", "--quiet", "--out", str(tmp_path / "b")]) == 2
+    assert "cryptography" in err.getvalue() and not (tmp_path / "b").exists()
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        port = taken.getsockname()[1]
+        with pytest.raises(cli._ExitError, match="--serve:"):
+            cli._serve_dashboard(tmp_path, f"127.0.0.1:{port}")
