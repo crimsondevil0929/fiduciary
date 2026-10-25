@@ -157,3 +157,5 @@ jobs:
           uv pip install --python "${{ runner.temp }}/bare/bin/python" "${{ runner.temp }}"/dist/*.whl
           "${{ runner.temp }}/bare/bin/fiduciary" --version
           "${{ runner.temp }}/bare/bin/python" -W error -c "import fiduciary.cli, fiduciary.postgres, fiduciary.verify"
+          # A bare install runs the whole stack: signing is a base dependency.
+          "${{ runner.temp }}/bare/bin/fiduciary" demo --quiet --out "${{ runner.temp }}/demo"
