@@ -35,10 +35,13 @@ identities and inventories agents; this stack judges consequences and proves the
 ## Sixty seconds: the whole stack, offline
 
 ```
-git clone https://github.com/crimsondevil0929/fiduciary && cd fiduciary
-uv sync
-uv run fiduciary demo --open
+pip install interlock-fiduciary
+fiduciary demo --open
 ```
+
+Or, with nothing installed, `uvx --from interlock-fiduciary fiduciary demo --open`. The
+`demo` extra (`pip install 'interlock-fiduciary[demo]'`) puts the gateway on the real Cedar
+engine; from a clone, `uv sync && uv run fiduciary demo --open` has it already.
 
 `fiduciary demo` stands up a deployment in a fresh directory (an AgentGov ledger,
 Interlock's back office of 200 orders across four tenants, fiduciary's store, a charter of
@@ -90,10 +93,7 @@ refused. The run takes a few seconds and writes:
   [A charter, a mandate, a derived child](#a-charter-a-mandate-a-derived-child).
 
 `--serve` serves the dashboard on loopback, `--report` writes it elsewhere, and `--out`
-names the directory. `fiduciary demo` ships in the release after 1.0.0, as
-`pip install 'interlock-fiduciary[demo]' && fiduciary demo --open` (the `demo` extra
-brings the signing library and Cedar); with 1.0.0 from PyPI, run it from a clone as
-above.
+names the directory. `fiduciary demo` arrived in 1.1.0.
 
 **With a live model.** `--live` puts a Claude model in front of act 1's queue, through the
 session, metered on the mandate's envelope and stopped at `--max-cost`. It reads
@@ -141,10 +141,10 @@ release. [`SECURITY.md`](SECURITY.md) states what is stored where and what is no
 ## Install
 
 ```
-pip install 'interlock-fiduciary[sign]'          # local Ed25519 keys
-pip install 'interlock-fiduciary[postgres,sign]' # the PostgreSQL store
+pip install interlock-fiduciary                  # local Ed25519 keys included
+pip install 'interlock-fiduciary[postgres]'      # the PostgreSQL store
 pip install 'interlock-fiduciary[kms-aws]'       # keys held by AWS KMS
-pip install 'interlock-fiduciary[demo]'          # fiduciary demo: signing, and the Cedar engine
+pip install 'interlock-fiduciary[demo]'          # fiduciary demo's gateway on the Cedar engine
 ```
 
 ## A charter, a mandate, a derived child

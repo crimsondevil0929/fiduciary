@@ -23,12 +23,16 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
   PDF. Exit codes are unchanged.
 - **`MandateEngine.observe(observer)`**: every result a lineage's engine returns, with the
   diff and the verdict a session never passes to an agent, for an operator's view.
-- **The `cedar` extra** (`cedarpy`), for the demo's gateway.
+- **The `cedar` and `demo` extras** (`cedarpy`), for the demo's gateway on the Cedar engine.
 - `SECURITY.md`: how to report a vulnerability, what is stored where, the trust boundaries
   and what is not claimed.
 
 ### Changed
 
+- **Signing is in the base install**: `interlock-fiduciary` depends on
+  `interlock-agentgov[sign]`, so `pip install interlock-fiduciary && fiduciary demo` (or
+  `uvx --from interlock-fiduciary fiduciary demo`) runs with no extra. The `sign` extra
+  stays, and resolves as before; `demo` brings the Cedar engine.
 - The README opens with the stack and a runnable demo; the release histories it opened
   with are here.
 

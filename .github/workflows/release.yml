@@ -58,6 +58,7 @@ jobs:
           uv venv "${{ runner.temp }}/bare" --python 3.12
           uv pip install --python "${{ runner.temp }}/bare/bin/python" dist/*.whl
           "${{ runner.temp }}/bare/bin/fiduciary" --version
+          "${{ runner.temp }}/bare/bin/fiduciary" demo --quiet --out "${{ runner.temp }}/demo"
 
       # Every package `pip install 'interlock-fiduciary[...]'` can bring in, at
       # the versions this release was tested with (uv.lock).

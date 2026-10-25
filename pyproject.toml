@@ -19,7 +19,8 @@ classifiers = [
 ]
 dependencies = [
     "interlock-escrow>=1.0.2",
-    "interlock-agentgov>=1.0.0",
+    # Signing is part of every install: keygen, approve, the service and the demo sign.
+    "interlock-agentgov[sign]>=1.0.0",
 ]
 
 [project.scripts]
@@ -28,8 +29,8 @@ fiduciary = "fiduciary.cli:main_entry"
 [project.optional-dependencies]
 # The PostgreSQL store (fiduciary.postgres), and AgentGov and Interlock on PostgreSQL.
 postgres = ["psycopg[binary]>=3.2", "interlock-escrow[postgres]>=1.0.2"]
-# Signing with an Ed25519 key held locally: a principal's approvals, the service's
-# records. Verifying needs nothing extra.
+# Signing with an Ed25519 key held locally. In the base install since 1.1.0; the
+# extra stays so that `interlock-fiduciary[sign]` still resolves.
 sign = ["interlock-agentgov[sign]>=1.0.0"]
 # Signing with an Ed25519 key held by AWS KMS (agentgov.receipts.kms_aws.AwsKmsSigner).
 kms-aws = ["interlock-agentgov[kms-aws]>=1.0.0"]
@@ -38,9 +39,8 @@ otel = ["interlock-agentgov[otel]>=1.0.0"]
 # The Cedar policy engine, for the input gateway `fiduciary demo` compares with;
 # without it the demo's built-in evaluator of the same policies decides.
 cedar = ["cedarpy>=4.12"]
-# `fiduciary demo`: it signs as every party of its deployment does, and its gateway
-# evaluates Cedar.
-demo = ["interlock-agentgov[sign]>=1.0.0", "cedarpy>=4.12"]
+# `fiduciary demo` with the Cedar engine (the demo runs without it too).
+demo = ["cedarpy>=4.12"]
 
 [build-system]
 requires = ["hatchling"]

@@ -1258,7 +1258,8 @@ def _demo(args: argparse.Namespace) -> int:
     except SignerUnavailableError:
         _fail(
             "the demo signs as every party of its deployment does, which needs the "
-            "cryptography package: pip install 'interlock-fiduciary[demo]'"
+            "cryptography package interlock-fiduciary installs: reinstall it with its "
+            "dependencies"
         )
     live = None
     if args.live:

@@ -566,7 +566,7 @@ name = "interlock-fiduciary"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "interlock-agentgov" },
+    { name = "interlock-agentgov", extra = ["sign"] },
     { name = "interlock-escrow" },
 ]
 
@@ -576,7 +576,6 @@ cedar = [
 ]
 demo = [
     { name = "cedarpy" },
-    { name = "interlock-agentgov", extra = ["sign"] },
 ]
 kms-aws = [
     { name = "interlock-agentgov", extra = ["kms-aws"] },
@@ -608,10 +607,9 @@ dev = [
 requires-dist = [
     { name = "cedarpy", marker = "extra == 'cedar'", specifier = ">=4.12" },
     { name = "cedarpy", marker = "extra == 'demo'", specifier = ">=4.12" },
-    { name = "interlock-agentgov", specifier = ">=1.0.0" },
     { name = "interlock-agentgov", extras = ["kms-aws"], marker = "extra == 'kms-aws'", specifier = ">=1.0.0" },
     { name = "interlock-agentgov", extras = ["otel"], marker = "extra == 'otel'", specifier = ">=1.0.0" },
-    { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'demo'", specifier = ">=1.0.0" },
+    { name = "interlock-agentgov", extras = ["sign"], specifier = ">=1.0.0" },
     { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'sign'", specifier = ">=1.0.0" },
     { name = "interlock-escrow", specifier = ">=1.0.2" },
     { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=1.0.2" },
