@@ -471,7 +471,7 @@ def test_a_reset_step_naming_an_entry_that_does_not_name_its_warrant_is_named(
     assert records[-1].kind == "execution.applied"
     _later(held.fid)
     report = _report(world, held.mandate)
-    _fails(report, "V8", "no reset in the ledger names it", code=5)
+    _fails(report, "V8", "no reset in the ledger references it", code=5)
 
 
 # -- V11 revocation ----------------------------------------------------------------------
