@@ -189,7 +189,7 @@ def test_a_delegation_no_binding_records_is_ambient(world: bound.World) -> None:
     )
     _later(fid)
     report = _report(world, mandate)
-    _fails(report, "V7", "a delegation no binding of the lineage records", code=7)
+    _fails(report, "V7", "delegation without a recorded binding", code=7)
     _only(report, "V7")
 
 
@@ -199,7 +199,7 @@ def test_a_reset_no_warrant_names_is_ambient(world: bound.World) -> None:
     world.governor.reset(bound.SCOPE)
     _later(fid)
     report = _report(world, mandate)
-    _fails(report, "V7", "a reset no warrant of the lineage names", code=7)
+    _fails(report, "V7", "circuit reset without an authorizing warrant", code=7)
     _only(report, "V7")
 
 
@@ -211,7 +211,7 @@ def test_an_operator_release_under_no_warrant_is_ambient(world: bound.World, hel
         log.close()
     _later(held.fid)
     report = _report(world, held.mandate)
-    _fails(report, "V7", "(release)", "under no warrant of it", code=7)
+    _fails(report, "V7", "(release)", "without an authorizing warrant", code=7)
     assert all(f.label == "" for f in report.failed("V7")), report.render()
     _only(report, "V7")
 
@@ -228,7 +228,7 @@ def test_a_break_glass_release_is_ambient_and_labeled(
         log.close()
     _later(glass_held.fid)
     report = _report(glass_world, glass_held.mandate, operators=("night-shift",))
-    _fails(report, "V7", "under no warrant of it", code=7)
+    _fails(report, "V7", "without an authorizing warrant", code=7)
     (finding,) = report.failed("V7")
     assert finding.label == "break-glass"
     assert "[break-glass]" in report.render()
@@ -251,7 +251,7 @@ def test_a_plan_no_pinned_tool_built_is_ambient(world: bound.World) -> None:
     assert world.execute(mandate, plan).committed
     _later(fid)
     report = _report(world, mandate)
-    _fails(report, "V7", "no pinned tool's call", code=7)
+    _fails(report, "V7", "which is not a pinned tool's call", code=7)
     _only(report, "V7")
 
 
@@ -270,7 +270,7 @@ def test_a_tool_hold_that_names_no_session_after_named_ones_is_ambient(
         world.governor.void(held, memo="released")
     _later(fid)
     report = _report(world, mandate)
-    _fails(report, "V7", "after memos began naming theirs", code=7)
+    _fails(report, "V7", "after the ledger began recording them", code=7)
     _only(report, "V7")
 
 
@@ -283,7 +283,7 @@ def test_a_reset_another_warrant_names_is_ambient(world: bound.World) -> None:
         world.governor.reset(bound.SCOPE)
     _later(fid)
     report = _report(world, mandate)
-    _fails(report, "V7", "a reset no warrant of the lineage names", code=7)
+    _fails(report, "V7", "circuit reset without an authorizing warrant", code=7)
 
 
 def test_a_session_memo_outside_the_sessions_life_is_ambient(world: bound.World) -> None:
@@ -296,7 +296,7 @@ def test_a_session_memo_outside_the_sessions_life_is_ambient(world: bound.World)
     world.governor.void(held, memo="released")
     _later(fid)
     report = _report(world, mandate)
-    _fails(report, "V7", "outside session", code=7)
+    _fails(report, "V7", "falls outside the time session", code=7)
 
 
 def test_a_version_bound_as_another_compiled_policy_is_named(world: bound.World) -> None:
@@ -447,7 +447,7 @@ def test_a_step_at_a_head_the_ticket_did_not_observe_is_named(
     assert records[-1].content["mismatches"]
     _later(held.fid)
     report = _report(world, held.mandate)
-    _fails(report, "V8", "at a head the ticket did not observe", code=7)
+    _fails(report, "V8", "after its delivery log moved past the head the ticket recorded", code=7)
     assert report.failed("V7")  # the hand release and its reset, too
 
 
@@ -499,8 +499,8 @@ def test_a_commit_after_revocation_is_named(world: bound.World) -> None:
     world.store.submit(b"not an approval")
     world.authority.process_intake()  # a record after: the range covers the commit
     report = _report(world, mandate)
-    _fails(report, "V11", "after the trip at", code=7)
-    assert any("commits after the trip" in f.message for f in report.failed("V11"))
+    _fails(report, "V11", "after the lineage was halted at", code=7)
+    assert any("commits after the lineage was halted" in f.message for f in report.failed("V11"))
     _only(report, "V7", "V11")
 
 
@@ -515,7 +515,7 @@ def test_an_unanchored_record_is_named(world: bound.World) -> None:
     seq = world.store.head("fiduciary")[0]
     _later(fid)
     report = _report(world, mandate)
-    _fails(report, "V10", f"record {seq} is in range, and no anchor names it", code=8)
+    _fails(report, "V10", f"record {seq} is in range but has no ledger anchor", code=8)
     _only(report, "V10")
 
 
@@ -563,7 +563,7 @@ def test_a_pinned_key_the_bundle_was_not_signed_with_is_named(
     keys = bk.auditor_keys(**{role: [other] if role == "receipts" else other})
     report = bk.verify(world, data, keys=keys)
     assert report.failed(check), report.render()
-    assert any("keys.json names" in f.message for f in report.failed("V1")), report.render()
+    assert any("keys.json has" in f.message for f in report.failed("V1")), report.render()
     assert report.exit_code == 3, report.render()
 
 
@@ -573,7 +573,7 @@ def test_without_pinned_keys_the_bundle_verifies_under_its_own_and_says_so(
     mandate, _ = _lineage(world)
     report = bk.verify(world, bk.export(world, mandate.mandate_id), keys=None)
     assert report.passed, report.render()
-    assert any("exporter's statement" in note for note in report.notes)
+    assert any("come from the bundle's own keys.json" in note for note in report.notes)
 
 
 def test_a_service_key_that_signed_nothing_in_the_log_is_named(world: bound.World) -> None:
@@ -719,6 +719,6 @@ def test_receipts_before_u1_are_checked_by_name_only_before_canonical_ones(
     report = bk.verify(world, data)
     if legacy_first:
         assert not report.failed("V4"), report.render()
-        assert any("before U-1" in note for note in report.notes), report.render()
+        assert any("older than 1.0.3" in note for note in report.notes), report.render()
     else:
         _fails(report, "V4", "table_allowlist ran with another configuration", code=6)

@@ -192,7 +192,7 @@ def test_an_edited_or_deleted_document_is_named(world: Authority, ledger: Budget
     _names(_verify(store, ledger), f"document {charter.digest[:16]}: its bytes do not hash")
     mandate = e.mandate()
     _owner(store, [("DELETE FROM {t}documents WHERE digest = ?", (mandate.digest,))])
-    _names(_verify(store, ledger), "names a mandate the store does not hold")
+    _names(_verify(store, ledger), "references a mandate that is not in the store")
 
 
 def test_a_document_that_is_not_its_type_is_named(world: Authority, ledger: BudgetManager) -> None:
@@ -283,7 +283,7 @@ def test_an_unanchored_record_is_named(world: Authority, ledger: BudgetManager) 
     Log(store, e.SERVICE).append("approval.refused", {"intake": 77, "digest": "a" * 64, "why": "x"})
     report = _verify(store, ledger)
     assert report.unanchored == (9,)
-    _names(report, "record 9: no anchor in the ledger names it")
+    _names(report, "record 9: has no anchor in the ledger")
     lenient = verify_store(
         store,
         service_key=e.SERVICE.public_key(),
@@ -363,7 +363,7 @@ def test_a_record_of_another_log_or_unreadable_is_named(
             )
         ],
     )
-    _names(_verify(store, ledger), "names log 'other'", "its columns disagree")
+    _names(_verify(store, ledger), "belongs to log 'other'", "its columns disagree")
     _owner(
         store,
         [

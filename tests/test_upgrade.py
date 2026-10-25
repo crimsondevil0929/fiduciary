@@ -171,7 +171,7 @@ def test_a_0x_store_upgrades_in_place_and_verifies(upgraded: Store, recorded: Pa
             # call admitted (F2-1). Everything else verifies.
             (finding,) = report.findings
             assert (finding.check, finding.kind) == ("V7", "ambient"), report.render()
-            assert "no pinned tool's call" in finding.message
+            assert "not a pinned tool's call" in finding.message
             assert report.exit_code == 7
         else:
             assert report.passed, report.render()

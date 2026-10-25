@@ -113,7 +113,7 @@ def verify_store(
         ):
             problems.append(f"{where}: its columns disagree with the record they hold")
         if record.log != log_id:
-            problems.append(f"{where}: names log {record.log!r}, not {log_id!r}")
+            problems.append(f"{where}: belongs to log {record.log!r}, not {log_id!r}")
         if record.seq != expected:
             problems.append(
                 f"{where}: expected record {expected}: the log lost or reordered records"
@@ -152,7 +152,10 @@ def verify_store(
             field, kind = named
             held = stored.get(str(record.content.get(field)))
             if held is None or held[0] != kind:
-                problems.append(f"record {record.seq}: names a {kind} the store does not hold")
+                problems.append(
+                    f"record {record.seq}: references {_article(kind)} {kind} "
+                    f"that is not in the store"
+                )
     implied = fold(records)
     for table in PROJECTIONS:
         if store.rows(table) != implied[table]:
@@ -177,7 +180,7 @@ def verify_store(
             problems.extend(ordering_problems(records, anchors, timedelta(seconds=skew_seconds)))
         unanchored = tuple(missing)
         if require_anchors:
-            problems.extend(f"record {seq}: no anchor in the ledger names it" for seq in missing)
+            problems.extend(f"record {seq}: has no anchor in the ledger" for seq in missing)
     return Report(tuple(problems), len(records), count, anchored, unanchored)
 
 
@@ -250,3 +253,7 @@ def _observed_problems(
                 f"is not before the record's own anchor ({anchor})"
             )
     return problems
+
+
+def _article(noun: str) -> str:
+    return "an" if noun[:1] in "aeiou" else "a"
