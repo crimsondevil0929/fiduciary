@@ -1420,17 +1420,19 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument("--charter-id")
     init.add_argument("--out")
     init.set_defaults(handler=_charter_init)
-    show = charter.add_parser("show", help="a charter, from a file or the store")
+    show = charter.add_parser("show", help="show a charter, from a file or the store")
     show.add_argument("target", metavar="FILE|DIGEST")
     show.set_defaults(handler=_show)
-    propose = charter.add_parser("propose", help="store a signed charter for approvals to name")
+    propose = charter.add_parser(
+        "propose", help="store a signed charter so approvals can reference it"
+    )
     propose.add_argument("file")
     propose.set_defaults(handler=lambda a: _propose(a, Charter))
-    adopt = charter.add_parser("adopt", help="adopt a charter version its quorum approved")
+    adopt = charter.add_parser("adopt", help="adopt a charter version approved by its quorum")
     adopt.add_argument("digest")
     adopt.set_defaults(handler=_charter_adopt)
     suspend = charter.add_parser(
-        "suspend", help="suspend a principal's key its revocation quorum approved"
+        "suspend", help="suspend a principal's key, once its revocation quorum approves"
     )
     suspend.add_argument("principal")
     suspend.set_defaults(handler=_charter_suspend)
@@ -1446,23 +1448,29 @@ def _parser() -> argparse.ArgumentParser:
     draft.add_argument("--parent", help="derive a child of this mandate")
     draft.add_argument("--out")
     draft.set_defaults(handler=_mandate_draft)
-    check = mandate.add_parser("check", help="a mandate well formed, and refining its parent")
+    check = mandate.add_parser(
+        "check", help="check that a mandate is well formed and refines its parent"
+    )
     check.add_argument("file")
     check.add_argument("--parent")
     check.add_argument("--charter")
     check.set_defaults(handler=_mandate_check)
-    diff = mandate.add_parser("diff", help="where each of two mandates is wider than the other")
+    diff = mandate.add_parser(
+        "diff", help="show where each of two mandates is wider than the other"
+    )
     diff.add_argument("first")
     diff.add_argument("second")
     diff.set_defaults(handler=_mandate_diff)
-    show = mandate.add_parser("show", help="a mandate, from a file or the store")
+    show = mandate.add_parser("show", help="show a mandate, from a file or the store")
     show.add_argument("target", metavar="FILE|DIGEST")
     show.set_defaults(handler=_show)
-    propose = mandate.add_parser("propose", help="store a signed mandate for approvals to name")
+    propose = mandate.add_parser(
+        "propose", help="store a signed mandate so approvals can reference it"
+    )
     propose.add_argument("file")
     propose.set_defaults(handler=lambda a: _propose(a, Mandate))
     issue = mandate.add_parser(
-        "issue", help="issue a mandate its quorum approved, or a derived child"
+        "issue", help="issue a mandate approved by its quorum, or a derived child"
     )
     issue.add_argument("digest")
     issue.set_defaults(handler=_mandate_issue)
@@ -1499,7 +1507,7 @@ def _parser() -> argparse.ArgumentParser:
     tool = commands.add_parser("tool", help="tool bindings").add_subparsers(
         dest="action", required=True
     )
-    digest = tool.add_parser("digest", help="a binding's digest, to pin in a mandate")
+    digest = tool.add_parser("digest", help="print a binding's digest, for pinning in a mandate")
     digest.add_argument("target", metavar="FILE|MODULE:NAME")
     digest.set_defaults(handler=_tool_digest)
 
@@ -1508,7 +1516,7 @@ def _parser() -> argparse.ArgumentParser:
         help="sign an approval: of a charter, a mandate, a ticket's option, a revocation, or "
         "a suspension",
     )
-    approve.add_argument("file", help="the document decided on")
+    approve.add_argument("file", help="the document being approved")
     approve.add_argument("--principal", required=True)
     approve.add_argument("--decline", action="store_true")
     approve.add_argument("--revoke", action="store_true", help="approve revoking the mandate")
@@ -1525,8 +1533,8 @@ def _parser() -> argparse.ArgumentParser:
     approve.add_argument(
         "--suspend", metavar="PRINCIPAL", help="approve suspending a principal's key"
     )
-    approve.add_argument("--ttl", type=int, default=3600, help="seconds the approval holds")
-    approve.add_argument("--yes", action="store_true", help="sign without asking, having read it")
+    approve.add_argument("--ttl", type=int, default=3600, help="seconds the approval stays valid")
+    approve.add_argument("--yes", action="store_true", help="sign without the confirmation prompt")
     approve.add_argument("--out")
     approve.add_argument("--submit", action="store_true", help="put it into the store's intake")
     _signing(approve)
@@ -1544,7 +1552,8 @@ def _parser() -> argparse.ArgumentParser:
     t_list.add_argument("--all", action="store_true", help="include terminal tickets")
     t_list.set_defaults(handler=_tickets_list)
     t_show = tickets.add_parser(
-        "show", help="render a ticket from its signed bytes, quarantining agent.statement (F7-3)"
+        "show",
+        help="show a ticket, rendered from its signed bytes, with the agent's statement apart",
     )
     t_show.add_argument("target", metavar="FILE|DIGEST|TICKET_ID")
     t_show.set_defaults(handler=_tickets_show)
@@ -1552,7 +1561,7 @@ def _parser() -> argparse.ArgumentParser:
     warrant = commands.add_parser("warrant", help="formed warrants").add_subparsers(
         dest="action", required=True
     )
-    w_show = warrant.add_parser("show", help="a warrant, from a file or the store")
+    w_show = warrant.add_parser("show", help="show a warrant, from a file or the store")
     w_show.add_argument("target", metavar="FILE|DIGEST|WARRANT_ID")
     w_show.set_defaults(handler=_warrant_show)
 
@@ -1592,7 +1601,7 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--metrics", help="HOST:PORT for /metrics and /healthz, over [metrics]")
     serve.set_defaults(handler=_serve)
 
-    export = commands.add_parser("export-bundle", help="write a lineage's audit bundle (§9)")
+    export = commands.add_parser("export-bundle", help="write a lineage's audit bundle")
     export.add_argument("--mandate", required=True, help="the lineage's mandate_id")
     export.add_argument("--from", dest="from_seq", type=int, help="the range's first record")
     export.add_argument("--to", dest="to_seq", type=int, help="the range's last record")
@@ -1603,8 +1612,8 @@ def _parser() -> argparse.ArgumentParser:
 
     check = commands.add_parser("verify-bundle", help="verify a bundle offline, V1 to V12")
     check.add_argument("bundle")
-    check.add_argument("--charter", required=True, help="charter version 1's pinned digest")
-    check.add_argument("--keys", help="the keys the auditor pins (keys.json's form)")
+    check.add_argument("--charter", required=True, help="the pinned digest of charter version 1")
+    check.add_argument("--keys", help="the public keys to pin, in keys.json format")
     check.add_argument("--witness", help="a ledger witness's key, ed25519:<hex>")
     check.add_argument("--skew", type=int, default=5, help="seconds of clock skew (V12)")
     check.add_argument(

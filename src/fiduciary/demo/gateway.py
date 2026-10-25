@@ -172,8 +172,12 @@ class Gateway:
             self.engine = "built-in evaluator"
         self.policies = cedar_text()
         self._parsed: Any = self.policies
-        if self._cedar is not None and hasattr(self._cedar, "PolicySet"):
-            self._parsed = self._cedar.PolicySet.from_str(self.policies)  # parsed once
+        if self._cedar is not None:
+            if hasattr(self._cedar, "PolicySet"):
+                self._parsed = self._cedar.PolicySet.from_str(self.policies)  # parsed once
+            # One evaluation up front, so the first call's latency is not the engine's warm-up.
+            self._cedar.is_authorized(self.request("warm-up", "lookup_order", {}), self._parsed, [])
+            self._sums.clear()
 
     def request(self, session: str, tool: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
         """The Cedar request the gateway forms from one call."""

@@ -1,21 +1,23 @@
 # Fiduciary
 
-**Consequence control for AI agents, under the gateway.** Gateways decide whether an agent
-may make a call. This stack decides whether the call's consequence may stand, and proves it
-to an auditor who trusts neither the agent nor the operator.
+Fiduciary adds signed authorization and offline audit to AI agents that change real data.
+It works with [AgentGov](https://github.com/crimsondevil0929/agentgov) (spend limits) and
+[Interlock](https://github.com/crimsondevil0929/interlock) (transactional checks on what
+an agent's database writes actually changed). An MCP or policy gateway decides whether an
+agent may call a tool. This stack decides whether the result of that call may commit, and
+produces evidence that an auditor can verify without trusting the agent or the operator.
 
-Fiduciary is the top of three layers. It records who set the limits the lower two enforce,
-and who approved each exception, as signed documents that anyone holding the public keys
-verifies offline.
+Fiduciary records who set each limit and who approved each exception, as signed
+documents. Anyone with the public keys can verify them offline.
 
-## The three-layer stack
+## Architecture
 
 ```
 agent ──▶ MCP / policy gateway ──▶ ┌────────────────────────────────────────────┐ ──▶ database
           identity, input checks   │ Fiduciary  who may decide: signed          │     Stripe
           (Cedar, OPA, allow-lists)│            mandates, quorum warrants,      │     mail
                                    │            an audit bundle, V1 to V12      │
-                                   │ Interlock  what it changed: stage, measure,│
+                                   │ Interlock  what changed: stage, measure,   │
                                    │            commit or roll back; exactly-   │
                                    │            once outbox, signed inbox       │
                                    │ AgentGov   what it costs: holds across the │
@@ -23,120 +25,126 @@ agent ──▶ MCP / policy gateway ──▶ ┌──────────
                                    └────────────────────────────────────────────┘
 ```
 
-| Layer | Package | The question it answers |
+| Layer | Package | What it checks |
 |---|---|---|
-| [AgentGov](https://github.com/crimsondevil0929/agentgov) | [`interlock-agentgov`](https://pypi.org/project/interlock-agentgov/) | May this scope spend this amount, counted across its whole delegation tree and every session, with in-flight calls held? |
-| [Interlock](https://github.com/crimsondevil0929/interlock) | [`interlock-escrow`](https://pypi.org/project/interlock-escrow/) | Does what this transaction actually changed, read back from the database, satisfy policy? Commit it or roll it back, and deliver its outside calls exactly once. |
-| **Fiduciary** | [`interlock-fiduciary`](https://pypi.org/project/interlock-fiduciary/) | Who set those limits, and who approved each exception? Signed mandates, quorum warrants, and an audit bundle anyone verifies offline. |
+| [AgentGov](https://github.com/crimsondevil0929/agentgov) | [`interlock-agentgov`](https://pypi.org/project/interlock-agentgov/) | Can this scope spend this amount? Limits apply across the whole delegation tree and every session, and in-flight calls hold funds until they settle. |
+| [Interlock](https://github.com/crimsondevil0929/interlock) | [`interlock-escrow`](https://pypi.org/project/interlock-escrow/) | Does the change this transaction actually made, read back from the database, satisfy policy? It commits or rolls back that same transaction, and delivers outbound API calls exactly once. |
+| **Fiduciary** | [`interlock-fiduciary`](https://pypi.org/project/interlock-fiduciary/) | Who set those limits, and who approved each exception? Signed mandates, quorum-approved warrants, and an audit bundle anyone can verify offline. |
 
-The stack sits under a gateway, not in place of one: a gateway scans prompts, checks
-identities and inventories agents; this stack judges consequences and proves the judgment.
+Use the stack behind a gateway, not instead of one. Gateways handle prompt scanning,
+identity and agent inventory; this stack checks consequences and records the evidence.
 
-## Sixty seconds: the whole stack, offline
+## Quickstart
 
 ```
 pip install interlock-fiduciary
 fiduciary demo --open
 ```
 
-Or, with nothing installed, `uvx --from interlock-fiduciary fiduciary demo --open`. The
-`demo` extra (`pip install 'interlock-fiduciary[demo]'`) puts the gateway on the real Cedar
-engine; from a clone, `uv sync && uv run fiduciary demo --open` has it already.
+Without installing anything: `uvx --from interlock-fiduciary fiduciary demo --open`. The
+demo's gateway uses a built-in evaluator of its Cedar policies; install the `demo` extra
+(`pip install 'interlock-fiduciary[demo]'`) to use the Cedar engine itself. From a clone,
+`uv sync && uv run fiduciary demo --open` includes it.
 
-`fiduciary demo` stands up a deployment in a fresh directory (an AgentGov ledger,
-Interlock's back office of 200 orders across four tenants, fiduciary's store, a charter of
-three principals and a bound mandate, every key made for the run) and plays seven acts.
-Each act puts the same calls in front of an input gateway, real Cedar policies evaluated by
-`cedarpy` (the `cedar` extra; a built-in evaluator of the same policies otherwise), and in
-front of the stack:
+`fiduciary demo` creates a deployment in a new directory: an AgentGov ledger, a SQLite back
+office with 200 orders across four tenants, a Fiduciary store, a charter with three
+principals, and a bound mandate. Keys are generated for each run. It then runs seven
+scenarios, sending the same tool calls to an input gateway (Cedar policies) and to the
+stack:
 
 ```
-Act 1  An everyday queue
-  gateway permitted 3 of 3 call(s); the stack committed 1 and refused 1
-  order 9: total 1000.00 -> 100.00, measured, then rolled back
-Act 2  One flag, a whole settlement batch
-  gateway PERMIT; the stage measured 50 rows of 4 tenants; ROLLED BACK, the back office byte-identical: True
-Act 3  Fifty sub-agents, one budget
-  50 sessions: the gateway permitted 50 (each within its own $100.00), $4,500.00 in all; the lineage's window committed 5 ($450.00) and refused 45
+Act 1  Order queue: refund and loyalty discount
+  gateway: 3 of 3 calls permitted. stack: 1 committed, 1 rolled back
+  order 9 total: 1000.00 -> 100.00 (90% drop, limit 30%); rolled back
+Act 2  Batch settlement cascade (cross-tenant trigger)
+  gateway: PERMIT. stack: 50 rows across 4 tenants (limit 20 rows, 1 tenant); rolled back, back office unchanged
+Act 3  Sub-agent fan-out across 50 sessions
+  gateway: 50 of 50 sessions permitted ($4,500.00; $100.00 per-session limit). stack: 5 committed ($450.00), 45 blocked by the $500/24h lineage window
   derive support-agent/returns (refund cap $100): derived and bound
   derive support-agent/billing (refund cap $50): derived and bound
-  derive support-agent/vip (refund cap $500): refused, wider than its parent: outbound.caps[stripe.refunds.create.amount.request].maximum.usd: is 500, above the parent's 200
-Act 4  The relay dies mid-call
-  relay-a died after Stripe answered; relay-b recorded the call lost and called again with the same key: Stripe saw 2 requests, made 1 refund
-  Stripe's webhook: 200 (verified, bound, attested); a forged one: 401; 6 message(s) delivered in all
-Act 5  The principals decide
-  ticket bcc47068 (held): 4 approvals submitted, warrant at 2 of 3; executed: execution.intent, execution.applied; message pending -> delivered
-Act 6  The administrator's shortcut
-  the night shift released message 18d23c0d and reset the breaker by hand; the relay delivered it: delivered
-Act 7  The auditor
-  before.fidb: PASS (0 finding(s)); sockets attempted 0; planted values found 0
-  after.fidb: FAIL: exit 7 (2 finding(s)); sockets attempted 0; planted values found 0
-    V7 ambient: ledger entry 221 (circuit_reset) on support-agent: a reset no warrant of the lineage names
-    V7 ambient [break-glass]: operator record 3 (release) by key be8d927e6fe8ed05 acts on the lineage's messages under no warrant of it
+  derive support-agent/vip (refund cap $500): refused, exceeds its parent: outbound.caps[stripe.refunds.create.amount.request].maximum.usd: is 500, above the parent's 200
+Act 4  Relay crash mid-refund (idempotent recovery)
+  relay-a crashed after Stripe processed the refund; relay-b retried with the same idempotency key: 2 requests, 1 refund
+  webhook: signed event accepted (200), forged event rejected (401); 6 messages delivered
+Act 5  2-of-3 principal quorum approval
+  ticket 0f908f93 (held): 4 approvals submitted, 2 principals counted, quorum 2 of 3; warrant executed; message pending -> delivered
+Act 6  Unauthorized DBA override (break-glass)
+  night-shift key released message f2114609 and reset the breaker without a warrant; message delivered
+Act 7  Offline third-party audit verification
+  before.fidb: PASS, 0 findings, 0 network calls, 0 planted values found
+  after.fidb: FAIL (exit 7), 2 findings, 0 network calls, 0 planted values found
+    V7 ambient: ledger entry 221 (circuit_reset) on support-agent: circuit reset without an authorizing warrant
+    V7 ambient [break-glass]: operator record 3 (release) by key f66328a7c3defa1c acted on the lineage's outbox messages without an authorizing warrant
 ```
 
-Every figure is measured as the run goes: rows read back from the stage, deliveries from
-the outbox's log, holds from the ledger, verdicts from `verify-bundle` run with sockets
-refused. The run takes a few seconds and writes:
+All figures are measured during the run: row changes from the open transaction,
+deliveries from the outbox log, holds from the ledger, and verdicts from `verify-bundle`
+with networking disabled. The run takes a few seconds and writes:
 
-- `dashboard.html`: one self-contained file, with no network requests, that prints to
-  PDF. It has the verdict, the zero-payload proof, the seven acts side by side, the lineage
-  tree with its ledger footprint, every ticket, approval, warrant and operator act, and the
-  V1–V12 matrix mapped to the OWASP Top 10 for Agentic Applications 2026, SOC 2 and the EU
-  AI Act's Articles 12 and 14;
-- `before.fidb` and `after.fidb`, the lineage's audit bundles, with `pinned-keys.json`
-  and `charter.digest` to check them yourself;
-- `attestation.json` and `report.md`;
-- the deployment, with its `fiduciary.toml`: `fiduciary --config <dir>/fiduciary.toml
-  verify`, `tickets list --all` and the rest open it. That is the onboarding path: a working
-  charter, mandate and keys, where setting one up by hand takes the commands under
+- `dashboard.html`: a single file that makes no network requests and prints to PDF. It
+  shows the verdict, the zero-payload check, the seven scenarios side by side, the mandate
+  lineage with ledger usage, every ticket, approval, warrant and operator action, and the
+  V1–V12 checks mapped to the OWASP Top 10 for Agentic Applications (2026), SOC 2, and EU AI
+  Act Articles 12 and 14.
+- `before.fidb` and `after.fidb`: audit bundles exported before and after the DBA override,
+  with `pinned-keys.json` and `charter.digest` for verifying them yourself.
+- `attestation.json` and `report.md`.
+- The deployment and its `fiduciary.toml`, so `fiduciary --config <dir>/fiduciary.toml
+  verify`, `tickets list --all` and the other commands work against it. This is the quickest
+  way to a working charter, mandate and keys; setting them up by hand takes the steps in
   [A charter, a mandate, a derived child](#a-charter-a-mandate-a-derived-child).
 
-`--serve` serves the dashboard on loopback, `--report` writes it elsewhere, and `--out`
-names the directory. `fiduciary demo` arrived in 1.1.0.
+`--out DIR` sets the directory, `--report PATH` also writes the dashboard or a Markdown
+report elsewhere, and `--serve` serves the dashboard on 127.0.0.1. Added in 1.1.0.
 
-**With a live model.** `--live` puts a Claude model in front of act 1's queue, through the
-session, metered on the mandate's envelope and stopped at `--max-cost`. It reads
-`BENCHMARK_API_KEY` only (from the environment or `--env-file`), never `ANTHROPIC_API_KEY`.
-The run of 2026-10-24, on interlock-escrow 1.0.3, interlock-agentgov 1.0.1 and cedarpy
-4.12.2:
+### Scenario 1 with a live model
+
+`--live` runs scenario 1 with a Claude model. Its calls go through the session, are
+metered against the mandate's budget, and stop at `--max-cost`. The API key comes from
+`BENCHMARK_API_KEY` (environment or `--env-file`); `ANTHROPIC_API_KEY` is never read.
+Results from the run on 2026-10-25 (UTC), with cedarpy 4.12.2:
 
 | | |
 |---|---|
-| Model | `claude-opus-5-5`, effort `medium`: 3 turns, 10.1 s |
-| Tokens | 5,713 input, 732 output: **$0.039492**, metered by AgentGov on the session's billing scope |
-| Its calls | `refund_order` (order 5, `"12.50"`), `apply_discount` (order 9, `10`), `lookup_order` 9, `lookup_order` 5 |
-| The gateway | Cedar permitted all four |
-| The stack | the refund committed; the discount rolled back after the stage measured order 9's total fall from 1,000.00 to 100.00 (the reprice trigger); the back office byte-identical |
-| What it told the operator | that the discount was blocked by the 30% limit, that someone who manages that limit needs to check it, and that it did not try another percentage to get around it |
+| Model | `claude-opus-5-5`, effort `medium`: 3 turns, 9.4 s |
+| Tokens and cost | 5,757 input and 715 output tokens: **$0.039328**, metered by AgentGov against the session's budget |
+| Calls made | `refund_order` (order 5, `"12.50"`), `apply_discount` (order 9, `10`), `lookup_order` (9), `lookup_order` (5) |
+| Gateway | Cedar permitted all four |
+| Stack | The refund committed. The discount was rolled back: the repricing trigger dropped order 9 from 1,000.00 to 100.00 (90%), over the 30% limit. The back office was left unchanged. |
+| Model's reply | It confirmed the refund, reported the blocked discount, said the 30% rule looked wrong for a 10% discount, and asked for the rule to be checked before retrying. |
 
-A real model, making calls that are correct and within policy, produces a consequence no
-input check can see. The run is not reproducible, because what a model chooses is not;
-the offline mode replays the calls a careful agent makes, and CI runs it.
+The model's calls were valid and within policy. The problem was what the database did with
+them, which no input check can see; the agent's feedback says only that the plan lowered
+order totals by more than 30%, so from its side the limit looks wrong. Live results are
+not reproducible because model behavior varies. The default mode replays a fixed call
+sequence, and CI runs that.
 
-## What it does
+## Features
 
-- **FIDU1 documents**, canonical JSON signed with Ed25519 (never HMAC): the charter (the
-  root of authority: principals, keys, quorums, break-glass keys), the mandate (every bound
-  one agent scope is delegated), the tool binding, the approval, the ticket, the warrant.
-- **Monotone delegation.** `refines(child, parent)` names every field where a child is
-  wider than its parent, so a delegation can only narrow (§5).
-- **Compilation and binding.** A mandate compiles into Interlock's checkers, sinks and rate
-  windows and AgentGov's governance and cognitive policies; what the deployment cannot
-  enforce fails compilation (§6).
-- **Escalation and warrants.** What a mandate does not allow goes to its principals as a
-  signed ticket of typed evidence; a warrant forms on the quorum of its class, by
-  principal, bound to the ticket's digest, the exact option and the heads the systems
-  recorded, and executes once, through Interlock's operators and AgentGov's ledger (§7).
-- **Sessions and MCP.** An agent acts through a session, in process or over MCP, and
-  nothing it reaches can approve anything (§8).
-- **The audit bundle.** A lineage exports to one file of no row data, payloads, prompts or
-  secrets, and `verify-bundle` checks it offline, V1 to V12, taking every decision again
-  (§9).
-- **The service and the cluster** on PostgreSQL, with crash-exact recovery (§10).
+- **Signed documents (FIDU1).** Canonical JSON signed with Ed25519 (HMAC is not
+  accepted): the charter (principals, keys, quorums, break-glass keys), the mandate (every
+  limit delegated to one agent scope), the tool binding, the approval, the ticket and the
+  warrant.
+- **Delegation can only narrow.** `refines(child, parent)` lists every field where a
+  child mandate is wider than its parent, and such a child is refused.
+- **Compilation and binding.** A mandate compiles into Interlock checkers, sinks and rate
+  windows, and AgentGov governance and loop-detection policies. A mandate the deployment
+  cannot enforce fails to compile.
+- **Escalation and warrants.** An action the mandate does not allow becomes a signed
+  ticket with typed evidence. A warrant forms when enough distinct principals approve the
+  exact option, before the deadline; it is bound to the ticket digest and the state the
+  systems recorded, and it executes once through Interlock's operators and AgentGov's
+  ledger.
+- **Sessions and MCP.** An agent acts through a session, in process or over MCP. Nothing
+  an agent can reach is able to approve anything.
+- **Audit bundle.** A lineage exports to one file with no row data, payloads, prompts or
+  secrets. `verify-bundle` checks it offline (V1 to V12) and re-evaluates every recorded
+  decision.
+- **Service and cluster** on PostgreSQL, with crash-safe recovery.
 
-`docs/FIDUCIARY_SPEC.md` is the specification, frozen for 1.x; `CHANGELOG.md` holds each
-release. [`SECURITY.md`](SECURITY.md) states what is stored where and what is not claimed.
+`docs/FIDUCIARY_SPEC.md` is the specification, stable across 1.x. `CHANGELOG.md` lists
+each release. [`SECURITY.md`](SECURITY.md) describes what is stored where and what is out
+of scope.
 
 ## Install
 
@@ -224,7 +232,7 @@ fiduciary mandate revoke <digest>
 fiduciary mandate expire                  # every lineage past its term
 ```
 
-`fiduciary approve` prints the document it signs and asks before signing it (G8). A
+`fiduciary approve` prints the document it is about to sign and asks for confirmation. A
 principal signs on their own machine, and needs no database credential beyond the intake
 role.
 
@@ -232,7 +240,7 @@ An exception is escalated as a ticket, and decided on the principals' own machin
 
 ```
 fiduciary tickets list                    # open tickets
-fiduciary tickets show <ticket_id>        # rendered from its signed bytes (F7-3)
+fiduciary tickets show <ticket_id>        # rendered from its signed bytes
 fiduciary approve ticket.json --charter charter.json --principal alice --key alice.key \
     --resolution grant --submit           # an option, by action or digest
 fiduciary approve ticket.json --charter charter.json --principal bob --key bob.key \
@@ -241,10 +249,9 @@ fiduciary warrant show <warrant_id>
 fiduciary resolve                         # settle executions a crash interrupted
 ```
 
-The executor signs interlock's operator records. Its key and the runtime records key may be
-AWS KMS keys only with an Interlock that signs ILOK1 records at signature version 2 (U-2,
-`docs/FIDUCIARY_SPEC.md` §12); fiduciary reads which Interlock it runs on, and refuses one
-otherwise:
+The executor signs Interlock's operator records. Its key and the runtime records key can
+be AWS KMS keys only with Interlock 1.0.3 or later, which signs ILOK1 records in a form KMS
+accepts. Fiduciary checks the installed Interlock and refuses a KMS key on an older one:
 
 ```toml
 [executor]
@@ -295,41 +302,41 @@ with `fiduciary tool digest module:name`.
 
 ## Auditing a lineage
 
-The operator exports a lineage. The ledger's checkpoint key signs the checkpoint its
-inclusion proofs verify against:
+The operator exports a lineage. The ledger's checkpoint key signs the checkpoint that the
+bundle's inclusion proofs are checked against:
 
 ```
 fiduciary export-bundle --mandate support-agent --ledger-key ledger.key --out support-agent.fidb
 ```
 
-The auditor verifies it anywhere, with the charter digest and the deployment's public keys
-obtained from outside the bundle:
+The auditor verifies it anywhere, using the charter digest and the deployment's public
+keys, obtained independently of the bundle:
 
 ```
 fiduciary verify-bundle support-agent.fidb --charter <digest> --keys keys.json
 ```
 
-`verify-bundle` prints V1 to V12 and every finding. `--json` prints the attestation
-instead, for a SIEM or GRC system: the verdict, each check with its findings and the
-controls its evidence bears on, and what the bundle holds (its mandates and their tree,
-tickets, approvals, warrants, operator acts and ledger footprint). `--report audit.html`
-(or `.md`) also writes the report, the HTML a self-contained console that prints to PDF.
-Neither changes the exit code. It exits 0 on a pass. Otherwise it exits with the first
-failing check's code:
+`verify-bundle` prints the result of each check (V1 to V12) and every finding. `--json`
+prints the attestation instead, for a SIEM or GRC system: the verdict, each check with its
+findings and the controls it supports, and a summary of the bundle (mandates and their
+tree, tickets, approvals, warrants, operator actions and ledger usage). `--report
+audit.html` (or `.md`) also writes a report; the HTML version is a single file that prints
+to PDF. Neither option changes the exit code. It exits 0 when every check passes, and
+otherwise with the code of the first failing check:
 
 | Exit | Failure |
 |---|---|
 | 1 | a usage error |
-| 2 | a file that is no bundle |
+| 2 | the file is not a readable bundle |
 | 3 | malformed |
 | 4 | a bad signature |
 | 5 | authority |
 | 6 | monotonicity or policy |
-| 7 | an ambient act no authority explains |
+| 7 | an action with no authorizing mandate or warrant |
 | 8 | missing evidence |
 | 9 | revocation or time |
 
-An act by a key the charter declares break-glass is still named, and labeled so.
+An action signed with a key the charter declares as break-glass is still reported, and labeled `[break-glass]`.
 
 ## Running the service
 
@@ -374,12 +381,12 @@ fiduciary serve --node fiduciary-1
 One node leads the writer: it holds the engines and serves the agents. One leads the
 executor. The others stand by, and `/healthz` says which roles each holds.
 
-The writer's files (the escrow chains, the runtime, receipt and operator logs) are on
-storage every node reaches and whose locks every node honors: one host's filesystem, or a
-network filesystem whose locks hold across hosts. A writer that freezes keeps their claims
-until it thaws or dies, and the node that took its role waits, healthy, until then. Have
-your supervisor kill a node whose `/healthz` does not answer: that bounds the wait
-(`docs/FIDUCIARY_SPEC.md` F10-19).
+The writer's files (escrow chains, and the runtime, receipt and operator logs) must be on
+storage that every node can reach and whose file locks every node respects: one host's
+filesystem, or a network filesystem with cross-host locking. A writer that freezes keeps
+its locks until it resumes or exits, and the node that took over its role waits, healthy,
+until then. Configure your supervisor to kill a node whose `/healthz` stops responding;
+that bounds the wait (see `docs/FIDUCIARY_SPEC.md`, F10-19).
 
 ## Tests
 
@@ -406,13 +413,14 @@ The service and cluster tests (`tests/test_service.py`, `tests/test_cluster.py`)
 upgrade tests (`tests/test_upgrade.py`) open stores each 0.x release wrote;
 `scripts/make_upgrade_stores.py` records them anew from each release's own code.
 
-Fiduciary uses each upstream fix of `docs/FIDUCIARY_SPEC.md` §12 where the installed
-interlock and AgentGov have it, and holds to its fallback where not; the tests of each side
-skip on the other, and the suite passes on both. To run it against their development
-trees: `uv pip install -e ../interlock -e ../agentgov`.
+Fiduciary uses the newer Interlock and AgentGov features listed in
+`docs/FIDUCIARY_SPEC.md` §12 when the installed versions have them, and falls back
+otherwise. Tests for each path skip on the other, and the suite passes on both. To test
+against development checkouts: `uv pip install -e ../interlock -e ../agentgov`.
 
-The soak runs a cluster for minutes against live PostgreSQL, then holds the database, the
-ledger and the logs to every invariant; `tests/test_soak.py` runs it for forty seconds:
+The soak test runs a cluster for several minutes against PostgreSQL, then checks the
+database, the ledger and the logs against every invariant. `tests/test_soak.py` runs it
+for forty seconds:
 
 ```
 uv run python scripts/live_stress_test.py --dsn postgresql://user:pw@localhost:5432/postgres --minutes 5
@@ -426,17 +434,17 @@ when nothing leaked:
 uv run python scripts/security_audit.py --dsn postgresql://user:pw@localhost:5432/postgres
 ```
 
-`scripts/live_acceptance.py` puts a Claude model in front of a session with business
-requests. It spends money only with `BENCHMARK_API_KEY` set, within each session's envelope
-and `--max-cost`; `--offline` replays its reference proposals, as the tests do:
+`scripts/live_acceptance.py` runs a Claude model against a session with business
+requests. It spends money only when `BENCHMARK_API_KEY` is set, within each session's
+budget and `--max-cost`. `--offline` replays fixed reference calls, as the tests do:
 
 ```
 uv run python scripts/live_acceptance.py --offline
 BENCHMARK_API_KEY=... uv run --with anthropic python scripts/live_acceptance.py --out live-run
 ```
 
-`scripts/ilok1_sizes.py --check` measures the ILOK1 records the executor has interlock
-sign, and requires the spec's table (§3.5) to match.
+`scripts/ilok1_sizes.py --check` measures the ILOK1 records the executor asks Interlock to
+sign, and checks them against the table in the spec (§3.5).
 
 `vectors/fidu1/` holds the golden vectors: valid documents with their digests and
 signing inputs, a chain of records, and invalid documents, each with the error it must

@@ -87,8 +87,8 @@ def markdown(data: Mapping[str, Any]) -> str:
             f"- **Lineage:** `{bundle['lineage']}` ({', '.join(bundle['subjects'])}), records "
             f"{bundle['range']['from']} to {bundle['range']['to']}, ledger cut "
             f"{bundle['ledger']['cut']}",
-            f"- **Pinned from outside the bundle:** charter `{a['inputs']['charter']}`; keys: "
-            f"{', '.join(a['inputs']['pinned_keys']) or 'none: the bundle keys, noted'}",
+            f"- **Pinned by the auditor:** charter `{a['inputs']['charter']}`; keys: "
+            f"{', '.join(a['inputs']['pinned_keys']) or 'none (the bundle keys were used)'}",
             f"- **Verifier:** fiduciary {a['verifier']['fiduciary']}, interlock-escrow "
             f"{a['verifier']['interlock']}, interlock-agentgov {a['verifier']['agentgov']}; "
             "offline, no database",
@@ -123,22 +123,22 @@ def markdown(data: Mapping[str, Any]) -> str:
                 )
         ambient = [o for o in a["operators"] if o["ambient"]]
         if ambient:
-            out += ["", "### Operator acts no warrant explains", ""]
+            out += ["", "### Operator actions without a warrant", ""]
             for o in ambient:
                 label = f" [{o['label']}]" if o["label"] else ""
                 out.append(
                     f"- record {o['seq']} ({o['action']}) by key `{o['key_id']}`{label}: "
                     f"{_cell(o['reason'])}"
                 )
-        out += ["", "### Notes", ""] + [f"- {_cell(n)}" for n in a["notes"]] + [""]
+        out += ["", "### Notes and scope", ""] + [f"- {_cell(n)}" for n in a["notes"]] + [""]
     demo = data.get("demo")
     if demo:
-        out += ["## The demo's acts", ""]
+        out += ["## Demo scenarios", ""]
         for act in demo["acts"]:
             out.append(f"- **Act {act['n']}: {act['title']}.** {act['lede']}")
         out.append("")
     out.append(
-        "_The control mapping is an aid to an assessment, not a certification. The verdict, "
-        "the exit code and every finding are `verify-bundle`'s own._"
+        "_The control mapping supports an assessment; it is not a certification. The verdict, "
+        "exit code and findings come directly from `verify-bundle`._"
     )
     return "\n".join(out) + "\n"
