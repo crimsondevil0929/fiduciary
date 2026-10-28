@@ -6,6 +6,25 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+### Added
+
+- **Control-framework packs.** The attestation now maps every check to nine frameworks,
+  each shipped as a data file: OWASP ASI 2026, SOC 2 and the EU AI Act as before, and
+  HIPAA, 21 CFR Part 11, ISO/IEC 27001:2022 Annex A, NIST SP 800-53 Rev. 5, SOX IT general
+  controls and GDPR. The new `mappings` member records each pack by the SHA-256 of its
+  canonical JSON, with a disclaimer that a mapping supports an assessment and is not a
+  certification. A pack never changes a verdict, a finding or an exit code.
+- **`fiduciary demo --domain`.** Four domain packs run on the same engine as the fintech
+  demo, each a deployment of its own with seven acts: healthcare (medication
+  reconciliation), cloud SRE (incident remediation, on a mirror of the cluster), supply
+  chain (procurement in an ERP) and multi-tenant SaaS (a CRM AI admin, with one bundle per
+  customer). `--domain all` runs fintech and all four behind one dashboard.
+- **The dashboard opens on an overview:** six industries and which of them ran, what in
+  the engine refused what in this run, the measurement classes, and interlock's recorded
+  live acceptance matrix (42 of 42 cases, $1.67 metered). An industry switcher moves
+  between the domains, and the control matrix lets the reader pick which frameworks to
+  show, with each pack's digest.
+
 ### Changed
 
 - **Plain wording in everything a person reads.** `verify-bundle` findings and notes,
