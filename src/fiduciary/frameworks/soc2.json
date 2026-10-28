@@ -1,0 +1,55 @@
+{
+  "framework": "soc2",
+  "title": "SOC 2 common criteria",
+  "source": "AICPA Trust Services Criteria (2017, revised points of focus 2022), common criteria CC6 to CC8",
+  "controls": {
+    "CC6.1": "Logical access: restricted to authorized users and processes",
+    "CC6.2": "Access granted and removed on authorization",
+    "CC6.3": "Access by role, least privilege",
+    "CC7.2": "System components monitored for anomalies",
+    "CC7.3": "Events evaluated to detect incidents",
+    "CC8.1": "Changes authorized, tested and approved before they run"
+  },
+  "evidence": {
+    "V1": [
+      "CC7.2"
+    ],
+    "V2": [
+      "CC6.1",
+      "CC6.2"
+    ],
+    "V3": [
+      "CC6.3",
+      "CC8.1"
+    ],
+    "V4": [
+      "CC8.1"
+    ],
+    "V5": [
+      "CC7.2"
+    ],
+    "V6": [
+      "CC7.2"
+    ],
+    "V7": [
+      "CC6.1",
+      "CC7.3"
+    ],
+    "V8": [
+      "CC6.2",
+      "CC8.1"
+    ],
+    "V9": [
+      "CC7.2"
+    ],
+    "V10": [
+      "CC7.2"
+    ],
+    "V11": [
+      "CC6.2"
+    ],
+    "V12": [
+      "CC7.2"
+    ]
+  }
+}

@@ -7,13 +7,16 @@ object: the verdict and each check's findings, exactly as the verifier
 reported them; what the bundle holds, read from its members (the lineage's
 mandates and their tree, its tickets, approvals and warrants, its operator
 acts, its ledger footprint); and each check's evidence mapped to the controls
-an assessor asks about (the OWASP Top 10 for Agentic Applications 2026, SOC 2's
-common criteria, the EU AI Act's Articles 12 and 14).
+an assessor asks about. The controls come from the packs in
+:mod:`fiduciary.frameworks`: the OWASP Top 10 for Agentic Applications 2026,
+SOC 2's common criteria, the EU AI Act, HIPAA, 21 CFR Part 11, ISO/IEC 27001,
+NIST SP 800-53, SOX IT general controls and GDPR. Each pack's digest is
+recorded under ``mappings``, so a reader can tell which mapping was applied.
 
 It decides nothing. The verdict, the exit code and every finding are the
 verifier's; the summary only reads the members a check already held to their
 digests, and a member V1 could not parse is left out of it. The mapping is an
-aid to an assessment, not a certification.
+aid to an assessment, not a certification (``mappings.disclaimer``).
 """
 
 from __future__ import annotations
@@ -27,11 +30,12 @@ from decimal import Decimal, InvalidOperation
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Final
 
-from fiduciary import __version__, _upstream, fidu1
+from fiduciary import __version__, _upstream, fidu1, frameworks
 from fiduciary.bundle.format import CHECKS, EXIT, BundleReport, unpack
 from fiduciary.exceptions import FiduciaryError
+from fiduciary.frameworks import DISCLAIMER
 
-__all__ = ["CONTROLS", "FRAMEWORKS", "PROVES", "SCHEMA", "attest"]
+__all__ = ["CONTROLS", "DISCLAIMER", "FRAMEWORKS", "MAPPINGS", "PROVES", "SCHEMA", "attest"]
 
 SCHEMA: Final = "fiduciary-attestation/1"
 
@@ -59,71 +63,21 @@ PROVES: Final[Mapping[str, str]] = {
     "V12": "Every timestamp the service wrote agrees with the ledger order of its anchor.",
 }
 
-FRAMEWORKS: Final[Mapping[str, Mapping[str, str]]] = {
-    "owasp-asi-2026": {
-        "ASI01": "Agent Goal Hijack",
-        "ASI02": "Tool Misuse and Exploitation",
-        "ASI03": "Identity and Privilege Abuse",
-        "ASI04": "Agentic Supply Chain Vulnerabilities",
-        "ASI05": "Unexpected Code Execution",
-        "ASI06": "Memory and Context Poisoning",
-        "ASI07": "Insecure Inter-Agent Communication",
-        "ASI08": "Cascading Failures",
-        "ASI09": "Human-Agent Trust Exploitation",
-        "ASI10": "Rogue Agents",
-    },
-    "soc2": {
-        "CC6.1": "Logical access: restricted to authorized users and processes",
-        "CC6.2": "Access granted and removed on authorization",
-        "CC6.3": "Access by role, least privilege",
-        "CC7.2": "System components monitored for anomalies",
-        "CC7.3": "Events evaluated to detect incidents",
-        "CC8.1": "Changes authorized, tested and approved before they run",
-    },
-    "eu-ai-act": {
-        "Art. 12": "Record-keeping: automatic logging over the system's lifetime",
-        "Art. 14": "Human oversight: people able to oversee, intervene and stop",
-    },
-}
+MAPPINGS: Final = frameworks.packs()
+"""The control-framework packs (:mod:`fiduciary.frameworks`), each a data file
+whose digest the attestation records."""
+
+FRAMEWORKS: Final[Mapping[str, Mapping[str, str]]] = {p.framework: p.controls for p in MAPPINGS}
 """The frameworks the matrix maps to, each control by its own identifier."""
 
 CONTROLS: Final[Mapping[str, Mapping[str, Sequence[str]]]] = {
-    "V1": {"owasp-asi-2026": ["ASI04"], "soc2": ["CC7.2"], "eu-ai-act": ["Art. 12"]},
-    "V2": {"owasp-asi-2026": ["ASI03"], "soc2": ["CC6.1", "CC6.2"], "eu-ai-act": ["Art. 14"]},
-    "V3": {
-        "owasp-asi-2026": ["ASI03", "ASI07", "ASI10"],
-        "soc2": ["CC6.3", "CC8.1"],
-        "eu-ai-act": ["Art. 14"],
-    },
-    "V4": {
-        "owasp-asi-2026": ["ASI02", "ASI08"],
-        "soc2": ["CC8.1"],
-        "eu-ai-act": ["Art. 12"],
-    },
-    "V5": {
-        "owasp-asi-2026": ["ASI01", "ASI02", "ASI08"],
-        "soc2": ["CC7.2"],
-        "eu-ai-act": ["Art. 12"],
-    },
-    "V6": {"owasp-asi-2026": ["ASI02", "ASI10"], "soc2": ["CC7.2"], "eu-ai-act": ["Art. 12"]},
-    "V7": {
-        "owasp-asi-2026": ["ASI03", "ASI10"],
-        "soc2": ["CC6.1", "CC7.3"],
-        "eu-ai-act": ["Art. 12", "Art. 14"],
-    },
-    "V8": {
-        "owasp-asi-2026": ["ASI09"],
-        "soc2": ["CC6.2", "CC8.1"],
-        "eu-ai-act": ["Art. 14"],
-    },
-    "V9": {"owasp-asi-2026": ["ASI06"], "soc2": ["CC7.2"], "eu-ai-act": ["Art. 12"]},
-    "V10": {"soc2": ["CC7.2"], "eu-ai-act": ["Art. 12"]},
-    "V11": {"owasp-asi-2026": ["ASI10"], "soc2": ["CC6.2"], "eu-ai-act": ["Art. 14"]},
-    "V12": {"soc2": ["CC7.2"], "eu-ai-act": ["Art. 12"]},
+    check: {p.framework: p.evidence[check] for p in MAPPINGS if check in p.evidence}
+    for check, _ in CHECKS
 }
-"""Which controls each check's evidence bears on. Not every ASI category is
-here: ASI05 (code an agent runs) is outside what a bundle records, and is
-answered by running an agent that writes code out of process (F8-10)."""
+"""Which controls each check's evidence bears on. Not every control is
+here: OWASP's ASI05 (code an agent runs) is outside what a bundle records, and
+is answered by running an agent that writes code out of process (F8-10). Each
+pack's ``limits`` say what else its controls need beyond the bundle."""
 
 PRIVACY: Final = (
     "No row data, payloads, tool arguments, prompts, model output or secrets. Logs record "
@@ -407,6 +361,17 @@ def _operators(records: list[Any], keys: Mapping[str, Any], report: BundleReport
     return out
 
 
+def _mappings() -> dict[str, Any]:
+    """Which packs mapped this attestation's checks to controls, by digest."""
+    summaries = [p.summary() for p in MAPPINGS]
+    joined = "\n".join(f"{s['framework']} {s['digest']}" for s in summaries)
+    return {
+        "disclaimer": DISCLAIMER,
+        "digest": "sha256:" + hashlib.sha256(joined.encode()).hexdigest(),
+        "packs": summaries,
+    }
+
+
 def attest(
     data: bytes,
     report: BundleReport,
@@ -517,4 +482,5 @@ def attest(
             "member_types": dict(sorted(types.items())),
         },
         "frameworks": {k: dict(v) for k, v in FRAMEWORKS.items()},
+        "mappings": _mappings(),
     }

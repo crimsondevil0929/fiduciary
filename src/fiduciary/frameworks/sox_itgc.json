@@ -1,0 +1,19 @@
+{
+  "framework": "sox_itgc",
+  "title": "SOX IT general controls",
+  "source": "IT general controls as commonly scoped for SOX Section 404 (PCAOB AS 2201, COSO 2013)",
+  "controls": {
+    "ITGC-SOD": "Segregation of duties: no one person both makes and approves a change to financial programs or data",
+    "ITGC-PCC": "Program change control: changes to programs and configuration are authorized and approved before they run",
+    "ITGC-MDA": "Master data authorization: changes to master data, such as vendor bank details, are approved by someone other than the requester"
+  },
+  "evidence": {
+    "V3": ["ITGC-SOD", "ITGC-PCC"],
+    "V4": ["ITGC-PCC"],
+    "V7": ["ITGC-SOD", "ITGC-MDA"],
+    "V8": ["ITGC-SOD", "ITGC-MDA"]
+  },
+  "limits": {
+    "ITGC-MDA": "Shown for master data in tables the stack observes: a write to a table the mandate does not grant is refused, and widening the mandate needs its quorum."
+  }
+}

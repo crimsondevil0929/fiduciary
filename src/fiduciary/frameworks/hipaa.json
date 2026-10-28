@@ -1,0 +1,31 @@
+{
+  "framework": "hipaa",
+  "title": "HIPAA Security and Privacy Rules",
+  "source": "45 CFR Part 164: Security Rule (Subpart C) and Privacy Rule (Subpart E)",
+  "controls": {
+    "§164.312(a)(1)": "Access control: only people and software granted access rights can reach electronic PHI",
+    "§164.312(b)": "Audit controls: mechanisms that record and examine activity in systems holding electronic PHI",
+    "§164.312(c)(1)": "Integrity: electronic PHI protected from improper alteration or destruction",
+    "§164.312(d)": "Person or entity authentication: whoever seeks access is the one claimed",
+    "§164.308(a)(1)(ii)(D)": "Information system activity review: audit logs and access reports reviewed regularly",
+    "§164.502(b)": "Minimum necessary: use and disclosure of PHI limited to what the purpose needs"
+  },
+  "evidence": {
+    "V1": ["§164.312(c)(1)"],
+    "V2": ["§164.312(a)(1)", "§164.312(d)"],
+    "V3": ["§164.312(a)(1)", "§164.502(b)"],
+    "V4": ["§164.502(b)"],
+    "V5": ["§164.312(b)", "§164.308(a)(1)(ii)(D)"],
+    "V6": ["§164.312(c)(1)"],
+    "V7": ["§164.312(a)(1)", "§164.308(a)(1)(ii)(D)"],
+    "V8": ["§164.312(d)"],
+    "V9": ["§164.312(b)", "§164.312(c)(1)"],
+    "V10": ["§164.312(b)"],
+    "V11": ["§164.312(a)(1)"],
+    "V12": ["§164.312(b)"]
+  },
+  "limits": {
+    "§164.312(d)": "Approvals are verified against the principals' keys in the charter. Tying those keys to the organization's identity provider is the deployment's job.",
+    "§164.502(b)": "The bundle shows each plan was held to one chart and that a refused agent is told the rule, never the values. It does not record what an agent read through a read-only tool."
+  }
+}

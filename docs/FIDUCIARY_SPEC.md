@@ -1645,6 +1645,16 @@ the first failing check in the order V1 to V12.
   path's kind is wrong. The mapping supports an assessment; it is not a certification.
   *(Added in 1.1.0.)*
 
+  The controls come from control-framework packs, one data file each in
+  `fiduciary/frameworks/`: OWASP ASI 2026, SOC 2, the EU AI Act, HIPAA (45 CFR 164),
+  21 CFR Part 11, ISO/IEC 27001:2022 Annex A, NIST SP 800-53 Rev. 5, SOX IT general
+  controls and GDPR. A pack names its controls, the checks whose evidence bears on each,
+  and, where the bundle alone is not enough, a limit. The attestation's `mappings` member
+  records every pack applied by the SHA-256 of its canonical JSON, a digest over them all,
+  and the disclaimer that the mapping is not a certification. A pack is read only by the
+  attestation: it never reaches a check, a finding or an exit code, so changing or
+  removing one changes no verdict. *(Amended in 1.2.0.)*
+
 - **F9-3.** `verify-bundle` needs no network and no database. Beyond the standard library,
   it imports only `fiduciary`, `interlock` and `agentgov`. The format is specified so that
   an implementation in another language needs nothing else. `vectors/fidu1/` holds valid

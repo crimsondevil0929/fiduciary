@@ -1,0 +1,33 @@
+{
+  "framework": "nist800_53",
+  "title": "NIST SP 800-53 Rev. 5",
+  "source": "NIST SP 800-53 Revision 5, Security and Privacy Controls (the basis of the FedRAMP baselines)",
+  "controls": {
+    "AC-5": "Separation of duties",
+    "AC-6": "Least privilege",
+    "AU-2": "Event logging",
+    "AU-3": "Content of audit records",
+    "AU-9": "Protection of audit information",
+    "AU-10": "Non-repudiation",
+    "CM-3": "Configuration change control",
+    "CM-5": "Access restrictions for change",
+    "SI-7": "Software, firmware and information integrity"
+  },
+  "evidence": {
+    "V1": ["AU-9", "SI-7"],
+    "V2": ["AU-10"],
+    "V3": ["AC-6", "CM-5"],
+    "V4": ["CM-3"],
+    "V5": ["AU-2", "AU-3"],
+    "V6": ["SI-7"],
+    "V7": ["AU-2", "CM-5"],
+    "V8": ["AC-5", "AU-10", "CM-3"],
+    "V9": ["AU-9", "AU-10", "SI-7"],
+    "V10": ["AU-9"],
+    "V11": ["AC-6"],
+    "V12": ["AU-3"]
+  },
+  "limits": {
+    "AU-10": "Non-repudiation rests on key custody. Holding the Ed25519 keys in a FIPS 140-3 validated module is the deployment's job."
+  }
+}
