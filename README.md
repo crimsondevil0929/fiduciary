@@ -10,6 +10,47 @@ produces evidence that an auditor can verify without trusting the agent or the o
 Fiduciary records who set each limit and who approved each exception, as signed
 documents. Anyone with the public keys can verify them offline.
 
+## One engine, any industry
+
+Fintech is where the demo starts, not what the engine is. The same checks, budgets,
+quorum warrants and offline proof apply to any agent action that has a consequence, a
+limit, or someone who must approve it. Only the nouns change:
+
+| | Fintech | Healthcare | Cloud SRE | Supply chain | Multi-tenant SaaS | Coding agents |
+|---|---|---|---|---|---|---|
+| **What the stack measures** | orders and refunds | orders on a patient's chart | resource changes, in a mirror of the cluster | purchase-order lines, stock levels | customer records, role grants | a diff of files |
+| **What the gateway let through, and the stack stopped** | a dispute flag whose trigger reached 4 tenants | a discontinue that stopped a whole encounter (31 rows); an order for the patient in the next bed | 6 replicas that a mutating policy made 60; a resize that replaced a database | a reorder point that exploded into 400 PO lines; a remittance note that rewrote a bank account | a filter that reached 4 customers; a role that carried admin rights | an edit to a workflow file |
+| **Partition** | tenant | chart | environment | warehouse | customer org | repository |
+| **Approvers** | CFO, head of ops, security | chief pharmacist, CMIO, privacy officer | on-call SRE, service owner, security | procurement lead, AP manager, treasury | platform security, product owner, trust and safety | maintainers |
+| **Frameworks mapped** | SOC 2, OWASP agentic, EU AI Act | HIPAA, 21 CFR Part 11 | NIST 800-53, ISO 27001 | SOX IT general controls | SOC 2, ISO 27001, GDPR | |
+| **Run it** | `fiduciary demo` | `--domain healthcare` | `--domain sre` | `--domain supply-chain` | `--domain saas` | not built yet |
+
+`fiduciary demo --domain all` runs the first five behind one dashboard in a few seconds.
+Each industry is a deployment of its own on the real stack, with its own database
+triggers, mandate, principals and break-glass key, and each ends with its audit bundles
+verified offline. The dashboard opens on an overview that counts, from what was measured,
+which check stopped what in each industry.
+
+**With live models.** Interlock's [customer acceptance
+matrix](https://github.com/crimsondevil0929/interlock/blob/main/docs/CUSTOMER_ACCEPTANCE_MATRIX.md)
+put live Claude models (`claude-opus-5-5` and `claude-haiku-5-5`) in front of four
+unrelated business domains on one engine: accounts payable, cluster operations, SaaS
+administration and warehouse fulfilment. **42 of 42 live cases passed**, for $1.67 of
+model spend metered by AgentGov (recorded 2026-10-11). One function builds every
+domain's checks; only table names, column names and limits differ.
+
+What this does not claim:
+
+- The cloud SRE pack measures a mirror of the cluster kept in the database, not the
+  cluster itself. Measuring a live cluster needs a Kubernetes or Terraform adapter, which
+  is not built yet. Coding agents need a Git adapter, which is next.
+- The four domain packs replay a fixed sequence of calls. The live models ran in
+  interlock's acceptance matrix and in the fintech demo's first scenario.
+- A control-framework mapping shows which evidence supports an assessment. It is not a
+  certification, and nothing here is "HIPAA compliant" or "FedRAMP ready" on its own.
+- A per-customer bundle holds none of the other customers' records, but it does name
+  their opaque org keys, because it carries the deployment's whole log.
+
 ## Architecture
 
 ```
@@ -84,8 +125,10 @@ with networking disabled. The run takes a few seconds and writes:
 - `dashboard.html`: a single file that makes no network requests and prints to PDF. It
   shows the verdict, the zero-payload check, the seven scenarios side by side, the mandate
   lineage with ledger usage, every ticket, approval, warrant and operator action, and the
-  V1–V12 checks mapped to the OWASP Top 10 for Agentic Applications (2026), SOC 2, and EU AI
-  Act Articles 12 and 14.
+  V1–V12 checks mapped to control frameworks: the OWASP Top 10 for Agentic Applications
+  (2026), SOC 2, the EU AI Act, HIPAA, 21 CFR Part 11, ISO/IEC 27001:2022, NIST SP 800-53
+  Rev. 5, SOX IT general controls and GDPR. Each mapping ships as a data file, and the
+  attestation records which ones it applied by their SHA-256.
 - `before.fidb` and `after.fidb`: audit bundles exported before and after the DBA override,
   with `pinned-keys.json` and `charter.digest` for verifying them yourself.
 - `attestation.json` and `report.md`.
@@ -96,6 +139,8 @@ with networking disabled. The run takes a few seconds and writes:
 
 `--out DIR` sets the directory, `--report PATH` also writes the dashboard or a Markdown
 report elsewhere, and `--serve` serves the dashboard on 127.0.0.1. Added in 1.1.0.
+`--domain` picks the industry (see [One engine, any industry](#one-engine-any-industry));
+with `all`, each domain pack is written to a subdirectory named for it.
 
 ### Scenario 1 with a live model
 
