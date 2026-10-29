@@ -8,8 +8,9 @@ from 0.1.0 to 1.0.0. Section 12 lists what the contract needs from `interlock` a
 implements, and each gap with its reason; [Traceability](#traceability) maps each
 requirement to the phase that built it and the tests that prove it. Where the text was
 amended as it was built, it says so, and in which release.
-**Applies to:** `interlock-fiduciary` 1.x, against `interlock-escrow` 1.0.2 and
-`interlock-agentgov` 1.0.0.
+**Applies to:** `interlock-fiduciary` 1.x, against `interlock-escrow` 1.0.4 and
+`interlock-agentgov` 1.0.1. *(Amended in 1.2.0: 1.0.0 applied against `interlock-escrow`
+1.0.2 and `interlock-agentgov` 1.0.0, and 1.1.1 required `interlock-escrow` 1.0.4.)*
 **Normative language:** MUST, MUST NOT, SHOULD, MAY per RFC 2119.
 
 ---
@@ -2236,14 +2237,17 @@ this.
 
 **The upstream gaps (§12).** Each is released: U-1 (crimsondevil0929/interlock#20), U-2,
 U-3, U-4 and U-6 (crimsondevil0929/interlock#21) in interlock 1.0.3, and U-5
-(crimsondevil0929/agentgov#8) in agentgov 1.0.1. Fiduciary requires interlock 1.0.2 and
-agentgov 1.0.0, uses each fix where the installed package provides it, and its suite runs
-both ways: on the releases it requires (`uv.lock`), and on interlock's and agentgov's
-`main` (CI's `upstream` job).
+(crimsondevil0929/agentgov#8) in agentgov 1.0.1. Fiduciary 1.0.0 required interlock 1.0.2
+and agentgov 1.0.0, used each fix where the installed package provided it, and its suite
+ran both ways: on the releases it required (`uv.lock`), and on interlock's and agentgov's
+`main` (CI's `upstream` job). Fiduciary 1.2.0 requires interlock 1.0.4 and agentgov 1.0.1,
+which provide all six. The detection and the fallbacks below stay: the verifier still
+reads what a store on the earlier releases wrote, and the tests exercise each side.
+*(Amended in 1.2.0.)*
 
 | # | With it | Without it, as on interlock 1.0.2 and agentgov 1.0.0 |
 |---|---|---|
-| U-1 | V4 checks every checker's digest, for the receipts from a lineage's first canonical one on. | V4 checks `fiduciary_mandate` exactly, and the other checkers by name (F6-8). A bundle whose manifest says `canonical_digests` is checked strictly, but for receipts that precede the lineage's first canonical one, which are noted. Verified against interlock `main`: every 0.x store's bundle passes. **Partial until fiduciary requires an Interlock with it.** |
+| U-1 | V4 checks every checker's digest, for the receipts from a lineage's first canonical one on. | V4 checks `fiduciary_mandate` exactly, and the other checkers by name (F6-8). A bundle whose manifest says `canonical_digests` is checked strictly, but for receipts that precede the lineage's first canonical one, which are noted. Verified against interlock `main`: every 0.x store's bundle passes. Fiduciary requires an Interlock with it from 1.1.1. *(Amended in 1.2.0.)* |
 | U-2 | An AWS KMS executor or runtime key signs ILOK1 records at signature version 2 (F3-9). | An AWS KMS executor or runtime key is refused. A bundle holding a record signed at version 2 cannot be read (exit 2), and the verifier names the record and the release that reads it (BUNDLE_FORMAT §3). Outbox actions are chunked to 8 targets either way. |
 | U-3 | A quote survives a restart, and the writer moving to another node (F7-14). | A quote lives in the memory of the process that made it, and a restart lapses its ticket. A repair proposal does either way (F4-27). The writer executes the warrants that need them (F10-12). |
 | U-4 | An outbox step at a head that moved after the ticket is refused before anything is signed (F7-15, G5). | It is recorded in `execution.applied` and named by V8: named, not prevented. |
