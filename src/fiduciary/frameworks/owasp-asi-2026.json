@@ -1,0 +1,59 @@
+{
+  "framework": "owasp-asi-2026",
+  "title": "OWASP Top 10 for Agentic Applications",
+  "source": "OWASP GenAI Security Project, Top 10 for Agentic Applications, 2026 edition",
+  "controls": {
+    "ASI01": "Agent Goal Hijack",
+    "ASI02": "Tool Misuse and Exploitation",
+    "ASI03": "Identity and Privilege Abuse",
+    "ASI04": "Agentic Supply Chain Vulnerabilities",
+    "ASI05": "Unexpected Code Execution",
+    "ASI06": "Memory and Context Poisoning",
+    "ASI07": "Insecure Inter-Agent Communication",
+    "ASI08": "Cascading Failures",
+    "ASI09": "Human-Agent Trust Exploitation",
+    "ASI10": "Rogue Agents"
+  },
+  "evidence": {
+    "V1": [
+      "ASI04"
+    ],
+    "V2": [
+      "ASI03"
+    ],
+    "V3": [
+      "ASI03",
+      "ASI07",
+      "ASI10"
+    ],
+    "V4": [
+      "ASI02",
+      "ASI08"
+    ],
+    "V5": [
+      "ASI01",
+      "ASI02",
+      "ASI08"
+    ],
+    "V6": [
+      "ASI02",
+      "ASI10"
+    ],
+    "V7": [
+      "ASI03",
+      "ASI10"
+    ],
+    "V8": [
+      "ASI09"
+    ],
+    "V9": [
+      "ASI06"
+    ],
+    "V11": [
+      "ASI10"
+    ]
+  },
+  "limits": {
+    "ASI05": "Code an agent runs is outside what a bundle records. Run an agent that writes code out of process, over MCP."
+  }
+}

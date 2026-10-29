@@ -8,8 +8,9 @@ from 0.1.0 to 1.0.0. Section 12 lists what the contract needs from `interlock` a
 implements, and each gap with its reason; [Traceability](#traceability) maps each
 requirement to the phase that built it and the tests that prove it. Where the text was
 amended as it was built, it says so, and in which release.
-**Applies to:** `interlock-fiduciary` 1.x, against `interlock-escrow` 1.0.2 and
-`interlock-agentgov` 1.0.0.
+**Applies to:** `interlock-fiduciary` 1.x, against `interlock-escrow` 1.0.4 and
+`interlock-agentgov` 1.0.1. *(Amended in 1.2.0: 1.0.0 applied against `interlock-escrow`
+1.0.2 and `interlock-agentgov` 1.0.0, and 1.1.1 required `interlock-escrow` 1.0.4.)*
 **Normative language:** MUST, MUST NOT, SHOULD, MAY per RFC 2119.
 
 ---
@@ -1645,6 +1646,16 @@ the first failing check in the order V1 to V12.
   path's kind is wrong. The mapping supports an assessment; it is not a certification.
   *(Added in 1.1.0.)*
 
+  The controls come from control-framework packs, one data file each in
+  `fiduciary/frameworks/`: OWASP ASI 2026, SOC 2, the EU AI Act, HIPAA (45 CFR 164),
+  21 CFR Part 11, ISO/IEC 27001:2022 Annex A, NIST SP 800-53 Rev. 5, SOX IT general
+  controls and GDPR. A pack names its controls, the checks whose evidence bears on each,
+  and, where the bundle alone is not enough, a limit. The attestation's `mappings` member
+  records every pack applied by the SHA-256 of its canonical JSON, a digest over them all,
+  and the disclaimer that the mapping is not a certification. A pack is read only by the
+  attestation: it never reaches a check, a finding or an exit code, so changing or
+  removing one changes no verdict. *(Amended in 1.2.0.)*
+
 - **F9-3.** `verify-bundle` needs no network and no database. Beyond the standard library,
   it imports only `fiduciary`, `interlock` and `agentgov`. The format is specified so that
   an implementation in another language needs nothing else. `vectors/fidu1/` holds valid
@@ -1874,7 +1885,7 @@ of them.
 | `fiduciary serve [--node N] [--bridge HOST:PORT] [--metrics HOST:PORT]` | Run the service under a supervisor (§10.7): the writer (binder, intake and bridge), triggers, settler, executor and metrics, alone or as a node of a cluster. `SIGHUP` opens every key again; `SIGTERM` drains and stops. |
 | `fiduciary mcp serve`, `proxy` | Run the MCP bridge: one session per process, over stdio, or Streamable HTTP with `--http HOST:PORT` (`--token-file`, `--tls-cert`, `--tls-key`). The process also judges the intake and executes the warrants formed, since it holds the quotes and proposals they name (F7-14). |
 | `fiduciary export-bundle`, `verify-bundle`, `verify` | §9, and live verification of the store. `verify-bundle --json` and `--report` write the attestation (F9-4). |
-| `fiduciary demo [--out DIR] [--report DIR\|FILE] [--serve [HOST:PORT]] [--open] [--live]` | Stand up a deployment of its own in a new directory and play seven acts against it and against an input gateway of Cedar policies (`cedarpy` with the `cedar` extra; otherwise a built-in evaluator of the same policies, which says so): a discount whose trigger collapses an order's total, a dispute flag whose trigger reaches four tenants, fifty sub-agent sessions against one lineage's window and a child wider than its parent, a relay killed between the vendor's answer and its record, a held message released on a 2-of-3 warrant, a break-glass release outside any warrant, and both bundles verified with sockets refused and scanned for every row, payload, prompt and secret the deployment holds. Writes the console (`dashboard.html`), both bundles, the attestation and a `fiduciary.toml` the other commands open. Exit 0 when the bundle before the break-glass act verifies, the one after it exits 7, and nothing planted is found; 1 otherwise; 2 on a usage error. `--live` puts a Claude model in front of the first act, reading `BENCHMARK_API_KEY` only, metered and stopped at `--max-cost`. *(Added in 1.1.0.)* |
+| `fiduciary demo [--out DIR] [--report DIR\|FILE] [--serve [HOST:PORT]] [--open] [--live]` | Stand up a deployment of its own in a new directory and play seven acts against it and against an input gateway of Cedar policies (`cedarpy` with the `cedar` extra; otherwise a built-in evaluator of the same policies, which says so): a discount whose trigger collapses an order's total, a dispute flag whose trigger reaches four tenants, fifty sub-agent sessions against one lineage's window and a child wider than its parent, a relay killed between the vendor's answer and its record, a held message released on a 2-of-3 warrant, a break-glass release outside any warrant, and both bundles verified with sockets refused and scanned for every row, payload, prompt and secret the deployment holds. Writes the console (`dashboard.html`), both bundles, the attestation and a `fiduciary.toml` the other commands open. Exit 0 when the bundle before the break-glass act verifies, the one after it exits 7, and nothing planted is found; 1 otherwise; 2 on a usage error. `--live` puts a Claude model in front of the first act, reading `BENCHMARK_API_KEY` only, metered and stopped at `--max-cost`. *(Added in 1.1.0.)* `--domain` picks the industry: `fintech` (the default, the acts above), `healthcare`, `sre`, `supply-chain` or `saas`, each a deployment of its own on the same engine with its own schema, triggers, mandate, principals and break-glass key, playing the same arc in seven acts; or `all`, fintech in the directory and each pack in a subdirectory named for it, behind one console that switches between them. Every console opens on an overview: the industries, which ran, what in the engine refused what (counted from the measured plans), the measurement classes, and the acceptance matrix interlock recorded. The exit code covers every industry run. `--live` puts the model in front of fintech's first act and each pack's second (its hidden cascade), each act stopped at `--max-cost`; the other acts replay. *(Amended in 1.2.0.)* |
 
 ## 10.7 The service
 
@@ -2226,14 +2237,17 @@ this.
 
 **The upstream gaps (§12).** Each is released: U-1 (crimsondevil0929/interlock#20), U-2,
 U-3, U-4 and U-6 (crimsondevil0929/interlock#21) in interlock 1.0.3, and U-5
-(crimsondevil0929/agentgov#8) in agentgov 1.0.1. Fiduciary requires interlock 1.0.2 and
-agentgov 1.0.0, uses each fix where the installed package provides it, and its suite runs
-both ways: on the releases it requires (`uv.lock`), and on interlock's and agentgov's
-`main` (CI's `upstream` job).
+(crimsondevil0929/agentgov#8) in agentgov 1.0.1. Fiduciary 1.0.0 required interlock 1.0.2
+and agentgov 1.0.0, used each fix where the installed package provided it, and its suite
+ran both ways: on the releases it required (`uv.lock`), and on interlock's and agentgov's
+`main` (CI's `upstream` job). Fiduciary 1.2.0 requires interlock 1.0.4 and agentgov 1.0.1,
+which provide all six. The detection and the fallbacks below stay: the verifier still
+reads what a store on the earlier releases wrote, and the tests exercise each side.
+*(Amended in 1.2.0.)*
 
 | # | With it | Without it, as on interlock 1.0.2 and agentgov 1.0.0 |
 |---|---|---|
-| U-1 | V4 checks every checker's digest, for the receipts from a lineage's first canonical one on. | V4 checks `fiduciary_mandate` exactly, and the other checkers by name (F6-8). A bundle whose manifest says `canonical_digests` is checked strictly, but for receipts that precede the lineage's first canonical one, which are noted. Verified against interlock `main`: every 0.x store's bundle passes. **Partial until fiduciary requires an Interlock with it.** |
+| U-1 | V4 checks every checker's digest, for the receipts from a lineage's first canonical one on. | V4 checks `fiduciary_mandate` exactly, and the other checkers by name (F6-8). A bundle whose manifest says `canonical_digests` is checked strictly, but for receipts that precede the lineage's first canonical one, which are noted. Verified against interlock `main`: every 0.x store's bundle passes. Fiduciary requires an Interlock with it from 1.1.1. *(Amended in 1.2.0.)* |
 | U-2 | An AWS KMS executor or runtime key signs ILOK1 records at signature version 2 (F3-9). | An AWS KMS executor or runtime key is refused. A bundle holding a record signed at version 2 cannot be read (exit 2), and the verifier names the record and the release that reads it (BUNDLE_FORMAT §3). Outbox actions are chunked to 8 targets either way. |
 | U-3 | A quote survives a restart, and the writer moving to another node (F7-14). | A quote lives in the memory of the process that made it, and a restart lapses its ticket. A repair proposal does either way (F4-27). The writer executes the warrants that need them (F10-12). |
 | U-4 | An outbox step at a head that moved after the ticket is refused before anything is signed (F7-15, G5). | It is recorded in `execution.applied` and named by V8: named, not prevented. |
@@ -2322,7 +2336,7 @@ SQLite and on PostgreSQL. The test kinds:
 | F8-10, F8-11: the trust boundary | 4 | in process, a session refuses to start without the setting | Implemented. `test_bridge.py` |
 | F9-1: no row data | 5, 6 | the security audit | Implemented. `test_security_audit.py`, `test_bundle_export.py` |
 | F9-2, F9-3: self-contained, offline, specified | 5 | the offline run; golden bundles; byte-identical exports | Implemented, with the limits above. `test_bundle_tamper.py`, `test_bundle_vectors.py` |
-| F9-4: reports (`--json`, `--report`) and `fiduciary demo` | after 6 | every golden bundle's exit code and findings through `--json`; the demo's seven acts, measured | Implemented (1.1.0), SQLite. `test_attest.py`, `test_demo.py` |
+| F9-4: reports (`--json`, `--report`) and `fiduciary demo` | after 6 | every golden bundle's exit code and findings through `--json`; the demo's seven acts, measured; the control-framework packs by digest; each domain pack's acts, measured | Implemented (1.1.0; packs and domains 1.2.0), SQLite. `test_attest.py`, `test_demo.py`, `test_packs.py` |
 | F10-1 to F10-4: the stores | 1, 3 | the projection fold; append-only enforcement on both stores; the intake role | Implemented. `test_store.py`, `test_postgres.py`, `test_upgrade.py` |
 | F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak | Implemented. `test_contention.py`, `test_cluster.py`, `test_soak.py` |
 | F10-9 to F10-11: crash points | 3 | crash | Implemented. `test_crash_recovery.py` |

@@ -1,0 +1,29 @@
+{
+  "framework": "iso27001",
+  "title": "ISO/IEC 27001:2022 Annex A",
+  "source": "ISO/IEC 27001:2022, Annex A information security controls (control text in ISO/IEC 27002:2022)",
+  "controls": {
+    "5.3": "Segregation of duties",
+    "5.15": "Access control",
+    "5.28": "Collection of evidence",
+    "8.2": "Privileged access rights",
+    "8.3": "Information access restriction",
+    "8.9": "Configuration management",
+    "8.15": "Logging",
+    "8.32": "Change management"
+  },
+  "evidence": {
+    "V1": ["5.28"],
+    "V2": ["5.15"],
+    "V3": ["5.15", "8.3"],
+    "V4": ["8.9", "8.32"],
+    "V5": ["5.28", "8.15"],
+    "V6": ["5.28"],
+    "V7": ["5.3", "8.2"],
+    "V8": ["5.3", "8.2", "8.32"],
+    "V9": ["5.28", "8.15"],
+    "V10": ["8.15"],
+    "V11": ["5.15", "8.3"],
+    "V12": ["8.15"]
+  }
+}

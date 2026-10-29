@@ -1,0 +1,26 @@
+{
+  "framework": "part11",
+  "title": "FDA 21 CFR Part 11",
+  "source": "21 CFR Part 11, Electronic Records; Electronic Signatures (Subparts B and C)",
+  "controls": {
+    "§11.10(e)": "Secure, computer-generated, time-stamped audit trails that never obscure earlier entries",
+    "§11.10(f)": "Operational system checks that enforce the permitted sequence of steps and events",
+    "§11.10(g)": "Authority checks: only authorized individuals use the system, sign or alter records",
+    "§11.50": "Signature manifestations: the signer, the date and time, and the meaning of the signature",
+    "§11.70": "Signature and record linking: signatures cannot be excised, copied or transferred to falsify a record"
+  },
+  "evidence": {
+    "V2": ["§11.10(g)"],
+    "V3": ["§11.10(g)", "§11.70"],
+    "V4": ["§11.10(f)"],
+    "V5": ["§11.10(e)"],
+    "V7": ["§11.10(g)"],
+    "V8": ["§11.10(f)", "§11.10(g)", "§11.50", "§11.70"],
+    "V9": ["§11.10(e)"],
+    "V10": ["§11.10(e)"],
+    "V12": ["§11.10(e)"]
+  },
+  "limits": {
+    "§11.50": "Approvals record the principal's name in the charter, the decision and the time. A printed full name and a stated meaning of each signature are the deployment's to add."
+  }
+}

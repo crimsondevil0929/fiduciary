@@ -1274,7 +1274,7 @@ def _demo(args: argparse.Namespace) -> int:
     say(f"fiduciary demo: a deployment in {root}")
     say("  an input gateway (Cedar) and the stack (AgentGov, Interlock, Fiduciary), same calls")
     try:
-        outcome = demo.run(root, live=live, engine=args.gateway, say=say)
+        outcome = demo.run(root, live=live, engine=args.gateway, say=say, domain=args.domain)
     except ImportError as exc:
         _fail(f"{exc}: pip install 'interlock-fiduciary[demo]' for the Cedar engine")
     data = outcome.payload
@@ -1297,6 +1297,9 @@ def _demo(args: argparse.Namespace) -> int:
         f"$(cat {root / 'charter.digest'}) --keys {root / 'pinned-keys.json'}"
     )
     say(f"explore     fiduciary --config {root / 'fiduciary.toml'} tickets list --all")
+    for page in data.get("domains", []):
+        profile = page["demo"]["domain"]
+        say(f"{profile['key']:<11} {root / profile['key']} ({profile['industry']})")
     if data["demo"]["model"]:
         model = data["demo"]["model"]
         say(f"live        {model['served']}: {model['turns']} turn(s), ${model['metered']} metered")
@@ -1629,9 +1632,16 @@ def _parser() -> argparse.ArgumentParser:
     demo = commands.add_parser(
         "demo",
         help="run the whole stack offline in seven acts, beside an input gateway, and write "
-        "its dashboard",
+        "its dashboard (--domain picks the industry)",
     )
     demo.add_argument("--out", help="the directory to write the deployment into (new or empty)")
+    demo.add_argument(
+        "--domain",
+        default="fintech",
+        choices=("fintech", "healthcare", "sre", "supply-chain", "saas", "all"),
+        help="the industry: fintech (the default), a domain pack on the same engine, or all "
+        "of them, each in its own subdirectory, behind one dashboard",
+    )
     demo.add_argument(
         "--report", metavar="DIR|FILE", help="also write the dashboard (.html) or report (.md)"
     )
@@ -1652,12 +1662,15 @@ def _parser() -> argparse.ArgumentParser:
     demo.add_argument(
         "--live",
         action="store_true",
-        help="act 1 is worked by a Claude model (BENCHMARK_API_KEY; costs money)",
+        help="a Claude model works fintech's act 1 and each pack's act 2 (BENCHMARK_API_KEY; "
+        "costs money)",
     )
     demo.add_argument("--model", default="claude-opus-5-5")
     demo.add_argument("--effort", default="medium", choices=("low", "medium", "high"))
     demo.add_argument(
-        "--max-cost", default="0.50", help="stop the live act once its metered spend reaches this"
+        "--max-cost",
+        default="0.50",
+        help="stop each live act once its metered spend reaches this",
     )
     demo.add_argument("--env-file", help="read BENCHMARK_API_KEY from this file")
     demo.add_argument("--quiet", action="store_true", help="print nothing but errors")

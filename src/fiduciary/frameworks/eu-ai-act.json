@@ -1,0 +1,48 @@
+{
+  "framework": "eu-ai-act",
+  "title": "EU AI Act",
+  "source": "Regulation (EU) 2024/1689, Articles 12 and 14",
+  "controls": {
+    "Art. 12": "Record-keeping: automatic logging over the system's lifetime",
+    "Art. 14": "Human oversight: people able to oversee, intervene and stop"
+  },
+  "evidence": {
+    "V1": [
+      "Art. 12"
+    ],
+    "V2": [
+      "Art. 14"
+    ],
+    "V3": [
+      "Art. 14"
+    ],
+    "V4": [
+      "Art. 12"
+    ],
+    "V5": [
+      "Art. 12"
+    ],
+    "V6": [
+      "Art. 12"
+    ],
+    "V7": [
+      "Art. 12",
+      "Art. 14"
+    ],
+    "V8": [
+      "Art. 14"
+    ],
+    "V9": [
+      "Art. 12"
+    ],
+    "V10": [
+      "Art. 12"
+    ],
+    "V11": [
+      "Art. 14"
+    ],
+    "V12": [
+      "Art. 12"
+    ]
+  }
+}

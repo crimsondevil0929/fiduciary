@@ -8,7 +8,9 @@ verdict, checks and evidence for a review thread or a ticket.
 A payload is ``{"attestations": {name: attestation, ...}, "primary": name,
 "demo": None | {...}}``: one attestation per bundle (``verify-bundle``
 writes one; ``fiduciary demo`` two, before and after its sixth act), and the
-demo's acts when there are any.
+demo's acts when there are any. A demo's payload also carries ``overview``
+(the industries, the measurement ladder and the acceptance matrix) and, when
+it ran more than one industry, ``domains``: a payload like this one for each.
 """
 
 from __future__ import annotations
@@ -136,6 +138,41 @@ def markdown(data: Mapping[str, Any]) -> str:
         out += ["## Demo scenarios", ""]
         for act in demo["acts"]:
             out.append(f"- **Act {act['n']}: {act['title']}.** {act['lede']}")
+        out.append("")
+    for page in data.get("domains", []):
+        profile = page["demo"]["domain"]
+        before = page["attestations"]["before"]["verdict"]
+        after = page["attestations"]["after"]["verdict"]
+        out += [
+            f"## {profile['industry']}: {profile['title']}",
+            "",
+            f"- **Bundles:** `{profile['key']}/before.fidb` {before['status']} (exit "
+            f"{before['exit_code']}); `{profile['key']}/after.fidb` {after['status']} (exit "
+            f"{after['exit_code']})",
+            f"- **Principals:** {', '.join(profile['principals'])}; break-glass key held by "
+            f"{profile['operator']}; partition: {profile['partition']}",
+        ]
+        model = page["demo"].get("model")
+        if model:
+            out.append(
+                f"- **Live model:** {model['served']} worked act 2: {model['turns']} turn(s), "
+                f"{model['usage'].get('input_tokens', 0)} input and "
+                f"{model['usage'].get('output_tokens', 0)} output tokens, "
+                f"${model['metered']} metered"
+            )
+        out.append("")
+        for act in page["demo"]["acts"]:
+            out.append(f"- **Act {act['n']}: {act['title']}.** {act['lede']}")
+        out.append("")
+    mappings = data["attestations"][primary].get("mappings")
+    if mappings:
+        out += ["## Control frameworks", "", mappings["disclaimer"], ""]
+        out += ["| Framework | Controls covered | Mapping SHA-256 |", "|---|---|---|"]
+        for pack in mappings["packs"]:
+            out.append(
+                f"| {_cell(pack['title'])} | {pack['covered']} of {pack['controls']} | "
+                f"`{pack['digest'].removeprefix('sha256:')}` |"
+            )
         out.append("")
     out.append(
         "_The control mapping supports an assessment; it is not a certification. The verdict, "

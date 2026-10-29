@@ -4,10 +4,48 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-10-29
+
+One engine, any industry. Nothing 1.1.1 writes or reads changes: FIDU1, the documents,
+the records, `fidb/1`, the checks V1 to V12 and every exit code are as they were.
+
+### Added
+
+- **Control-framework packs.** The attestation now maps every check to nine frameworks,
+  each shipped as a data file: OWASP ASI 2026, SOC 2 and the EU AI Act as before, and
+  HIPAA, 21 CFR Part 11, ISO/IEC 27001:2022 Annex A, NIST SP 800-53 Rev. 5, SOX IT general
+  controls and GDPR. The new `mappings` member records each pack by the SHA-256 of its
+  canonical JSON, with a disclaimer that a mapping supports an assessment and is not a
+  certification. A pack never changes a verdict, a finding or an exit code.
+- **`fiduciary demo --domain`.** Four domain packs run on the same engine as the fintech
+  demo, each a deployment of its own with seven acts: healthcare (medication
+  reconciliation), cloud SRE (incident remediation, on a mirror of the cluster), supply
+  chain (procurement in an ERP) and multi-tenant SaaS (a CRM AI admin, with one bundle per
+  customer). `--domain all` runs fintech and all four behind one dashboard.
+- **The dashboard opens on an overview:** six industries and which of them ran, what in
+  the engine refused what in this run, the measurement classes, and interlock's recorded
+  live acceptance matrix (42 of 42 cases, $1.67 metered). An industry switcher moves
+  between the domains, and the control matrix lets the reader pick which frameworks to
+  show, with each pack's digest.
+- **`--live` works the domain packs too.** A Claude model works each pack's hidden-cascade
+  act behind the gateway and the stack, as it works fintech's first act. The act records
+  the model's calls, its summarized reasoning, what each call returned, its tokens and
+  the spend AgentGov metered. `scripts/stack_dashboard.py --live` adds live pack acts to a
+  recorded run and holds them to `--budget` together.
+- **SaaS org keys are keyed pseudonyms.** Each customer's org key is an HMAC-SHA-256 of
+  its account id under the vendor's pseudonym key. Each per-customer bundle is searched
+  for the other customers' records, names, account ids and email domains, and for the
+  pseudonym key, and the trust-center panel reports what was found.
 
 ### Changed
 
+- Requires `interlock-agentgov` 1.0.1 (it was 1.0.0) and `interlock-escrow` 1.0.4.
+
+## [1.1.1] - 2026-10-25
+
+### Changed
+
+- Requires `interlock-escrow` 1.0.4, whose value guards count each row once.
 - **Plain wording in everything a person reads.** `verify-bundle` findings and notes,
   `fiduciary verify` problems, CLI help, the demo's output, the dashboard and the Markdown
   report now say directly what happened, for example "circuit reset without an

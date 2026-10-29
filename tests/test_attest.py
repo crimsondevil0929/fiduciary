@@ -145,3 +145,106 @@ def test_what_the_attestation_cannot_read_it_leaves_out() -> None:
     (row,) = ledger["scopes"]
     assert (row["scope"], row["held"], row["spent"]) == ("a", "1.50000000", "2.00000000")
     assert ledger["by_type"] == {"funding": 1, "hold": 2, "spend": 1}
+
+
+# -- the control-framework packs -------------------------------------------------------
+
+PACK_CONTROLS = {
+    "hipaa": [
+        "§164.312(a)(1)",
+        "§164.312(b)",
+        "§164.312(c)(1)",
+        "§164.312(d)",
+        "§164.308(a)(1)(ii)(D)",
+        "§164.502(b)",
+    ],
+    "part11": ["§11.10(e)", "§11.10(f)", "§11.10(g)", "§11.50", "§11.70"],
+    "iso27001": ["5.3", "5.15", "5.28", "8.2", "8.3", "8.9", "8.15", "8.32"],
+    "nist800_53": ["AC-5", "AC-6", "AU-2", "AU-3", "AU-9", "AU-10", "CM-3", "CM-5", "SI-7"],
+    "sox_itgc": ["ITGC-SOD", "ITGC-PCC", "ITGC-MDA"],
+    "gdpr": ["Art. 5(1)(f)", "Art. 5(2)", "Art. 25", "Art. 32"],
+}
+
+
+def test_each_new_pack_names_exactly_its_controls_and_maps_every_one() -> None:
+    for name, controls in PACK_CONTROLS.items():
+        assert list(FRAMEWORKS[name]) == controls, name
+        mapped = {c for m in CONTROLS.values() for c in m.get(name, ())}
+        assert mapped == set(controls), (name, set(controls) - mapped)
+
+
+def test_the_first_three_packs_are_the_mapping_1_1_shipped() -> None:
+    """Moving SOC 2, OWASP and the EU AI Act into data files changed no mapping."""
+    assert list(FRAMEWORKS["soc2"]) == ["CC6.1", "CC6.2", "CC6.3", "CC7.2", "CC7.3", "CC8.1"]
+    assert list(FRAMEWORKS["eu-ai-act"]) == ["Art. 12", "Art. 14"]
+    assert CONTROLS["V7"]["owasp-asi-2026"] == ("ASI03", "ASI10")
+    assert CONTROLS["V8"]["soc2"] == ("CC6.2", "CC8.1")
+    assert "owasp-asi-2026" not in CONTROLS["V10"]
+    uncovered = set(FRAMEWORKS["owasp-asi-2026"]) - {
+        c for m in CONTROLS.values() for c in m.get("owasp-asi-2026", ())
+    }
+    assert uncovered == {"ASI05"}  # outside what a bundle records, and the pack says so
+
+
+def test_the_attestation_records_each_pack_by_digest_and_says_what_it_is_not() -> None:
+    import hashlib
+
+    from fiduciary import frameworks
+
+    data = (BUNDLES / PASSING["file"]).read_bytes()
+    keys = TrustedKeys(PASSING["keys"]) if PASSING["keys"] else None
+    found = verify_bundle(data, charter=PASSING["charter"], keys=keys)
+    attested = attest(data, found, charter=PASSING["charter"])
+    mappings = attested["mappings"]
+    assert "not a certification" in mappings["disclaimer"]
+    assert [p["framework"] for p in mappings["packs"]] == list(frameworks.ORDER)
+    for summary in mappings["packs"]:
+        raw = json.loads(
+            (Path(frameworks.__file__).parent / f"{summary['framework']}.json").read_text()
+        )
+        canonical = json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        assert summary["digest"] == "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
+        assert summary["covered"] <= summary["controls"]
+    assert len({p["digest"] for p in mappings["packs"]}) == len(mappings["packs"])
+
+
+def test_a_mapping_never_moves_a_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reports never change verdicts: an empty mapping attests the same verdict."""
+    import fiduciary.attest as module
+
+    case = next(c for c in INDEX if c["name"] == "v7-break-glass-release")
+    data = (BUNDLES / case["file"]).read_bytes()
+    keys = TrustedKeys(case["keys"]) if case["keys"] else None
+    found = verify_bundle(data, charter=case["charter"], keys=keys)
+    before = attest(data, found, charter=case["charter"])
+    monkeypatch.setattr(module, "CONTROLS", {check: {} for check, _ in CHECKS})
+    after = attest(data, found, charter=case["charter"])
+    assert after["verdict"] == before["verdict"]
+    assert [c["findings"] for c in after["checks"]] == [c["findings"] for c in before["checks"]]
+
+
+def test_a_malformed_pack_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from fiduciary import frameworks
+
+    good = json.loads((Path(frameworks.__file__).parent / "sox_itgc.json").read_text())
+    cases = [
+        ({**good, "framework": "other"}, "names framework"),
+        ({**good, "evidence": {"V99": ["ITGC-SOD"]}}, "not a check"),
+        ({**good, "evidence": {"V1": ["ITGC-XYZ"]}}, "unknown controls"),
+        ({**good, "limits": {"ITGC-XYZ": "x"}}, "limits name unknown"),
+    ]
+    for raw, said in cases:
+
+        class Text:
+            def read_text(self, encoding: str = "utf-8", _raw: Any = raw) -> str:
+                return json.dumps(_raw)
+
+        class Folder:
+            def __truediv__(self, name: str) -> Text:
+                return Text()
+
+        monkeypatch.setattr(frameworks, "files", lambda _: Folder())
+        with pytest.raises(ValueError, match=said):
+            frameworks._read("sox_itgc")
+    with pytest.raises(KeyError, match="no control-framework pack"):
+        frameworks.load("pci-dss")

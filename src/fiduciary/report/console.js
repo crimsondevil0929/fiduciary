@@ -1,8 +1,13 @@
 (function () {
   "use strict";
-  var P = JSON.parse(document.getElementById("payload").textContent);
+  var ROOT = JSON.parse(document.getElementById("payload").textContent);
+  var PAGES = [ROOT].concat(ROOT.domains || []);
+  var OVERVIEW = ROOT.overview || null;
+  var P = ROOT;
   var DEMO = P.demo;
+  var PACK = DEMO && DEMO.domain ? DEMO.domain : null;
   var current = P.primary;
+  var activePage = 0;
   var app = document.getElementById("app");
   var tip = document.getElementById("tip");
   var NS = "http://www.w3.org/2000/svg";
@@ -144,6 +149,7 @@
       s("rect", { x: 1, y: 9.5, width: 24, height: 5, rx: 2, fill: "var(--s1)" }),
       s("rect", { x: 1, y: 4, width: 24, height: 5, rx: 2, fill: "var(--ink)" }));
     var toc = h("nav", { class: "toc" },
+      OVERVIEW ? h("a", { href: "#overview" }, "Overview") : null,
       DEMO ? h("a", { href: "#theatre" }, "Acts") : null,
       h("a", { href: "#lineage" }, "Lineage"),
       h("a", { href: "#inspector" }, "Warrants & operators"),
@@ -177,7 +183,8 @@
         var av = P.attestations[n].verdict;
         return h("button", { "aria-pressed": n === current ? "true" : "false", onclick: function () { current = n; render(); } },
           h("i", { class: "dot", style: "background:var(" + (av.passed ? "--good" : "--critical") + ")" }),
-          n === "after" ? "After DBA override" : n === "before" ? "Before DBA override" : n);
+          PACK ? (n === "after" ? "After break-glass act" : n === "before" ? "Before break-glass act" : n)
+            : n === "after" ? "After DBA override" : n === "before" ? "Before DBA override" : n);
       })) : null;
     var sockets = DEMO && act("audit") ? act("audit").verdicts[current] : null;
     return h("div", { class: "card verdict " + (ok ? "ok" : "bad") },
@@ -221,14 +228,18 @@
       h("div", { class: "sec-head", style: "margin:0" }, h("span", { class: "kicker" }, "Data exposure"), pill("ZERO-PAYLOAD BUNDLE", "info")),
       h("div", { class: "zeros" }, cells),
       composition,
-      h("p", { class: "claim" }, scan
+      h("p", { class: "claim" }, scan && PACK
+        ? "Every record value, payload value, injected instruction, private key and vendor secret in this deployment was searched for in the bundle, as written and as SHA-256. None was found." + (audit.labels ? " The bundle does name " + audit.labels.named + " of " + audit.labels.known + " " + audit.labels.partition + " keys, which are opaque labels: session records and receipts say which partition each action was for." : "")
+        : scan
         ? "Every customer name, payment ID, prompt, model reply, private key and vendor secret in this deployment was searched for in the bundle. None was found: the bundle holds digests, signatures and amounts."
         : a.privacy.claim));
   }
   function kpis() {
     var a = A();
     var tiles = [];
-    if (DEMO) {
+    if (PACK) {
+      tiles = packTiles(a);
+    } else if (DEMO) {
       var q = act("queue"), st = act("settlement"), fl = act("fleet"), qu = act("quorum");
       var refused = [];
       [q, st].forEach(function (x) { if (x) x.calls.forEach(function (c) { if (c.measured && !c.measured.committed) refused.push(c.measured); }); });
@@ -346,10 +357,10 @@
       stackSide(right)),
       verdictLine(permitted + " of " + calls.length + " permitted", committed + " committed, " + refused + " rolled back after measuring the change")];
   }
-  function tenantBar(m) {
+  function tenantBar(m, rowLimit, word) {
     var names = Object.keys(m.tenants);
     var total = names.reduce(function (t, n) { return t + m.tenants[n]; }, 0);
-    var w = 560, x = 0, limit = 20;
+    var w = 560, x = 0, limit = rowLimit || 20;
     var colors = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
     var segs = names.map(function (n, i) {
       var bw = (w - 2 * (names.length - 1)) * m.tenants[n] / total;
@@ -364,7 +375,7 @@
       s("svg", { class: "chart", viewBox: "0 -4 " + w + " 70", role: "img", "aria-label": "rows changed by tenant" },
         segs,
         s("line", { x1: lx, x2: lx, y1: 10, y2: 52, stroke: "var(--ink)", "stroke-width": 2, "stroke-dasharray": "4 3" }),
-        s("text", { x: lx + 4, y: 8, class: "val", text: "mandate limit: " + limit + " rows, 1 tenant" }),
+        s("text", { x: Math.min(lx + 4, w - 190), y: 8, class: "val", text: "mandate limit: " + limit + " rows, 1 " + (word || "tenant") }),
         s("text", { x: 0, y: 62, text: "0" }), s("text", { x: w, y: 62, "text-anchor": "end", text: total + " rows" })),
       h("div", { class: "legend" }, names.map(function (n, i) { return h("span", null, h("i", { class: "dot", style: "background:" + colors[i % 4] }), n); })));
   }
@@ -535,6 +546,7 @@
   var SHORT = { queue: "Order queue", settlement: "Settlement cascade", fleet: "Sub-agent fan-out", crash: "Relay crash", quorum: "Principal quorum", "break-glass": "DBA override", audit: "Offline audit" };
   var ACTS = { queue: actQueue, settlement: actSettlement, fleet: actFleet, crash: actCrash, quorum: actQuorum, "break-glass": actBreakGlass, audit: actAudit };
   function theatre() {
+    if (PACK) return packTheatre();
     var tabs = h("div", { class: "tabs", role: "tablist" });
     var body = h("div");
     DEMO.acts.forEach(function (x, i) {
@@ -555,6 +567,297 @@
       tabs, body));
   }
 
+  // -- a domain pack's acts --------------------------------------------------------------
+  function mandateOf(a) { return a.authority.mandates.filter(function (m) { return !m.parent; })[0] || a.authority.mandates[0] || {}; }
+  function refusedPlans() {
+    var seen = {}, out = [];
+    function walk(node) {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (node.measured && !node.measured.committed && !seen[node.measured.plan]) { seen[node.measured.plan] = 1; out.push(node.measured); }
+      Object.keys(node).forEach(function (k) { if (k !== "measured") walk(node[k]); });
+    }
+    walk(DEMO.acts);
+    return out;
+  }
+  function packTiles(a) {
+    var refused = refusedPlans();
+    var rows = refused.reduce(function (t, m) { return t + m.rows; }, 0);
+    var biggest = refused.reduce(function (t, m) { return Math.max(t, m.rows); }, 0);
+    var after = P.attestations.after || a;
+    var glass = after.verdict.labels.indexOf("break-glass") >= 0;
+    var v6 = a.checks[5];
+    return [
+      ["Plans refused before commit", String(refused.length), num(rows) + " rows measured inside the transaction and rolled back", "interlock"],
+      ["Largest hidden consequence", num(biggest) + " rows", "what one call the gateway permitted would have changed", "interlock"],
+      ["Warrants executed", String(a.warrants.length), "each formed by its quorum and bound to the ticket digest", "fiduciary"],
+      ["Break-glass act", glass ? "Named" : "None", glass ? "found offline in the bundle exported after it (exit 7)" : "no act outside a warrant", "fiduciary"],
+      ["Ledger", v6.status === "pass" ? "Balanced" : "Fails", "Inclusion proofs verified against the signed checkpoint; conservation check passed", "agentgov"]
+    ];
+  }
+  function changesText(changes) {
+    return Object.keys(changes).map(function (k) { return k + " " + (changes[k][0] === null ? "—" : changes[k][0]) + " → " + (changes[k][1] === null ? "deleted" : changes[k][1]); }).join(" · ");
+  }
+  function packMeasured(c) {
+    var m = c.measured;
+    if (!m) return measuredBlock(c);
+    var a = A(), mandate = mandateOf(a);
+    var parts = Object.keys(m.tenants);
+    var kids = [];
+    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " row(s), " + m.outbound.length + " outbound request(s) queued"));
+    else kids.push(h("div", { class: "outcome good" }, icon("shield"), "ROLLED BACK · nothing written" + (c.unchanged ? " · database unchanged" : "")));
+    kids.push(h("div", { class: "mini-stats" },
+      h("div", { class: "mini" }, h("b", { class: "tnum" }, num(m.rows)), h("span", null, "rows the plan changed")),
+      h("div", { class: "mini" }, h("b", { class: "tnum" }, String(Object.keys(m.tables).length)), h("span", null, "tables reached")),
+      h("div", { class: "mini" }, h("b", { class: "tnum" }, String(parts.length)), h("span", null, PACK.partition + (parts.length === 1 ? "" : "s") + " reached"))));
+    kids.push(h("p", { class: "small ink2" }, "By table: " + Object.keys(m.tables).map(function (k) { return k + " " + m.tables[k]; }).join(" · ")));
+    if (parts.length > 1) kids.push(tenantBar(m, mandate.max_rows, PACK.partition));
+    kids.push(findingList(m.findings.filter(function (f) { return !m.committed || f.severity !== "advisory"; })));
+    if (m.changed.length) {
+      kids.push(h("details", null, h("summary", null, "Rows measured in the transaction (" + (m.changed.length < m.rows ? "first " + m.changed.length + " of " + m.rows : m.rows) + ")"),
+        table(["Table", "Row", PACK.partition, "Change"], m.changed.slice(0, 12).map(function (r) { return [h("span", { class: "mono" }, r.table), String(r.id), h("span", { class: "mono small" }, r.tenant || "—"), h("span", { class: "small" }, changesText(r.changes))]; }))));
+    }
+    kids.push(h("p", { class: "small muted", style: "margin-top:8px" }, m.checkers + " checks evaluated · " + m.captured + " row images captured · plan " + m.plan));
+    return h("div", null, kids);
+  }
+  function noteBlock(text) {
+    return h("div", { class: "callrow note" }, h("div", { class: "line" }, pill("INSTRUCTION IN THE INPUT", "warn")), h("pre", null, text));
+  }
+  function liveBlock(x) {
+    var m = x.model, u = m.usage || {};
+    var turns = (m.transcript || []).map(function (t) {
+      return h("div", { class: "turn" }, h("div", { class: "small muted" }, "Turn " + t.turn + " · " + t.stop),
+        t.blocks.map(function (b) {
+          if (b.type === "reasoning") return h("div", { class: "tx reasoning" }, h("span", { class: "tx-k" }, "Reasoning (summary)"), h("pre", null, b.text));
+          if (b.type === "text") return h("div", { class: "tx" }, h("span", { class: "tx-k" }, "Model"), h("pre", null, b.text));
+          return h("div", { class: "tx call" }, h("span", { class: "tx-k" }, "Tool call"), h("span", { class: "tool" }, b.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(b.arguments)),
+            h("div", { class: "tx-r" + (b.error ? " err" : "") }, h("span", { class: "tx-k" }, b.error ? "Returned (refused)" : "Returned"), h("pre", null, b.result)));
+        }));
+    });
+    return h("div", { class: "callrow", style: "background:var(--stack-wash)" },
+      h("div", { class: "line" }, pill("LIVE", "info"), h("b", null, m.served), h("span", { class: "small muted" }, m.turns + " turns · effort " + m.effort + " · " + m.seconds + " s")),
+      h("div", { class: "small ink2", style: "margin-top:4px" }, num(u.input_tokens || 0) + " input / " + num(u.output_tokens || 0) + " output tokens · " + money(x.metered, 4) + " metered to the session's budget by AgentGov" + (m.halted ? " · stopped: " + m.halted : "")),
+      h("p", { class: "small", style: "margin-top:6px" }, h("span", { class: "ink2" }, "Request: “" + x.request + "”")),
+      m.answer ? h("details", { open: true }, h("summary", null, "Model's final reply"), h("pre", null, m.answer)) : null,
+      turns.length ? h("details", null, h("summary", null, "Full transcript (" + turns.length + " turns)"), turns) : null);
+  }
+  function packCalls(x) {
+    var calls = x.calls;
+    var right = calls.map(function (c) { return h("div", { class: "callrow" }, h("div", { class: "line", style: "margin-bottom:6px" }, h("span", { class: "tool" }, c.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(c.arguments))), packMeasured(c)); });
+    if (x.window) {
+      right.unshift(h("div", { class: "callrow" },
+        h("div", { class: "line" }, pill("WINDOW", "info"), h("b", null, num(x.window.limit) + " " + x.window.unit), h("span", { class: "small muted" }, "per " + x.window.per + ", sliding " + x.window.span_hours + " h, across every session")),
+        h("div", { class: "waffle", style: "margin-top:8px" }, calls.map(function (c, i) {
+          var ok = c.outcome === "committed";
+          return tipOn(h("i", { style: "background:" + (ok ? "var(--stack)" : "var(--grid)") + ";" + (ok ? "" : "box-shadow:inset 0 0 0 1px var(--axis)") }), "sub-agent " + (i + 1) + ": gateway " + c.gateway.decision + ", stack " + c.outcome);
+        })),
+        h("p", { class: "small ink2", style: "margin-top:6px" }, x.committed + " of " + x.sessions + " sessions committed (blue)")));
+    }
+    var permitted = calls.filter(function (c) { return c.gateway && c.gateway.decision === "PERMIT"; }).length;
+    var committed = calls.filter(function (c) { return c.outcome === "committed"; }).length;
+    var refused = calls.filter(function (c) { return c.outcome === "refused"; }).length;
+    var by = {};
+    calls.forEach(function (c) { if (c.measured && !c.measured.committed) c.measured.findings.forEach(function (f) { if (f.severity === "blocking") by[f.check.split(":")[0]] = 1; }); });
+    var names = Object.keys(by);
+    return [h("div", { class: "split" },
+      gatewaySide([x.note ? noteBlock(x.note) : null, x.mode === "live" && x.model ? liveBlock(x) : null, calls.map(function (c) { return callRow(c); })]),
+      stackSide(right)),
+      verdictLine(permitted + " of " + calls.length + " permitted", committed + " committed, " + refused + " rolled back" + (names.length ? " by " + names.join(", ") : ""))];
+  }
+  function heldCall(x) {
+    var c = x.call;
+    return c ? h("div", { class: "callrow" }, h("div", { class: "line" }, pill("HELD REQUEST", "info"), h("span", { class: "tool" }, c.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(c.arguments))),
+      h("div", { class: "small ink2", style: "margin-top:4px" }, "Committed by the agent (" + c.measured.rows + " row(s)); its outbound request was held by the pause before the relay sent it.")) : null;
+  }
+  function packQuorum(x) {
+    var parts = actQuorum(x), held = heldCall(x);
+    if (held) parts[0].lastChild.insertBefore(held, parts[0].lastChild.children[1] || null);
+    return parts;
+  }
+  function packBreakGlass(x) {
+    var parts = actBreakGlass(x), held = heldCall(x);
+    if (held) parts[0].lastChild.insertBefore(held, parts[0].lastChild.children[1] || null);
+    parts[1] = verdictLine("not involved", "the bundle exported after the act names it; the release is labeled break-glass");
+    return parts;
+  }
+  function actAmend(x) {
+    var need = {};
+    x.ticket.options.forEach(function (o) { need[o.action] = o.quorum; });
+    var votes = x.votes.map(function (v) {
+      return h("div", { class: "vote" }, h("span", { style: "color:" + (v.action === "reject" ? "var(--good-ink)" : "var(--muted)") }, icon(v.action === "reject" ? "shield" : "check")),
+        h("span", null, h("b", null, v.principal), " ", h("span", { class: "ink2" }, v.note), h("div", { class: "small muted" }, "approval ", hash(v.approval, 12), " → " + v.recorded.join(", "))),
+        v.warrant ? pill("WARRANT: " + v.action.toUpperCase(), "good") : pill(v.action.toUpperCase() + " · 1 OF " + need[v.action], "permit"));
+    });
+    return [h("div", { class: "split" },
+      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What a gateway does with a policy change"),
+        h("div", { class: "empty-gw" }, h("b", null, "Whoever edits the policy deploys it."), "A gateway's policy is changed in its console. Nothing ties the change to a quorum of named approvers, or to the exact text they approved.")),
+      stackSide([
+        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("TICKET", "info"), h("b", null, x.ticket["class"]), h("span", { class: "small muted" }, "raised and signed by the service; proposed version " + x.proposed.version + " by " + x.proposed.by)),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "What the new version widens: " + x.ticket.wider.map(function (w) { return w.path + " (" + w.message + ")"; }).join("; ")),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "Options: " + x.ticket.options.map(function (o) { return o.action + " (quorum " + o.quorum + ")"; }).join(" · "))),
+        h("h4", { style: "margin:10px 0 6px;font-size:13px" }, "Approvals in arrival order"),
+        votes,
+        h("div", { class: "callrow", style: "margin-top:10px" },
+          h("div", { class: "line" }, pill("WARRANT", "good"), h("b", null, x.warrant.action), hash(x.warrant.digest, 16), h("span", { class: "small muted" }, "on " + x.warrant.basis.length + " approval(s), formed " + x.warrant.formed_at)),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "Executed: " + x.executed.join(" → ") + ". The mandate stays at version " + x.version_after + ": the bank-account table is still outside it."))])),
+      verdictLine("no quorum on policy changes", "widening takes " + need.amend + " of 3; one rejection closes it, because stopping is never harder than starting")];
+  }
+  function packAudit(x) {
+    var rows = ["before", "after"].map(function (n) {
+      var v = x.verdicts[n];
+      return h("tr", null, h("td", null, h("b", null, n + ".fidb")), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
+        h("td", { class: "num" }, String(v.findings.length)), h("td", { class: "num" }, String(v.sockets)),
+        h("td", { class: "num" }, num(v.scan.members)), h("td", { class: "num" }, String(v.scan.found.rows + v.scan.found.payloads + v.scan.found.prompts + v.scan.found.secrets)), h("td", null, hash(v.sha256, 12)));
+    });
+    var scan = x.verdicts.after.scan;
+    return [h("div", { class: "split" },
+      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What a gateway log gives an auditor"),
+        h("div", { class: "empty-gw" }, h("b", null, "Its own decisions."), "A gateway log records what the gateway decided. It cannot show what the database did, who approved an exception, or what an administrator did around the agent.")),
+      stackSide([
+        h("div", { class: "tablewrap" }, h("table", null,
+          h("thead", null, h("tr", null, ["Bundle", "Verdict", "Findings", "Network calls", "Members", "Planted values found", "SHA-256"].map(function (t) { return h("th", null, t); }))),
+          h("tbody", null, rows))),
+        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for: " + scan.planted.rows + " record values from the database, " + scan.planted.payloads + " payload values the vendor received, " + scan.planted.prompts + " injected instruction(s), " + scan.planted.secrets + " private keys and secrets, each as written and as SHA-256. Ledger conservation: " + x.conservation + "."),
+        x.labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "Partition labels: the bundle names " + x.labels.named + " of the " + x.labels.known + " " + x.labels.partition + " keys, in " + x.labels.members + " members (session records and receipts say which " + x.labels.partition + " each action was for). They are opaque keys; no record behind them is in the bundle.") : null])),
+      verdictLine("its own decisions only", "both bundles verified offline against independently pinned keys; the break-glass act is reported")];
+  }
+  function actTrust(x) {
+    var n = x.customers.length - 1;
+    var rows = x.customers.map(function (c) {
+      return [h("b", null, c.customer), h("span", { class: "mono small" }, c.org), c.passed ? pill("PASS", "good") : pill("EXIT " + c.exit_code, "bad"), num(c.members), String(c.other_records), String((c.other_names || 0) + (c.other_accounts || 0)), String(c.other_labels) + " of " + n, c.other_domains === undefined ? "—" : String(c.other_domains) + " of " + n];
+    });
+    var labels = x.customers.reduce(function (t, c) { return Math.max(t, c.other_labels); }, 0);
+    var domains = x.customers.reduce(function (t, c) { return Math.max(t, c.other_domains || 0); }, 0);
+    var where = {};
+    x.customers.forEach(function (c) { (c.domains_where || []).forEach(function (w) { where[w] = 1; }); });
+    var ps = x.pseudonym;
+    return [h("div", { class: "split" },
+      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What a gateway can give a customer"),
+        h("div", { class: "empty-gw" }, h("b", null, "A log the vendor keeps."), "A customer has to trust the vendor's export of the vendor's own log. Nothing in it can be checked without the vendor's systems.")),
+      stackSide([
+        table(["Customer", "Org key", "Bundle", "Members", "Others' records", "Others' names or account ids", "Others' org keys", "Others' email domains"], rows),
+        h("p", { class: "small ink2", style: "margin-top:10px" }, "Each bundle covers one customer's derived mandate. It was verified with every socket refused (" + x.customers.reduce(function (t, c) { return t + c.sockets; }, 0) + " network calls) against keys pinned outside it, and searched for every opportunity name and email address of the other customers, as written and as SHA-256. Files: " + x.customers.map(function (c) { return c.file; }).join(", ") + "."),
+        ps ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How org keys are made. "), "Each org key is " + ps.derivation + ". The vendor holds the pseudonym key, as it holds its signing keys. Without it, an org key cannot be reversed or linked to an account; with it, the vendor or an auditor it chooses recomputes the key from the account id. Every bundle was searched for the key, as written and in hex, and for each other customer's name and account id: " + (ps.key_in_bundles + x.customers.reduce(function (t, c) { return t + (c.other_names || 0) + (c.other_accounts || 0); }, 0)) + " found.") : null,
+        labels || domains ? h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others" + (labels ? ": their org keys, in session records and receipts, because the bundle carries the deployment's whole log" : "") + (domains ? "; and each org key's email domain, in the mandate documents only (" + Object.keys(where).join(", ") + "): the vendor-wide mandate maps every org key to its allowed recipient domain, and every customer's mandate is derived from it" : "") + ". So the bundles are not anonymous: a customer can tell how many other customers this agent worked for, and from the domains, who they are. The org key alone gives nothing away; the domain map does. A bundle cut to one customer's part of the log is not built yet: it needs a bundle format that proves a subset of the log.") : null])),
+      verdictLine("not available", x.customers.length + " customer bundles, each verified on its own; 0 records, names or account ids of any other customer")];
+  }
+  var PACK_SHORT = { queue: "Everyday action", cascade: "Hidden cascade", replace: "Forced replacement", drawdown: "Stock drawdown", injected: "Injected instruction", grant: "Admin rights", fleet: "Sub-agent fan-out", quorum: "2-of-3 warrant", amend: "Amend ticket", "break-glass": "Break-glass", "trust-center": "Trust center", audit: "Offline audit" };
+  var PACK_ACTS = { quorum: packQuorum, amend: actAmend, "break-glass": packBreakGlass, audit: packAudit, "trust-center": actTrust };
+  function packTheatre() {
+    var tabs = h("div", { class: "tabs", role: "tablist" });
+    var body = h("div");
+    DEMO.acts.forEach(function (x, i) {
+      var t = h("button", { class: "tab", role: "tab", "aria-selected": i === activeAct ? "true" : "false", onclick: function () {
+        activeAct = i;
+        tabs.querySelectorAll(".tab").forEach(function (b, j) { b.setAttribute("aria-selected", j === i ? "true" : "false"); });
+        body.querySelectorAll(".act").forEach(function (a, j) { a.classList.toggle("on", j === i); });
+      } }, h("span", { class: "n" }, String(x.n)), PACK_SHORT[x.key] || x.title);
+      tabs.appendChild(t);
+      var panel;
+      try { panel = (PACK_ACTS[x.key] || packCalls)(x); } catch (e) { panel = h("p", { class: "pad" }, "This act could not be drawn: " + e.message); }
+      body.appendChild(h("div", { class: "card act" + (i === activeAct ? " on" : "") }, h("div", { class: "act-head" }, h("h3", null, "Act " + x.n + ". " + x.title), h("p", null, x.lede)), panel));
+    });
+    return h("section", { id: "theatre" }, h("div", { class: "wrap" },
+      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, PACK.industry + " · demo scenarios"), h("h2", null, PACK.title),
+        h("p", null, "The same engine as every other industry here, on this one's own schema, triggers, mandate and approvers: " + PACK.principals.join(", ") + ". Each call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + (DEMO.mode === "live" && DEMO.model ? "Act 2 was worked by " + DEMO.model.served + ", live; the other acts replay a fixed sequence, with no model." : "The calls are a fixed sequence, with no model; pass --live to have a model work act 2.") + " All figures were measured during the run (" + DEMO.seconds + " s).")),
+      tabs, body));
+  }
+
+  // -- the overview: the same engine, in every industry -------------------------------------
+  function openPage(key) {
+    for (var i = 0; i < PAGES.length; i++) {
+      var d = PAGES[i].demo && PAGES[i].demo.domain ? PAGES[i].demo.domain.key : "fintech";
+      if (d === key) { use(i); render(); var el = document.getElementById("domain"); if (el) el.scrollIntoView(); return; }
+    }
+  }
+  function use(i) {
+    activePage = i; P = PAGES[i]; DEMO = P.demo; PACK = DEMO && DEMO.domain ? DEMO.domain : null;
+    current = P.primary; activeAct = 0; activePanel = 0; selected = null; shownFw = null;
+  }
+  function engineCell(row, key) {
+    var e = row.engine;
+    if (!e) return h("td", { class: "muted" }, "—");
+    var v = e[key];
+    if (key === "warrant") return h("td", null, v.length ? v.map(function (w) { return pill(w.action + " · " + w.approvals + " of 3", "good"); }) : "—");
+    if (key === "break-glass") return h("td", null, v ? pill("NAMED", "good") : "—");
+    if (key === "offline") return h("td", null, v ? pill("VERIFIED", "good") : pill("NO", "bad"));
+    return h("td", { class: "num" }, v ? h("b", null, String(v)) : h("span", { class: "muted" }, "0"));
+  }
+  function overview() {
+    var o = OVERVIEW, ran = o.industries.filter(function (r) { return r.ran; });
+    var refused = ran.reduce(function (t, r) { return t + (r.engine ? r.engine.refused_plans : 0); }, 0);
+    var acc = o.acceptance;
+    var tiles = [
+      ["Industries run in this dashboard", ran.length + " of " + o.industries.length, ran.map(function (r) { return r.industry; }).join(" · "), "this run"],
+      ["Live acceptance matrix", acc.passed + " / " + acc.cases, "$" + acc.metered_usd + " metered · " + acc.model_calls + " model calls · " + acc.domains.length + " domains · " + acc.models.length + " Claude models", "interlock, recorded " + acc.generated],
+      ["Plans refused before commit", String(refused), "each one permitted by the gateway, measured, and rolled back", "this run"],
+      ["Bundles checked offline", String(ran.length * 2), ran.length + " verify; " + ran.filter(function (r) { return r.after.exit_code === 7; }).length + " name the break-glass act, as they should. No network, keys pinned outside; 0 planted records found", "this run"]
+    ];
+    var cards = o.industries.map(function (r) {
+      var status = r.ran ? pill("RAN · " + r.acts + " ACTS", "good") : r.planned ? pill("NEXT · NOT BUILT", "warn") : pill("NOT IN THIS RUN", "permit");
+      var n = r.nouns || {};
+      var open = r.ran && PAGES.length > 1 ? h("button", { class: "btn noprint", onclick: function () { openPage(r.key); } }, "Open") : null;
+      return h("div", { class: "card ind" + (r.ran ? "" : " off") },
+        h("div", { class: "ind-head" }, h("b", null, r.industry), h("span", { class: "rung", title: "measurement class" }, r["class"]), h("span", { class: "spacer" }), status),
+        h("div", { class: "small ink2" }, r.title),
+        h("dl", { class: "nouns" },
+          h("dt", null, "Measures"), h("dd", null, n.measure || "—"),
+          h("dt", null, "Hidden consequence"), h("dd", null, n.hidden || "—"),
+          h("dt", null, "Unit"), h("dd", null, n.unit || "—"),
+          h("dt", null, "Partition"), h("dd", null, n.partition || "—"),
+          h("dt", null, "Approvers"), h("dd", null, n.approvers || "—"),
+          h("dt", null, "Verified by"), h("dd", null, n.verifier || "—")),
+        h("div", { class: "chips" }, (r.frameworks || []).map(function (k) { return h("span", { class: "chip static" }, fwLabel(k)); })),
+        r.model ? h("div", { class: "small", style: "margin-top:8px" }, pill("LIVE", "info"), " " + r.model.served + " · " + r.model.turns + " turns · " + money(r.model.metered, 4) + " metered") : null,
+        r.ran ? h("div", { class: "small", style: "margin-top:8px" }, "before.fidb ", r.before.passed ? pill("PASS", "good") : pill("EXIT " + r.before.exit_code, "bad"), " · after.fidb ", pill(r.after.status, r.after.exit_code === 7 ? "warn" : "bad")) : null,
+        r.note ? h("div", { class: "small muted", style: "margin-top:6px" }, "Note: " + r.note + ".") : null,
+        r.planned ? h("div", { class: "small muted", style: "margin-top:6px" }, r.planned) : null,
+        !r.ran && !r.planned ? h("div", { class: "small muted", style: "margin-top:6px" }, h("code", null, "fiduciary demo --domain " + r.key)) : null,
+        open);
+    });
+    var cols = ran;
+    var grid = h("div", { class: "tablewrap" }, h("table", { class: "engine" },
+      h("thead", null, h("tr", null, [h("th", null, "Part of the engine"), h("th", null, "Reads")].concat(cols.map(function (r) { return h("th", null, r.industry); })))),
+      h("tbody", null, o.engine.map(function (e) {
+        return h("tr", null, h("td", null, h("code", null, e.label)), h("td", { class: "small muted" }, e.reads), cols.map(function (r) { return engineCell(r, e.key); }));
+      }))));
+    var ladder = h("div", { class: "ladder" }, o.ladder.map(function (rung) {
+      var here = o.industries.filter(function (r) { return r["class"] === rung["class"] && (r.ran || r.planned); }).map(function (r) { return r.industry + (r.planned ? " (next)" : ""); });
+      return h("div", { class: "card rung-card" + (rung.shipped ? "" : " off") },
+        h("div", { class: "ind-head" }, h("span", { class: "rung big" }, rung["class"]), h("b", null, rung.name), h("span", { class: "spacer" }), rung.shipped ? pill("SHIPPED", "good") : pill("NOT BUILT", "permit")),
+        h("p", { class: "small" }, rung.promise),
+        h("p", { class: "small muted" }, rung.where),
+        rung["class"] === "R" ? h("p", { class: "small ink2" }, "Every pack here, for its outbound requests.") : here.length ? h("p", { class: "small ink2" }, "In this dashboard: " + here.join(", ") + ".") : null);
+    }));
+    var matrixCard = h("div", { class: "card pad acceptance" },
+      h("div", { class: "ind-head" }, h("b", null, "Customer acceptance matrix"), h("span", { class: "spacer" }), pill(acc.passed + " / " + acc.cases + " PASS", "good")),
+      h("p", { class: "small" }, "Live Claude models (" + acc.models.join(", ") + ") in front of " + acc.domains.length + " unrelated domains on one interlock kernel: " + acc.domains.join("; ") + ". " + acc.plans.proposed + " plans proposed: " + acc.plans.committed + " committed, " + acc.plans.refused + " refused by a checker. $" + acc.metered_usd + " of model spend, metered by AgentGov."),
+      h("p", { class: "small muted" }, acc.note + " Source: " + acc.source + ", generated " + acc.generated + " on interlock " + acc.interlock + "."));
+    return h("section", { id: "overview" }, h("div", { class: "wrap" },
+      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Same engine, different nouns"), h("h2", null, "One consequence-control engine, six industries"),
+        h("p", null, "Every industry below runs the same loop: stage the agent's change, measure what it actually did, check it, hold exceptions for a quorum, commit once, and prove it offline. Only the tables, the limits and the approvers change. Fintech is where we started, not what the engine is.")),
+      h("div", { class: "kpis ov" }, tiles.map(function (t) { return h("div", { class: "card kpi" }, h("div", { class: "label" }, t[0]), h("div", { class: "value tnum" }, t[1]), h("div", { class: "note" }, t[2]), h("span", { class: "layer-tag" }, t[3])); })),
+      h("div", { class: "inds" }, cards),
+      h("h3", { class: "ov-h" }, "What refused what, in this run"),
+      h("p", { class: "small ink2" }, "Counted from the plans each industry's acts measured: how many plans each checker refused, which warrants formed, and whether the bundles verified offline. A zero means that checker refused nothing here, not that it was missing."),
+      h("div", { class: "card pad" }, grid),
+      h("h3", { class: "ov-h" }, "The measurement ladder"),
+      h("p", { class: "small ink2" }, "How strongly each kind of system can be measured. Every industry in this dashboard runs on class T, and their outbound requests on class R. Classes P and V are the substrate roadmap."),
+      ladder,
+      matrixCard));
+  }
+  function domainBar() {
+    if (PAGES.length < 2) return null;
+    return h("section", { id: "domain", class: "domain-bar" }, h("div", { class: "wrap" },
+      h("div", { class: "seg noprint", role: "group", "aria-label": "Industry" }, PAGES.map(function (page, i) {
+        var d = page.demo && page.demo.domain;
+        var v = page.attestations[page.primary].verdict;
+        return h("button", { "aria-pressed": i === activePage ? "true" : "false", onclick: function () { use(i); render(); } },
+          h("i", { class: "dot", style: "background:var(" + (v.passed ? "--good" : "--critical") + ")" }), d ? d.industry : "Fintech");
+      })),
+      h("span", { class: "small muted" }, PACK ? PACK.title + " · " + PACK.frameworks.map(fwLabel).join(", ") : "Support refunds and order adjustments · SOC 2, OWASP ASI 2026, EU AI Act")));
+  }
+
   // -- the lineage tree --------------------------------------------------------------------
   function tree() {
     var a = A();
@@ -563,7 +866,7 @@
     mandates.forEach(function (m) { if (!heads[m.mandate_id] || heads[m.mandate_id].version < m.version) heads[m.mandate_id] = m; });
     var list = Object.keys(heads).map(function (k) { return heads[k]; });
     var roots = list.filter(function (m) { return !m.parent; });
-    var refused = DEMO && act("fleet") ? act("fleet").children.filter(function (c) { return !c.derived; }) : [];
+    var refused = DEMO && act("fleet") && act("fleet").children ? act("fleet").children.filter(function (c) { return !c.derived; }) : [];
     var ledger = {};
     a.ledger.scopes.forEach(function (r) { ledger[r.scope] = r; });
     var kids = function (m) { return list.filter(function (c) { return c.parent === m.mandate_id; }); };
@@ -611,13 +914,13 @@
       var span = Math.max(1, children.length + extra.length);
       var rx = colX + span * step / 2 - NW / 2;
       var cap = r.caps[0] ? money(r.caps[0].maximum.usd || Object.values(r.caps[0].maximum)[0], 0) + " / refund" : "no cap";
-      var win = r.windows[0] ? money(r.windows[0].limit, 0) + " / " + Math.round(r.windows[0].span_seconds / 3600) + " h" : "no window";
-      var rn = node(rx, Y1, "root", r.scope + " · v" + r.version, [[r.label + " · " + r.issuance], ["envelope " + money(r.envelope) + " · " + money(r.per_call) + " per model call"], [cap + " · window " + win], ["≤ " + r.max_rows + " rows, " + r.max_tenants + " tenant per plan"]], r.scope, r.envelope,
+      var win = r.windows[0] ? (PACK ? num(r.windows[0].limit) + " " + r.windows[0].name.replace(/^[0-9a-f]+_/, "").replace(/_/g, " ") : money(r.windows[0].limit, 0)) + " / " + Math.round(r.windows[0].span_seconds / 3600) + " h" : "no window";
+      var rn = node(rx, Y1, "root", r.scope + " · v" + r.version, [[r.label + " · " + r.issuance], ["envelope " + money(r.envelope) + " · " + money(r.per_call) + " per model call"], [PACK ? "window " + win : cap + " · window " + win], ["≤ " + r.max_rows + " rows, " + r.max_tenants + " " + (PACK ? PACK.partition : "tenant") + " per plan"]], r.scope, r.envelope,
         r.scope + ": issued by its quorum (V3); compiled into Interlock checkers and AgentGov policies (V4)");
       edge(cnode, rn, true, "issued on quorum");
       children.forEach(function (c, i) {
         var cx = colX + i * step + step / 2 - NW / 2;
-        var ccap = c.caps[0] ? money(c.caps[0].maximum.usd || Object.values(c.caps[0].maximum)[0], 0) + " / refund" : "no cap";
+        var ccap = PACK ? "narrowed to its own " + PACK.partition : c.caps[0] ? money(c.caps[0].maximum.usd || Object.values(c.caps[0].maximum)[0], 0) + " / refund" : "no cap";
         var cn = node(cx, Y2, "child", c.scope.split("/").pop() + " · derived", [[c.label], ["envelope " + money(c.envelope)], [ccap]], c.scope, c.envelope, c.scope + ": derived by the service; equal to or narrower than its parent on every field (V3)");
         edge(rn, cn, true, "⊑ refines");
       });
@@ -688,9 +991,22 @@
 
   // -- the control matrix ----------------------------------------------------------------------
   var selected = null;
+  var shownFw = null;
+  var FW_LABELS = { "owasp-asi-2026": "OWASP ASI 2026", soc2: "SOC 2", "eu-ai-act": "EU AI Act", hipaa: "HIPAA", part11: "21 CFR Part 11", iso27001: "ISO/IEC 27001", nist800_53: "NIST 800-53", sox_itgc: "SOX ITGC", gdpr: "GDPR" };
+  function fwLabel(k) { return FW_LABELS[k] || k; }
+  function packOf(a, k) {
+    var found = a.mappings ? a.mappings.packs.filter(function (m) { return m.framework === k; }) : [];
+    return found.length ? found[0] : null;
+  }
+  function fwColumns(a) {
+    var keys = Object.keys(a.frameworks);
+    var want = shownFw || (PACK ? PACK.frameworks : ["owasp-asi-2026", "soc2", "eu-ai-act"]);
+    var cols = want.filter(function (k) { return keys.indexOf(k) >= 0; });
+    return cols.length ? cols : keys.slice(0, 3);
+  }
   function matrix() {
     var a = A(), fw = a.frameworks;
-    var labels = { "owasp-asi-2026": "OWASP ASI 2026", soc2: "SOC 2", "eu-ai-act": "EU AI Act" };
+    var cols = fwColumns(a);
     var body = h("tbody");
     function paint() {
       body.querySelectorAll("tr").forEach(function (tr) {
@@ -703,33 +1019,51 @@
     function chip(id, name) {
       return tipOn(h("button", { class: "chip", "data-control": id, "aria-pressed": "false", onclick: function () { selected = selected === id ? null : id; paint(); } }, id), name);
     }
-    var coverage = h("div", { class: "coverage" }, Object.keys(fw).map(function (k) {
-      return [h("span", { class: "fw" }, labels[k] || k), h("div", { class: "chips" }, Object.keys(fw[k]).map(function (id) {
+    var picker = h("div", { class: "fw-picker noprint", role: "group", "aria-label": "Control frameworks shown" },
+      h("span", { class: "small muted" }, "Frameworks shown (up to 4):"),
+      Object.keys(fw).map(function (k) {
+        var on = cols.indexOf(k) >= 0;
+        return h("button", { class: "chip fw", "aria-pressed": on ? "true" : "false", onclick: function () {
+          var next = cols.slice();
+          if (on) { if (next.length > 1) next.splice(next.indexOf(k), 1); }
+          else { next.push(k); if (next.length > 4) next.shift(); }
+          shownFw = next; selected = null; render();
+        } }, fwLabel(k));
+      }));
+    var coverage = h("div", { class: "coverage" }, cols.map(function (k) {
+      return [h("span", { class: "fw" }, fwLabel(k)), h("div", { class: "chips" }, Object.keys(fw[k]).map(function (id) {
         var used = a.checks.some(function (c) { return (c.controls[k] || []).indexOf(id) >= 0; });
-        var b = chip(id, fw[k][id] + (used ? "" : " (not covered by bundle evidence)"));
+        var m = packOf(a, k);
+        var limit = m && m.limits && m.limits[id] ? " Limit: " + m.limits[id] : "";
+        var b = chip(id, fw[k][id] + (used ? "" : " (not covered by bundle evidence)") + limit);
         if (!used) b.style.opacity = 0.45;
         return b;
       }))];
     }));
     a.checks.forEach(function (c) {
-      var ids = [].concat(c.controls["owasp-asi-2026"] || [], c.controls.soc2 || [], c.controls["eu-ai-act"] || []);
+      var ids = [].concat.apply([], cols.map(function (k) { return c.controls[k] || []; }));
       var detail = c.findings.length ? h("details", null, h("summary", null, c.findings.length + " finding(s)"), h("ul", { class: "findings" }, c.findings.map(function (f) { return h("li", null, h("span", { class: "sev blocking" }, f.label || kindLabel(f.kind)), h("span", null, f.message + " (exit " + f.exit_code + ")")); }))) : null;
       body.appendChild(h("tr", { "data-controls": ids.join(" ") },
         h("td", { class: "check" }, c.id + " ", h("span", { class: "muted", style: "font-weight:500" }, c.name)),
         h("td", null, c.status === "pass" ? pill("PASS", "good") : pill("FAIL", "bad")),
         h("td", null, h("span", { class: "small" }, c.proves), detail),
-        ["owasp-asi-2026", "soc2", "eu-ai-act"].map(function (k) { return h("td", null, h("div", { class: "chips" }, (c.controls[k] || []).map(function (id) { return chip(id, fw[k][id]); }))); })));
+        cols.map(function (k) { return h("td", null, h("div", { class: "chips" }, (c.controls[k] || []).map(function (id) { return chip(id, fw[k][id]); }))); })));
+    });
+    var digests = cols.map(function (k) {
+      var m = packOf(a, k);
+      return m ? h("span", { class: "small" }, h("b", null, fwLabel(k)), " ", hash(m.digest.replace("sha256:", ""), 12), h("span", { class: "muted" }, " · " + m.covered + " of " + m.controls + " controls covered")) : null;
     });
     var json = JSON.stringify(a, null, 2);
     return h("section", { id: "matrix" }, h("div", { class: "wrap" },
       h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "V1–V12"), h("h2", null, "Verification checks and control mapping"),
-        h("p", null, "What each offline check proves, and the controls its evidence supports. Select a control to highlight the checks that cover it. This mapping supports an assessment; it is not a certification.")),
-      h("div", { class: "card pad" }, coverage,
+        h("p", null, "What each offline check proves, and the controls its evidence supports. Select a control to highlight the checks that cover it, or pick which frameworks to show. " + (a.mappings ? a.mappings.disclaimer : "This mapping supports an assessment; it is not a certification."))),
+      h("div", { class: "card pad" }, picker, coverage,
         h("div", { class: "tablewrap" }, h("table", { class: "matrix" },
-          h("thead", null, h("tr", null, ["Check", "Result", "What it proves", "OWASP ASI 2026", "SOC 2", "EU AI Act"].map(function (t) { return h("th", null, t); }))), body))),
+          h("thead", null, h("tr", null, ["Check", "Result", "What it proves"].concat(cols.map(fwLabel)).map(function (t) { return h("th", null, t); }))), body)),
+        a.mappings ? h("div", { class: "digests" }, h("span", { class: "small muted" }, "Mappings applied, by SHA-256 of each pack:"), digests) : null),
       h("div", { class: "card pad", style: "margin-top:14px" },
         h("div", { style: "display:flex;gap:10px;align-items:center;flex-wrap:wrap" }, h("h3", null, "Machine-readable attestation"), h("span", { class: "small muted" }, a.schema + " · same output as fiduciary verify-bundle --json"), h("span", { class: "spacer" }),
-          h("button", { class: "btn noprint", onclick: function () { download("attestation-" + current + ".json", json + "\n", "application/json"); } }, icon("down"), "Download JSON"),
+          h("button", { class: "btn noprint", onclick: function () { download("attestation-" + (PACK ? PACK.key + "-" : "") + current + ".json", json + "\n", "application/json"); } }, icon("down"), "Download JSON"),
           h("button", { class: "btn noprint", onclick: function () { copy(json); } }, "Copy")),
         h("details", null, h("summary", null, "Show the JSON"), h("pre", null, json)))));
   }
@@ -748,6 +1082,8 @@
     var y = window.scrollY;
     app.textContent = "";
     add(app, topbar());
+    if (OVERVIEW) add(app, overview());
+    add(app, domainBar());
     add(app, h("section", null, h("div", { class: "wrap" }, h("div", { class: "hero" }, verdictCard(), privacyCard()), kpis())));
     if (DEMO) add(app, theatre());
     add(app, tree());
