@@ -4,7 +4,10 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-10-29
+
+One engine, any industry. Nothing 1.1.1 writes or reads changes: FIDU1, the documents,
+the records, `fidb/1`, the checks V1 to V12 and every exit code are as they were.
 
 ### Added
 
@@ -36,6 +39,13 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ### Changed
 
+- Requires `interlock-agentgov` 1.0.1 (it was 1.0.0) and `interlock-escrow` 1.0.4.
+
+## [1.1.1] - 2026-10-25
+
+### Changed
+
+- Requires `interlock-escrow` 1.0.4, whose value guards count each row once.
 - **Plain wording in everything a person reads.** `verify-bundle` findings and notes,
   `fiduciary verify` problems, CLI help, the demo's output, the dashboard and the Markdown
   report now say directly what happened, for example "circuit reset without an

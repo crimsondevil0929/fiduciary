@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 __all__ = ["Fiduciary", "Session", "Tool", "__version__"]
 
