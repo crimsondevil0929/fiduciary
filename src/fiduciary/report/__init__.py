@@ -151,8 +151,16 @@ def markdown(data: Mapping[str, Any]) -> str:
             f"{after['exit_code']})",
             f"- **Principals:** {', '.join(profile['principals'])}; break-glass key held by "
             f"{profile['operator']}; partition: {profile['partition']}",
-            "",
         ]
+        model = page["demo"].get("model")
+        if model:
+            out.append(
+                f"- **Live model:** {model['served']} worked act 2: {model['turns']} turn(s), "
+                f"{model['usage'].get('input_tokens', 0)} input and "
+                f"{model['usage'].get('output_tokens', 0)} output tokens, "
+                f"${model['metered']} metered"
+            )
+        out.append("")
         for act in page["demo"]["acts"]:
             out.append(f"- **Act {act['n']}: {act['title']}.** {act['lede']}")
         out.append("")

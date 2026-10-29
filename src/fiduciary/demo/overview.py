@@ -207,6 +207,16 @@ def overview(played: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
             row["acts"] = len(payload["demo"]["acts"])
             row["seconds"] = payload["demo"].get("seconds")
             row["mode"] = payload["demo"].get("mode")
+            model = payload["demo"].get("model")
+            row["model"] = (
+                {
+                    "served": model["served"],
+                    "metered": model.get("metered"),
+                    "turns": model["turns"],
+                }
+                if model
+                else None
+            )
             row["before"] = {"passed": before["passed"], "exit_code": before["exit_code"]}
             row["after"] = {"status": after["status"], "exit_code": after["exit_code"]}
             row["engine"] = _engine(payload)

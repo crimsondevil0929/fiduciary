@@ -22,6 +22,7 @@ from typing import Any, Final
 
 from fiduciary import __version__, report
 from fiduciary.attest import attest
+from fiduciary.demo.acts import Live
 from fiduciary.demo.packs import healthcare, saas, sre, supply_chain
 from fiduciary.demo.packs.kit import Pack, PackGateway, PackRun, build, pinned
 
@@ -38,14 +39,16 @@ def run(
     *,
     engine: str = "auto",
     say: Callable[[str], None] = lambda _: None,
+    live: Live | None = None,
 ) -> dict[str, Any]:
     """Play pack ``key`` into ``root``, which must be empty or absent, and
-    return its console payload (module docstring)."""
+    return its console payload (module docstring). With ``live``, a model
+    works the pack's signature act (act 2), and every other act replays."""
     pack = PACKS[key]
     started = time.monotonic()
     world = build(root, pack)
     gateway = PackGateway(pack, pack.tenants[0], engine=engine)
-    played = PackRun(world, gateway, say=say)
+    played = PackRun(world, gateway, say=say, live=live)
     try:
         played.observe()
         pack.acts(played)
@@ -67,8 +70,8 @@ def run(
         demo={
             "version": __version__,
             "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "mode": "reference",
-            "model": None,
+            "mode": "live" if played.model else "reference",
+            "model": played.model or None,
             "gateway": {"engine": gateway.engine, "policies": gateway.policies},
             "seconds": seconds,
             "acts": played.acts,

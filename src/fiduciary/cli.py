@@ -1261,8 +1261,6 @@ def _demo(args: argparse.Namespace) -> int:
             "cryptography package interlock-fiduciary installs: reinstall it with its "
             "dependencies"
         )
-    if args.live and args.domain not in ("fintech", "all"):
-        _fail("--live works the fintech queue; the domain packs replay theirs: --domain fintech")
     live = None
     if args.live:
         live = _live_model(args)
@@ -1664,12 +1662,15 @@ def _parser() -> argparse.ArgumentParser:
     demo.add_argument(
         "--live",
         action="store_true",
-        help="act 1 is worked by a Claude model (BENCHMARK_API_KEY; costs money)",
+        help="a Claude model works fintech's act 1 and each pack's act 2 (BENCHMARK_API_KEY; "
+        "costs money)",
     )
     demo.add_argument("--model", default="claude-opus-5-5")
     demo.add_argument("--effort", default="medium", choices=("low", "medium", "high"))
     demo.add_argument(
-        "--max-cost", default="0.50", help="stop the live act once its metered spend reaches this"
+        "--max-cost",
+        default="0.50",
+        help="stop each live act once its metered spend reaches this",
     )
     demo.add_argument("--env-file", help="read BENCHMARK_API_KEY from this file")
     demo.add_argument("--quiet", action="store_true", help="print nothing but errors")

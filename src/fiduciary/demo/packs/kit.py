@@ -55,8 +55,8 @@ from fiduciary.bridge import CallResult, Fiduciary, Session
 from fiduciary.bundle import BundleReport, Evidence, TrustedKeys, export_bundle, verify_bundle
 from fiduciary.bundle.export import spec as key_spec
 from fiduciary.compiler import Deployment
+from fiduciary.demo.acts import Live, _spent, converse, no_network, scan
 from fiduciary.demo.acts import measured as fintech_measured
-from fiduciary.demo.acts import no_network, scan
 from fiduciary.demo.gateway import Condition, Decision, Policy
 from fiduciary.demo.world import DIRECTIVE, PRICING, World, _key
 from fiduciary.documents import Charter, Mandate, ToolBinding
@@ -77,6 +77,8 @@ __all__ = [
     "call",
     "mandate_json",
     "plan_tool",
+    "prompts",
+    "work",
 ]
 
 QUORUMS: Final = {
@@ -145,6 +147,8 @@ class Pack:
     acts: Callable[[PackRun], None]
     canaries: Callable[[PackRun], dict[str, list[str]]]
     nouns: Mapping[str, str]
+    system: str
+    """What a live model is told it is, when it works the pack's signature act."""
     quorums: Mapping[str, int] = field(default_factory=lambda: dict(QUORUMS))
     delegation: Mapping[str, Any] | None = None
 
@@ -729,11 +733,16 @@ class PackRun:
     world: PackWorld
     gateway: PackGateway
     say: Callable[[str], None] = lambda _: None
+    live: Live | None = None
     vendor: Vendor = field(default_factory=Vendor)
     acts: list[dict[str, Any]] = field(default_factory=list)
     results: list[StageResult] = field(default_factory=list)
     bundles: dict[str, bytes] = field(default_factory=dict)
     reports: dict[str, BundleReport] = field(default_factory=dict)
+    prompts: list[str] = field(default_factory=list)
+    """Every text a model was given or wrote: the zero-data scan looks for each."""
+    model: dict[str, Any] = field(default_factory=dict)
+    """The live act's model run, when there is one."""
 
     @property
     def pack(self) -> Pack:
@@ -821,6 +830,49 @@ def one(
         scope or run.pack.scope, tenant=tenant or run.pack.tenants[0], trajectory=trajectory
     ) as session:
         return call(run, session, tool, arguments)
+
+
+LIVE_TURNS: Final = 4
+"""A live act's turns: the request, the model's reply to each refusal, and its answer."""
+
+
+def work(
+    run: PackRun,
+    tool: str,
+    arguments: Mapping[str, Any],
+    *,
+    tenant: str,
+    trajectory: str,
+    request: str,
+) -> tuple[list[Called], dict[str, Any]]:
+    """A pack's signature act: the fixed call, or, with a live model, the
+    calls the model chooses for the same ``request``, each behind both
+    controls. The second value is what the act records about how its calls
+    were chosen."""
+    if run.live is None:
+        found = one(run, tool, arguments, tenant=tenant, trajectory=trajectory)
+        return [found], {"mode": "reference", "request": request}
+    live = run.live
+    with run.world.fid.session(run.pack.scope, tenant=tenant, trajectory=trajectory) as session:
+        calls, model = converse(
+            run.world,
+            session,
+            live,
+            system=run.pack.system,
+            request=request,
+            step=lambda name, args: call(run, session, name, args),
+            prompts=run.prompts,
+            max_turns=LIVE_TURNS,
+            reasoning=True,
+        )
+    spent = _spent(run.world, session.session_id)
+    model["metered"] = f"{spent:.6f}"
+    run.model = model
+    run.say(
+        f"  live {model['served']}: {model['turns']} turn(s), {len(calls)} call(s), "
+        f"${spent:.6f} metered"
+    )
+    return calls, {"mode": "live", "request": request, "model": model, "metered": f"{spent:.6f}"}
 
 
 def blocked(found: Called) -> list[str]:
@@ -1149,6 +1201,11 @@ def secrets(run: PackRun) -> list[str]:
     """Every private key in the deployment, and the relay's credential."""
     keys_dir = run.world.root / "keys"
     return [p.read_text().strip() for p in sorted(keys_dir.glob("*.key"))] + [Vendor.API_KEY]
+
+
+def prompts(run: PackRun) -> list[str]:
+    """Every text a live model was given or wrote, as the fintech scan takes them."""
+    return [p for p in run.prompts if len(p) >= 12]
 
 
 def payloads(run: PackRun) -> list[str]:

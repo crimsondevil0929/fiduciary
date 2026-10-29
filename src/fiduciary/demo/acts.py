@@ -64,6 +64,7 @@ from fiduciary.bundle.export import spec
 from fiduciary.demo.gateway import SESSION_LIMIT_CENTS, Decision, Gateway
 from fiduciary.demo.world import (
     ORDERS,
+    PRICING,
     SCOPE,
     SOURCES,
     STRIPE_SECRET_ENV,
@@ -96,6 +97,8 @@ REFERENCE: Final = (
     ("apply_discount", {"order_id": 9, "percent": 10}),
 )
 MAX_TURNS: Final = 8
+MAX_OUTPUT: Final = 4096
+"""Each live turn's ``max_tokens``: the mandate's ``max_output_tokens``."""
 TITLES: Final = {
     "queue": "Order queue: refund and loyalty discount",
     "settlement": "Batch settlement cascade (cross-tenant trigger)",
@@ -267,7 +270,21 @@ def _act(run: Run, n: int, key: str, lede: str, **body: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def _tool_result(found: _Call) -> tuple[str, bool]:
+TURN_INPUT: Final = 16_000
+"""The most input tokens one live turn is costed at, for a budget: every act's
+tools, prompts and transcript fit well inside it."""
+
+
+def turn_ceiling(model: str) -> Decimal:
+    """The most one live turn of ``model`` can cost: :data:`TURN_INPUT` input
+    tokens, and every output token the request allows."""
+    rates = PRICING[model]
+    return (
+        TURN_INPUT * rates.input_usd_per_mtok + MAX_OUTPUT * rates.output_usd_per_mtok
+    ) / Decimal(1_000_000)
+
+
+def _tool_result(found: Any) -> tuple[str, bool]:
     if found.result is None:
         return (
             f"The gateway denied this call ({found.gateway.decision}): no policy permits it.",
@@ -277,29 +294,49 @@ def _tool_result(found: _Call) -> tuple[str, bool]:
     return text or found.result.outcome, not found.result.ok
 
 
-def _converse(run: Run, session: Session, live: Live) -> list[_Call]:
-    """A manual tool-use loop: the model chooses every call, nothing else does."""
+def converse(
+    world: World,
+    session: Session,
+    live: Live,
+    *,
+    system: str,
+    request: str,
+    step: Callable[[str, dict[str, Any]], Any],
+    prompts: list[str],
+    max_turns: int = MAX_TURNS,
+    reasoning: bool = False,
+) -> tuple[list[Any], dict[str, Any]]:
+    """A manual tool-use loop: the model chooses every call, nothing else
+    does. ``step`` makes one call behind both controls; every text the model
+    was given or wrote goes into ``prompts``, for the zero-data scan. With
+    ``reasoning``, the model's summarized thinking is kept in the transcript
+    beside its text, its calls and what each call returned."""
     governed = session.govern(live.client)
     tools = session.tool_definitions()
-    messages: list[dict[str, Any]] = [{"role": "user", "content": REQUEST}]
-    run.prompts.extend([SYSTEM, REQUEST])
-    calls: list[_Call] = []
+    messages: list[dict[str, Any]] = [{"role": "user", "content": request}]
+    prompts.extend([system, request])
+    calls: list[Any] = []
+    transcript: list[dict[str, Any]] = []
     usage = Counter[str]()
     turns, stop, halted = 0, "", None
     started = time.monotonic()
-    while turns < MAX_TURNS:
-        if _spent(run.world, session.session_id) >= live.max_cost:
+    extra: dict[str, Any] = {}
+    if reasoning:
+        extra["thinking"] = {"type": "adaptive", "display": "summarized"}
+    while turns < max_turns:
+        if _spent(world, session.session_id) >= live.max_cost:
             halted = "max-cost"
             break
         turns += 1
         try:
             response = governed.messages.create(
                 model=live.model,
-                max_tokens=4096,
-                system=SYSTEM,
+                max_tokens=MAX_OUTPUT,
+                system=system,
                 tools=tools,
                 messages=messages,
                 output_config={"effort": live.effort},
+                **extra,
             )
         except SessionHaltedError as exc:
             halted = exc.kind
@@ -307,9 +344,15 @@ def _converse(run: Run, session: Session, live: Live) -> list[_Call]:
         stop = str(response.stop_reason)
         for name in ("input_tokens", "output_tokens", "cache_read_input_tokens"):
             usage[name] += int(getattr(response.usage, name, 0) or 0)
+        turn: list[dict[str, Any]] = []
         for block in response.content:
             if block.type == "text":
-                run.prompts.append(block.text)
+                prompts.append(block.text)
+                turn.append({"type": "text", "text": block.text})
+            elif block.type == "thinking" and getattr(block, "thinking", ""):
+                prompts.append(block.thinking)
+                turn.append({"type": "reasoning", "text": block.thinking})
+        transcript.append({"turn": turns, "stop": stop, "blocks": turn})
         messages.append({"role": "assistant", "content": response.content})
         if response.stop_reason != "tool_use":
             break
@@ -317,9 +360,18 @@ def _converse(run: Run, session: Session, live: Live) -> list[_Call]:
         for block in response.content:
             if block.type != "tool_use":
                 continue
-            found = call(run, session, block.name, dict(block.input))
+            found = step(block.name, dict(block.input))
             calls.append(found)
             text, error = _tool_result(found)
+            turn.append(
+                {
+                    "type": "tool_use",
+                    "tool": block.name,
+                    "arguments": dict(block.input),
+                    "result": text,
+                    "error": error,
+                }
+            )
             results.append(
                 {
                     "type": "tool_result",
@@ -333,7 +385,7 @@ def _converse(run: Run, session: Session, live: Live) -> list[_Call]:
     if messages[-1]["role"] == "assistant":
         texts = [b.text for b in messages[-1]["content"] if getattr(b, "type", "") == "text"]
         answer = "\n".join(texts)
-    run.model = {
+    model: dict[str, Any] = {
         "model": live.model,
         "served": str(getattr(response, "model", live.model)) if turns else live.model,
         "effort": live.effort,
@@ -344,6 +396,22 @@ def _converse(run: Run, session: Session, live: Live) -> list[_Call]:
         "seconds": round(time.monotonic() - started, 1),
         "answer": answer,
     }
+    if reasoning:
+        model["transcript"] = transcript
+    return calls, model
+
+
+def _converse(run: Run, session: Session, live: Live) -> list[_Call]:
+    """Act 1's queue, worked by the model."""
+    calls, run.model = converse(
+        run.world,
+        session,
+        live,
+        system=SYSTEM,
+        request=REQUEST,
+        step=lambda tool, arguments: call(run, session, tool, arguments),
+        prompts=run.prompts,
+    )
     return calls
 
 

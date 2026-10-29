@@ -24,6 +24,15 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
   live acceptance matrix (42 of 42 cases, $1.67 metered). An industry switcher moves
   between the domains, and the control matrix lets the reader pick which frameworks to
   show, with each pack's digest.
+- **`--live` works the domain packs too.** A Claude model works each pack's hidden-cascade
+  act behind the gateway and the stack, as it works fintech's first act. The act records
+  the model's calls, its summarized reasoning, what each call returned, its tokens and
+  the spend AgentGov metered. `scripts/stack_dashboard.py --live` adds live pack acts to a
+  recorded run and holds them to `--budget` together.
+- **SaaS org keys are keyed pseudonyms.** Each customer's org key is an HMAC-SHA-256 of
+  its account id under the vendor's pseudonym key. Each per-customer bundle is searched
+  for the other customers' records, names, account ids and email domains, and for the
+  pseudonym key, and the trust-center panel reports what was found.
 
 ### Changed
 

@@ -623,6 +623,24 @@
   function noteBlock(text) {
     return h("div", { class: "callrow note" }, h("div", { class: "line" }, pill("INSTRUCTION IN THE INPUT", "warn")), h("pre", null, text));
   }
+  function liveBlock(x) {
+    var m = x.model, u = m.usage || {};
+    var turns = (m.transcript || []).map(function (t) {
+      return h("div", { class: "turn" }, h("div", { class: "small muted" }, "Turn " + t.turn + " · " + t.stop),
+        t.blocks.map(function (b) {
+          if (b.type === "reasoning") return h("div", { class: "tx reasoning" }, h("span", { class: "tx-k" }, "Reasoning (summary)"), h("pre", null, b.text));
+          if (b.type === "text") return h("div", { class: "tx" }, h("span", { class: "tx-k" }, "Model"), h("pre", null, b.text));
+          return h("div", { class: "tx call" }, h("span", { class: "tx-k" }, "Tool call"), h("span", { class: "tool" }, b.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(b.arguments)),
+            h("div", { class: "tx-r" + (b.error ? " err" : "") }, h("span", { class: "tx-k" }, b.error ? "Returned (refused)" : "Returned"), h("pre", null, b.result)));
+        }));
+    });
+    return h("div", { class: "callrow", style: "background:var(--stack-wash)" },
+      h("div", { class: "line" }, pill("LIVE", "info"), h("b", null, m.served), h("span", { class: "small muted" }, m.turns + " turns · effort " + m.effort + " · " + m.seconds + " s")),
+      h("div", { class: "small ink2", style: "margin-top:4px" }, num(u.input_tokens || 0) + " input / " + num(u.output_tokens || 0) + " output tokens · " + money(x.metered, 4) + " metered to the session's budget by AgentGov" + (m.halted ? " · stopped: " + m.halted : "")),
+      h("p", { class: "small", style: "margin-top:6px" }, h("span", { class: "ink2" }, "Request: “" + x.request + "”")),
+      m.answer ? h("details", { open: true }, h("summary", null, "Model's final reply"), h("pre", null, m.answer)) : null,
+      turns.length ? h("details", null, h("summary", null, "Full transcript (" + turns.length + " turns)"), turns) : null);
+  }
   function packCalls(x) {
     var calls = x.calls;
     var right = calls.map(function (c) { return h("div", { class: "callrow" }, h("div", { class: "line", style: "margin-bottom:6px" }, h("span", { class: "tool" }, c.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(c.arguments))), packMeasured(c)); });
@@ -642,7 +660,7 @@
     calls.forEach(function (c) { if (c.measured && !c.measured.committed) c.measured.findings.forEach(function (f) { if (f.severity === "blocking") by[f.check.split(":")[0]] = 1; }); });
     var names = Object.keys(by);
     return [h("div", { class: "split" },
-      gatewaySide([x.note ? noteBlock(x.note) : null, calls.map(function (c) { return callRow(c); })]),
+      gatewaySide([x.note ? noteBlock(x.note) : null, x.mode === "live" && x.model ? liveBlock(x) : null, calls.map(function (c) { return callRow(c); })]),
       stackSide(right)),
       verdictLine(permitted + " of " + calls.length + " permitted", committed + " committed, " + refused + " rolled back" + (names.length ? " by " + names.join(", ") : ""))];
   }
@@ -704,18 +722,24 @@
       verdictLine("its own decisions only", "both bundles verified offline against independently pinned keys; the break-glass act is reported")];
   }
   function actTrust(x) {
+    var n = x.customers.length - 1;
     var rows = x.customers.map(function (c) {
-      return [h("b", null, c.customer), h("span", { class: "mono small" }, c.org), c.passed ? pill("PASS", "good") : pill("EXIT " + c.exit_code, "bad"), num(c.members), String(c.other_records), String(c.other_labels) + " of " + (x.customers.length - 1)];
+      return [h("b", null, c.customer), h("span", { class: "mono small" }, c.org), c.passed ? pill("PASS", "good") : pill("EXIT " + c.exit_code, "bad"), num(c.members), String(c.other_records), String((c.other_names || 0) + (c.other_accounts || 0)), String(c.other_labels) + " of " + n, c.other_domains === undefined ? "—" : String(c.other_domains) + " of " + n];
     });
     var labels = x.customers.reduce(function (t, c) { return Math.max(t, c.other_labels); }, 0);
+    var domains = x.customers.reduce(function (t, c) { return Math.max(t, c.other_domains || 0); }, 0);
+    var where = {};
+    x.customers.forEach(function (c) { (c.domains_where || []).forEach(function (w) { where[w] = 1; }); });
+    var ps = x.pseudonym;
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What a gateway can give a customer"),
         h("div", { class: "empty-gw" }, h("b", null, "A log the vendor keeps."), "A customer has to trust the vendor's export of the vendor's own log. Nothing in it can be checked without the vendor's systems.")),
       stackSide([
-        table(["Customer", "Org key", "Bundle", "Members", "Others' records", "Others' org keys"], rows),
+        table(["Customer", "Org key", "Bundle", "Members", "Others' records", "Others' names or account ids", "Others' org keys", "Others' email domains"], rows),
         h("p", { class: "small ink2", style: "margin-top:10px" }, "Each bundle covers one customer's derived mandate. It was verified with every socket refused (" + x.customers.reduce(function (t, c) { return t + c.sockets; }, 0) + " network calls) against keys pinned outside it, and searched for every opportunity name and email address of the other customers, as written and as SHA-256. Files: " + x.customers.map(function (c) { return c.file; }).join(", ") + "."),
-        labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "Each bundle also names the other customers' opaque org keys, because it carries the deployment's whole log, and the log's session records name every session's org. No record behind those keys is in it. Use opaque org keys for a trust center; a bundle cut to one customer's records is not built yet.") : null])),
-      verdictLine("not available", x.customers.length + " customer bundles, each verified on its own; 0 records of any other customer")];
+        ps ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How org keys are made. "), "Each org key is " + ps.derivation + ". The vendor holds the pseudonym key, as it holds its signing keys. Without it, an org key cannot be reversed or linked to an account; with it, the vendor or an auditor it chooses recomputes the key from the account id. Every bundle was searched for the key, as written and in hex, and for each other customer's name and account id: " + (ps.key_in_bundles + x.customers.reduce(function (t, c) { return t + (c.other_names || 0) + (c.other_accounts || 0); }, 0)) + " found.") : null,
+        labels || domains ? h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others" + (labels ? ": their org keys, in session records and receipts, because the bundle carries the deployment's whole log" : "") + (domains ? "; and each org key's email domain, in the mandate documents only (" + Object.keys(where).join(", ") + "): the vendor-wide mandate maps every org key to its allowed recipient domain, and every customer's mandate is derived from it" : "") + ". So the bundles are not anonymous: a customer can tell how many other customers this agent worked for, and from the domains, who they are. The org key alone gives nothing away; the domain map does. A bundle cut to one customer's part of the log is not built yet: it needs a bundle format that proves a subset of the log.") : null])),
+      verdictLine("not available", x.customers.length + " customer bundles, each verified on its own; 0 records, names or account ids of any other customer")];
   }
   var PACK_SHORT = { queue: "Everyday action", cascade: "Hidden cascade", replace: "Forced replacement", drawdown: "Stock drawdown", injected: "Injected instruction", grant: "Admin rights", fleet: "Sub-agent fan-out", quorum: "2-of-3 warrant", amend: "Amend ticket", "break-glass": "Break-glass", "trust-center": "Trust center", audit: "Offline audit" };
   var PACK_ACTS = { quorum: packQuorum, amend: actAmend, "break-glass": packBreakGlass, audit: packAudit, "trust-center": actTrust };
@@ -735,7 +759,7 @@
     });
     return h("section", { id: "theatre" }, h("div", { class: "wrap" },
       h("div", { class: "sec-head" }, h("span", { class: "kicker" }, PACK.industry + " · demo scenarios"), h("h2", null, PACK.title),
-        h("p", null, "The same engine as every other industry here, on this one's own schema, triggers, mandate and approvers: " + PACK.principals.join(", ") + ". Each call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. The calls are a fixed sequence, with no model. All figures were measured during the run (" + DEMO.seconds + " s).")),
+        h("p", null, "The same engine as every other industry here, on this one's own schema, triggers, mandate and approvers: " + PACK.principals.join(", ") + ". Each call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + (DEMO.mode === "live" && DEMO.model ? "Act 2 was worked by " + DEMO.model.served + ", live; the other acts replay a fixed sequence, with no model." : "The calls are a fixed sequence, with no model; pass --live to have a model work act 2.") + " All figures were measured during the run (" + DEMO.seconds + " s).")),
       tabs, body));
   }
 
@@ -784,6 +808,7 @@
           h("dt", null, "Approvers"), h("dd", null, n.approvers || "—"),
           h("dt", null, "Verified by"), h("dd", null, n.verifier || "—")),
         h("div", { class: "chips" }, (r.frameworks || []).map(function (k) { return h("span", { class: "chip static" }, fwLabel(k)); })),
+        r.model ? h("div", { class: "small", style: "margin-top:8px" }, pill("LIVE", "info"), " " + r.model.served + " · " + r.model.turns + " turns · " + money(r.model.metered, 4) + " metered") : null,
         r.ran ? h("div", { class: "small", style: "margin-top:8px" }, "before.fidb ", r.before.passed ? pill("PASS", "good") : pill("EXIT " + r.before.exit_code, "bad"), " · after.fidb ", pill(r.after.status, r.after.exit_code === 7 ? "warn" : "bad")) : null,
         r.note ? h("div", { class: "small muted", style: "margin-top:6px" }, "Note: " + r.note + ".") : null,
         r.planned ? h("div", { class: "small muted", style: "margin-top:6px" }, r.planned) : null,

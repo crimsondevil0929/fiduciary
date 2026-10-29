@@ -9,14 +9,16 @@ import contextlib
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from agentgov.interceptor import TokenUsage
 
 from fiduciary import cli
-from fiduciary.demo import DOMAINS, Outcome, run
+from fiduciary.demo import DOMAINS, Live, Outcome, run
 from fiduciary.demo.overview import ACCEPTANCE, overview
-from fiduciary.demo.packs import PACKS
+from fiduciary.demo.packs import PACKS, healthcare, saas, sre, supply_chain
 from fiduciary.demo.packs.kit import PackGateway
 
 
@@ -133,8 +135,14 @@ def test_saas(stack: Outcome) -> None:
         assert customer["passed"] and customer["sockets"] == 0
         assert customer["other_records"] == 0
         assert (stack.root / "saas" / customer["file"]).is_file()
-    # Stated on the page: each bundle carries the whole log, which names every org key.
-    assert {c["other_labels"] for c in customers} == {3}
+        assert customer["other_names"] == customer["other_accounts"] == 0
+        assert customer["pseudonym_key"] == 0
+        assert customer["org"] == saas.pseudonym(saas.ACCOUNTS[customers.index(customer)])
+    # Stated on the page: each bundle carries the whole log, which names every org key,
+    # and the vendor-wide mandate, which lists every org's email domain.
+    assert {c["other_labels"] for c in customers} == {c["other_domains"] for c in customers} == {3}
+    assert {w for c in customers for w in c["domains_where"]} == {"mandates"}
+    assert _act(stack, "saas", "trust-center")["pseudonym"]["key_in_bundles"] == 0
 
 
 def test_every_audit_finds_no_planted_value_and_names_the_break_glass_act(stack: Outcome) -> None:
@@ -228,14 +236,8 @@ def test_one_pack_alone_and_what_the_command_refuses(tmp_path: Path) -> None:
     embedded = (out / "demo.json").read_text()
     assert json.loads(embedded)["overview"]["industries"][2]["ran"]
     assert "domains" not in json.loads(embedded)
-    with contextlib.redirect_stderr(io.StringIO()) as err:
-        argv = ["demo", "--domain", "saas", "--live", "--out", str(tmp_path / "x")]
-        assert cli.main(argv) == 2
-    assert "--live works the fintech queue" in err.getvalue()
     with pytest.raises(ValueError, match="domain is one of"):
         run(tmp_path / "y", domain="retail")
-    with pytest.raises(ValueError, match="--live works the fintech queue"):
-        run(tmp_path / "z", domain="healthcare", live=object())  # type: ignore[arg-type]
     assert DOMAINS == ("fintech", "healthcare", "sre", "supply-chain", "saas", "all")
 
 
@@ -295,3 +297,116 @@ def test_each_pack_names_shipped_frameworks_and_distinct_parties() -> None:
         assert set(pack.frameworks) <= set(frameworks.ORDER), key
         assert len(set(pack.principals)) == 3 and pack.operator not in pack.principals
         assert {"queue", "break-glass", "audit"} <= set(pack.titles)
+
+
+# -- a live model on each pack's signature act, against a stand-in ---------------------
+
+SIGNATURE: dict[str, tuple[str, dict[str, Any]]] = {
+    "healthcare": ("discontinue_order", {"order_id": healthcare.first_order(3)}),
+    "sre": ("scale_deployment", {"deployment_id": sre.deployment(0, "api"), "replicas": 6}),
+    "supply-chain": (
+        "set_reorder_point",
+        {"reorder_point_id": supply_chain.reorder_point(0, "A-1001"), "point": 500},
+    ),
+    "saas": ("bulk_reassign", {"stage": "lost", "owner": "u77@acme.example"}),
+}
+
+
+class _Model:
+    """A stand-in for the Messages API: it thinks, calls each tool given,
+    then answers."""
+
+    def __init__(self, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self._calls = list(calls)
+        self.requests: list[dict[str, Any]] = []
+
+    def create(self, **kwargs: Any) -> Any:
+        self.requests.append(kwargs)
+        usage = TokenUsage(input_tokens=1200, output_tokens=150)
+        thought = SimpleNamespace(type="thinking", thinking="The stack refused the plan; say why.")
+        if not self._calls:
+            text = SimpleNamespace(type="text", text="Nothing changed: the plan reached too far.")
+            return SimpleNamespace(
+                content=[thought, text], stop_reason="end_turn", model=kwargs["model"], usage=usage
+            )
+        name, arguments = self._calls.pop(0)
+        block = SimpleNamespace(
+            type="tool_use", id=f"toolu_{len(self.requests)}", name=name, input=arguments
+        )
+        return SimpleNamespace(
+            content=[thought, block], stop_reason="tool_use", model=kwargs["model"], usage=usage
+        )
+
+
+@pytest.mark.parametrize("key", list(PACKS))
+def test_a_live_model_works_each_packs_signature_act(key: str, tmp_path: Path) -> None:
+    tool, arguments = SIGNATURE[key]
+    client = SimpleNamespace(messages=_Model([(tool, arguments), ("fiduciary_status", {})]))
+    outcome = run(
+        tmp_path / key, live=Live(client, "claude-opus-5-5"), engine="builtin", domain=key
+    )
+    assert outcome.held
+    demo = outcome.payload["demo"]
+    assert demo["mode"] == "live" and demo["model"]["served"] == "claude-opus-5-5"
+    cascade = next(a for a in demo["acts"] if a["key"] == "cascade")
+    assert cascade["mode"] == "live" and cascade["request"]
+    first = cascade["calls"][0]
+    assert (first["tool"], first["gateway"]["decision"]) == (tool, "PERMIT")
+    assert first["outcome"] == "refused" and first["unchanged"]
+    model = cascade["model"]
+    assert model["turns"] == 3 and model["stop"] == "end_turn"
+    assert float(cascade["metered"]) > 0 and model["metered"] == cascade["metered"]
+    assert model["usage"]["input_tokens"] == 3600
+    kinds = [[b["type"] for b in t["blocks"]] for t in model["transcript"]]
+    assert kinds == [["reasoning", "tool_use"], ["reasoning", "tool_use"], ["reasoning", "text"]]
+    assert model["transcript"][0]["blocks"][1]["error"] is True
+    assert model["answer"].startswith("Nothing changed")
+    sent = client.messages.requests[0]
+    assert sent["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert sent["system"] == PACKS[key].system and sent["output_config"] == {"effort": "medium"}
+    audit = next(a for a in demo["acts"] if a["key"] == "audit")
+    for name in ("before", "after"):
+        scanned = audit["verdicts"][name]["scan"]
+        assert scanned["planted"]["prompts"] >= 4 and scanned["found"]["prompts"] == 0
+    assert outcome.payload["overview"]["industries"][list(PACKS).index(key) + 1]["mode"] == "live"
+
+
+def test_a_live_pack_act_stops_at_its_cost_cap(tmp_path: Path) -> None:
+    from decimal import Decimal
+
+    client = SimpleNamespace(messages=_Model([SIGNATURE["sre"]]))
+    outcome = run(
+        tmp_path / "capped",
+        live=Live(client, "claude-opus-5-5", max_cost=Decimal(0)),
+        engine="builtin",
+        domain="sre",
+    )
+    cascade = next(a for a in outcome.payload["demo"]["acts"] if a["key"] == "cascade")
+    assert cascade["calls"] == [] and cascade["model"]["halted"] == "max-cost"
+    assert client.messages.requests == []
+
+
+def test_the_packs_live_acts_hold_to_their_budget_together(stack: Outcome, tmp_path: Path) -> None:
+    """A live act may spend one turn past its cap, so a pack runs live only
+    while its cap and one turn at its largest fit in what is left."""
+    from decimal import Decimal
+
+    from fiduciary.demo import extend
+    from fiduciary.demo.acts import turn_ceiling
+
+    fintech = {k: v for k, v in stack.payload.items() if k not in ("domains", "overview")}
+    budget = turn_ceiling("claude-opus-5-5") + Decimal("0.001")
+    client = SimpleNamespace(messages=_Model([]))
+    grown = extend(
+        tmp_path / "budget",
+        fintech,
+        engine="builtin",
+        live=Live(client, "claude-opus-5-5"),
+        budget=budget,
+    )
+    assert grown.held
+    pages = grown.payload["domains"]
+    assert [p["demo"]["mode"] for p in pages] == ["live", "reference", "reference", "reference"]
+    spent = Decimal(pages[0]["demo"]["model"]["metered"])
+    assert Decimal("0.001") < spent <= budget
+    assert len(client.messages.requests) == 1

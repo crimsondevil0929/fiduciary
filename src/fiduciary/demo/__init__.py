@@ -30,15 +30,16 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final
 
 from fiduciary import __version__, report
 from fiduciary.attest import attest
 from fiduciary.demo import packs
-from fiduciary.demo.acts import Live, Run, pinned, run_acts
+from fiduciary.demo.acts import Live, Run, pinned, run_acts, turn_ceiling
 from fiduciary.demo.gateway import Gateway
 from fiduciary.demo.overview import overview
 from fiduciary.demo.world import ORDERS, SCOPE, build, tenant_of
@@ -88,14 +89,12 @@ def run(
     if domain not in DOMAINS:
         raise ValueError(f"domain is one of {', '.join(DOMAINS)}, not {domain!r}")
     if domain in packs.PACKS:
-        if live is not None:
-            raise ValueError("--live works the fintech queue; the domain packs replay theirs")
-        page = packs.run(root, domain, engine=engine, say=say)
+        page = packs.run(root, domain, engine=engine, say=say, live=live)
         return _write(root, page, {domain: page})
     page = _fintech(root, live=live, engine=engine, say=say)
     if domain == "fintech":
         return _write(root, page, {"fintech": page})
-    return extend(root, page, engine=engine, say=say)
+    return extend(root, page, engine=engine, say=say, live=live)
 
 
 def extend(
@@ -104,16 +103,32 @@ def extend(
     *,
     engine: str = "auto",
     say: Callable[[str], None] = lambda _: None,
+    live: Live | None = None,
+    budget: Decimal | None = None,
 ) -> Outcome:
     """Every domain pack, each in its own new subdirectory of ``root``, beside
     the fintech run whose console payload is ``page``; and the one dashboard
     over them all, written to ``root`` (``domain="all"``, and how a recorded
-    live run gains the other industries without being run again)."""
+    live run gains the other industries without being run again). With
+    ``live``, a model works each pack's signature act, each act under
+    ``live.max_cost``; and with ``budget``, the packs' live acts together
+    spend at most that. A live act stops between turns once it reaches its
+    cap, so it may spend one turn past it: a pack whose cap and one turn at
+    its largest would take the total past ``budget`` replays instead."""
     played = {"fintech": {k: v for k, v in page.items() if k not in ("domains", "overview")}}
+    spent = Decimal(0)
     for key in packs.PACKS:
         say("")
         say(f"{packs.PACKS[key].industry}: a deployment in {root / key}")
-        sub = packs.run(root / key, key, engine=engine, say=say)
+        worked = live
+        if live is not None and budget is not None:
+            cap = min(live.max_cost, budget - spent - turn_ceiling(live.model))
+            worked = replace(live, max_cost=cap) if cap > 0 else None
+            if worked is None:
+                say(f"  live: ${spent:.6f} of ${budget} spent; this pack replays")
+        sub = packs.run(root / key, key, engine=engine, say=say, live=worked)
+        if sub["demo"]["model"]:
+            spent += Decimal(sub["demo"]["model"]["metered"])
         _write(root / key, sub, {key: sub})
         played[key] = sub
     combined = {**played["fintech"], "domains": [played[k] for k in packs.PACKS]}
