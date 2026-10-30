@@ -1435,7 +1435,13 @@ billing scope. It is recorded (`session.opened`) before its first call.
      - `scope_id` is the billing scope;
      - `trajectory_id` is the session's;
      - `intent` is `FIDU1 tool <name> <digest[:16]>`;
-     - each effect's `tenant_id` comes from the session.
+     - each effect's `tenant_id` comes from the session;
+     - when the engine verifies inbound facts (an inbox is configured), the plan consumes
+       every attested fact pending for the billing scope whose kind a `data.facts` rule
+       names for a table the binding writes, and whose tenant is the session's or none.
+       A refused plan consumes nothing, so the facts stay pending. *(Amended in 1.3.0:
+       before it, a plan consumed no fact, and a `data.facts` rule refused every write
+       it covers that no exempt value allowed.)*
   4. The lineage's engine runs the plan.
 
   The result carries interlock's sanitized feedback (`AgentFeedback`, `RepairFeedback`). It
