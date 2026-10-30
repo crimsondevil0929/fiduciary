@@ -1,6 +1,6 @@
 [project]
 name = "interlock-fiduciary"
-version = "1.2.0"
+version = "1.3.0"
 description = "Signed mandates, quorum warrants and offline compliance proofs over Interlock and AgentGov."
 readme = "README.md"
 requires-python = ">=3.11"
