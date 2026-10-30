@@ -99,17 +99,7 @@ jobs:
         run: |
           uv run python - <<'EOF'
           import json, sys
-          from fiduciary import _upstream
-          report = json.load(open("coverage.json"))
-          totals = dict(report["totals"])
-          # The coding-agent pack runs on interlock 1.1.0's Git substrate. On an
-          # older interlock it is left out of the demo, so out of the floors too.
-          pack = "src/fiduciary/demo/packs/coding_agent.py"
-          if not _upstream.GIT_SUBSTRATE and pack in report["files"]:
-              for key, value in report["files"][pack]["summary"].items():
-                  if key in ("covered_lines", "num_statements", "covered_branches", "num_branches"):
-                      totals[key] -= value
-              print(f"{pack}: set aside; the installed interlock has no Git substrate")
+          totals = json.load(open("coverage.json"))["totals"]
           lines = 100 * totals["covered_lines"] / totals["num_statements"]
           branches = 100 * totals["covered_branches"] / totals["num_branches"]
           print(f"lines {lines:.2f}%, branches {branches:.2f}%")

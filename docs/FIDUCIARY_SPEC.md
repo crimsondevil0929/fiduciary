@@ -8,9 +8,10 @@ from 0.1.0 to 1.0.0. Section 12 lists what the contract needs from `interlock` a
 implements, and each gap with its reason; [Traceability](#traceability) maps each
 requirement to the phase that built it and the tests that prove it. Where the text was
 amended as it was built, it says so, and in which release.
-**Applies to:** `interlock-fiduciary` 1.x, against `interlock-escrow` 1.0.4 and
-`interlock-agentgov` 1.0.1. *(Amended in 1.2.0: 1.0.0 applied against `interlock-escrow`
-1.0.2 and `interlock-agentgov` 1.0.0, and 1.1.1 required `interlock-escrow` 1.0.4.)*
+**Applies to:** `interlock-fiduciary` 1.x, against `interlock-escrow` 1.1.0 and
+`interlock-agentgov` 1.0.1. *(Amended in 1.3.0: 1.0.0 applied against `interlock-escrow`
+1.0.2 and `interlock-agentgov` 1.0.0, 1.1.1 required `interlock-escrow` 1.0.4, and 1.3.0
+requires 1.1.0, whose Git substrate the coding-agent pack runs on.)*
 **Normative language:** MUST, MUST NOT, SHOULD, MAY per RFC 2119.
 
 ---

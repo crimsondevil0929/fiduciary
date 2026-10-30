@@ -49,6 +49,8 @@ records, `fidb/1`, the checks V1 to V12 and every exit code are as they were.
 
 ### Changed
 
+- **Requires `interlock-escrow` 1.1.0** (it was 1.0.4), for its Git substrate. Every
+  CI job now runs the coding-agent pack, and the coverage floors count it.
 - **A live act's model calls never take it past `--max-cost`.** Each turn may write only
   the output tokens that what is left of the cap buys, after the turn's input tokens, which
   the API counts (or the request's size bounds, where it cannot count them). Before, an act
