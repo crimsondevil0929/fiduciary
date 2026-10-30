@@ -227,6 +227,14 @@ def test_the_pack_runs_from_a_relative_directory(
     outcome = run(Path("relative") / "coding", engine="builtin", domain="coding-agent")
     assert outcome.held
     assert (tmp_path / "relative" / "coding" / f"{coding_agent.REPO}.git").is_dir()
+    with contextlib.redirect_stdout(io.StringIO()):  # its files name absolute paths
+        assert cli.main(["--config", "relative/coding/fiduciary.toml", "verify"]) == 0
+    from fiduciary.demo.packs.kit import restore_config
+
+    (tmp_path / "relative" / "coding" / "fiduciary.toml").unlink()
+    restore_config(Path("relative") / "coding", PACKS["coding-agent"])
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert cli.main(["--config", "relative/coding/fiduciary.toml", "verify"]) == 0
 
 
 def test_the_deployment_opens_from_fiduciary_toml_on_git(played: Outcome) -> None:

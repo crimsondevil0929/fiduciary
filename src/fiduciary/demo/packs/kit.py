@@ -537,7 +537,9 @@ def _toml(text: str | Path) -> str:
 
 def interlock_toml(root: Path, pack: Pack, back_office: Path) -> str:
     """``interlock.toml`` for ``pack``'s deployment under ``root``: its
-    substrate, its sinks, and its inbox with the key its facts verify under."""
+    substrate, its sinks, and its inbox with the key its facts verify under.
+    Every path is absolute: the file is read wherever it is opened from."""
+    root, back_office = root.resolve(), back_office.resolve()
     if pack.interlock is not None:
         head = pack.interlock(root, back_office)
     else:
@@ -574,7 +576,8 @@ def fiduciary_toml(root: Path, *, charter: str, tools: Sequence[Path]) -> str:
     """``fiduciary.toml`` for the deployment under ``root``, as the fintech
     demo writes it: the store, the ledger, ``interlock.toml``, sessions in
     process as the demo runs them, the charter pinned by ``charter``, the
-    keys, and ``tools``."""
+    keys, and ``tools``. Every path is absolute."""
+    root = root.resolve()
     service = root / "keys" / "service.key"
     back_office = root / "back_office.db"
     return (
@@ -584,7 +587,7 @@ def fiduciary_toml(root: Path, *, charter: str, tools: Sequence[Path]) -> str:
         'in_process = "tool-calls-only"\n'
         f'[charter]\nfile = {_toml(root / "charter.json")}\ndigest = "{charter}"\n'
         f"[service]\nkey = {_toml(service)}\n"
-        f"[binding]\ntools = {json.dumps([str(t) for t in tools])}\n"
+        f"[binding]\ntools = {json.dumps([str(t.resolve()) for t in tools])}\n"
         f"directives = [{_toml(root / 'stop-retrying.txt')}]\nchains = {_toml(root / 'chains')}\n"
         f"[executor]\nkey = {_toml(service)}\noutbox = {_toml(back_office)}\n"
         f"log = {_toml(root / 'operators.jsonl')}\n"
@@ -625,6 +628,7 @@ def restore_config(root: Path, pack: Pack) -> list[str]:
     :returns: The files written.
     :raises ValueError: When a binding would not be the one the mandate pins.
     """
+    root = root.resolve()
     mandate = Mandate.from_json(json.loads((root / "mandate.json").read_text()))
     pins = {pin.name: pin.digest for pin in mandate.tools.bindings}
     developer = load_key(root / "keys" / "developer.key")
