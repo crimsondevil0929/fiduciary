@@ -22,6 +22,7 @@ import json
 import sqlite3
 import subprocess
 from contextlib import closing
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -214,3 +215,12 @@ def test_bumped_files_are_what_ci_tests() -> None:
     assert found["uv.lock"].count('version = "0.28.1"') == 1
     assert 'httpx: ["0.28.1"]' in found[".github/workflows/ci.yml"]
     assert coding_agent.blob_sha("hi\n") == "45b983be36b73c0788dc9cbcb76cbb80fc7bb057"
+
+
+def test_the_pack_runs_from_a_relative_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    outcome = run(Path("relative") / "coding", engine="builtin", domain="coding-agent")
+    assert outcome.held
+    assert (tmp_path / "relative" / "coding" / f"{coding_agent.REPO}.git").is_dir()

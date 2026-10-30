@@ -328,6 +328,7 @@ def _system(root: Path, control: Path) -> tuple[Callable[[], Any], Repository]:
     """The repository: a bare origin with one commit, its code generator, and
     the control database the substrate keeps its outbox, inbox and windows in."""
     assert GIT is not None
+    root, control = root.resolve(), control.resolve()
     seed = root / "repository-seed"
     origin = root / f"{REPO}.git"
     seed.mkdir()
