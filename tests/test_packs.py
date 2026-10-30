@@ -18,7 +18,7 @@ from agentgov.interceptor import TokenUsage
 from fiduciary import cli
 from fiduciary.demo import DOMAINS, Live, Outcome, run
 from fiduciary.demo.overview import ACCEPTANCE, overview
-from fiduciary.demo.packs import PACKS, healthcare, saas, sre, supply_chain
+from fiduciary.demo.packs import PACKS, coding_agent, healthcare, saas, sre, supply_chain
 from fiduciary.demo.packs.kit import PackGateway
 
 
@@ -150,23 +150,33 @@ def test_every_audit_finds_no_planted_value_and_names_the_break_glass_act(stack:
         audit = _act(stack, key, "audit")
         before, after = audit["verdicts"]["before"], audit["verdicts"]["after"]
         assert before["passed"] and after["exit_code"] == 7, key
-        assert any("[break-glass]" in f for f in after["findings"]), key
         for verdict in (before, after):
             assert verdict["sockets"] == 0
             assert set(verdict["scan"]["found"].values()) == {0}, (key, verdict["scan"]["hits"])
             assert verdict["scan"]["planted"]["rows"] > 0 and verdict["scan"]["planted"]["secrets"]
         assert audit["labels"]["partition"] == pack.partition
         attestation = _page(stack, key)["attestations"]["after"]
+        if pack.substrate is not None:
+            # The administrator's hotfix is a plan, not an operator act (test_coding_agent).
+            assert attestation["verdict"]["status"] == "AMBIENT AUTHORITY DETECTED", key
+            assert any("not a pinned tool's call" in f for f in after["findings"]), key
+            continue
+        assert any("[break-glass]" in f for f in after["findings"]), key
         assert attestation["verdict"]["status"] == "BREAK-GLASS DETECTED"
         assert [o["label"] for o in attestation["operators"] if o["ambient"]] == ["break-glass"]
 
 
 def test_each_pack_opens_with_the_ordinary_commands(stack: Outcome) -> None:
-    for key in PACKS:
+    for key, pack in PACKS.items():
         root = stack.root / key
-        with contextlib.redirect_stdout(io.StringIO()) as printed:
-            assert cli.main(["--config", str(root / "fiduciary.toml"), "verify"]) == 0, key
-        assert printed.getvalue().startswith("PASS")
+        if pack.substrate is not None:
+            # interlock's configuration names SQLite and PostgreSQL only.
+            assert not (root / "fiduciary.toml").exists()
+            assert json.loads((root / "git-substrate.json").read_text())["branch"]
+        else:
+            with contextlib.redirect_stdout(io.StringIO()) as printed:
+                assert cli.main(["--config", str(root / "fiduciary.toml"), "verify"]) == 0, key
+            assert printed.getvalue().startswith("PASS")
         charter = (root / "charter.digest").read_text().strip()
         keys = str(root / "pinned-keys.json")
         files = [("before.fidb", 0), ("after.fidb", 7)]
@@ -186,10 +196,12 @@ def test_the_overview_counts_only_what_ran(stack: Outcome) -> None:
         "sre",
         "supply-chain",
         "saas",
-        "coding",
+        "coding-agent",
     ]
     assert all(rows[k]["ran"] for k in ("fintech", *PACKS))
-    assert not rows["coding"]["ran"] and "not built" in rows["coding"]["planned"]
+    assert rows["coding-agent"]["ran"] is ("coding-agent" in PACKS)
+    assert rows["coding-agent"]["substrate"] == "Git" and rows["saas"]["substrate"] == "SQLite"
+    assert not any(r.get("planned") for r in found["industries"])
     assert rows["sre"]["note"] and "mirror" in rows["sre"]["note"]
     engine = {k: rows[k]["engine"] for k in ("fintech", *PACKS)}
     assert engine["fintech"]["rate_window"] == 45  # every fan-out session, not the sample
@@ -238,7 +250,8 @@ def test_one_pack_alone_and_what_the_command_refuses(tmp_path: Path) -> None:
     assert "domains" not in json.loads(embedded)
     with pytest.raises(ValueError, match="domain is one of"):
         run(tmp_path / "y", domain="retail")
-    assert DOMAINS == ("fintech", "healthcare", "sre", "supply-chain", "saas", "all")
+    assert DOMAINS == ("fintech", *PACKS, "all")
+    assert set(PACKS) - {"coding-agent"} == {"healthcare", "sre", "supply-chain", "saas"}
 
 
 def test_a_recorded_fintech_run_gains_the_other_industries(stack: Outcome, tmp_path: Path) -> None:
@@ -257,7 +270,8 @@ def _requests(key: str) -> list[tuple[str, str, dict[str, Any]]]:
     for i, (resource, _) in enumerate(sorted(pack.entities().items())[:6]):
         name, _, value = resource.partition(":")
         tool = next(t for t, arg in pack.resource.items() if arg == name)
-        found.append((f"s{i}", tool, {name: int(value), "replicas": 3, "port": 22, "point": 9}))
+        argument: int | str = int(value) if value.isdigit() else value
+        found.append((f"s{i}", tool, {name: argument, "replicas": 3, "port": 22, "point": 9}))
     for tool, arg in pack.summed.items():
         found += [("t", tool, {arg: 40}), ("t", tool, {arg: 40})]
     found.append(("u", pack.policies[0].action, {}))
@@ -272,7 +286,7 @@ def test_both_cedar_engines_decide_every_pack_alike(key: str) -> None:
     cedar = PackGateway(pack, pack.tenants[0], engine="cedarpy")
     builtin = PackGateway(pack, pack.tenants[0], engine="builtin")
     for gateway in (cedar, builtin):
-        gateway.opened("s1", pack.tenants[1])
+        gateway.opened("s1", pack.tenants[-1])
     decided = []
     for session, tool, arguments in _requests(key):
         a = cedar.decide(session, tool, arguments)
@@ -296,7 +310,9 @@ def test_each_pack_names_shipped_frameworks_and_distinct_parties() -> None:
         assert pack.key == key
         assert set(pack.frameworks) <= set(frameworks.ORDER), key
         assert len(set(pack.principals)) == 3 and pack.operator not in pack.principals
-        assert {"queue", "break-glass", "audit"} <= set(pack.titles)
+        assert {"queue", "audit"} <= set(pack.titles)
+        # An act around the agent: an operator's break-glass key, or, on Git, a hotfix.
+        assert {"break-glass", "hotfix"} & set(pack.titles), key
 
 
 # -- a live model on each pack's signature act, against a stand-in ---------------------
@@ -309,6 +325,10 @@ SIGNATURE: dict[str, tuple[str, dict[str, Any]]] = {
         {"reorder_point_id": supply_chain.reorder_point(0, "A-1001"), "point": 500},
     ),
     "saas": ("bulk_reassign", {"stage": "lost", "owner": "u77@acme.example"}),
+    "coding-agent": (
+        "edit_file",
+        {"path": coding_agent.SCHEMA, "old": '"version": "1.4"', "new": '"version": "1.5"'},
+    ),
 }
 
 
@@ -406,7 +426,7 @@ def test_the_packs_live_acts_hold_to_their_budget_together(stack: Outcome, tmp_p
     )
     assert grown.held
     pages = grown.payload["domains"]
-    assert [p["demo"]["mode"] for p in pages] == ["live", "reference", "reference", "reference"]
+    assert [p["demo"]["mode"] for p in pages] == ["live", *["reference"] * (len(PACKS) - 1)]
     spent = Decimal(pages[0]["demo"]["model"]["metered"])
     assert Decimal("0.001") < spent <= budget
     assert len(client.messages.requests) == 1
