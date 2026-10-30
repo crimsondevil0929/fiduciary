@@ -35,6 +35,7 @@ __all__ = [
     "StoredRecord",
     "TicketRow",
     "WarrantRow",
+    "Withheld",
     "fold",
     "rows_for",
 ]
@@ -86,6 +87,17 @@ class StoredRecord:
     prev: str
     kind: str
     data: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class Withheld:
+    """A record a sealed bundle withholds: its place in its log, and its hash,
+    which the ledger's anchor of it vouches for (§9.2). Folding one moves the
+    head and adds nothing else."""
+
+    log: str
+    seq: int
+    hash: str
 
 
 def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
@@ -380,7 +392,7 @@ class State:
     """Each resolution action's warrants, by digest."""
 
     @classmethod
-    def of(cls, records: Sequence[Record]) -> State:
+    def of(cls, records: Sequence[Record | Withheld]) -> State:
         state = cls()
         for record in records:
             state.apply(record)
@@ -412,8 +424,13 @@ class State:
         )
         return found
 
-    def apply(self, record: Record) -> None:
+    def apply(self, record: Record | Withheld) -> None:
         self.head_seq = record.seq
+        if isinstance(record, Withheld):
+            # what it says is not known here: its hash is the head a ticket
+            # observes, and the last instant known stays the head's
+            self.head_hash = record.hash
+            return
         self.head_time = record.issued_at
         # a record simulated by after() has no hash yet
         self.head_hash = record.hash if record.signature is not None else None

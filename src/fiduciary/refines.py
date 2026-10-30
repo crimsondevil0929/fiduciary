@@ -266,6 +266,8 @@ def _data(check: _Check, child: Mandate, parent: Mandate) -> None:
         lambda d: ".".join(d.identity),
         lambda path, c, p: _drawdown(check, path, c, p),
     )
+    if theirs.receipt_tenants == "declared" and mine.receipt_tenants != "declared":
+        check.fail("data.receipt_tenants", "names tenants the parent's receipts do not")
     for dimension, rule in sorted(theirs.partitions.items()):
         path = f"data.partitions.{dimension}"
         kept = mine.partitions.get(dimension)

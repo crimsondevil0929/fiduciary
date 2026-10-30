@@ -473,11 +473,17 @@ class Data:
     facts: tuple[FactRule, ...]
     partitions: Mapping[str, PartitionRule] = field(default_factory=dict)
     """Dimensions beside the tenant a plan is confined in: written only when set."""
+    receipt_tenants: str = "touched"
+    """Which tenants a receipt names: every one its plan touched, or, when
+    ``"declared"``, only those the plan declares, the rest counted (1.4).
+    Written only when ``"declared"``."""
 
     def to_json(self) -> dict[str, Any]:
         found = self._json()
         if self.partitions:
             found["partitions"] = {d: r.to_json() for d, r in sorted(self.partitions.items())}
+        if self.receipt_tenants != "touched":
+            found["receipt_tenants"] = self.receipt_tenants
         return found
 
     def _json(self) -> dict[str, Any]:
@@ -990,7 +996,9 @@ class Mandate(Document):
             "governance": _read_governance(
                 fields.object("governance", ("max_calls", "seconds", "fleet_velocity", "cognitive"))
             ),
-            "data": _read_data(fields.object("data", _DATA_FIELDS, ("partitions",))),
+            "data": _read_data(
+                fields.object("data", _DATA_FIELDS, ("partitions", "receipt_tenants"))
+            ),
             "outbound": _read_outbound(fields.object("outbound", _OUTBOUND_FIELDS)),
             "windows": _read_windows(fields),
             "tools": _read_tools(fields.object("tools", ("statements", "bindings"))),
@@ -1215,6 +1223,10 @@ def _read_data(fields: Fields) -> Data:
             raise MalformedError(
                 "agreement", fields.path("partitions"), "is written only when it holds one"
             )
+    receipt_tenants = "touched"
+    if fields.has("receipt_tenants"):
+        # the default is never written: one mandate has one encoding
+        receipt_tenants = fields.choice("receipt_tenants", ("declared",))
     footprint = None
     if not fields.is_null("stated_footprint"):
         entry = fields.object("stated_footprint", ("tolerance", "blocking"))
@@ -1262,6 +1274,7 @@ def _read_data(fields: Fields) -> Data:
         agreements=sorted_by(agreements, lambda a: a.identity, fields.path("agreements")),
         facts=sorted_by(facts, lambda f: f.identity, fields.path("facts")),
         partitions=partitions,
+        receipt_tenants=receipt_tenants,
     )
 
 

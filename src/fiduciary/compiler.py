@@ -206,9 +206,14 @@ class CompiledMandate:
 
     def receipt_issuer(self, log: ReceiptLog, *, row_secret: bytes | None = None) -> ReceiptIssuer:
         """The issuer of this version's receipts: ``fiduciary:<mandate_id>``, at
-        epoch ``version`` (F6-7)."""
+        epoch ``version`` (F6-7), naming the tenants ``data.receipt_tenants``
+        says."""
         return ReceiptIssuer(
-            log, issuer=self.issuer, row_secret=row_secret, policy_epoch=self.policy_epoch
+            log,
+            issuer=self.issuer,
+            row_secret=row_secret,
+            policy_epoch=self.policy_epoch,
+            tenants=self.description["receipts"].get("tenants", "touched"),
         )
 
     def engine_checkers(self) -> tuple[InvariantChecker, ...]:
@@ -487,6 +492,8 @@ def _describe(
     }
     if mandate.budgets:
         description["budgets"] = {u: b.to_json() for u, b in sorted(mandate.budgets.items())}
+    if mandate.data.receipt_tenants != "touched":
+        description["receipts"]["tenants"] = mandate.data.receipt_tenants
     return description, problems
 
 

@@ -10,7 +10,9 @@ Principals' keys always come from the charter the pinned digest vouches for.
 
 The decisions in the log are taken again from the state before each record,
 by the same rules the service took them by (:func:`fiduciary.authority.replay_each`),
-over an in-memory store holding only what the bundle carries.
+over an in-memory store holding only what the bundle carries. A sealed bundle
+(``fidb/2``) withholds other lineages' records: each is held to its place in
+the chain and its ledger anchor, and folded past, not replayed.
 """
 
 from __future__ import annotations
@@ -55,7 +57,7 @@ from fiduciary import documents, fidu1
 from fiduciary._upstream import ILOK1_DIGESTS
 from fiduciary.authority import Decide, replay_each
 from fiduciary.bundle.export import _type_of
-from fiduciary.bundle.format import FORMAT, BundleError, BundleReport, unpack
+from fiduciary.bundle.format import FORMAT, SEALED, BundleError, BundleReport, unpack
 from fiduciary.checkers import admits_scope
 from fiduciary.compiler import (
     CompiledMandate,
@@ -67,7 +69,7 @@ from fiduciary.compiler import (
 from fiduciary.documents import Charter, Mandate, Record, ToolBinding
 from fiduciary.exceptions import FiduciaryError
 from fiduciary.log import LOG_ID, check_anchors, parse_memo
-from fiduciary.store import State, Store, StoredRecord
+from fiduciary.store import State, Store, StoredRecord, Withheld
 from fiduciary.verify import ordering_problems
 
 __all__ = ["TrustedKeys", "verify_bundle"]
@@ -188,7 +190,12 @@ def _sink(raw: Mapping[str, Any]) -> SinkSpec:
     return SinkSpec(
         raw["name"],
         tuple(
-            OperationSpec(op["name"], compensation=op["compensation"], schema=op["schema"])
+            OperationSpec(
+                op["name"],
+                compensation=op["compensation"],
+                schema=op["schema"],
+                hold=op.get("hold") is True,
+            )
             for op in raw["operations"]
         ),
         cost_per_call=Decimal(raw["cost_per_call"]),
@@ -215,6 +222,7 @@ class _Bundle:
     docs: dict[str, tuple[str, bytes]] = field(default_factory=dict)
     stored: list[StoredRecord] = field(default_factory=list)
     records: list[Record] = field(default_factory=list)
+    withheld: list[Withheld] = field(default_factory=list)
     intake: dict[int, bytes] = field(default_factory=dict)
     entries: list[tuple[LedgerEntry, int, list[bytes]]] = field(default_factory=list)
     checkpoint: Checkpoint | None = None
@@ -226,6 +234,18 @@ class _Bundle:
     chains: dict[str, bytes] = field(default_factory=dict)
     deployment: dict[str, Any] = field(default_factory=dict)
     keys: dict[str, Any] = field(default_factory=dict)
+
+    def chain(self) -> list[tuple[Record | Withheld, str]]:
+        """The log's prefix, each record or withheld record with its hash:
+        the records in the order the bundle holds them, each withheld one
+        before the first record after it."""
+        found: list[tuple[Record | Withheld, str]] = []
+        withheld = list(self.withheld)
+        for stored, record in zip(self.stored, self.records, strict=True):
+            while withheld and withheld[0].seq < record.seq:
+                found.append((withheld[0], withheld.pop(0).hash))
+            found.append((record, stored.hash))
+        return found + [(w, w.hash) for w in withheld]
 
 
 def _lines(data: bytes) -> list[bytes]:
@@ -257,8 +277,8 @@ def _v1(members: list[tuple[str, bytes]], report: BundleReport) -> _Bundle:
         manifest = fidu1.parse(raw)
         if fidu1.canonical(manifest) != raw:
             raise FiduciaryError("manifest.json is not canonical JSON")
-        if manifest.get("format") != FORMAT or manifest.get("type") != "bundle":
-            raise FiduciaryError(f"manifest.json is not a {FORMAT} manifest")
+        if manifest.get("format") not in (FORMAT, SEALED) or manifest.get("type") != "bundle":
+            raise FiduciaryError(f"manifest.json is not a {FORMAT} or {SEALED} manifest")
         listed = {m["path"]: m for m in manifest["members"]}
     except (FiduciaryError, KeyError, TypeError, AttributeError) as exc:
         report.add("V1", "malformed", f"manifest.json: {exc}")
@@ -284,6 +304,9 @@ def _v1(members: list[tuple[str, bytes]], report: BundleReport) -> _Bundle:
             raise  # this verifier cannot read it, which is no finding about the bundle
         except Exception as exc:  # each library's parser raises its own errors
             report.add("V1", "malformed", f"member {path} does not parse: {exc}")
+    both = {r.seq for r in out.records} & {w.seq for w in out.withheld}
+    for seq in sorted(both):
+        report.add("V1", "malformed", f"record {seq} is both in log.jsonl and withheld")
     return out
 
 
@@ -334,6 +357,18 @@ def _parse(path: str, data: bytes, out: _Bundle) -> None:
                     line,
                 )
             )
+    elif path == "withheld.json" and out.manifest.get("format") == SEALED:
+        seqs = []
+        for item in fidu1.parse(data):
+            if not isinstance(item, dict) or sorted(item) != ["hash", "seq"]:
+                raise FiduciaryError("each withheld record is {seq, hash}")
+            seq = item["seq"]
+            if type(seq) is not int or seq < 1 or not fidu1.HASH.fullmatch(str(item["hash"])):
+                raise FiduciaryError(f"withheld record {seq!r} has no place or no hash")
+            seqs.append(seq)
+            out.withheld.append(Withheld(LOG_ID, seq, str(item["hash"])))
+        if seqs != sorted(set(seqs)):
+            raise FiduciaryError("the withheld records are not in order, once each")
     elif top == "intake":
         out.intake[int(path.rsplit("/", 1)[-1].removesuffix(".bin"))] = data
     elif path == "ledger/entries.jsonl":
@@ -438,6 +473,12 @@ def verify_bundle(
         return report
     trust = _trusted(bundle, keys, report)
     _Checks(bundle, trust, report, charter, witness, skew_seconds).run()
+    if bundle.withheld:
+        total = len(bundle.withheld) + len(bundle.records)
+        report.notes.append(
+            f"sealed: {len(bundle.withheld)} of the log's {total} records are other lineages', "
+            "withheld; each is held to its ledger anchor and its place in the chain, not replayed"
+        )
     report.notes.append(
         "out of scope: the outbox's full delivery logs and Interlock's own operator-log "
         "check; operator acts are checked on the messages this lineage's tickets and "
@@ -470,6 +511,9 @@ class _Checks:
         rng = manifest.get("range", {})
         self.first, self.last = int(rng.get("from", 1)), int(rng.get("to", 0))
         self.store = _MemoryStore(bundle.docs, bundle.stored, bundle.intake)
+        self.links = bundle.chain()
+        self.chain = [record for record, _ in self.links]
+        self.by_seq = {r.seq: r for r in bundle.records}
         self.ledger: dict[int, LedgerEntry] = {}
         self.anchors: dict[int, LedgerEntry] = {}
         self.state = State()
@@ -480,6 +524,11 @@ class _Checks:
 
     def add(self, check: str, kind: str, message: str, label: str = "") -> None:
         self.r.add(check, kind, message, label)
+
+    def record_at(self, seq: int) -> Record:
+        """Record ``seq``, which an event of the bundle's own lineages names:
+        never withheld."""
+        return self.by_seq[seq]
 
     def run(self) -> None:
         if self.k.service is None:
@@ -493,7 +542,7 @@ class _Checks:
         if charter_ok:
             self._replay()
         else:  # nothing to replay under: what the log says, for the checks that read it
-            self.state = State.of(self.b.records)
+            self.state = State.of(self.chain)
         self._v5()
         self._v10()
         self._v7()
@@ -506,27 +555,29 @@ class _Checks:
     def _v9(self) -> None:
         assert self.k.service is not None
         previous, expected = fidu1.GENESIS, 1
-        for stored, record in zip(self.b.stored, self.b.records, strict=True):
+        for record, digest in self.links:
             where = f"record {record.seq}"
-            try:
-                record.verify(self.k.service)
-            except FiduciaryError as exc:
-                self.add("V9", "signature", f"{where}: {exc}")
-            if record.log != LOG_ID:
-                self.add("V9", "signature", f"{where}: belongs to log {record.log!r}")
+            # A withheld record's hash is what the next record links to, and
+            # its anchor names (V10): nothing else of it is here to check.
+            disclosed = record if isinstance(record, Record) else None
+            if disclosed is not None:
+                try:
+                    disclosed.verify(self.k.service)
+                except FiduciaryError as exc:
+                    self.add("V9", "signature", f"{where}: {exc}")
+                if disclosed.log != LOG_ID:
+                    self.add("V9", "signature", f"{where}: belongs to log {disclosed.log!r}")
             if record.seq != expected:
                 self.add(
                     "V9",
                     "signature",
                     f"{where}: expected record {expected}: records are missing or out of order",
                 )
-            if record.prev != previous:
+            if disclosed is not None and disclosed.prev != previous:
                 self.add("V9", "signature", f"{where}: does not link to the record before it")
-            previous, expected = stored.hash, record.seq + 1
-        if len(self.b.records) != self.last:
-            self.add(
-                "V9", "signature", f"the log holds {len(self.b.records)} records, not {self.last}"
-            )
+            previous, expected = digest, record.seq + 1
+        if len(self.chain) != self.last:
+            self.add("V9", "signature", f"the log holds {len(self.chain)} records, not {self.last}")
 
     def _v9_manifest(self) -> None:
         """A signed manifest is the service's: its signature must hold."""
@@ -582,7 +633,7 @@ class _Checks:
         deployment = self._deployment()
         decide = Decide(self.store, self.pinned, self.k.service)
         for record, state, problem in replay_each(
-            self.b.records, self.store, pinned=self.pinned, service_key=self.k.service
+            self.chain, self.store, pinned=self.pinned, service_key=self.k.service
         ):
             if problem is not None:
                 check, kind = self._classify(record, problem)
@@ -590,7 +641,7 @@ class _Checks:
             elif record.kind == "mandate.bound" and deployment is not None:
                 self._v4_bound(decide, state, record, deployment)
             self.state = state
-        self.state = State.of(self.b.records)
+        self.state = State.of(self.chain)
         self._v4_receipts()
 
     def _classify(self, record: Record, problem: str) -> tuple[str, str]:
@@ -726,6 +777,24 @@ class _Checks:
                 text = f"{failure.name}: {failure.detail}" if failure is not None else "fails"
                 kind = "signature" if "signature" in text else "evidence"
                 self.add("V5", kind, f"receipt {name}: {text}")
+        # What a receipt's effect is worth: one measured short of a transaction
+        # says so, and the report names how many (ARC1 1.3 coverage.measurement).
+        classes: dict[str, int] = {}
+        for bundle in actions.values():
+            assert isinstance(bundle.receipt, ActionReceipt)
+            measured = bundle.receipt.coverage.measurement
+            if measured != "transactional":
+                classes[measured] = classes.get(measured, 0) + 1
+        for measured, count in sorted(classes.items()):
+            self.r.notes.append(
+                f"measured {measured}: {count} receipt(s) whose effect was not measured in a "
+                + {
+                    "plan-bound": "transaction, but as the plan the system applied",
+                    "predicted": "transaction, but predicted, written conditionally and read back",
+                    "request-only": "transaction: only the request was; its effect is the "
+                    "remote system's word",
+                }.get(measured, "transaction")
+            )
 
     # -- V6 ledger ---------------------------------------------------------------------
 
@@ -797,12 +866,16 @@ class _Checks:
     # -- V10 anchors -------------------------------------------------------------------
 
     def _v10(self) -> None:
-        in_range = [r for r in self.b.records if self.first <= r.seq <= self.last]
-        problems, _, missing = check_anchors(in_range, self.ledger.values(), LOG_ID)
+        # Every withheld record is anchored, in range or not: its anchor is
+        # all that vouches for it.
+        withheld = {w.seq for w in self.b.withheld}
+        held = [r for r in self.chain if self.first <= r.seq <= self.last or r.seq in withheld]
+        problems, _, missing = check_anchors(held, self.ledger.values(), LOG_ID)
         for problem in problems:
             self.add("V10", "evidence", problem)
         for seq in missing:
-            self.add("V10", "evidence", f"record {seq} is in range but has no ledger anchor")
+            what = "is withheld" if seq in withheld else "is in range"
+            self.add("V10", "evidence", f"record {seq} {what} but has no ledger anchor")
 
     # -- V7 completeness ---------------------------------------------------------------
 
@@ -915,7 +988,7 @@ class _Checks:
             for event, _, _, seq in self.state.events.get(mandate_id, ()):
                 if event not in ("revoked", "expired", "suspended"):
                     continue
-                ended = self.b.records[seq - 1]
+                ended = self.record_at(seq)
                 found = [int(t) for t in ended.content.get("trips", ())]
                 if found:
                     trips[mandate_id] = min(trips.get(mandate_id, found[0]), *found)
@@ -979,7 +1052,7 @@ class _Explained:
             self.versions.update(digest for _, digest, _, _ in state.lineages.get(mandate_id, ()))
             for event, _, _, seq in state.events.get(mandate_id, ()):
                 if event == "bound":
-                    self.bound.update(str(e) for e in checks.b.records[seq - 1].content["entries"])
+                    self.bound.update(str(e) for e in checks.record_at(seq).content["entries"])
         self.prefixes = {r.record_hash[:16] for records in checks.escrow.values() for r in records}
         runtime = checks.b.runtime
         self.runtime = {(r.log, r.seq, r.record_hash) for r in runtime}
