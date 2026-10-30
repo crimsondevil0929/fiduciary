@@ -15,7 +15,7 @@ from tests.test_compiler import full
 
 def digests() -> dict[str, object]:
     mandate = Mandate.from_json(full(), signed=False)
-    compiled = compile([mandate], deployment=deploy.deployment())
+    compiled = compile([mandate], deployment=deploy.deployment(units={"mme": 8}))
     child = compile([e.mandate(), e.child()], deployment=deploy.deployment())
     return {
         "digest": compiled.digest,

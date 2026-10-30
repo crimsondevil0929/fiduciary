@@ -355,6 +355,7 @@ def build_plan(
             stated_rows=effect.stated_rows,
             effect_id=EffectId(effect.effect_id),
             after=[EffectId(a) for a in effect.after],
+            partitions=_labels(effect.partitions, arguments),
         )
     for request in binding.requests:
         compensation = None
@@ -372,8 +373,21 @@ def build_plan(
             compensation=compensation,
             effect_id=EffectId(request.request_id),
             after=[EffectId(a) for a in request.after],
+            partitions=_labels(request.partitions, arguments),
         )
     return builder.build()
+
+
+def _labels(partitions: Mapping[str, str], arguments: Mapping[str, Any]) -> dict[str, str]:
+    """The labels a step declares, from the call's arguments: text, or an
+    integer written as one."""
+    found = {}
+    for dimension, source in partitions.items():
+        value = arguments.get(source.removeprefix("$."))
+        if isinstance(value, bool) or not isinstance(value, str | int) or value == "":
+            raise PlanError(f"partition {dimension} reads {source}, which is no label")
+        found[dimension] = str(value)
+    return found
 
 
 # --------------------------------------------------------------------------

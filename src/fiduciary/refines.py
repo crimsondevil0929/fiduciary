@@ -28,9 +28,11 @@ from fiduciary.documents.mandate import (
     REDUCING,
     AmountCap,
     AutoRule,
+    Drawdown,
     Mandate,
     Recipients,
 )
+from fiduciary.sealing import opens
 
 __all__ = ["Problem", "delegation_problems", "refines"]
 
@@ -121,6 +123,7 @@ def refines(child: Mandate, parent: Mandate) -> tuple[Problem, ...]:
     _term(check, child, parent)
     _roster(check, child, parent)
     _budget(check, child, parent)
+    _budgets(check, child, parent)
     _governance(check, child, parent)
     _data(check, child, parent)
     _outbound(check, child, parent)
@@ -261,8 +264,16 @@ def _data(check: _Check, child: Mandate, parent: Mandate) -> None:
         theirs.drawdown,
         lambda d: d.identity,
         lambda d: ".".join(d.identity),
-        lambda path, c, p: check.at_most(f"{path}.max_drop", c.max_drop, p.max_drop),
+        lambda path, c, p: _drawdown(check, path, c, p),
     )
+    for dimension, rule in sorted(theirs.partitions.items()):
+        path = f"data.partitions.{dimension}"
+        kept = mine.partitions.get(dimension)
+        if kept is None:
+            check.fail(path, "is dropped, and the parent confines plans in it")
+        else:
+            check.at_most(f"{path}.max", kept.max, rule.max)
+            check.implies(f"{path}.declared", kept.declared, rule.declared)
     if theirs.stated_footprint is not None:
         found = mine.stated_footprint
         if found is None:
@@ -364,9 +375,24 @@ def _outbound(check: _Check, child: Mandate, parent: Mandate) -> None:
                     )
 
 
+def _drawdown(check: _Check, path: str, child: Drawdown, parent: Drawdown) -> None:
+    for name, mine, theirs in (
+        ("max_drop", child.max_drop, parent.max_drop),
+        ("max_rise", child.max_rise, parent.max_rise),
+    ):
+        if theirs is None:
+            continue  # the parent does not bound that way; the child may
+        if mine is None:
+            check.fail(f"{path}.{name}", "is unbounded, and the parent's is bounded")
+        else:
+            check.at_most(f"{path}.{name}", mine, theirs)
+
+
 def _cap(check: _Check, path: str, child: AmountCap, parent: AmountCap) -> None:
     if child.currency_field != parent.currency_field:
         check.fail(f"{path}.currency_field", "reads the currency elsewhere than the parent's")
+    if child.unit_field != parent.unit_field:
+        check.fail(f"{path}.unit_field", "reads the unit elsewhere than the parent's")
     mine, theirs = child.maximum, parent.maximum
     if isinstance(theirs, Mapping):
         if not isinstance(mine, Mapping):
@@ -390,11 +416,34 @@ def _recipients(check: _Check, path: str, child: Recipients, parent: Recipients)
     check.subset(f"{path}.addresses", child.addresses, parent.addresses)
     for tenant, domains in sorted(child.tenant_domains.items()):
         allowed = parent.tenant_domains.get(tenant)
-        if allowed is None:
-            check.fail(f"{path}.tenant_domains.{tenant}", "is a tenant the parent allows nothing")
+        opening = child.openings.get(tenant)
+        where = f"{path}.tenant_domains.{tenant}"
+        if opening is not None:
+            # Opened under the parent's seal: exactly the entry it sealed.
+            if parent.sealed is None or not opens(parent.sealed, tenant, domains, opening):
+                check.fail(where, "is not an entry its opening puts under the parent's seal")
+        elif allowed is None:
+            check.fail(where, "is a tenant the parent allows nothing")
         else:
-            check.subset(f"{path}.tenant_domains.{tenant}", domains, allowed)
+            check.subset(where, domains, allowed)
+    if child.sealed is not None and child.sealed != parent.sealed:
+        check.fail(f"{path}.sealed", "seals another map than the parent's")
     check.only_if(f"{path}.subdomains", child.subdomains, parent.subdomains)
+
+
+def _budgets(check: _Check, child: Mandate, parent: Mandate) -> None:
+    for unit, theirs in sorted(parent.budgets.items()):
+        path = f"budgets.{unit}"
+        mine = child.budgets.get(unit)
+        if mine is None:
+            check.fail(path, "is dropped, and the parent conserves it")
+            continue
+        if mine.places != theirs.places:
+            check.fail(f"{path}.places", "counts the unit otherwise than the parent's ledger")
+        if mine.measure != theirs.measure:
+            check.fail(f"{path}.measure", "measures the unit otherwise than the parent")
+        check.at_most(f"{path}.envelope", mine.envelope, theirs.envelope)
+        check.at_most(f"{path}.per_plan", mine.per_plan, theirs.per_plan)
 
 
 def _tools(check: _Check, child: Mandate, parent: Mandate) -> None:

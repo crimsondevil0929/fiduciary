@@ -365,6 +365,7 @@ def _parse(path: str, data: bytes, out: _Bundle) -> None:
         SinkRegistry([_sink(s) for s in raw["sinks"]])
         {str(k): str(v) for k, v in raw["directives"].items()}
         {str(k): int(v) for k, v in raw.get("depths", {}).items()}
+        {str(k): int(v) for k, v in raw.get("units", {}).items()}
         out.deployment = raw
     elif path == "keys.json":
         out.keys.update(fidu1.parse(data))
@@ -628,6 +629,7 @@ class _Checks:
             sinks=SinkRegistry([_sink(s) for s in raw["sinks"]]),
             tools={d: t for d, t in tools.items() if isinstance(t, ToolBinding)},
             directives=dict(raw["directives"]),
+            units={str(u): int(p) for u, p in raw.get("units", {}).items()},
         )
 
     def _v4_bound(

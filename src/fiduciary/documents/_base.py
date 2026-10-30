@@ -35,6 +35,8 @@ class Document:
 
     TYPE: ClassVar[str]
     FIELDS: ClassVar[tuple[str, ...]]
+    OPTIONAL: ClassVar[tuple[str, ...]] = ()
+    """Fields added after the format froze: written only when set."""
     MAX_BYTES: ClassVar[int] = fidu1.MAX_DOCUMENT
 
     signature: Signature | None
@@ -85,7 +87,7 @@ class Document:
 
         :raises MalformedError: On anything the type does not allow.
         """
-        fields = Fields.document(raw, cls.TYPE, cls.FIELDS, signed=signed)
+        fields = Fields.document(raw, cls.TYPE, cls.FIELDS, signed=signed, optional=cls.OPTIONAL)
         size = len(fidu1.canonical(raw))
         if size > cls.MAX_BYTES:
             raise MalformedError(

@@ -297,6 +297,9 @@ def export_bundle(
             ],
             "directives": dict(sorted(deployment.directives.items())),
             "depths": dict(sorted(depths.items())),
+            # Only when it keeps ledgers of other units, so other bundles keep
+            # their bytes (1.4).
+            **({"units": dict(sorted(deployment.units.items()))} if deployment.units else {}),
         }
     )
     members["keys.json"] = _json(_keys(evidence, held))
