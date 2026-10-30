@@ -104,6 +104,17 @@ FREE_FORM = ("$.input", "$.body", ".payload")
 """Subtrees whose keys are the author's: a tool's JSON Schema, a record's body,
 a request's payload. Their own rules are tested apart."""
 PAIRS = (".key",)
+OPTIONAL = (
+    "budgets",
+    "partitions",
+    "receipt_tenants",
+    "max_rise",
+    "unit_field",
+    "sealed",
+    "openings",
+)
+"""Members 1.4 adds, each written only when set: a document without one is
+the document it always was."""
 DATA_MAPS = (
     ".tables",
     ".sinks",
@@ -166,7 +177,13 @@ def mutations(document: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
         if path.startswith("$.sig"):
             continue  # a signature's own fields are checked by the signature vectors
         parent_path = path.rsplit(".", 1)[0]
-        if isinstance(parent, dict) and not free and not parent_path.endswith(DATA_MAPS):
+        optional = path.rsplit(".", 1)[-1] in OPTIONAL
+        if (
+            isinstance(parent, dict)
+            and not free
+            and not optional
+            and not parent_path.endswith(DATA_MAPS)
+        ):
             dropped = copy.deepcopy(document)
             target, last = _get_parent(dropped, path)
             del target[last]

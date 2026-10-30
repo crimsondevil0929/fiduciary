@@ -162,6 +162,34 @@
     "witness": null
   },
   {
+    "about": "a withheld record's hash rewritten: its anchor names another",
+    "charter": "0be4558b6a3ab7de77c84af5152e8f9a3655369e6ef7927d4d2b1bd334cb8354",
+    "checks": [
+      "V10"
+    ],
+    "exit_code": 8,
+    "file": "v10-withheld-rewritten.fidb",
+    "findings": [
+      "V10 evidence: the ledger anchors record 11 of log 'fiduciary' as 2b3aa20da89bd65a, but the log holds abababababababab: it was rewritten",
+      "V10 evidence: record 11 is withheld but has no ledger anchor"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v10-withheld-rewritten",
+    "sha256": "123aeb15caa3584718ccdc550c322ba0cd62fcda2038d6fd9b73f1d9125810ff",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "a plan committed on the lineage's chain after its revocation's trip",
     "charter": "332bb8597dc8a19121bb9569c257205c74e461cc03aade84ea251850dcd4cb67",
     "checks": [
@@ -767,6 +795,36 @@
     "witness": null
   },
   {
+    "about": "a withheld record dropped: the chain has a gap",
+    "charter": "0be4558b6a3ab7de77c84af5152e8f9a3655369e6ef7927d4d2b1bd334cb8354",
+    "checks": [
+      "V9",
+      "V10"
+    ],
+    "exit_code": 4,
+    "file": "v9-withheld-dropped.fidb",
+    "findings": [
+      "V9 signature: record 18: expected record 17: records are missing or out of order",
+      "V9 signature: the log holds 19 records, not 20",
+      "V10 evidence: the ledger anchors record 17 of log 'fiduciary' (entry 31), which the log does not hold: it was truncated"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v9-withheld-dropped",
+    "sha256": "e0573798c9f55a3ef1b011a6060f8f6b34a0c4ad597b4a536f715674b382b001",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "a held message released by warrant: its reset's anchor, its operator intents",
     "charter": "5be04daef7934e6f60166299128a75264a044372757a2d8edeb0992405045245",
     "checks": [],
@@ -832,6 +890,29 @@
     },
     "name": "valid-phase-4-lifecycle",
     "sha256": "0f23a82a4f327708e9cd0e784df085e5b702a9f40e8d59e189e741196943e80a",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "fidb/2: one child's lineage whole, its sibling's and its parent's sessions withheld",
+    "charter": "0be4558b6a3ab7de77c84af5152e8f9a3655369e6ef7927d4d2b1bd334cb8354",
+    "checks": [],
+    "exit_code": 0,
+    "file": "valid-sealed-child.fidb",
+    "findings": [],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "valid-sealed-child",
+    "sha256": "bf5dc225762e012dc2e1bd9dbff47350ff174c798a510a3a05de9c2bc5ac9481",
     "skew_seconds": 5,
     "witness": null
   }
