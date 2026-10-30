@@ -1,4 +1,4 @@
-# The audit bundle format (`fidb/1`)
+# The audit bundle format (`fidb/1`, and sealed: `fidb/2`)
 
 This document specifies the bytes of an audit bundle, the file that
 `fiduciary export-bundle` writes and `fiduciary verify-bundle` checks
@@ -10,9 +10,13 @@ needs nothing else, apart from the formats the bundle carries from its sources:
   `RECEIPTS_SPEC.md`);
 - ILOK1 records and escrow chains (interlock's `ESCROW_SPEC.md`).
 
-`vectors/fidu1/bundles/` holds 30 golden bundles: three valid, and the others
-each failing one or more checks. `index.json` records, for each one, what it is
-verified with and its verdict (§6).
+`vectors/fidu1/bundles/` holds 33 golden bundles: four valid (one of them
+sealed), and the others each failing one or more checks. `index.json` records,
+for each one, what it is verified with and its verdict (§6).
+
+*Amended in 1.4.0:* a **sealed** bundle (`fidb/2`, §3.4) carries one lineage's
+records whole, and of the log's other records their places and hashes only.
+Everything else in this document holds for it too.
 
 ## 1. The container
 
@@ -182,6 +186,32 @@ Each key is trusted in its own way:
   then uses the pinned ones. Where `keys.json` names a key that differs from a
   pinned one, V1 fails. A role the auditor did not pin is verified under
   `keys.json`'s key, and the report says so.
+
+### 3.4 `withheld.json` (`fidb/2` only)
+
+*Added in 1.4.0.* A sealed bundle's manifest names `"format": "fidb/2"`, and its
+`log.jsonl` holds whole only the records its lineage's decisions are taken from
+(`FIDUCIARY_SPEC.md` F9-5). `withheld.json` holds every other record of the
+log's prefix, in order, as its place and its hash:
+
+```json
+[{"hash": "<64 hex>", "seq": 3}, {"hash": "<64 hex>", "seq": 4}]
+```
+
+Each object has exactly those two members; the sequences rise, each once, and
+none is also in `log.jsonl` (else V1). Together the two members are the chain
+from record 1 to the range's last. A `withheld.json` in a `fidb/1` bundle is a
+member the format does not have (V1).
+
+The verifier holds a withheld record to two things, and to nothing else:
+
+- **V9.** It sits in the chain at its place: the next record names its hash as
+  `prev`, and no sequence is missing.
+- **V10.** The ledger anchors it, with that hash, whether or not it is in range.
+  The anchor is in `ledger/entries.jsonl`, under the signed checkpoint.
+
+Replay folds a withheld record past: the state's head moves to it, and nothing
+else changes. The report says how many records were withheld.
 
 ## 4. Verification
 

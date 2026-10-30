@@ -20,7 +20,9 @@ limit, or someone who must approve it. Only the nouns change:
 |---|---|---|---|---|---|---|
 | **What the stack measures** | orders and refunds | orders on a patient's chart | resource changes, in a mirror of the cluster | purchase-order lines, stock levels | customer records, role grants | a diff of files, read from Git |
 | **What the gateway let through, and the stack stopped** | a dispute flag whose trigger reached 4 tenants | a discontinue that stopped a whole encounter (31 rows); an order for the patient in the next bed | 6 replicas that a mutating policy made 60; a resize that replaced a database | a reorder point that exploded into 400 PO lines; a remittance note that rewrote a bank account | a filter that reached 4 customers; a role that carried admin rights | one edit that a code generator turned into 36 files; a workflow step that posted the PyPI token |
-| **Partition** | tenant | chart | environment | warehouse | customer org | repository |
+| **Partition** | tenant | chart, and its facility | environment, and its cloud account | warehouse, and each line's supplier | customer org | repository |
+| **Conserved beside dollars** | | morphine milligram equivalents | vCPUs | | | |
+| **Held for a warrant** | | every Schedule II order | every security-group change | | | |
 | **Approvers** | CFO, head of ops, security | chief pharmacist, CMIO, privacy officer | on-call SRE, service owner, security | procurement lead, AP manager, treasury | platform security, product owner, trust and safety | lead maintainer, security reviewer, release captain |
 | **Frameworks mapped** | SOC 2, OWASP agentic, EU AI Act | HIPAA, 21 CFR Part 11 | NIST 800-53, ISO 27001 | SOX IT general controls | SOC 2, ISO 27001, GDPR | SOC 2, ISO 27001, NIST 800-53 |
 | **Run it** | `fiduciary demo` | `--domain healthcare` | `--domain sre` | `--domain supply-chain` | `--domain saas` | `--domain coding-agent` |
@@ -84,13 +86,15 @@ What this does not claim:
   scenarios still replay.
 - A control-framework mapping shows which evidence supports an assessment. It is not a
   certification, and nothing here is "HIPAA compliant" or "FedRAMP ready" on its own.
-- A per-customer bundle holds none of the other customers' records, names or account
-  ids, but it is not anonymous. It names the other customers' org keys, because it
-  carries the deployment's whole log. The vendor-wide mandate maps each org key to that
-  customer's email domain, for the outbound recipient check, so a reader can work out
-  who the other customers are. Each org key is a keyed hash (HMAC-SHA-256) of the
-  account id, so the key alone gives nothing away; the domain does. A bundle cut to one
-  customer's part of the log is not built yet.
+- A per-customer bundle is sealed. It carries that customer's own records whole, and of
+  every other record in the log only its position and hash, which the ledger's anchor
+  of that record vouches for. It names no other customer's records, names, account ids,
+  org keys or email domains. What it does show is how many other records the log holds,
+  and when they were anchored. The trust that is left: the bundle cannot prove that
+  every withheld record belongs to someone else. The service says so when it signs the
+  bundle, and the completeness check still ties every ledger entry, receipt and commit
+  on the customer's own scope to a record the bundle carries. So a withheld record of
+  the customer's that acted would be caught. One that did nothing would not be.
 
 ## Architecture
 
@@ -257,9 +261,22 @@ verifying their bundles again, and plays only the rest.
   configured), a tool call consumes the attested facts its mandate's fact rules name for
   the tables it writes. A dependency bump commits only with CI's signed result for its
   exact bytes, for example; the agent cannot claim that result for itself.
+- **Budgets in any unit.** Beside model spend, a mandate can conserve a dose, a capacity
+  or a count of seats in an AgentGov ledger of that unit. Each plan holds its bound
+  before it stages and settles what it measurably consumed, and a child's envelope in
+  the unit only narrows.
+- **Partitions and guards in both directions.** A plan can be confined to one patient,
+  facility, account or supplier as well as one tenant, and a guard can bound how far a
+  column rises as well as how far it falls.
+- **Operations held for a warrant.** An operation marked `hold = true` in
+  `interlock.toml` never leaves without a warrant, whatever the breaker says. An MCP
+  server's write tool is governed this way: a plan binding whose request goes to an
+  `mcp` sink, called by the relay at most once, and dead-lettered when its outcome is
+  unknown. Its receipt says only the request was measured.
 - **Audit bundle.** A lineage exports to one file with no row data, payloads, prompts or
   secrets. `verify-bundle` checks it offline (V1 to V12) and re-evaluates every recorded
-  decision.
+  decision. A sealed bundle (`--sealed`) is one customer's: its own records whole, and of
+  every other record only the position and hash the ledger vouches for.
 - **Service and cluster** on PostgreSQL, with crash-safe recovery.
 
 `docs/FIDUCIARY_SPEC.md` is the specification, stable across 1.x. `CHANGELOG.md` lists
@@ -457,6 +474,18 @@ otherwise with the code of the first failing check:
 | 9 | revocation or time |
 
 An action signed with a key the charter declares as break-glass is still reported, and labeled `[break-glass]`.
+
+For one customer of a multi-tenant product, export the customer's lineage sealed:
+
+```
+fiduciary export-bundle --mandate <customer mandate_id> --sealed --ledger-key ledger.key --out customer.fidb
+```
+
+It carries that customer's records whole. Of every other record in the log it carries
+only its position and hash, each held to the ledger's signed anchor of it, so the log
+still checks end to end. With the vendor's mandate sealing its recipient map
+(`outbound.recipients[].sealed`) and receipts naming only the declared tenant
+(`data.receipt_tenants = "declared"`), the bundle names no other customer at all.
 
 ## Running the service
 
