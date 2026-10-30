@@ -340,6 +340,9 @@ class _Model:
         self._calls = list(calls)
         self.requests: list[dict[str, Any]] = []
 
+    def count_tokens(self, **kwargs: Any) -> Any:
+        return SimpleNamespace(input_tokens=1200)
+
     def create(self, **kwargs: Any) -> Any:
         self.requests.append(kwargs)
         usage = TokenUsage(input_tokens=1200, output_tokens=150)
@@ -407,15 +410,18 @@ def test_a_live_pack_act_stops_at_its_cost_cap(tmp_path: Path) -> None:
 
 
 def test_the_packs_live_acts_hold_to_their_budget_together(stack: Outcome, tmp_path: Path) -> None:
-    """A live act may spend one turn past its cap, so a pack runs live only
-    while its cap and one turn at its largest fit in what is left."""
+    """Each pack's cap is what is left of the budget, and its model calls never
+    pass it; a pack whose cap cannot buy one turn replays."""
     from decimal import Decimal
 
     from fiduciary.demo import extend
-    from fiduciary.demo.acts import turn_ceiling
+    from fiduciary.demo.acts import turn_floor
 
     fintech = {k: v for k, v in stack.payload.items() if k not in ("domains", "overview")}
-    budget = turn_ceiling("claude-opus-5-5") + Decimal("0.001")
+    # The stand-in answers in one turn, of $0.0078 (1,200 tokens in, 150 out);
+    # starting a turn needs the floor, $0.01312. The first pack's cap is the
+    # budget; what is left after it, $0.0122, is under the floor.
+    budget = Decimal("0.02")
     client = SimpleNamespace(messages=_Model([]))
     grown = extend(
         tmp_path / "budget",
@@ -428,5 +434,5 @@ def test_the_packs_live_acts_hold_to_their_budget_together(stack: Outcome, tmp_p
     pages = grown.payload["domains"]
     assert [p["demo"]["mode"] for p in pages] == ["live", *["reference"] * (len(PACKS) - 1)]
     spent = Decimal(pages[0]["demo"]["model"]["metered"])
-    assert Decimal("0.001") < spent <= budget
+    assert spent == Decimal("0.0078") and budget - spent < turn_floor("claude-opus-5-5")
     assert len(client.messages.requests) == 1

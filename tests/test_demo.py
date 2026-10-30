@@ -248,6 +248,51 @@ def test_the_live_act_stops_at_its_cost_cap(tmp_path: Path) -> None:
     assert model["halted"] == "max-cost" and model["turns"] == 0
 
 
+class _Counting(_Messages):
+    """The Messages API with its token counter: every request is 2,000 input
+    tokens, and each turn bills them and every output token it may write."""
+
+    def count_tokens(self, **kwargs: Any) -> Any:
+        assert "max_tokens" not in kwargs and kwargs["model"] == "claude-opus-5-5"
+        return SimpleNamespace(input_tokens=2000)
+
+    def create(self, **kwargs: Any) -> Any:
+        found = super().create(**kwargs)
+        found.usage = TokenUsage(input_tokens=2000, output_tokens=kwargs["max_tokens"])
+        return found
+
+
+def test_a_live_act_never_spends_past_its_cap(tmp_path: Path) -> None:
+    """Each turn's max_tokens is what the rest of the cap buys after its input:
+    even a model that writes every token it may stays inside the cap."""
+    looping = [("lookup_order", {"order_id": n}) for n in range(1, 9)]
+    client = SimpleNamespace(messages=_Counting(looping))
+    cap = Decimal("0.05")
+    outcome = run(
+        tmp_path / "exact", live=Live(client, "claude-opus-5-5", max_cost=cap), engine="builtin"
+    )
+    queue = _act(outcome, "queue")
+    model = queue["model"]
+    sent = [r["max_tokens"] for r in client.messages.requests]
+    # $4 and $20 per million: 2,000 input tokens cost $0.008, leaving 2,100 output tokens.
+    assert sent[0] == 2100 and model["halted"] == "max-cost"
+    usage = model["usage"]
+    billed = (usage["input_tokens"] * 4 + usage["output_tokens"] * 20) / Decimal(1_000_000)
+    assert billed <= cap
+    # What the session paid beyond the model: each priced tool the model called.
+    tools = sum(1 for c in queue["calls"] if c["tool"] == "lookup_order") * Decimal("0.001")
+    assert Decimal(queue["metered"]) == billed + tools
+
+
+def test_without_a_token_counter_the_request_size_bounds_the_turn(tmp_path: Path) -> None:
+    from fiduciary.demo.acts import FRAMING, _input_bound
+
+    client = SimpleNamespace(messages=_Messages([]))
+    live = Live(client, "claude-opus-5-5")
+    request = {"model": live.model, "system": "x" * 100, "tools": [], "messages": []}
+    assert _input_bound(live, request) > 100 + FRAMING
+
+
 # -- the command --------------------------------------------------------------------
 
 
