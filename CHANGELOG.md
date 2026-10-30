@@ -4,7 +4,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - Unreleased
+## [1.3.0] - 2026-10-30
 
 Coding agents, on Git. Nothing 1.2.0 writes or reads changes: FIDU1, the documents, the
 records, `fidb/1`, the checks V1 to V12 and every exit code are as they were.
