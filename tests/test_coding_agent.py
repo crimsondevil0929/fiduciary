@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import contextlib
 import io
-import json
 import sqlite3
 import subprocess
 from contextlib import closing
@@ -73,8 +72,12 @@ def test_the_pack_holds_on_a_git_branch(played: Outcome) -> None:
     assert demo["domain"]["tables"] == [
         *("workflows", "governance", "infra", "deps", "tests", "src", "docs", "other")
     ]
-    config = json.loads((played.root / "git-substrate.json").read_text())
-    assert config["branch"] == "refs/heads/main" and config["hooks"][0]["name"] == "codegen"
+    import tomllib
+
+    config = tomllib.loads((played.root / "interlock.toml").read_text())
+    assert config["substrate"] == "git" and config["git"]["branch"] == "main"
+    assert config["git"]["hooks"][0]["name"] == "codegen" and config["inbox"]["keys"]["inbox"]
+    assert not (played.root / "git-substrate.json").exists()
 
 
 def test_one_edit_is_one_commit_at_the_measured_head(played: Outcome) -> None:
@@ -224,3 +227,72 @@ def test_the_pack_runs_from_a_relative_directory(
     outcome = run(Path("relative") / "coding", engine="builtin", domain="coding-agent")
     assert outcome.held
     assert (tmp_path / "relative" / "coding" / f"{coding_agent.REPO}.git").is_dir()
+
+
+def test_the_deployment_opens_from_fiduciary_toml_on_git(played: Outcome) -> None:
+    """The files the pack writes are the deployment: the service they open
+    stages on the repository, and its sessions commit to the branch."""
+    from interlock.git_substrate import GitSubstrate
+
+    from fiduciary.bridge import Fiduciary
+
+    config = str(played.root / "fiduciary.toml")
+    with contextlib.redirect_stdout(io.StringIO()) as printed:
+        assert cli.main(["--config", config, "verify"]) == 0
+    assert printed.getvalue().startswith("PASS")
+    before = _show(played, "README.md")
+    head = subprocess.run(
+        ["git", "rev-parse", "main"],  # noqa: S607
+        cwd=played.root / f"{coding_agent.REPO}.git",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    fid = Fiduciary.from_config(config)
+    try:
+        mandate = played.payload["demo"]["domain"]
+        assert mandate["key"] == "coding-agent"
+        (engine,) = fid.binder.engines().values()
+        assert isinstance(engine.engine._substrate, GitSubstrate)
+        assert engine.engine._inbox is not None  # [inbox.keys], so facts verify
+        with fid.session(
+            "repo-maintainer-agent", tenant=coding_agent.REPO, trajectory="from-config"
+        ) as session:
+            result = session.call(
+                "edit_file",
+                {"path": "README.md", "old": "for Acme.", "new": "for Acme, on Git."},
+            )
+        assert result.committed, result.feedback
+    finally:
+        fid.close()
+    assert _show(played, "README.md") == before.replace("for Acme.", "for Acme, on Git.")
+    log = subprocess.run(
+        ["git", "log", "-1", "--format=%P%n%B", "main"],  # noqa: S607
+        cwd=played.root / f"{coding_agent.REPO}.git",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert log.startswith(head) and "Interlock-Stage: " in log
+
+
+def test_a_recorded_deployment_gets_its_configuration_back(tmp_path: Path) -> None:
+    from fiduciary.demo.packs.kit import restore_config
+
+    outcome = run(tmp_path / "recorded", engine="builtin", domain="coding-agent")
+    root = outcome.root
+    written = {p: (root / p).read_text() for p in ("interlock.toml", "fiduciary.toml")}
+    for name in ("interlock.toml", "fiduciary.toml"):
+        (root / name).unlink()
+    pack = PACKS["coding-agent"]
+    files = restore_config(root, pack)
+    assert files[0] == "interlock.toml" and files[-1] == "fiduciary.toml"
+    assert {p: (root / p).read_text() for p in written} == written
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert cli.main(["--config", str(root / "fiduciary.toml"), "verify"]) == 0
+    (root / "keys" / "developer.key").unlink()
+    from fiduciary.keys import generate_key
+
+    generate_key(root / "keys" / "developer.key")  # another developer's key
+    with pytest.raises(ValueError, match="is not the binding the recorded mandate pins"):
+        restore_config(root, pack)

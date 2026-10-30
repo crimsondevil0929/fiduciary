@@ -21,9 +21,12 @@ The repository came with what repositories come with:
 Each path's class is its table (``src``, ``tests``, ``docs``, ``deps``,
 ``workflows``, ``governance``, ``infra``, ``other``) and the repository is
 its partition. The mandate grants ``src``, ``tests`` and ``docs``, and
-``deps`` only with CI's word for the bytes. interlock's configuration file
-names SQLite and PostgreSQL substrates only, so this pack writes
-``git-substrate.json`` in place of ``fiduciary.toml``.
+``deps`` only with CI's word for the bytes.
+
+The deployment is configured as any other: ``interlock.toml`` names
+``substrate = "git"``, the repository, its hook and the control database,
+and the substrate the acts stage on is built from that file, as
+``fiduciary.toml``'s service builds it.
 """
 
 from __future__ import annotations
@@ -273,15 +276,11 @@ class Repository:
         }
 
     def substrate(self) -> Any:
-        assert GIT is not None
-        inner = GIT.GitSubstrate(
-            self.origin,
-            branch=BRANCH,
-            workspace=REPO,
-            hooks=self.hooks,
-            control=self.control,
-            author=("repo-maintainer-agent", "agent@acme.example"),
-        )
+        """The substrate ``interlock.toml`` configures, as the service opens it."""
+        from interlock.config import load_config
+        from interlock.wiring import open_substrate
+
+        inner = open_substrate(load_config(self.origin.parent / "interlock.toml"))
         self.current = inner
         return _Racing(inner, self)
 
@@ -351,29 +350,22 @@ def _system(root: Path, control: Path) -> tuple[Callable[[], Any], Repository]:
         ),
     )
     repository = Repository(origin, _git(origin, "rev-parse", BRANCH), hooks, control)
-    (root / "git-substrate.json").write_text(
-        json.dumps(
-            {
-                "repository": str(origin),
-                "branch": f"refs/heads/{BRANCH}",
-                "workspace": REPO,
-                "control": str(control),
-                "classes": {c.name: list(c.patterns) for c in GIT.DEFAULT_CLASSES},
-                "hooks": [
-                    {
-                        "name": h.name,
-                        "argv": list(h.argv),
-                        "when": list(h.when),
-                        "sources": list(h.sources),
-                    }
-                    for h in hooks
-                ],
-            },
-            indent=2,
-        )
-        + "\n"
-    )
     return repository.substrate, repository
+
+
+def _interlock(root: Path, control: Path) -> str:
+    """The head of ``interlock.toml``: a Git substrate over the repository,
+    its code generator, and the control database."""
+    origin = root.resolve() / f"{REPO}.git"
+    argv = json.dumps([sys.executable, "tools/codegen.py"])
+    return (
+        f'substrate = "git"\ndatabase = {json.dumps(str(control.resolve()))}\n'
+        f'[git]\nrepository = {json.dumps(str(origin))}\nbranch = "{BRANCH}"\n'
+        f'workspace = "{REPO}"\n'
+        f'author = {{ name = "repo-maintainer-agent", email = "agent@acme.example" }}\n'
+        f'[[git.hooks]]\nname = "codegen"\nargv = {argv}\nwhen = ["{SCHEMA}"]\n'
+        f'sources = ["tools/codegen.py"]\n'
+    )
 
 
 def _fingerprint(world: Any) -> str:
@@ -1113,6 +1105,7 @@ PACK: Final[Pack | None] = (
         sources=(CI_SOURCE,),
         substrate=_system,
         fingerprint=_fingerprint,
+        interlock=_interlock,
     )
     if GIT is not None
     else None

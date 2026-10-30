@@ -31,8 +31,19 @@ records, `fidb/1`, the checks V1 to V12 and every exit code are as they were.
   billing scope whose kind a `data.facts` rule names for a table the binding writes. A
   refused plan consumes none. Before, a session consumed no fact, so a `data.facts` rule
   refused every write it covers. Spec F8-2 is amended.
+- **A Git deployment configured in files.** The coding-agent pack writes `interlock.toml`
+  (`substrate = "git"`, its `[git]` repository and hook, the control database, the inbox and
+  its keys) and `fiduciary.toml`, and its acts stage on the substrate that file configures.
+  `fiduciary --config fiduciary.toml verify`, and a service opened from it, work on the
+  repository as on a database. Every pack's `fiduciary.toml` says `in_process =
+  "tool-calls-only"`, as the demo runs its sessions.
+- **The service verifies inbound facts with `interlock.toml`'s `[inbox.keys]`.** Before, a
+  service opened from files built its engines with no inbox keys, so no plan could consume
+  a fact.
 - **`scripts/stack_dashboard.py --keep`** keeps the packs a recorded run holds, after
-  verifying their bundles again, and plays only the others.
+  verifying their bundles again, and plays only the others. A kept deployment recorded
+  without its configuration files gets them back from its own keys, each tool binding
+  checked against the pin in its recorded mandate.
 - **The dashboard** says what each industry stages on (SQLite or Git), counts commits refused
   at a moved head, and draws the Git pack's race, warrant and hotfix.
 

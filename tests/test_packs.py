@@ -167,16 +167,11 @@ def test_every_audit_finds_no_planted_value_and_names_the_break_glass_act(stack:
 
 
 def test_each_pack_opens_with_the_ordinary_commands(stack: Outcome) -> None:
-    for key, pack in PACKS.items():
+    for key in PACKS:
         root = stack.root / key
-        if pack.substrate is not None:
-            # interlock's configuration names SQLite and PostgreSQL only.
-            assert not (root / "fiduciary.toml").exists()
-            assert json.loads((root / "git-substrate.json").read_text())["branch"]
-        else:
-            with contextlib.redirect_stdout(io.StringIO()) as printed:
-                assert cli.main(["--config", str(root / "fiduciary.toml"), "verify"]) == 0, key
-            assert printed.getvalue().startswith("PASS")
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            assert cli.main(["--config", str(root / "fiduciary.toml"), "verify"]) == 0, key
+        assert printed.getvalue().startswith("PASS")
         charter = (root / "charter.digest").read_text().strip()
         keys = str(root / "pinned-keys.json")
         files = [("before.fidb", 0), ("after.fidb", 7)]

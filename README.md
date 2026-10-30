@@ -52,7 +52,11 @@ measures every file that changed. A plan that passes commits with a compare-and-
    offline verifier names it.
 7. Both bundles are verified offline.
 
-It needs Interlock 1.1.0, and runs wherever that is installed.
+The pack writes the deployment's configuration as every other pack does: `interlock.toml`
+names `substrate = "git"`, the repository, its code generator and the control database, and
+`fiduciary --config <dir>/fiduciary.toml verify` and a service opened from that file stage on
+the repository. The acts themselves stage on the substrate that file configures. The pack
+needs Interlock 1.1.0.
 
 **With live models.** Interlock's [customer acceptance
 matrix](https://github.com/crimsondevil0929/interlock/blob/main/docs/CUSTOMER_ACCEPTANCE_MATRIX.md)
@@ -75,8 +79,6 @@ What this does not claim:
 - A push straight to `main` leaves no record in the stack, so the offline verifier cannot
   see it. Reconciliation, run against the repository, names it. The hotfix in scenario 6
   went through the deployment's own engine, which is why the verifier can name it.
-- `fiduciary.toml` cannot name a Git substrate yet, so the coding-agent pack writes
-  `git-substrate.json` instead, and the configured commands do not open that deployment.
 - Without `--live`, the five domain packs replay a fixed sequence of calls. With it, a
   Claude model works each pack's second scenario, the hidden cascade, and the other
   scenarios still replay.

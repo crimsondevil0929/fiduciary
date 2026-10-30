@@ -14,7 +14,9 @@ all of them, with ``demo.json`` and ``report.md``, in the run's directory.
 
 With ``--keep``, a pack the run already holds is kept as recorded, its live
 transcript included: its bundles are verified again the same way, and only
-the packs it does not hold are played.
+the packs it does not hold are played. A kept deployment recorded without
+its configuration files gets them back from its own keys
+(:func:`~fiduciary.demo.packs.kit.restore_config`).
 
 With ``--live``, a Claude model works each pack's signature act (act 2), as
 ``fiduciary demo --live`` does: ``BENCHMARK_API_KEY`` from the environment or
@@ -36,6 +38,7 @@ from fiduciary.attest import attest
 from fiduciary.bundle import TrustedKeys, verify_bundle
 from fiduciary.demo import extend
 from fiduciary.demo.packs import PACKS
+from fiduciary.demo.packs.kit import restore_config
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -63,6 +66,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     kept: dict[str, dict[str, Any]] = {}
     for key in taken:
+        if not (root / key / "fiduciary.toml").exists():
+            try:
+                written = restore_config(root / key, PACKS[key])
+            except ValueError as exc:
+                print(f"{key}: {exc}", file=sys.stderr)
+                return 1
+            (root / key / "git-substrate.json").unlink(missing_ok=True)
+            print(f"{key}: wrote {', '.join(written)} from the deployment's own keys")
         sub: dict[str, Any] = json.loads((root / key / "demo.json").read_text())
         sub = {k: v for k, v in sub.items() if k not in ("domains", "overview")}
         if not reverified(root / key, sub, key):
