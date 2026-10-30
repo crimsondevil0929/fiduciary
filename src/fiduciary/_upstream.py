@@ -7,6 +7,7 @@ it is present, and holds to the fallback §12 states where it is not.
 
 from __future__ import annotations
 
+import importlib.util
 import inspect
 from typing import Final
 
@@ -16,7 +17,14 @@ from interlock.extension import BudgetGuard
 from interlock.operators import Operator
 from interlock.recovery import RecoveryRuntime
 
-__all__ = ["EXPECTED_HEADS", "ILOK1_DIGESTS", "QUOTES_ADOPTED", "RECOVERY_REOPENS", "RESET_MEMO"]
+__all__ = [
+    "EXPECTED_HEADS",
+    "GIT_SUBSTRATE",
+    "ILOK1_DIGESTS",
+    "QUOTES_ADOPTED",
+    "RECOVERY_REOPENS",
+    "RESET_MEMO",
+]
 
 ILOK1_DIGESTS: Final = hasattr(records, "SIGNATURE_VERSIONS")
 """U-2: an ILOK1 record may be signed at signature version 2, a digest, so a
@@ -36,3 +44,7 @@ RESET_MEMO: Final = "memo" in inspect.signature(BudgetManager.reset).parameters
 RECOVERY_REOPENS: Final = "reopen" in inspect.signature(RecoveryRuntime).parameters
 """U-6: a recovery that was closed opens again on a fresh reserve, so a
 lineage recovers each time it halts, not once."""
+
+GIT_SUBSTRATE: Final = importlib.util.find_spec("interlock.git_substrate") is not None
+"""interlock 1.1.0: a Git branch as a transactional substrate. The demo's
+coding-agent pack runs on it, and is left out where it is absent."""

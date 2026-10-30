@@ -1,8 +1,9 @@
 """Domain packs: the same engine, run with each industry's nouns.
 
 Each pack (:mod:`.healthcare`, :mod:`.sre`, :mod:`.supply_chain`,
-:mod:`.saas`) stands up a deployment of its own and plays its acts on the
-real stack: its own schema and triggers, mandate, tool bindings, rate windows,
+:mod:`.saas`, :mod:`.coding_agent`) stands up a deployment of its own and
+plays its acts on the real stack: its own schema and triggers (or, for coding
+agents, a Git repository and its hooks), mandate, tool bindings, rate windows,
 quorum and break-glass key, and the offline verifier at the end. Every figure
 is measured as the acts run. Nothing is written in ahead.
 
@@ -23,14 +24,18 @@ from typing import Any, Final
 from fiduciary import __version__, report
 from fiduciary.attest import attest
 from fiduciary.demo.acts import Live
-from fiduciary.demo.packs import healthcare, saas, sre, supply_chain
+from fiduciary.demo.packs import coding_agent, healthcare, saas, sre, supply_chain
 from fiduciary.demo.packs.kit import Pack, PackGateway, PackRun, build, pinned
 
 __all__ = ["PACKS", "run"]
 
 PACKS: Final[dict[str, Pack]] = {
-    p.key: p for p in (healthcare.PACK, sre.PACK, supply_chain.PACK, saas.PACK) if p
+    p.key: p
+    for p in (healthcare.PACK, sre.PACK, supply_chain.PACK, saas.PACK, coding_agent.PACK)
+    if p
 }
+"""Every pack the installed packages can run: the coding-agent pack needs
+interlock's Git substrate (interlock 1.1.0)."""
 
 
 def run(

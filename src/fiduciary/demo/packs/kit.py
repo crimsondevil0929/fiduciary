@@ -40,13 +40,14 @@ from agentgov.receipts import ReceiptLog
 from agentgov.receipts.signing import Signer, verifier_of
 from interlock.deliveries import operations
 from interlock.engine import StageResult
+from interlock.inbox import InboundSource
 from interlock.operators import OPERATOR_LOG as OPERATOR_SCOPE
 from interlock.operators import Operator, OperatorLog
 from interlock.outbound import SinkRegistry, SinkSpec
 from interlock.records import Keyring, RecordLog
 from interlock.relay import DELIVERED, Delivery, DeliveryResult, LedgerBreaker, Relay
 from interlock.sqlite_outbox import OPERATOR, RELAY, SqliteOutboxStore, install_sqlite_outbox
-from interlock.substrate import SqliteSubstrate, TableSpec
+from interlock.substrate import ShadowSubstrate, SqliteSubstrate, TableSpec
 
 from fiduciary import _upstream, fidu1
 from fiduciary.authority import Authority
@@ -151,6 +152,15 @@ class Pack:
     """What a live model is told it is, when it works the pack's signature act."""
     quorums: Mapping[str, int] = field(default_factory=lambda: dict(QUORUMS))
     delegation: Mapping[str, Any] | None = None
+    sources: tuple[InboundSource, ...] = ()
+    """The inbox's sources: vendors whose signed webhooks become facts."""
+    substrate: Callable[[Path, Path], tuple[Callable[[], ShadowSubstrate], Any]] | None = None
+    """What the stage runs on, when not the back office's own tables: given the
+    deployment's root and its control database, a factory and what the acts
+    need to reach the system behind it. SQLite over ``tables`` by default."""
+    fingerprint: Callable[[PackWorld], str] | None = None
+    """A digest of the system's state, to show a refused call changed nothing;
+    the observed tables' rows by default."""
 
 
 # --------------------------------------------------------------------------
@@ -316,6 +326,8 @@ def per_session(name: str, maximum: int) -> Condition:
 class PackWorld(World):
     pack: Pack | None = None
     children: dict[str, Mandate] = field(default_factory=dict)
+    system: Any = None
+    """What a pack's own substrate set up for its acts (:attr:`Pack.substrate`)."""
 
     @property
     def spec(self) -> Pack:
@@ -323,6 +335,8 @@ class PackWorld(World):
         return self.pack
 
     def fingerprint(self) -> str:
+        if self.spec.fingerprint is not None:
+            return self.spec.fingerprint(self)
         digest = hashlib.sha256()
         for table in self.spec.tables:
             rows = self.fetch(f"SELECT * FROM {table.name} ORDER BY id")  # noqa: S608 - our names
@@ -514,6 +528,8 @@ def child_json(
 def _write_config(world: PackWorld) -> None:
     """``fiduciary.toml`` and ``interlock.toml``, as the fintech demo writes them."""
     root, pack = world.root, world.spec
+    if pack.substrate is not None:
+        return  # interlock's configuration names SQLite and PostgreSQL substrates only
     tools = []
     for binding in world.tools.values():
         path = root / "tools" / f"{binding.name}.tool.json"
@@ -552,6 +568,10 @@ def _write_config(world: PackWorld) -> None:
     )
 
 
+def world_key(signers: Mapping[str, Signer], name: str) -> str:
+    return str(signers[name].public_key().key_id)
+
+
 def build(root: Path, pack: Pack) -> PackWorld:
     """Stand ``pack``'s deployment up under ``root``, which must be empty or absent."""
     root.mkdir(parents=True, exist_ok=True)
@@ -566,6 +586,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
         pack.operator,
         "relay-a",
         "relay-b",
+        *(("inbox",) if pack.sources else ()),
     )
     signers: dict[str, Signer] = {name: _key(root, name) for name in names}
     closers: list[Callable[[], None]] = []
@@ -575,10 +596,16 @@ def build(root: Path, pack: Pack) -> PackWorld:
         conn.executescript(pack.schema)
         pack.seed(conn)
         conn.commit()
-    install_sqlite_outbox(back_office, pack.sinks, ())
+    install_sqlite_outbox(back_office, pack.sinks, pack.sources)
     specs = [
         TableSpec(t.name, columns=list(t.columns), tenant_column=t.tenant) for t in pack.tables
     ]
+    system: Any = None
+    substrate: Callable[[], ShadowSubstrate]
+    if pack.substrate is not None:
+        substrate, system = pack.substrate(root, back_office)
+    else:
+        substrate = lambda: SqliteSubstrate(str(back_office), tables=specs)  # noqa: E731
 
     governor = BudgetManager.open_sqlite(str(root / "ledger.db"))
     closers.append(governor.close)
@@ -628,9 +655,12 @@ def build(root: Path, pack: Pack) -> PackWorld:
         authority,
         governor,
         deployment=deployment,
-        substrate=lambda: SqliteSubstrate(str(back_office), tables=specs),
+        substrate=substrate,
         chains=root / "chains",
         receipts=receipts,
+        inbox=Keyring({world_key(signers, "inbox"): signers["inbox"].public_key()})
+        if pack.sources
+        else None,
     )
     closers.append(binder.close)
     service = signers["service"].public_key()
@@ -674,6 +704,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
         webhook_secret="",
         closers=closers,
         pack=pack,
+        system=system,
     )
     try:
         authority.propose(charter)

@@ -156,6 +156,12 @@ def _text(column: str, value: Any) -> Any:
     return value
 
 
+def _order(key: str) -> tuple[int, int, str]:
+    """A row's place in the view: numeric keys by number, before any other key
+    (a file's path, on Git) by text."""
+    return (0, int(key), "") if key.isdigit() else (1, 0, key)
+
+
 def measured(result: StageResult) -> dict[str, Any]:
     """The operator's view of one adjudicated plan: each row once (its first
     before image and its last after image), its tenants, the money it moved,
@@ -180,7 +186,9 @@ def measured(result: StageResult) -> dict[str, Any]:
         Decimal(0),
     )
     changed = []
-    for (table, pk), (b, a, tenant) in sorted(rows.items(), key=lambda i: (i[0][0], int(i[0][1]))):
+    for (table, pk), (b, a, tenant) in sorted(
+        rows.items(), key=lambda i: (i[0][0], _order(i[0][1]))
+    ):
         columns = sorted(set(b or {}) | set(a or {}))
         moved = {
             c: [_text(c, (b or {}).get(c)), _text(c, (a or {}).get(c))]

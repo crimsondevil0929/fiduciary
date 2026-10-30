@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -105,6 +105,7 @@ def extend(
     say: Callable[[str], None] = lambda _: None,
     live: Live | None = None,
     budget: Decimal | None = None,
+    kept: Mapping[str, dict[str, Any]] | None = None,
 ) -> Outcome:
     """Every domain pack, each in its own new subdirectory of ``root``, beside
     the fintech run whose console payload is ``page``; and the one dashboard
@@ -114,10 +115,16 @@ def extend(
     ``live.max_cost``; and with ``budget``, the packs' live acts together
     spend at most that. A live act stops between turns once it reaches its
     cap, so it may spend one turn past it: a pack whose cap and one turn at
-    its largest would take the total past ``budget`` replays instead."""
+    its largest would take the total past ``budget`` replays instead.
+
+    ``kept`` holds packs already played into ``root``, by key: each is taken
+    as it is, its subdirectory untouched, and only the others are played."""
     played = {"fintech": {k: v for k, v in page.items() if k not in ("domains", "overview")}}
     spent = Decimal(0)
     for key in packs.PACKS:
+        if kept is not None and key in kept:
+            played[key] = kept[key]
+            continue
         say("")
         say(f"{packs.PACKS[key].industry}: a deployment in {root / key}")
         worked = live

@@ -604,21 +604,106 @@
     var a = A(), mandate = mandateOf(a);
     var parts = Object.keys(m.tenants);
     var kids = [];
-    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " row(s), " + m.outbound.length + " outbound request(s) queued"));
-    else kids.push(h("div", { class: "outcome good" }, icon("shield"), "ROLLED BACK · nothing written" + (c.unchanged ? " · database unchanged" : "")));
+    var git = PACK.nouns.substrate === "Git", rowsName = PACK.nouns.rows || "rows", tablesName = PACK.nouns.tables || "tables";
+    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " " + (git ? "file(s)" : "row(s)") + ", " + m.outbound.length + " outbound request(s) queued"));
+    else kids.push(h("div", { class: "outcome good" }, icon("shield"), "ROLLED BACK · nothing written" + (c.unchanged ? (git ? " · every branch unchanged" : " · database unchanged") : "")));
     kids.push(h("div", { class: "mini-stats" },
-      h("div", { class: "mini" }, h("b", { class: "tnum" }, num(m.rows)), h("span", null, "rows the plan changed")),
-      h("div", { class: "mini" }, h("b", { class: "tnum" }, String(Object.keys(m.tables).length)), h("span", null, "tables reached")),
+      h("div", { class: "mini" }, h("b", { class: "tnum" }, num(m.rows)), h("span", null, rowsName + " the plan changed")),
+      h("div", { class: "mini" }, h("b", { class: "tnum" }, String(Object.keys(m.tables).length)), h("span", null, tablesName + " reached")),
       h("div", { class: "mini" }, h("b", { class: "tnum" }, String(parts.length)), h("span", null, PACK.partition + (parts.length === 1 ? "" : "s") + " reached"))));
-    kids.push(h("p", { class: "small ink2" }, "By table: " + Object.keys(m.tables).map(function (k) { return k + " " + m.tables[k]; }).join(" · ")));
+    kids.push(h("p", { class: "small ink2" }, (git ? "By path class: " : "By table: ") + Object.keys(m.tables).map(function (k) { return k + " " + m.tables[k]; }).join(" · ")));
     if (parts.length > 1) kids.push(tenantBar(m, mandate.max_rows, PACK.partition));
     kids.push(findingList(m.findings.filter(function (f) { return !m.committed || f.severity !== "advisory"; })));
     if (m.changed.length) {
-      kids.push(h("details", null, h("summary", null, "Rows measured in the transaction (" + (m.changed.length < m.rows ? "first " + m.changed.length + " of " + m.rows : m.rows) + ")"),
-        table(["Table", "Row", PACK.partition, "Change"], m.changed.slice(0, 12).map(function (r) { return [h("span", { class: "mono" }, r.table), String(r.id), h("span", { class: "mono small" }, r.tenant || "—"), h("span", { class: "small" }, changesText(r.changes))]; }))));
+      kids.push(h("details", null, h("summary", null, (git ? "Files measured in the stage's worktree (" : "Rows measured in the transaction (") + (m.changed.length < m.rows ? "first " + m.changed.length + " of " + m.rows : m.rows) + ")"),
+        table(git ? ["Path class", "Path", PACK.partition, "Change"] : ["Table", "Row", PACK.partition, "Change"], m.changed.slice(0, 12).map(function (r) { return [h("span", { class: "mono" }, r.table), git ? h("span", { class: "mono small" }, r.id) : String(r.id), h("span", { class: "mono small" }, r.tenant || "—"), h("span", { class: "small" }, changesText(r.changes))]; }))));
     }
-    kids.push(h("p", { class: "small muted", style: "margin-top:8px" }, m.checkers + " checks evaluated · " + m.captured + " row images captured · plan " + m.plan));
+    kids.push(h("p", { class: "small muted", style: "margin-top:8px" }, m.checkers + " checks evaluated · " + m.captured + (git ? " file images measured" : " row images captured") + " · plan " + m.plan));
     return h("div", null, kids);
+  }
+  function gitLine(g) {
+    if (!g || !g.after) return null;
+    var moved = g.before && g.before !== g.after;
+    return h("div", { class: "callrow" }, h("div", { class: "line" }, pill("MAIN", moved ? "good" : "permit"), hash(g.before || g.measured_at || g.reviewed, 10), h("span", { class: "small muted" }, "→"), hash(g.after, 10)),
+      g.trailer && moved ? h("div", { class: "small ink2", style: "margin-top:4px" }, "One commit, moved onto main by a compare-and-swap from the head the stage measured. Its trailer: ", h("code", null, g.trailer)) : null);
+  }
+  function chainList(records) {
+    return h("ul", { class: "findings" }, records.filter(function (r) { return r.type !== "plan_admitted" && r.type !== "stage_opened"; }).map(function (r) {
+      return h("li", null, h("span", { class: "sev " + (r.type === "committed" ? "advisory" : r.type === "aborted" ? "blocking" : "advisory") }, r.type.replace("_", " ")), h("span", { class: "small" }, r.note));
+    }));
+  }
+  function reconcileBlock(r, lede) {
+    return h("div", { class: "callrow" }, h("div", { class: "line" }, pill("RECONCILIATION", r.clean ? "good" : "warn"), h("span", { class: "small muted" }, r.commits + " commit(s) on main since " + short(r.since, 10) + ", " + r.stages + " from stages")),
+      h("p", { class: "small ink2", style: "margin-top:4px" }, lede),
+      r.unmediated.length ? h("ul", { class: "findings" }, r.unmediated.map(function (w) {
+        return h("li", null, h("span", { class: "sev blocking" }, "unmediated " + w.what), h("span", { class: "small" }, h("code", null, short(w.commit, 10)), " by " + (w.by || "unknown") + ", " + w.at + ": no stage made it"));
+      })) : h("p", { class: "small" }, "Every commit carries a stage the chain records as committed."));
+  }
+  function actRace(x) {
+    var c = x.calls[0], g = x.git;
+    return [h("div", { class: "split" },
+      gatewaySide([callRow(c)]),
+      stackSide([
+        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("STAGE", "info"), h("span", { class: "small" }, "measured at "), hash(g.measured_at, 10)),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "The plan passed every check: the commit is the last step.")),
+        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("PUSH", "warn"), h("span", { class: "small" }, "a teammate's commit, straight to main: "), hash(g.pushed, 10))),
+        h("div", { class: "outcome good" }, icon("shield"), "COMMIT REFUSED · main stayed at " + short(g.after, 10) + (g.landed ? "" : " · the agent's change is not on it")),
+        h("p", { class: "small ink2" }, "The commit is git update-ref main <new> <measured head>: it moves main only if main is still where the stage measured it. It was not, so nothing moved. The escrow chain records why:"),
+        chainList(x.chain),
+        reconcileBlock(x.reconcile, "Reconciliation reads main's history: every commit must carry a stage trailer the chain records as committed.")])),
+      verdictLine("1 of 1 permitted", "nothing committed onto a head the stage did not measure; the push around it is named")];
+  }
+  function actGitWarrant(x) {
+    var calls = x.calls, early = calls[0], asked = calls[1], found = calls[2], t = x.ticket;
+    var inWarrant = {}, seen = {};
+    x.votes.forEach(function (v) { if (x.warrant.basis.indexOf(v.approval) >= 0) inWarrant[v.principal] = true; });
+    var votes = x.votes.map(function (v) {
+      var first = v.counted && !seen[v.principal];
+      if (v.counted) seen[v.principal] = true;
+      var mark = v.counted ? (first ? ["check", "var(--good-ink)"] : ["check", "var(--muted)"]) : ["x", "var(--critical-ink)"];
+      return h("div", { class: "vote" }, h("span", { style: "color:" + mark[1] }, icon(mark[0])),
+        h("span", null, h("b", null, v.principal), " ", h("span", { class: "ink2" }, v.note), h("div", { class: "small muted" }, "approval ", hash(v.approval, 12), " → " + v.recorded.join(", "))),
+        first && inWarrant[v.principal] ? pill("IN THE WARRANT", "good") : first ? pill("COUNTED", "good") : v.counted ? pill("DUPLICATE", "permit") : pill("REFUSED", "bad"));
+    });
+    var need = t.options.filter(function (o) { return o.action === "accept_repair"; })[0].quorum;
+    var hooks = x.ci.webhooks.map(function (w) { return h("li", null, h("span", { class: "sev " + (w.status < 300 ? "advisory" : "blocking") }, String(w.status)), h("span", { class: "small" }, w.path + (w.status < 300 ? ": signed by CI, attested by the inbox" : ": a forged copy, refused: no signature verifies"))); });
+    var landed = x.committed[0];
+    return [h("div", { class: "split" },
+      gatewaySide(calls.map(function (c) { return callRow(c); })),
+      stackSide([
+        h("div", { class: "callrow" }, h("div", { class: "line" }, h("span", { class: "tool" }, early.tool), h("span", { class: "small muted" }, "before CI has run")), packMeasured(early)),
+        h("div", { class: "callrow" }, h("div", { class: "line" }, h("span", { class: "tool" }, asked.tool), pill("CI", "info"), h("span", { class: "small muted" }, x.ci.runs.map(function (r) { return r.run_id + " on " + short(r.head, 10); }).join(", "))),
+          h("ul", { class: "findings" }, hooks),
+          h("p", { class: "small ink2", style: "margin-top:4px" }, x.ci.facts + " facts pending for the agent's scope, each naming a file and the blob id CI tested.")),
+        h("div", { class: "callrow" }, h("div", { class: "line" }, h("span", { class: "tool" }, found.tool), h("span", { class: "small muted" }, "with CI's results")), packMeasured(found)),
+        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("TICKET", "info"), h("b", null, t["class"]), h("span", { class: "small muted" }, "refused by " + t.blocked_by.join(", ") + "; the part that passes keeps " + t.kept.join(", ") + " and drops " + t.dropped.join(", "))),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "Options: " + t.options.map(function (o) { return o.action + " (quorum " + o.quorum + ")"; }).join(" · "))),
+        h("h4", { style: "margin:10px 0 0;font-size:13px" }, "Approvals in arrival order (quorum: " + need + " of 3)"),
+        h("div", { class: "meter" }, [0, 1, 2].map(function (i) { return h("i", { class: i < x.warrant.basis.length ? "on" : "" }); })), votes,
+        h("div", { class: "callrow", style: "margin-top:10px" },
+          h("div", { class: "line" }, pill("WARRANT", "good"), hash(x.warrant.digest, 16), h("span", { class: "small muted" }, "formed " + x.warrant.formed_at)),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "Executed: " + x.executed.join(" → ") + ". The plan names the head the maintainers reviewed (" + short(x.git.pinned, 10) + "), and commits only there: main was at " + short(x.git.reviewed, 10) + ", and moved to " + short(x.git.after, 10) + "."),
+          landed ? h("div", { class: "small", style: "margin-top:4px" }, pill(landed.committed ? "COMMITTED" : "REFUSED", landed.committed ? "good" : "bad"), " " + landed.rows + " file(s): " + landed.changed.map(function (r) { return r.id; }).join(", ")) : null)])),
+      verdictLine("3 of 3 permitted", "no dependency bytes commit without CI's signed word for them; the bump commits on 2 of 3 maintainers at the reviewed head; the workflow edit never does")];
+  }
+  function actHotfix(x) {
+    var after = P.attestations.after || A();
+    var v7 = after.checks[6];
+    var m = x.measured;
+    return [h("div", { class: "split" },
+      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What the input gateway saw"),
+        h("div", { class: "empty-gw" }, h("b", null, "Nothing."), "No agent call was made. The administrator used the deployment's own credentials.")),
+      stackSide([
+        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("PLAN", "bad"), h("span", { class: "mono small" }, x.plan), pill(x.holder, "warn")),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "“" + x.intent + "”: measured and checked like every plan" + (m && m.committed ? ", and committed (" + m.rows + " file)." : "."))),
+        gitLine(x.git),
+        reconcileBlock(x.reconcile, "To Git and to reconciliation the hotfix is an ordinary commit: it carries a stage trailer, and the chain records that stage as committed. What reconciliation names is the push of act 4."),
+        h("h4", { style: "margin:10px 0 6px;font-size:13px" }, "V7 findings in the audited bundle"),
+        v7.findings.length ? h("ul", { class: "findings" }, v7.findings.map(function (f) {
+          return h("li", null, h("span", { class: "sev blocking" }, f.label || kindLabel(f.kind)), h("span", null, f.message));
+        })) : h("p", { class: "small" }, "No finding."),
+        h("p", { class: "small muted", style: "margin-top:10px" }, "Named after the fact, from the escrow chain: every plan on a lineage's chain must be a session's call to a tool the mandate pins. The bundle exported before the hotfix verifies; the one exported after it fails with exit code 7.")])),
+      verdictLine("not involved", "the commit is ordinary to Git; the offline verifier names the plan no tool call explains")];
   }
   function noteBlock(text) {
     return h("div", { class: "callrow note" }, h("div", { class: "line" }, pill("INSTRUCTION IN THE INPUT", "warn")), h("pre", null, text));
@@ -661,7 +746,7 @@
     var names = Object.keys(by);
     return [h("div", { class: "split" },
       gatewaySide([x.note ? noteBlock(x.note) : null, x.mode === "live" && x.model ? liveBlock(x) : null, calls.map(function (c) { return callRow(c); })]),
-      stackSide(right)),
+      stackSide(x.git ? right.concat([gitLine(x.git)]) : right)),
       verdictLine(permitted + " of " + calls.length + " permitted", committed + " committed, " + refused + " rolled back" + (names.length ? " by " + names.join(", ") : ""))];
   }
   function heldCall(x) {
@@ -741,8 +826,8 @@
         labels || domains ? h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others" + (labels ? ": their org keys, in session records and receipts, because the bundle carries the deployment's whole log" : "") + (domains ? "; and each org key's email domain, in the mandate documents only (" + Object.keys(where).join(", ") + "): the vendor-wide mandate maps every org key to its allowed recipient domain, and every customer's mandate is derived from it" : "") + ". So the bundles are not anonymous: a customer can tell how many other customers this agent worked for, and from the domains, who they are. The org key alone gives nothing away; the domain map does. A bundle cut to one customer's part of the log is not built yet: it needs a bundle format that proves a subset of the log.") : null])),
       verdictLine("not available", x.customers.length + " customer bundles, each verified on its own; 0 records, names or account ids of any other customer")];
   }
-  var PACK_SHORT = { queue: "Everyday action", cascade: "Hidden cascade", replace: "Forced replacement", drawdown: "Stock drawdown", injected: "Injected instruction", grant: "Admin rights", fleet: "Sub-agent fan-out", quorum: "2-of-3 warrant", amend: "Amend ticket", "break-glass": "Break-glass", "trust-center": "Trust center", audit: "Offline audit" };
-  var PACK_ACTS = { quorum: packQuorum, amend: actAmend, "break-glass": packBreakGlass, audit: packAudit, "trust-center": actTrust };
+  var PACK_SHORT = { queue: "Everyday action", cascade: "Hidden cascade", replace: "Forced replacement", drawdown: "Stock drawdown", injected: "Injected instruction", grant: "Admin rights", fleet: "Sub-agent fan-out", quorum: "2-of-3 warrant", amend: "Amend ticket", "break-glass": "Break-glass", "trust-center": "Trust center", race: "Concurrent push", warrant: "CI + 2-of-3", hotfix: "Break-glass push", audit: "Offline audit" };
+  var PACK_ACTS = { quorum: packQuorum, amend: actAmend, "break-glass": packBreakGlass, audit: packAudit, "trust-center": actTrust, race: actRace, warrant: actGitWarrant, hotfix: actHotfix };
   function packTheatre() {
     var tabs = h("div", { class: "tabs", role: "tablist" });
     var body = h("div");
@@ -759,7 +844,7 @@
     });
     return h("section", { id: "theatre" }, h("div", { class: "wrap" },
       h("div", { class: "sec-head" }, h("span", { class: "kicker" }, PACK.industry + " · demo scenarios"), h("h2", null, PACK.title),
-        h("p", null, "The same engine as every other industry here, on this one's own schema, triggers, mandate and approvers: " + PACK.principals.join(", ") + ". Each call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + (DEMO.mode === "live" && DEMO.model ? "Act 2 was worked by " + DEMO.model.served + ", live; the other acts replay a fixed sequence, with no model." : "The calls are a fixed sequence, with no model; pass --live to have a model work act 2.") + " All figures were measured during the run (" + DEMO.seconds + " s).")),
+        h("p", null, "The same engine as every other industry here, on this one's own " + (PACK.nouns.substrate === "Git" ? "Git repository, hooks" : "schema, triggers") + ", mandate and approvers: " + PACK.principals.join(", ") + ". Each call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + (DEMO.mode === "live" && DEMO.model ? "Act 2 was worked by " + DEMO.model.served + ", live; the other acts replay a fixed sequence, with no model." : "The calls are a fixed sequence, with no model; pass --live to have a model work act 2.") + " All figures were measured during the run (" + DEMO.seconds + " s).")),
       tabs, body));
   }
 
@@ -780,6 +865,7 @@
     var v = e[key];
     if (key === "warrant") return h("td", null, v.length ? v.map(function (w) { return pill(w.action + " · " + w.approvals + " of 3", "good"); }) : "—");
     if (key === "break-glass") return h("td", null, v ? pill("NAMED", "good") : "—");
+    if (key === "stale_head" && row.substrate !== "Git") return h("td", { class: "muted" }, "n/a");
     if (key === "offline") return h("td", null, v ? pill("VERIFIED", "good") : pill("NO", "bad"));
     return h("td", { class: "num" }, v ? h("b", null, String(v)) : h("span", { class: "muted" }, "0"));
   }
@@ -798,7 +884,7 @@
       var n = r.nouns || {};
       var open = r.ran && PAGES.length > 1 ? h("button", { class: "btn noprint", onclick: function () { openPage(r.key); } }, "Open") : null;
       return h("div", { class: "card ind" + (r.ran ? "" : " off") },
-        h("div", { class: "ind-head" }, h("b", null, r.industry), h("span", { class: "rung", title: "measurement class" }, r["class"]), h("span", { class: "spacer" }), status),
+        h("div", { class: "ind-head" }, h("b", null, r.industry), h("span", { class: "rung", title: "measurement class" }, r["class"]), r.substrate ? h("span", { class: "chip static", title: "what the stage runs on" }, r.substrate) : null, h("span", { class: "spacer" }), status),
         h("div", { class: "small ink2" }, r.title),
         h("dl", { class: "nouns" },
           h("dt", null, "Measures"), h("dd", null, n.measure || "—"),
@@ -834,8 +920,8 @@
       h("p", { class: "small" }, "Live Claude models (" + acc.models.join(", ") + ") in front of " + acc.domains.length + " unrelated domains on one interlock kernel: " + acc.domains.join("; ") + ". " + acc.plans.proposed + " plans proposed: " + acc.plans.committed + " committed, " + acc.plans.refused + " refused by a checker. $" + acc.metered_usd + " of model spend, metered by AgentGov."),
       h("p", { class: "small muted" }, acc.note + " Source: " + acc.source + ", generated " + acc.generated + " on interlock " + acc.interlock + "."));
     return h("section", { id: "overview" }, h("div", { class: "wrap" },
-      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Same engine, different nouns"), h("h2", null, "One consequence-control engine, six industries"),
-        h("p", null, "Every industry below runs the same loop: stage the agent's change, measure what it actually did, check it, hold exceptions for a quorum, commit once, and prove it offline. Only the tables, the limits and the approvers change. Fintech is where we started, not what the engine is.")),
+      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Same engine, different nouns"), h("h2", null, "One consequence-control engine, six industries, on SQL and on Git"),
+        h("p", null, "Every industry below runs the same loop: stage the agent's change, measure what it actually did, check it, hold exceptions for a quorum, commit once, and prove it offline. Only the tables, the limits and the approvers change. Five industries stage in a SQL transaction; coding agents stage in a Git worktree and commit with a compare-and-swap of the branch. Fintech is where we started, not what the engine is.")),
       h("div", { class: "kpis ov" }, tiles.map(function (t) { return h("div", { class: "card kpi" }, h("div", { class: "label" }, t[0]), h("div", { class: "value tnum" }, t[1]), h("div", { class: "note" }, t[2]), h("span", { class: "layer-tag" }, t[3])); })),
       h("div", { class: "inds" }, cards),
       h("h3", { class: "ov-h" }, "What refused what, in this run"),
