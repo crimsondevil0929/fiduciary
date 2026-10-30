@@ -33,6 +33,7 @@ next one needs it:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -156,6 +157,12 @@ def _text(column: str, value: Any) -> Any:
     return value
 
 
+def _order(key: str) -> tuple[int, int, str]:
+    """A row's place in the view: numeric keys by number, before any other key
+    (a file's path, on Git) by text."""
+    return (0, int(key), "") if key.isdigit() else (1, 0, key)
+
+
 def measured(result: StageResult) -> dict[str, Any]:
     """The operator's view of one adjudicated plan: each row once (its first
     before image and its last after image), its tenants, the money it moved,
@@ -180,7 +187,9 @@ def measured(result: StageResult) -> dict[str, Any]:
         Decimal(0),
     )
     changed = []
-    for (table, pk), (b, a, tenant) in sorted(rows.items(), key=lambda i: (i[0][0], int(i[0][1]))):
+    for (table, pk), (b, a, tenant) in sorted(
+        rows.items(), key=lambda i: (i[0][0], _order(i[0][1]))
+    ):
         columns = sorted(set(b or {}) | set(a or {}))
         moved = {
             c: [_text(c, (b or {}).get(c)), _text(c, (a or {}).get(c))]
@@ -270,18 +279,58 @@ def _act(run: Run, n: int, key: str, lede: str, **body: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-TURN_INPUT: Final = 16_000
 """The most input tokens one live turn is costed at, for a budget: every act's
 tools, prompts and transcript fit well inside it."""
 
 
-def turn_ceiling(model: str) -> Decimal:
-    """The most one live turn of ``model`` can cost: :data:`TURN_INPUT` input
-    tokens, and every output token the request allows."""
+MIN_OUTPUT: Final = 256
+"""The fewest output tokens a live turn is worth starting with: a turn the
+rest of its act's cap cannot buy that many of is not started."""
+
+FRAMING: Final = 1024
+"""Tokens added to a request's size when the client cannot count them: the
+API's own framing of the system prompt, the tools and each message."""
+
+
+FLOOR_INPUT: Final = 2000
+"""Input tokens a pack's live act needs at the least: its system prompt, its
+tools and the request."""
+
+
+def turn_floor(model: str) -> Decimal:
+    """The least one live turn of ``model`` can be started on: :data:`FLOOR_INPUT`
+    input tokens and :data:`MIN_OUTPUT` output tokens. A cap below it buys no
+    turn."""
     rates = PRICING[model]
     return (
-        TURN_INPUT * rates.input_usd_per_mtok + MAX_OUTPUT * rates.output_usd_per_mtok
+        FLOOR_INPUT * rates.input_usd_per_mtok + MIN_OUTPUT * rates.output_usd_per_mtok
     ) / Decimal(1_000_000)
+
+
+def _input_bound(live: Live, request: Mapping[str, Any]) -> int:
+    """The most input tokens ``request`` can be: counted by the API when the
+    client can count them (``messages.count_tokens``, which is not billed),
+    else every byte of it as JSON and :data:`FRAMING`, since a token is at
+    least a byte."""
+    counter = getattr(getattr(live.client, "messages", None), "count_tokens", None)
+    if callable(counter):
+        with contextlib.suppress(Exception):  # any failure falls back to the size bound
+            return int(counter(**request).input_tokens)
+    size = json.dumps(request, default=lambda o: getattr(o, "__dict__", str(o)), sort_keys=True)
+    return len(size.encode("utf-8")) + FRAMING
+
+
+def _turn_tokens(live: Live, spent: Decimal, request: Mapping[str, Any]) -> int:
+    """The ``max_tokens`` that keeps a turn inside what is left of the cap: the
+    input bound at the input rate, and every output token at the output rate.
+    Thinking counts as output, so this bounds it too."""
+    rates = PRICING[live.model]
+    left = (live.max_cost - spent) * 1_000_000 - _input_bound(
+        live, request
+    ) * rates.input_usd_per_mtok
+    if left <= 0:
+        return 0
+    return min(MAX_OUTPUT, int(left / rates.output_usd_per_mtok))
 
 
 def _tool_result(found: Any) -> tuple[str, bool]:
@@ -324,18 +373,21 @@ def converse(
     if reasoning:
         extra["thinking"] = {"type": "adaptive", "display": "summarized"}
     while turns < max_turns:
-        if _spent(world, session.session_id) >= live.max_cost:
+        spent = _spent(world, session.session_id)
+        if spent >= live.max_cost:
+            halted = "max-cost"
+            break
+        counted = {"model": live.model, "system": system, "tools": tools, "messages": messages}
+        allowed = _turn_tokens(live, spent, {**counted, **extra})
+        if allowed < MIN_OUTPUT:
             halted = "max-cost"
             break
         turns += 1
         try:
             response = governed.messages.create(
-                model=live.model,
-                max_tokens=MAX_OUTPUT,
-                system=system,
-                tools=tools,
-                messages=messages,
+                max_tokens=allowed,
                 output_config={"effort": live.effort},
+                **counted,
                 **extra,
             )
         except SessionHaltedError as exc:

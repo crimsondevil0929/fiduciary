@@ -1,11 +1,12 @@
-"""The console's overview: the same engine in six industries, the measurement
-ladder, and the live acceptance matrix interlock recorded.
+"""The console's overview: the same engine in six industries, on SQL and on
+Git, the measurement ladder, and the live acceptance matrix interlock recorded.
 
 :func:`overview` reads the payloads of the domains a run played and says,
 from what each one measured, which part of the engine refused a plan, formed
 a warrant, named a break-glass act or verified offline. A domain that did not
-run says so, and the one that is not built yet (coding agents, on Git) says
-that too: a pack on a slide is a promise, and only a pack that ran is evidence.
+run says so: a pack on a slide is a promise, and only a pack that ran is
+evidence. The coding-agent pack runs only where the installed interlock has
+its Git substrate.
 """
 
 from __future__ import annotations
@@ -37,33 +38,33 @@ INDUSTRIES: Final = (
     {"key": "supply-chain", "class": "T"},
     {"key": "saas", "class": "T"},
     {
-        "key": "coding",
+        "key": "coding-agent",
         "industry": "Coding agents",
-        "title": "Pull requests merged at the reviewed head",
+        "title": "A repository maintainer agent, on a Git branch",
         "frameworks": ["soc2", "iso27001", "nist800_53"],
         "class": "T",
-        "planned": "Next to build: a Git substrate, where a ref update is a compare-and-swap. "
-        "It is not built yet, so no acts run here.",
+        "substrate": "Git",
         "nouns": {
-            "measure": "a diff of files",
-            "hidden": "an edit to a workflow file",
-            "unit": "CI minutes, USD",
-            "partition": "repository, path class",
-            "approvers": "maintainers",
-            "vendor": "a CI check run",
-            "verifier": "the security team",
+            "measure": "a diff of files, read from Git",
+            "hidden": "a code generator's rewrite; an edit to a workflow file",
+            "unit": "lines of code; CI minutes",
+            "partition": "the repository, by path class",
+            "approvers": "lead maintainer, security reviewer, release captain",
+            "vendor": "a signed CI check result",
+            "verifier": "the security team, a SOC 2 auditor",
         },
     },
 )
-"""Every industry the overview shows, in order. The four packs' own entries
-come from their profiles; these fill in fintech and the one not built."""
+"""Every industry the overview shows, in order. The packs' own entries come
+from their profiles; these fill in fintech, and what each runs on."""
 
 LADDER: Final = (
     {
         "class": "T",
         "name": "Transactional",
         "promise": "What was measured is exactly what committed, or nothing committed.",
-        "where": "SQLite and PostgreSQL (shipped); a Git ref and an atomic directory swap next",
+        "where": "SQLite and PostgreSQL; a Git branch, by compare-and-swap of its ref (shipped); "
+        "an atomic directory swap next",
         "shipped": True,
     },
     {
@@ -121,6 +122,7 @@ ENGINE: Final = (
     ("table_allowlist", "TableAllowlist", "plans refused"),
     ("no_delete", "NoDelete", "plans refused"),
     ("rate_window", "RateWindow", "plans refused"),
+    ("stale_head", "Commit only at the measured head", "plans refused"),
     ("warrant", "Quorum warrant", "formed"),
     ("break-glass", "Break-glass act named offline", "named"),
     ("offline", "Bundle verified offline", "verified"),
@@ -164,15 +166,23 @@ def _engine(payload: Mapping[str, Any]) -> dict[str, Any]:
             cells["rate_window"] += extra
             for n in range(extra):
                 plans[f"{act['key']}-unsampled-{n}"] = 0
-    cells["refused_plans"] = len(plans)
+    # A Git stage whose branch moved after it was measured: refused at the
+    # compare-and-swap, after every check passed, so no finding names it.
+    cells["stale_head"] = sum(
+        1 for a in acts if isinstance(a.get("git"), Mapping) and a["git"].get("pushed")
+        and not a["git"].get("landed")
+    )  # fmt: skip
+    cells["refused_plans"] = len(plans) + cells["stale_head"]
     cells["rows_blocked"] = sum(plans.values())
     warrants = [a["warrant"] for a in acts if isinstance(a.get("warrant"), Mapping)]
     cells["warrant"] = [
         {"action": w.get("action", "release"), "approvals": len(w.get("basis", []))}
         for w in warrants
     ]
-    after = payload["attestations"].get("after", {})
-    cells["break-glass"] = "break-glass" in after.get("verdict", {}).get("labels", [])
+    after = payload["attestations"].get("after", {}).get("verdict", {})
+    # Named offline: labeled break-glass (an operator's declared key), or, for
+    # an act with no operator key, an ambient act the after bundle names (V7).
+    cells["break-glass"] = "break-glass" in after.get("labels", []) or after.get("exit_code") == 7
     audit = next((a for a in acts if a["key"] == "audit"), None)
     if audit is not None:
         before = audit["verdicts"]["before"]
@@ -197,6 +207,9 @@ def overview(played: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
             "frameworks": profile.get("frameworks", entry.get("frameworks", [])),
             "nouns": profile.get("nouns", entry.get("nouns", {})),
             "class": entry["class"],
+            "substrate": profile.get("nouns", {}).get(
+                "substrate", entry.get("substrate", "SQLite")
+            ),
             "note": entry.get("note"),
             "planned": entry.get("planned"),
             "ran": payload is not None,

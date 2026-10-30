@@ -831,6 +831,7 @@ def open_fiduciary(
             substrate=lambda: open_substrate(interlock, application_name=stage),
             chains=config.chains,
             receipts=receipts,
+            inbox=interlock.inbox_keyring(),
         )
         runtime = None
         if config.runtime_records is not None:

@@ -4,6 +4,62 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - Unreleased
+
+Coding agents, on Git. Nothing 1.2.0 writes or reads changes: FIDU1, the documents, the
+records, `fidb/1`, the checks V1 to V12 and every exit code are as they were.
+
+### Added
+
+- **`fiduciary demo --domain coding-agent`.** A repository maintainer agent works on a real
+  Git branch, staged and committed by Interlock 1.1.0's Git substrate, with the
+  deployment's SQLite file as the home of its outbox, inbox and windows. Its seven acts:
+  - a one-line fix, committed as one commit at the head it was measured on;
+  - one edit that the code generator turns into 36 files, refused;
+  - an issue's planted instructions to post the PyPI token from a workflow and delete a
+    migration test, both refused;
+  - a teammate's push while the agent's change is staged: the commit is refused and
+    reconciliation names the push;
+  - a dependency bump that commits only with CI's signed result for its exact bytes, on
+    2 of 3 maintainers, at the head they reviewed;
+  - an administrator's hotfix outside any session, which the offline verifier names;
+  - both bundles verified offline.
+  `--domain all` runs it beside the other five. It runs where the installed Interlock has
+  the Git substrate and is left out otherwise.
+- **A tool call consumes the facts its writes answer to.** When the lineage's engine
+  verifies inbound facts, a plan tool's call consumes every attested fact pending for its
+  billing scope whose kind a `data.facts` rule names for a table the binding writes. A
+  refused plan consumes none. Before, a session consumed no fact, so a `data.facts` rule
+  refused every write it covers. Spec F8-2 is amended.
+- **A Git deployment configured in files.** The coding-agent pack writes `interlock.toml`
+  (`substrate = "git"`, its `[git]` repository and hook, the control database, the inbox and
+  its keys) and `fiduciary.toml`, and its acts stage on the substrate that file configures.
+  `fiduciary --config fiduciary.toml verify`, and a service opened from it, work on the
+  repository as on a database. Every pack's `fiduciary.toml` says `in_process =
+  "tool-calls-only"`, as the demo runs its sessions.
+- **The service verifies inbound facts with `interlock.toml`'s `[inbox.keys]`.** Before, a
+  service opened from files built its engines with no inbox keys, so no plan could consume
+  a fact.
+- **`scripts/stack_dashboard.py --keep`** keeps the packs a recorded run holds, after
+  verifying their bundles again, and plays only the others. A kept deployment recorded
+  without its configuration files gets them back from its own keys, each tool binding
+  checked against the pin in its recorded mandate.
+- **The dashboard** says what each industry stages on (SQLite or Git), counts commits refused
+  at a moved head, and draws the Git pack's race, warrant and hotfix.
+
+### Changed
+
+- **Requires `interlock-escrow` 1.1.0** (it was 1.0.4), for its Git substrate. Every
+  CI job now runs the coding-agent pack, and the coverage floors count it.
+- **A live act's model calls never take it past `--max-cost`.** Each turn may write only
+  the output tokens that what is left of the cap buys, after the turn's input tokens, which
+  the API counts (or the request's size bounds, where it cannot count them). Before, an act
+  stopped between turns once it reached its cap, so one turn could take it up to $0.146
+  past the cap on `claude-opus-5-5`. `--budget` now gives each pack what is left of it, and a
+  pack whose cap cannot buy one turn replays.
+- **The overview counts an after bundle's ambient finding as a named break-glass act** when
+  the act was not an operator's (the Git hotfix), as it counts a labeled release.
+
 ## [1.2.0] - 2026-10-29
 
 One engine, any industry. Nothing 1.1.1 writes or reads changes: FIDU1, the documents,

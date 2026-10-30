@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -39,7 +39,7 @@ from typing import Any, Final
 from fiduciary import __version__, report
 from fiduciary.attest import attest
 from fiduciary.demo import packs
-from fiduciary.demo.acts import Live, Run, pinned, run_acts, turn_ceiling
+from fiduciary.demo.acts import Live, Run, pinned, run_acts, turn_floor
 from fiduciary.demo.gateway import Gateway
 from fiduciary.demo.overview import overview
 from fiduciary.demo.world import ORDERS, SCOPE, build, tenant_of
@@ -105,6 +105,7 @@ def extend(
     say: Callable[[str], None] = lambda _: None,
     live: Live | None = None,
     budget: Decimal | None = None,
+    kept: Mapping[str, dict[str, Any]] | None = None,
 ) -> Outcome:
     """Every domain pack, each in its own new subdirectory of ``root``, beside
     the fintech run whose console payload is ``page``; and the one dashboard
@@ -112,18 +113,26 @@ def extend(
     live run gains the other industries without being run again). With
     ``live``, a model works each pack's signature act, each act under
     ``live.max_cost``; and with ``budget``, the packs' live acts together
-    spend at most that. A live act stops between turns once it reaches its
-    cap, so it may spend one turn past it: a pack whose cap and one turn at
-    its largest would take the total past ``budget`` replays instead."""
+    spend at most that. Each turn of a live act may write only the output
+    tokens what is left of its cap buys, after the turn's input, so its model
+    calls never take it past the cap: each pack's cap is what is left of
+    ``budget``, and a pack whose cap cannot buy one turn
+    (:func:`~fiduciary.demo.acts.turn_floor`) replays instead.
+
+    ``kept`` holds packs already played into ``root``, by key: each is taken
+    as it is, its subdirectory untouched, and only the others are played."""
     played = {"fintech": {k: v for k, v in page.items() if k not in ("domains", "overview")}}
     spent = Decimal(0)
     for key in packs.PACKS:
+        if kept is not None and key in kept:
+            played[key] = kept[key]
+            continue
         say("")
         say(f"{packs.PACKS[key].industry}: a deployment in {root / key}")
         worked = live
         if live is not None and budget is not None:
-            cap = min(live.max_cost, budget - spent - turn_ceiling(live.model))
-            worked = replace(live, max_cost=cap) if cap > 0 else None
+            cap = min(live.max_cost, budget - spent)
+            worked = replace(live, max_cost=cap) if cap >= turn_floor(live.model) else None
             if worked is None:
                 say(f"  live: ${spent:.6f} of ${budget} spent; this pack replays")
         sub = packs.run(root / key, key, engine=engine, say=say, live=worked)

@@ -46,6 +46,7 @@ process instead (:mod:`fiduciary.mcp`).
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import threading
 import time
@@ -926,6 +927,7 @@ class Session:
         except PlanError as exc:
             return CallResult(name, "error", feedback_for_error(_empty_plan(self), exc).render())
         engine = self._engine()
+        plan = self._with_facts(engine, binding, plan)
         try:
             result = engine.execute(plan)
         except BindingError:
@@ -993,6 +995,35 @@ class Session:
             ticket=self._note(ticket),
             repaired=repaired,
         )
+
+    def _with_facts(
+        self, engine: MandateEngine, binding: ToolBinding, plan: EffectPlan
+    ) -> EffectPlan:
+        """``plan``, consuming the facts its writes may answer to (F8-2): every
+        attested fact pending for the billing scope, of a kind a ``data.facts``
+        rule names for a table the binding writes, for the session's tenant or
+        none. Unchanged when the engine verifies no facts, or no rule applies."""
+        tables = {e.table for e in binding.effects}
+        kinds = {
+            kind for rule in engine.mandate.data.facts if rule.table in tables for kind in rule.kind
+        }
+        if not kinds:
+            return plan
+        try:
+            pending = engine.engine.facts(plan.scope_id)
+        except InterlockError:
+            return plan  # no inbox keys: the engine consumes no fact, so none is named
+        found = tuple(
+            sorted(
+                (
+                    f.fact_id
+                    for f in pending
+                    if f.kind in kinds and f.tenant_id in (None, self.tenant)
+                ),
+                key=str,
+            )
+        )
+        return dataclasses.replace(plan, facts=found) if found else plan
 
     # -- a passthrough tool (F4-15) ------------------------------------------------------
 

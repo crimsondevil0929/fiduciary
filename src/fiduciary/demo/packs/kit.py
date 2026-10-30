@@ -40,13 +40,14 @@ from agentgov.receipts import ReceiptLog
 from agentgov.receipts.signing import Signer, verifier_of
 from interlock.deliveries import operations
 from interlock.engine import StageResult
+from interlock.inbox import InboundSource
 from interlock.operators import OPERATOR_LOG as OPERATOR_SCOPE
 from interlock.operators import Operator, OperatorLog
 from interlock.outbound import SinkRegistry, SinkSpec
 from interlock.records import Keyring, RecordLog
 from interlock.relay import DELIVERED, Delivery, DeliveryResult, LedgerBreaker, Relay
 from interlock.sqlite_outbox import OPERATOR, RELAY, SqliteOutboxStore, install_sqlite_outbox
-from interlock.substrate import SqliteSubstrate, TableSpec
+from interlock.substrate import ShadowSubstrate, SqliteSubstrate, TableSpec
 
 from fiduciary import _upstream, fidu1
 from fiduciary.authority import Authority
@@ -60,6 +61,7 @@ from fiduciary.demo.acts import measured as fintech_measured
 from fiduciary.demo.gateway import Condition, Decision, Policy
 from fiduciary.demo.world import DIRECTIVE, PRICING, World, _key
 from fiduciary.documents import Charter, Mandate, ToolBinding
+from fiduciary.keys import load_key
 from fiduciary.log import Log, ensure_anchor_scope
 from fiduciary.sqlite import SqliteStore
 
@@ -151,6 +153,19 @@ class Pack:
     """What a live model is told it is, when it works the pack's signature act."""
     quorums: Mapping[str, int] = field(default_factory=lambda: dict(QUORUMS))
     delegation: Mapping[str, Any] | None = None
+    sources: tuple[InboundSource, ...] = ()
+    """The inbox's sources: vendors whose signed webhooks become facts."""
+    substrate: Callable[[Path, Path], tuple[Callable[[], ShadowSubstrate], Any]] | None = None
+    """What the stage runs on, when not the back office's own tables: given the
+    deployment's root and its control database, a factory and what the acts
+    need to reach the system behind it. SQLite over ``tables`` by default."""
+    fingerprint: Callable[[PackWorld], str] | None = None
+    """A digest of the system's state, to show a refused call changed nothing;
+    the observed tables' rows by default."""
+    interlock: Callable[[Path, Path], str] | None = None
+    """The head of ``interlock.toml`` (its substrate, and what the substrate
+    needs), given the deployment's root and its control database: SQLite over
+    ``tables`` by default. The sinks and the inbox follow it."""
 
 
 # --------------------------------------------------------------------------
@@ -316,6 +331,8 @@ def per_session(name: str, maximum: int) -> Condition:
 class PackWorld(World):
     pack: Pack | None = None
     children: dict[str, Mandate] = field(default_factory=dict)
+    system: Any = None
+    """What a pack's own substrate set up for its acts (:attr:`Pack.substrate`)."""
 
     @property
     def spec(self) -> Pack:
@@ -323,6 +340,8 @@ class PackWorld(World):
         return self.pack
 
     def fingerprint(self) -> str:
+        if self.spec.fingerprint is not None:
+            return self.spec.fingerprint(self)
         digest = hashlib.sha256()
         for table in self.spec.tables:
             rows = self.fetch(f"SELECT * FROM {table.name} ORDER BY id")  # noqa: S608 - our names
@@ -511,45 +530,125 @@ def child_json(
     return {"v": "FIDU1", "type": "mandate", **raw}
 
 
-def _write_config(world: PackWorld) -> None:
-    """``fiduciary.toml`` and ``interlock.toml``, as the fintech demo writes them."""
-    root, pack = world.root, world.spec
-    tools = []
-    for binding in world.tools.values():
-        path = root / "tools" / f"{binding.name}.tool.json"
-        path.parent.mkdir(exist_ok=True)
-        path.write_text(binding.pretty())
-        tools.append(str(path))
-    (root / "stop-retrying.txt").write_bytes(DIRECTIVE)
-    tables = "".join(
-        f'[[tables]]\nname = "{t.name}"\ncolumns = {json.dumps(list(t.columns))}\n'
-        + (f'tenant_column = "{t.tenant}"\n' if t.tenant else "")
-        for t in pack.tables
-    )
+def _toml(text: str | Path) -> str:
+    """A TOML basic string: JSON's escapes are TOML's."""
+    return json.dumps(str(text))
+
+
+def interlock_toml(root: Path, pack: Pack, back_office: Path) -> str:
+    """``interlock.toml`` for ``pack``'s deployment under ``root``: its
+    substrate, its sinks, and its inbox with the key its facts verify under.
+    Every path is absolute: the file is read wherever it is opened from."""
+    root, back_office = root.resolve(), back_office.resolve()
+    if pack.interlock is not None:
+        head = pack.interlock(root, back_office)
+    else:
+        head = f'substrate = "sqlite"\ndatabase = {_toml(back_office)}\n' + "".join(
+            f'[[tables]]\nname = "{t.name}"\ncolumns = {json.dumps(list(t.columns))}\n'
+            + (f'tenant_column = "{t.tenant}"\n' if t.tenant else "")
+            for t in pack.tables
+        )
     sinks = "".join(
         f'[[sinks]]\nname = "{s.name}"\ncost_per_call = "{s.cost_per_call}"\n'
         f'idempotency = "{s.idempotency}"\nmax_payload_bytes = {s.max_payload_bytes}\n'
         "operations = [" + ", ".join(f'{{ name = "{op.name}" }}' for op in s.operations) + "]\n"
         for s in pack.sinks
     )
-    (root / "interlock.toml").write_text(
-        f'substrate = "sqlite"\ndatabase = "{world.back_office}"\n' + tables + sinks
-    )
+    inbox = ""
+    if pack.sources:
+        key = root / "keys" / "inbox.key"
+        inbox = f"[inbox]\nkey = {_toml(key)}\n"
+        for source in pack.sources:
+            fields = ", ".join(
+                f'{{ name = "{f.name}", path = "{f.path}", type = "{f.type}" }}'
+                for f in source.fields
+            )
+            inbox += (
+                f'[[inbox.sources]]\nname = "{source.name}"\nkind = "{source.kind}"\n'
+                f'secret_env = "{source.secret_env}"\n'
+                f"references = {json.dumps(list(source.references))}\nfields = [{fields}]\n"
+            )
+        inbox += f'[inbox.keys]\ninbox = "{key_spec(load_key(key).public_key())}"\n'
+    return head + sinks + inbox
+
+
+def fiduciary_toml(root: Path, *, charter: str, tools: Sequence[Path]) -> str:
+    """``fiduciary.toml`` for the deployment under ``root``, as the fintech
+    demo writes it: the store, the ledger, ``interlock.toml``, sessions in
+    process as the demo runs them, the charter pinned by ``charter``, the
+    keys, and ``tools``. Every path is absolute."""
+    root = root.resolve()
     service = root / "keys" / "service.key"
-    (root / "fiduciary.toml").write_text(
-        f'database = "{root / "fiduciary.db"}"\n'
-        f'ledger = "{root / "ledger.db"}"\n'
-        f'interlock = "{root / "interlock.toml"}"\n'
-        f'[charter]\nfile = "{root / "charter.json"}"\ndigest = "{world.charter.digest}"\n'
-        f'[service]\nkey = "{service}"\n'
-        f"[binding]\ntools = {json.dumps(tools)}\n"
-        f'directives = ["{root / "stop-retrying.txt"}"]\nchains = "{world.chains}"\n'
-        f'[executor]\nkey = "{service}"\noutbox = "{world.back_office}"\n'
-        f'log = "{world.operator_log}"\n'
-        f'[runtime]\nrecords = "{root / "runtime.jsonl"}"\nkey = "{service}"\n'
-        f'[receipts]\nlog = "{root / "receipts.jsonl"}"\n'
-        f'key = "{root / "keys" / "receipts.key"}"\n'
+    back_office = root / "back_office.db"
+    return (
+        f"database = {_toml(root / 'fiduciary.db')}\n"
+        f"ledger = {_toml(root / 'ledger.db')}\n"
+        f"interlock = {_toml(root / 'interlock.toml')}\n"
+        'in_process = "tool-calls-only"\n'
+        f'[charter]\nfile = {_toml(root / "charter.json")}\ndigest = "{charter}"\n'
+        f"[service]\nkey = {_toml(service)}\n"
+        f"[binding]\ntools = {json.dumps([str(t.resolve()) for t in tools])}\n"
+        f"directives = [{_toml(root / 'stop-retrying.txt')}]\nchains = {_toml(root / 'chains')}\n"
+        f"[executor]\nkey = {_toml(service)}\noutbox = {_toml(back_office)}\n"
+        f"log = {_toml(root / 'operators.jsonl')}\n"
+        f"[runtime]\nrecords = {_toml(root / 'runtime.jsonl')}\nkey = {_toml(service)}\n"
+        f"[receipts]\nlog = {_toml(root / 'receipts.jsonl')}\n"
+        f"key = {_toml(root / 'keys' / 'receipts.key')}\n"
     )
+
+
+def _write_tools(root: Path, bindings: Sequence[ToolBinding]) -> list[Path]:
+    paths = []
+    for binding in bindings:
+        path = root / "tools" / f"{binding.name}.tool.json"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(binding.pretty())
+        paths.append(path)
+    (root / "stop-retrying.txt").write_bytes(DIRECTIVE)
+    return paths
+
+
+def _write_config(world: PackWorld) -> None:
+    """``fiduciary.toml``, its tool bindings and directive, as the fintech
+    demo writes them. ``interlock.toml`` is written before the substrate is
+    built (:func:`build`)."""
+    tools = _write_tools(world.root, list(world.tools.values()))
+    (world.root / "fiduciary.toml").write_text(
+        fiduciary_toml(world.root, charter=world.charter.digest, tools=tools)
+    )
+
+
+def restore_config(root: Path, pack: Pack) -> list[str]:
+    """Write the configuration files of a recorded deployment of ``pack``
+    that lacks them, from its own keys: ``interlock.toml``, the tool bindings
+    signed again with its developer key, and ``fiduciary.toml``. Ed25519
+    signs alike every time, so each binding is the document its mandate pins;
+    each is checked against the pin before anything is written.
+
+    :returns: The files written.
+    :raises ValueError: When a binding would not be the one the mandate pins.
+    """
+    root = root.resolve()
+    mandate = Mandate.from_json(json.loads((root / "mandate.json").read_text()))
+    pins = {pin.name: pin.digest for pin in mandate.tools.bindings}
+    developer = load_key(root / "keys" / "developer.key")
+    bindings = [ToolBinding.from_json(raw, signed=False).signed(developer) for raw in pack.tools()]
+    for binding in bindings:
+        if pins.get(binding.name) != binding.digest:
+            raise ValueError(
+                f"tool {binding.name}: {binding.digest[:16]} is not the binding the recorded "
+                f"mandate pins ({str(pins.get(binding.name))[:16]}): nothing written"
+            )
+    back_office = root / "back_office.db"
+    (root / "interlock.toml").write_text(interlock_toml(root, pack, back_office))
+    tools = _write_tools(root, bindings)
+    charter = (root / "charter.digest").read_text().strip()
+    (root / "fiduciary.toml").write_text(fiduciary_toml(root, charter=charter, tools=tools))
+    return ["interlock.toml", *(f"tools/{t.name}" for t in tools), "fiduciary.toml"]
+
+
+def world_key(signers: Mapping[str, Signer], name: str) -> str:
+    return str(signers[name].public_key().key_id)
 
 
 def build(root: Path, pack: Pack) -> PackWorld:
@@ -566,6 +665,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
         pack.operator,
         "relay-a",
         "relay-b",
+        *(("inbox",) if pack.sources else ()),
     )
     signers: dict[str, Signer] = {name: _key(root, name) for name in names}
     closers: list[Callable[[], None]] = []
@@ -575,10 +675,17 @@ def build(root: Path, pack: Pack) -> PackWorld:
         conn.executescript(pack.schema)
         pack.seed(conn)
         conn.commit()
-    install_sqlite_outbox(back_office, pack.sinks, ())
+    install_sqlite_outbox(back_office, pack.sinks, pack.sources)
+    (root / "interlock.toml").write_text(interlock_toml(root, pack, back_office))
     specs = [
         TableSpec(t.name, columns=list(t.columns), tenant_column=t.tenant) for t in pack.tables
     ]
+    system: Any = None
+    substrate: Callable[[], ShadowSubstrate]
+    if pack.substrate is not None:
+        substrate, system = pack.substrate(root, back_office)
+    else:
+        substrate = lambda: SqliteSubstrate(str(back_office), tables=specs)  # noqa: E731
 
     governor = BudgetManager.open_sqlite(str(root / "ledger.db"))
     closers.append(governor.close)
@@ -628,9 +735,12 @@ def build(root: Path, pack: Pack) -> PackWorld:
         authority,
         governor,
         deployment=deployment,
-        substrate=lambda: SqliteSubstrate(str(back_office), tables=specs),
+        substrate=substrate,
         chains=root / "chains",
         receipts=receipts,
+        inbox=Keyring({world_key(signers, "inbox"): signers["inbox"].public_key()})
+        if pack.sources
+        else None,
     )
     closers.append(binder.close)
     service = signers["service"].public_key()
@@ -674,6 +784,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
         webhook_secret="",
         closers=closers,
         pack=pack,
+        system=system,
     )
     try:
         authority.propose(charter)

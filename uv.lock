@@ -546,14 +546,14 @@ sign = [
 
 [[package]]
 name = "interlock-escrow"
-version = "1.0.4"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "interlock-agentgov" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5e/7e/97fae2bfdc929835fc0b74498a45aa383f1f973026d1436b9be0c8a13bc8/interlock_escrow-1.0.4.tar.gz", hash = "sha256:284d6f99f9ac9002ae8e58f12a6a8a141b807217ff826884ba2dc5989c845b65", size = 1341840, upload-time = "2026-10-25T04:34:21.161Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3d/a1/0ed73f03d33f414befec9d9fdb3d51295d2de277083dba3cfc023f8a5ba3/interlock_escrow-1.1.0.tar.gz", hash = "sha256:0f143d633246d748ae00f8ef214ef825fa9c324cec3b4cd31f1132ccdf811e2c", size = 1383237, upload-time = "2026-10-30T06:30:49.643Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/23/2f/25a23d8487ce9665644457eea64199995cd905c375c98d07d9751ec49d42/interlock_escrow-1.0.4-py3-none-any.whl", hash = "sha256:4f8325c296f1519177ff27b22b318744b4a8fc8d9b15481ffeda2c4268374af9", size = 485315, upload-time = "2026-10-25T04:34:19.093Z" },
+    { url = "https://files.pythonhosted.org/packages/cf/91/89fe86e23f70d8a44b0e41c115d242f8e660809b603ce2bd1b7afe5e567a/interlock_escrow-1.1.0-py3-none-any.whl", hash = "sha256:0ed032e9f4be02ab395c09787c60923da055afdfc996e907fb55f0c1c0485e18", size = 511161, upload-time = "2026-10-30T06:30:47.847Z" },
 ]
 
 [package.optional-dependencies]
@@ -563,7 +563,7 @@ postgres = [
 
 [[package]]
 name = "interlock-fiduciary"
-version = "1.2.0"
+version = "1.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "interlock-agentgov", extra = ["sign"] },
@@ -611,8 +611,8 @@ requires-dist = [
     { name = "interlock-agentgov", extras = ["otel"], marker = "extra == 'otel'", specifier = ">=1.0.1" },
     { name = "interlock-agentgov", extras = ["sign"], specifier = ">=1.0.1" },
     { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'sign'", specifier = ">=1.0.1" },
-    { name = "interlock-escrow", specifier = ">=1.0.4" },
-    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=1.0.4" },
+    { name = "interlock-escrow", specifier = ">=1.1.0" },
+    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=1.1.0" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
 ]
 provides-extras = ["postgres", "sign", "kms-aws", "otel", "cedar", "demo"]
