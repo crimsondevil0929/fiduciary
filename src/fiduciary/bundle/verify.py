@@ -488,7 +488,8 @@ def verify_bundle(
         total = len(bundle.withheld) + len(bundle.records)
         report.notes.append(
             f"sealed: {len(bundle.withheld)} of the log's {total} records are other lineages', "
-            "withheld; each is held to its ledger anchor and its place in the chain, not replayed"
+            "withheld; each is held to its ledger anchor, its seal and its place in the chain, "
+            "not replayed"
         )
     report.notes.append(
         "out of scope: the outbox's full delivery logs and Interlock's own operator-log "
