@@ -284,7 +284,7 @@ class ToolBinding(Document):
             effects.append(
                 Effect(
                     effect_id=entry.text("id", _EFFECT_ID, "an id, [a-z][a-z0-9_-]{0,63}"),
-                    kind=entry.choice("kind", ("delete", "insert", "update")),
+                    kind=entry.choice("kind", ("apply", "delete", "insert", "update")),
                     table=entry.text("table", IDENTIFIER, "a table"),
                     statement=entry.text(
                         "statement", fidu1.STATEMENT, "a statement of 1 to 8192 characters"

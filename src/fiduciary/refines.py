@@ -299,6 +299,30 @@ def _data(check: _Check, child: Mandate, parent: Mandate) -> None:
         lambda a: ".".join(a.identity),
     )
     check.kept("data.facts", mine.facts, theirs.facts, lambda f: f, lambda f: ".".join(f.identity))
+    # 1.5.0: a child keeps every analyzer its parent needs, signed by keys
+    # the parent trusts; every pinned checker, as pinned; and accepts no
+    # unmeasured value the parent does not.
+    check.kept(
+        "data.sensors",
+        mine.sensors,
+        theirs.sensors,
+        lambda r: r.sensor,
+        lambda r: r.sensor,
+        lambda path, c, p: check.subset(f"{path}.keys", c.keys, p.keys),
+    )
+    check.kept(
+        "data.checkers",
+        mine.checkers,
+        theirs.checkers,
+        lambda c: c.identity,
+        lambda c: f"{c.module}.{c.checker}",
+        lambda path, c, p: (
+            None
+            if c.to_json() == p.to_json()
+            else check.fail(path, "is changed: a child runs its parent's checkers as pinned")
+        ),
+    )
+    check.subset("data.acknowledge_unknown", mine.acknowledge_unknown, theirs.acknowledge_unknown)
 
 
 def _outbound(check: _Check, child: Mandate, parent: Mandate) -> None:

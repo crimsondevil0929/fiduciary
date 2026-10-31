@@ -33,6 +33,7 @@ from agentgov.exceptions import AgentGovError
 from interlock.anchor import LedgerAnchor
 from interlock.chain import EscrowChain
 from interlock.engine import EscrowEngine, StageResult
+from interlock.sensors import Sensor
 from interlock.types import EffectPlan
 
 from fiduciary import fidu1
@@ -85,9 +86,11 @@ class MandateEngine:
         row_secret: bytes | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         ledgers: Mapping[str, BudgetManager] | None = None,
+        sensors: Sequence[Sensor] = (),
     ) -> None:
         self._lock = threading.RLock()
         self._ledgers = dict(ledgers or {})
+        self._sensors = tuple(sensors)
         self._substrate = substrate
         self._chain = chain
         self._anchor = anchor
@@ -124,6 +127,9 @@ class MandateEngine:
             meters=tuple(
                 m.meter(self._ledgers[m.unit], scope=compiled.subject) for m in compiled.meters
             ),
+            # The deployment's analyzers see every diff; a mandate that needs
+            # one's word says so with a SensorAttestation (data.sensors).
+            sensors=self._sensors,
         )
 
     @property
@@ -211,6 +217,8 @@ class Binder:
     :param ledgers: A write-capable governor of each AgentGov ledger of
         another unit the deployment keeps (1.4), by unit code: a mandate's
         ``budgets`` are delegated, held and settled there.
+    :param sensors: The deployment's analyzers (``[sensors.<name>]``,
+        1.5.0), shown every diff an engine measures.
     """
 
     def __init__(
@@ -225,7 +233,9 @@ class Binder:
         inbox: Keyring | None = None,
         row_secret: bytes | None = None,
         ledgers: Mapping[str, BudgetManager] | None = None,
+        sensors: Sequence[Sensor] = (),
     ) -> None:
+        self._sensors = tuple(sensors)
         self._authority = authority
         self._governor = governor
         self._ledgers = dict(ledgers or {})
@@ -456,6 +466,7 @@ class Binder:
             row_secret=self._row_secret,
             clock=self.log.now,
             ledgers=self._ledgers,
+            sensors=self._sensors,
         )
         self._engines[mandate.mandate_id] = engine
         return engine

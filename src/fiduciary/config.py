@@ -875,7 +875,7 @@ def open_fiduciary(
     from agentgov.receipts import ReceiptLog
     from interlock.cluster import connection_name
     from interlock.records import RecordLog
-    from interlock.wiring import open_substrate
+    from interlock.wiring import open_sensors, open_substrate
 
     from fiduciary.authority import Authority
     from fiduciary.binding import Binder
@@ -926,6 +926,7 @@ def open_fiduciary(
             receipts=receipts,
             inbox=interlock.inbox_keyring(),
             ledgers=ledgers,
+            sensors=open_sensors(interlock),
         )
         runtime = None
         if config.runtime_records is not None:
