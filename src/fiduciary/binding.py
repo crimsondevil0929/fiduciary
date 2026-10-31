@@ -23,7 +23,7 @@ from __future__ import annotations
 import dataclasses
 import re
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -84,8 +84,10 @@ class MandateEngine:
         inbox: Keyring | None = None,
         row_secret: bytes | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        ledgers: Mapping[str, BudgetManager] | None = None,
     ) -> None:
         self._lock = threading.RLock()
+        self._ledgers = dict(ledgers or {})
         self._substrate = substrate
         self._chain = chain
         self._anchor = anchor
@@ -103,6 +105,9 @@ class MandateEngine:
         self.recovered = self._engine.recover() if chain.path is not None else ()
 
     def _build(self, compiled: CompiledMandate) -> EscrowEngine:
+        missing = sorted(m.unit for m in compiled.meters if m.unit not in self._ledgers)
+        if missing:
+            raise BindingError(f"the deployment opened no ledger of {', '.join(missing)}")
         return EscrowEngine(
             self._substrate,
             checkers=compiled.checkers,
@@ -114,6 +119,11 @@ class MandateEngine:
             sinks=compiled.sinks,
             windows=compiled.windows,
             inbox=self._inbox,
+            # A lineage's units are held on its subject, whatever satellite
+            # a plan is billed to.
+            meters=tuple(
+                m.meter(self._ledgers[m.unit], scope=compiled.subject) for m in compiled.meters
+            ),
         )
 
     @property
@@ -198,6 +208,9 @@ class Binder:
     :param chains: Where each lineage's escrow chain lives, ``<mandate_id>.chain``.
         In memory when ``None``.
     :param receipts: The receipt log every engine issues into.
+    :param ledgers: A write-capable governor of each AgentGov ledger of
+        another unit the deployment keeps (1.4), by unit code: a mandate's
+        ``budgets`` are delegated, held and settled there.
     """
 
     def __init__(
@@ -211,9 +224,11 @@ class Binder:
         receipts: ReceiptLog | None = None,
         inbox: Keyring | None = None,
         row_secret: bytes | None = None,
+        ledgers: Mapping[str, BudgetManager] | None = None,
     ) -> None:
         self._authority = authority
         self._governor = governor
+        self._ledgers = dict(ledgers or {})
         self._deployment = deployment
         self._substrate = substrate
         self._chains = chains
@@ -373,6 +388,7 @@ class Binder:
                             delegated -= amount
             except AgentGovError as exc:
                 raise BindingError(f"the ledger refused the envelope: {exc}") from exc
+            self._delegate_units(mandate, previous, memo, key)
             chain = None if self._chains is None else self._chains / f"{mandate.mandate_id}.chain"
             record = self.log.append(
                 "mandate.bound",
@@ -394,6 +410,38 @@ class Binder:
                 engine.rebind(mandate, compiled)
         return record
 
+    def _delegate_units(
+        self, mandate: Mandate, previous: Mapping[str, Any] | None, memo: str, key: str
+    ) -> None:
+        """Delegate each budget in another unit to the subject, in that unit's
+        ledger, from the scope that funds the mandate. A rebinding may lower
+        one, returning the difference, never raise it: a larger envelope in
+        a unit is a new lineage's."""
+        scope, funded = mandate.subject.scope, mandate.subject.funded_from
+        for unit, budget in sorted(mandate.budgets.items()):
+            ledger = self._ledgers.get(unit)
+            if ledger is None:
+                raise BindingError(f"the deployment opened no ledger of {unit}")
+            ledger.refresh()
+            try:
+                if scope not in ledger.scopes():
+                    ledger.delegate(
+                        funded, scope, budget.envelope, memo=memo, idempotency_key=f"{key}-{unit}"
+                    )
+                    continue
+                allocated = ledger.node(scope).allocated
+                if budget.envelope > allocated:
+                    raise BindingError(
+                        f"budgets.{unit}: {budget.envelope} is above the {allocated} delegated "
+                        f"when the lineage was bound; a unit envelope only narrows"
+                    )
+                if previous is not None and budget.envelope < allocated:
+                    amount = min(allocated - budget.envelope, ledger.available(scope))
+                    if amount > 0:
+                        ledger.release(scope, amount, memo=memo)
+            except AgentGovError as exc:
+                raise BindingError(f"the {unit} ledger refused the envelope: {exc}") from exc
+
     def _open_engine(self, mandate: Mandate, compiled: CompiledMandate) -> MandateEngine:
         assert self._substrate is not None
         chain = None if self._chains is None else self._chains / f"{mandate.mandate_id}.chain"
@@ -407,6 +455,7 @@ class Binder:
             inbox=self._inbox,
             row_secret=self._row_secret,
             clock=self.log.now,
+            ledgers=self._ledgers,
         )
         self._engines[mandate.mandate_id] = engine
         return engine

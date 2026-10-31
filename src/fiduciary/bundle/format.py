@@ -24,6 +24,7 @@ __all__ = [
     "CHECKS",
     "EXIT",
     "FORMAT",
+    "SEALED",
     "BundleError",
     "BundleReport",
     "Finding",
@@ -32,6 +33,9 @@ __all__ = [
 ]
 
 FORMAT: Final = "fidb/1"
+SEALED: Final = "fidb/2"
+"""A sealed bundle's format: one lineage's records whole, and of the log's
+others, their places and hashes (``withheld.json``). Added in 1.4.0."""
 CHECKS: Final = (
     ("V1", "schema"),
     ("V2", "charter"),

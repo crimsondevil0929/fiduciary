@@ -132,16 +132,20 @@ def test_saas(stack: Outcome) -> None:
     customers = _act(stack, "saas", "trust-center")["customers"]
     assert len(customers) == 4
     for customer in customers:
-        assert customer["passed"] and customer["sockets"] == 0
+        assert customer["sockets"] == 0 and customer["withheld"] > 0
         assert customer["other_records"] == 0
         assert (stack.root / "saas" / customer["file"]).is_file()
         assert customer["other_names"] == customer["other_accounts"] == 0
         assert customer["pseudonym_key"] == 0
         assert customer["org"] == saas.pseudonym(saas.ACCOUNTS[customers.index(customer)])
-    # Stated on the page: each bundle carries the whole log, which names every org key,
-    # and the vendor-wide mandate, which lists every org's email domain.
-    assert {c["other_labels"] for c in customers} == {c["other_domains"] for c in customers} == {3}
-    assert {w for c in customers for w in c["domains_where"]} == {"mandates"}
+        # Sealed: no other customer's org key or email domain anywhere in it.
+        assert customer["other_labels"] == customer["other_domains"] == 0, customer
+        assert customer["domains_where"] == []
+    # Initech's own bundle names the support engineer's hand-sent invitation (act 5).
+    assert [c["passed"] for c in customers] == [True, True, False, True]
+    initech = customers[2]
+    assert initech["exit_code"] == 7
+    assert any("[break-glass]" in f for f in initech["findings"]), initech["findings"]
     assert _act(stack, "saas", "trust-center")["pseudonym"]["key_in_bundles"] == 0
 
 
@@ -175,7 +179,11 @@ def test_each_pack_opens_with_the_ordinary_commands(stack: Outcome) -> None:
         charter = (root / "charter.digest").read_text().strip()
         keys = str(root / "pinned-keys.json")
         files = [("before.fidb", 0), ("after.fidb", 7)]
-        files += [(p.name, 0) for p in sorted(root.glob("customer-*.fidb"))]
+        # Initech's workspace holds the hand-sent invitation of scenario 5 (test_saas).
+        files += [
+            (p.name, 7 if p.name == f"customer-{saas.ORGS[2]}.fidb" else 0)
+            for p in sorted(root.glob("customer-*.fidb"))
+        ]
         for name, code in files:
             argv = ["verify-bundle", str(root / name), "--charter", charter, "--keys", keys]
             with contextlib.redirect_stdout(io.StringIO()):

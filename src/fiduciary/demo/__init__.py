@@ -58,7 +58,17 @@ def _held(page: dict[str, Any]) -> bool:
     held = bool(before["passed"]) and after["exit_code"] == 7 and leaked == 0
     for act in demo["acts"]:
         for customer in act.get("customers", []):
-            held = held and bool(customer["passed"]) and customer["other_records"] == 0
+            # A customer's bundle passes, or names the break-glass act done in
+            # that customer's own workspace; and names nothing of the others.
+            named = customer["exit_code"] == 7 and any(
+                "[break-glass]" in f for f in customer["findings"]
+            )
+            others = (
+                customer["other_records"]
+                + customer.get("other_labels", 0)
+                + customer.get("other_domains", 0)
+            )
+            held = held and (bool(customer["passed"]) or named) and others == 0
     return held
 
 

@@ -1157,6 +1157,7 @@ def _export_bundle(args: argparse.Namespace) -> int:
             ),
             from_seq=args.from_seq,
             to_seq=args.to_seq,
+            sealed=args.sealed,
         )
     except (ConfigError, BundleError, OSError, ValueError) as exc:
         _fail(str(exc), REFUSED if isinstance(exc, BundleError) else USAGE)
@@ -1611,6 +1612,11 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--out", required=True, help="the bundle file to write (.fidb)")
     export.add_argument("--ledger-key", help="the ledger's checkpoint key file")
     export.add_argument("--ledger-signer", help="the ledger's checkpoint key, a [signers.<name>]")
+    export.add_argument(
+        "--sealed",
+        action="store_true",
+        help="one party's bundle: other lineages' records as their place and hash only (fidb/2)",
+    )
     export.set_defaults(handler=_export_bundle)
 
     check = commands.add_parser("verify-bundle", help="verify a bundle offline, V1 to V12")

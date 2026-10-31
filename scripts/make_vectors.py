@@ -79,6 +79,91 @@ def valid() -> list[dict[str, Any]]:
         ),
         _valid("ticket, extension", e.ticket(), e.SERVICE.public_key().spec()),
         _valid("warrant, quorum", e.warrant(), e.SERVICE.public_key().spec()),
+        *_horizontal(),
+    ]
+
+
+def _horizontal() -> list[dict[str, Any]]:
+    """1.4's members, each written only when used: a budget in another unit,
+    a partition beside the tenant, a guard on a rise, receipts naming only the
+    declared tenants, a cap by unit and a sealed recipient map; and a child
+    that opens its entry of the seal."""
+    from fiduciary.sealing import salts, seal
+
+    entries = {"acme": ["acme.example"], "beta": ["beta.example"]}
+    sealed = seal(entries, salts(b"vector seal key", sorted(entries)))
+    raw = e.mandate_json()
+    raw["budgets"] = {
+        "mme": {
+            "places": 0,
+            "envelope": "200",
+            "per_plan": "50",
+            "measure": {
+                "kind": "row_sum",
+                "table": "orders",
+                "column": "total",
+                "rows": "inserted",
+            },
+        }
+    }
+    raw["data"]["partitions"] = {"region": {"max": 1, "declared": False}}
+    raw["data"]["drawdown"] = [
+        {
+            "table": "orders",
+            "column": "total",
+            "per": "partition:region",
+            "max_drop": None,
+            "max_rise": "0.5",
+        }
+    ]
+    raw["data"]["receipt_tenants"] = "declared"
+    raw["outbound"]["caps"] = [
+        {
+            "sink": "stripe",
+            "operation": "refunds.create",
+            "field": "amount",
+            "maximum": {"case": "40", "each": "500"},
+            "per": "request",
+            "currency_field": None,
+            "unit_field": "uom",
+        }
+    ]
+    raw["outbound"]["sinks"]["mail"] = {
+        "operations": ["send"],
+        "max_attempts": 10,
+        "not_after_seconds": 900,
+        "max_payload_bytes": 16384,
+    }
+    raw["outbound"]["per_sink"]["mail"] = 1
+    raw["outbound"]["recipients"] = [
+        {
+            "sink": "mail",
+            "operation": "send",
+            "kind": "email",
+            "fields": ["to"],
+            "domains": [],
+            "addresses": [],
+            "tenant_domains": {},
+            "subdomains": False,
+            "sealed": sealed.root,
+        }
+    ]
+    root = Mandate.from_json(raw, signed=False).signed(e.signer("head-ops"))
+    child = e.child_json(root)
+    child["budgets"] = raw["budgets"]
+    child["data"] = copy.deepcopy(raw["data"])
+    child["outbound"] = copy.deepcopy(raw["outbound"])
+    recipients = child["outbound"]["recipients"][0]
+    recipients["tenant_domains"] = {"acme": ["acme.example"]}
+    recipients["openings"] = {"acme": sealed.openings["acme"].to_json()}
+    opened = Mandate.from_json(child, signed=False).signed(e.SERVICE)
+    return [
+        _valid("mandate, root, with 1.4 members", root, e.key("head-ops")),
+        _valid(
+            "mandate, derived child opening its sealed entry",
+            opened,
+            e.SERVICE.public_key().spec(),
+        ),
     ]
 
 

@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from fiduciary import cli
+from fiduciary.bundle.format import unpack
 from fiduciary.store import Store
 from tests import bound
 from tests import bundle_kit as bk
@@ -83,6 +84,13 @@ def test_export_bundle_writes_a_bundle_verify_bundle_passes(
     assert cli.main(again) == cli.USAGE
     assert "never overwritten" in capsys.readouterr().err
     assert bundle.read_bytes() == data
+    # Sealed: one lineage alone, still verifying (fidb/2).
+    sealed = world.tmp / "sealed.fidb"
+    argv = [*again[:-3], str(sealed), *again[-2:], "--sealed"]
+    assert cli.main(argv) == 0, capsys.readouterr().err
+    assert json.loads(dict(unpack(sealed.read_bytes()))["manifest.json"])["format"] == "fidb/2"
+    check = ["verify-bundle", str(sealed), "--charter", world.charter.digest, "--keys", str(keys)]
+    assert cli.main(check) == 0
 
 
 def test_export_bundle_refuses_without_the_ledger_key_or_a_lineage(

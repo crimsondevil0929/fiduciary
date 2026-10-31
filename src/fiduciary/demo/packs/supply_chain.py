@@ -14,7 +14,9 @@ database came with a material-requirements trigger:
 
 The mandate grants the agent supplier contact details, never bank accounts: a
 bank-account change needs the mandate widened, and widening it needs a quorum.
-The partition is the warehouse. Thresholds are placeholders.
+The partition is the warehouse, the site; each purchase-order line is labeled
+with its supplier too, and a plan may order from one. A line's quantity is
+capped in its unit of measure. Thresholds are placeholders.
 """
 
 from __future__ import annotations
@@ -132,7 +134,12 @@ TABLES: Final = (
     Table("bom", ("id", "parent_sku", "component_sku", "supplier_id", "qty_per"), None),
     Table("stock_on_hand", ("id", "warehouse", "sku", "qty", "safety_stock"), "warehouse"),
     Table("reorder_points", ("id", "warehouse", "sku", "point"), "warehouse"),
-    Table("po_lines", ("id", "warehouse", "po_number", "sku", "supplier_id", "qty"), "warehouse"),
+    Table(
+        "po_lines",
+        ("id", "warehouse", "po_number", "sku", "supplier_id", "qty"),
+        "warehouse",
+        {"supplier": "supplier_id"},
+    ),
     Table("allocations", ("id", "warehouse", "customer", "sku", "qty"), "warehouse"),
 )
 
@@ -194,6 +201,7 @@ def _tools() -> list[dict[str, Any]]:
             "sku": _SKU,
             "supplier_id": {"type": "integer", "minimum": 1, "maximum": SUPPLIERS},
             "qty": {"type": "integer", "minimum": 1, "maximum": 10000},
+            "uom": {"type": "string", "enum": ["case", "each"]},
         },
         [
             effect(
@@ -215,6 +223,7 @@ def _tools() -> list[dict[str, Any]]:
                     "sku": "$.sku",
                     "supplier_id": "$.supplier_id",
                     "qty": "$.qty",
+                    "uom": "$.uom",
                 },
                 ["line"],
             )
@@ -315,6 +324,7 @@ def _data() -> dict[str, Any]:
             }
         ],
         "facts": [],
+        "partitions": {"supplier": {"max": 1, "declared": False}},
     }
 
 
@@ -330,7 +340,18 @@ def _outbound() -> dict[str, Any]:
         },
         "max_per_plan": 1,
         "per_sink": {"edi": 1},
-        "caps": [],
+        # a line's quantity, in the unit of measure the request names
+        "caps": [
+            {
+                "sink": "edi",
+                "operation": "purchase_order.send",
+                "field": "qty",
+                "maximum": {"case": "40", "each": "500"},
+                "per": "request",
+                "currency_field": None,
+                "unit_field": "uom",
+            }
+        ],
         "recipients": [],
         "tenants": {"max_tenants": 1, "require_tenant": True, "fields": {}},
     }
@@ -497,7 +518,7 @@ def acts(run: PackRun) -> None:
     found = one(
         run,
         "create_po",
-        {"sku": "B-2002", "supplier_id": 4, "qty": 120},
+        {"sku": "B-2002", "supplier_id": 4, "qty": 120, "uom": "each"},
         tenant=east,
         trajectory="replenish",
     )
@@ -583,7 +604,7 @@ def acts(run: PackRun) -> None:
         "purchase order. An ERP administrator sends it by hand and resets the breaker, with "
         "the declared break-glass key and no warrant.",
         "create_po",
-        {"sku": "A-1001", "supplier_id": 7, "qty": 80},
+        {"sku": "A-1001", "supplier_id": 7, "qty": 80, "uom": "each"},
         "paused by treasury: supplier 7 under review",
         "payment run deadline: sent by hand",
         tenant=east,
@@ -657,7 +678,7 @@ PACK: Final = Pack(
         "measure": "PO lines, stock levels",
         "hidden": "an MRP fan-out; a drained warehouse",
         "unit": "units of stock; currency",
-        "partition": "the warehouse",
+        "partition": "the warehouse, and each line's supplier",
         "approvers": "procurement lead, AP manager, treasury",
         "vendor": "an EDI purchase order",
         "verifier": "SOX auditor",

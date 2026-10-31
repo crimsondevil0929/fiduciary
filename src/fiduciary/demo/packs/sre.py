@@ -15,7 +15,11 @@ The mirror came with what a cluster comes with:
 - ``replace_on_resize``: a new instance type on a node group replaces the
   database attached to it, with a new, empty volume.
 
-The partition is the environment. Thresholds are placeholders.
+The partition is the environment, and each row is labeled with its cloud
+account too: a plan may touch one of each. Capacity is conserved in a ledger
+of vCPUs, held per plan before it stages; a plan may at most triple a
+deployment's replicas; and every security-group change is held for a warrant
+before it reaches the cluster. Thresholds are placeholders.
 """
 
 from __future__ import annotations
@@ -50,6 +54,8 @@ from fiduciary.demo.packs.kit import (
 )
 
 ENVS: Final = ("prod-east", "prod-west", "staging", "dev")
+ACCOUNTS: Final = ("acct-prod", "acct-prod", "acct-nonprod", "acct-nonprod")
+"""Each environment's cloud account."""
 SERVICES: Final = (
     # service, replicas, vCPU per replica, mutating policy
     ("api", 4, 1, "scale-x10"),
@@ -66,6 +72,7 @@ CREATE TABLE seq (id INTEGER PRIMARY KEY);
 CREATE TABLE deployments (
     id INTEGER PRIMARY KEY,
     env TEXT NOT NULL,
+    account TEXT NOT NULL,
     service TEXT NOT NULL,
     image TEXT NOT NULL,
     replicas INTEGER NOT NULL,
@@ -81,6 +88,7 @@ CREATE TABLE pods (
 CREATE TABLE node_groups (
     id INTEGER PRIMARY KEY,
     env TEXT NOT NULL,
+    account TEXT NOT NULL,
     name TEXT NOT NULL,
     instance_type TEXT NOT NULL,
     nodes INTEGER NOT NULL
@@ -97,6 +105,7 @@ CREATE TABLE db_instances (
 CREATE TABLE security_groups (
     id INTEGER PRIMARY KEY,
     env TEXT NOT NULL,
+    account TEXT NOT NULL,
     name TEXT NOT NULL,
     open_ports TEXT NOT NULL
 );
@@ -123,15 +132,30 @@ END;
 
 TABLES: Final = (
     Table("seq", ("id",), None),
-    Table("deployments", ("id", "env", "service", "image", "replicas", "vcpu", "policy"), "env"),
+    Table(
+        "deployments",
+        ("id", "env", "account", "service", "image", "replicas", "vcpu", "policy"),
+        "env",
+        {"account": "account"},
+    ),
     Table("pods", ("id", "env", "deployment_id", "vcpu"), "env"),
-    Table("node_groups", ("id", "env", "name", "instance_type", "nodes"), "env"),
+    Table(
+        "node_groups",
+        ("id", "env", "account", "name", "instance_type", "nodes"),
+        "env",
+        {"account": "account"},
+    ),
     Table(
         "db_instances",
         ("id", "env", "name", "endpoint", "node_group", "storage_gb", "generation"),
         "env",
     ),
-    Table("security_groups", ("id", "env", "name", "open_ports"), "env"),
+    Table(
+        "security_groups",
+        ("id", "env", "account", "name", "open_ports"),
+        "env",
+        {"account": "account"},
+    ),
 )
 
 
@@ -146,13 +170,14 @@ def node_group(env: int, name: str) -> int:
 
 def _seed(conn: sqlite3.Connection) -> None:
     conn.executemany("INSERT INTO seq VALUES (?)", [(n,) for n in range(1, 201)])
-    for e, env in enumerate(ENVS):
+    for e, (env, account) in enumerate(zip(ENVS, ACCOUNTS, strict=True)):
         for service, replicas, vcpu, policy in SERVICES:
             conn.execute(
-                "INSERT INTO deployments (env, service, image, replicas, vcpu, policy) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO deployments (env, account, service, image, replicas, vcpu, policy) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     env,
+                    account,
                     service,
                     f"registry.internal/{service}:{env}-r{e + 41}",
                     replicas,
@@ -161,9 +186,9 @@ def _seed(conn: sqlite3.Connection) -> None:
                 ),
             )
         conn.execute(
-            "INSERT INTO node_groups (env, name, instance_type, nodes) VALUES "
-            "(?, 'general', 'm7i.xlarge', 6), (?, 'data', 'r7i.2xlarge', 3)",
-            (env, env),
+            "INSERT INTO node_groups (env, account, name, instance_type, nodes) VALUES "
+            "(?, ?, 'general', 'm7i.xlarge', 6), (?, ?, 'data', 'r7i.2xlarge', 3)",
+            (env, account, env, account),
         )
         conn.execute(
             "INSERT INTO db_instances (env, name, endpoint, node_group, storage_gb, generation) "
@@ -171,7 +196,9 @@ def _seed(conn: sqlite3.Connection) -> None:
             (env, f"orders-pg.{env}.db.internal:5432", node_group(e, "data")),
         )
         conn.execute(
-            "INSERT INTO security_groups (env, name, open_ports) VALUES (?, 'edge', '443')", (env,)
+            "INSERT INTO security_groups (env, account, name, open_ports) "
+            "VALUES (?, ?, 'edge', '443')",
+            (env, account),
         )
     for row in conn.execute("SELECT id, env, replicas, vcpu FROM deployments").fetchall():
         conn.executemany(
@@ -186,7 +213,8 @@ SINKS: Final = (
         (
             OperationSpec("deployment.scale"),
             OperationSpec("nodegroup.update"),
-            OperationSpec("securitygroup.update"),
+            # network changes wait for a warrant before the cluster sees them
+            OperationSpec("securitygroup.update", hold=True),
         ),
         cost_per_call=Decimal("0.01"),
         idempotency="header",
@@ -306,7 +334,16 @@ def _data() -> dict[str, Any]:
         "declared_tenants": True,
         "max_rows": 20,
         "max_tenants": 1,
-        "drawdown": [],
+        # a plan may at most triple a deployment's replicas, in any environment
+        "drawdown": [
+            {
+                "table": "deployments",
+                "column": "replicas",
+                "per": "tenant",
+                "max_drop": None,
+                "max_rise": "2",
+            }
+        ],
         "stated_footprint": {"tolerance": "2", "blocking": False},
         "agreements": [
             {
@@ -320,6 +357,20 @@ def _data() -> dict[str, Any]:
             }
         ],
         "facts": [],
+        "partitions": {"account": {"max": 1, "declared": False}},
+    }
+
+
+def _budgets() -> dict[str, Any]:
+    """Capacity, conserved: a ledger of whole vCPUs, of which each plan holds
+    its bound before it stages and settles what its new pods run on."""
+    return {
+        "vcpu": {
+            "places": 0,
+            "envelope": "64",
+            "per_plan": "16",
+            "measure": {"kind": "row_sum", "table": "pods", "column": "vcpu", "rows": "inserted"},
+        }
     }
 
 
@@ -474,18 +525,23 @@ def acts(run: PackRun) -> None:
         )
     committed = sum(c.committed for c in calls)
     permitted = sum(c.gateway.permitted for c in calls)
+    vcpu = run.world.ledgers["vcpu"]
+    vcpu.refresh()
+    left = format(vcpu.available(run.pack.scope).normalize(), "f")
     run.say(
         f"  5 sub-agents, +4 vCPU each: gateway permitted {permitted}; stack committed "
-        f"{committed} (16 vCPU per hour across the lineage)"
+        f"{committed} (16 vCPU per hour across the lineage); vCPU ledger {left} of 64 left"
     )
     run.act(
         4,
         "fleet",
         "Five sub-agents each add a little capacity to a different service: 2 replicas of "
         "2 vCPU apiece. Each call is within the gateway's per-call limit. The mandate's "
-        "window counts the vCPU every session of the lineage adds in an hour.",
+        "window counts the vCPU every session of the lineage adds in an hour, and the vCPU "
+        "ledger holds each plan's bound before it stages.",
         calls=[c.to_json() for c in calls],
         window={"limit": "16", "unit": "vCPU", "span_hours": 1, "per": "lineage"},
+        meter={"unit": "vcpu", "envelope": "64", "per_plan": "16", "left": left},
         committed=committed,
         sessions=len(calls),
         refused_by=sorted({b for c in calls for b in blocked(c)}),
@@ -495,12 +551,12 @@ def acts(run: PackRun) -> None:
     act_quorum(
         run,
         5,
-        "Security pauses the agent to review a network change. The relay holds the request "
-        "to open port 22 on the staging edge security group, and the service raises a "
-        "ticket for the principals.",
+        "Every security-group change waits for a warrant: its cluster operation is declared "
+        "held. The relay holds the request to open port 22 on the staging edge security "
+        "group, and the service raises a ticket for the principals.",
         "open_port",
         {"security_group_id": 3, "port": 22},
-        "paused by security: network change review",
+        None,
         forged=run.pack.operator,
         tenant=ENVS[2],
     )
@@ -589,9 +645,10 @@ PACK: Final = Pack(
         "measure": "resource changes, in a mirror of the cluster",
         "hidden": "a mutating policy; a forced replacement",
         "unit": "vCPU; USD",
-        "partition": "the environment",
+        "partition": "the environment, and its cloud account",
         "approvers": "on-call SRE, service owner, security",
         "vendor": "a cluster change request",
         "verifier": "FedRAMP assessor, SOC 2 auditor",
     },
+    budgets=_budgets,
 )

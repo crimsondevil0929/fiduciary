@@ -70,7 +70,7 @@ from fiduciary.documents.ticket import (
 from fiduciary.exceptions import AuthorityError, FiduciaryError, MalformedError, SignatureError
 from fiduciary.log import Log
 from fiduciary.refines import delegation_problems, refines
-from fiduciary.store import State, Store
+from fiduciary.store import State, Store, Withheld
 
 __all__ = ["BUILTIN_TOOLS", "REFUSAL_CODES", "Authority", "Decide", "replay", "replay_each"]
 
@@ -1309,14 +1309,18 @@ def replay(
 
 
 def replay_each(
-    records: Sequence[Record], store: Store, *, pinned: str, service_key: Verifier
+    records: Sequence[Record | Withheld], store: Store, *, pinned: str, service_key: Verifier
 ) -> Iterator[tuple[Record, State, str | None]]:
     """Each record, the state before it, and why its rules would not have
-    written it as it is (``None`` when they would)."""
+    written it as it is (``None`` when they would). A withheld record is
+    folded past, not replayed."""
     decide = Decide(store, pinned, service_key)
     intake = dict(store.intake())
     state = State()
     for record in records:
+        if isinstance(record, Withheld):
+            state.apply(record)
+            continue
         problem = None
         try:
             expected = _expected(decide, state, record, intake)

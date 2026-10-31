@@ -50,11 +50,26 @@ def full() -> dict[str, Any]:
         {"table": "orders", "column": "total", "per": "tenant", "max_drop": "0.9"},
     ]
     raw["tools"]["statements"] = "bound"
+    # 1.4: a budget in another unit compiles to a meter, whose check is built in.
+    raw["budgets"] = {
+        "mme": {
+            "places": 8,
+            "envelope": "900",
+            "per_plan": "90",
+            "measure": {
+                "kind": "row_sum",
+                "table": "orders",
+                "column": "total",
+                "rows": "inserted",
+            },
+        }
+    }
     return raw
 
 
 def _compile(raw: dict[str, Any] | Mandate, **deployment: Any) -> CompiledMandate:
     mandate = raw if isinstance(raw, Mandate) else Mandate.from_json(raw, signed=False)
+    deployment.setdefault("units", {"mme": 8})
     return compile([mandate], deployment=deploy.deployment(**deployment))
 
 
