@@ -6,7 +6,9 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-### 1.4.0: any unit, any partition, one customer's bundle
+## [1.4.0] - 2026-10-31
+
+Any unit, any partition, one customer's bundle.
 
 One engine for any industry's consequences, with no finance, SQL or single-tenant
 assumption left in what a mandate can say. Every new member of a document is written only
