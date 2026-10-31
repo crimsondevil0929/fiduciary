@@ -57,8 +57,9 @@ from fiduciary.bridge import Fiduciary
 from fiduciary.bundle.export import spec
 from fiduciary.compiler import Deployment
 from fiduciary.documents import Approval, Charter, Mandate, ToolBinding
-from fiduciary.keys import generate_key
+from fiduciary.keys import generate_key, load_key
 from fiduciary.log import Log, ensure_anchor_scope
+from fiduciary.seals import Sealer
 from fiduciary.sqlite import SqliteStore
 
 __all__ = ["PRICING", "SCOPE", "TENANTS", "World", "build"]
@@ -69,6 +70,8 @@ TENANTS: Final = ("acme", "globex", "initech", "umbrella")
 ORDERS: Final = 200
 BATCH: Final = 50
 PRINCIPALS: Final = ("cfo", "head-ops", "security")
+SEAL_KEY: Final = hashlib.sha256(b"fiduciary demo seal\nfintech").digest()
+"""The fintech log's seal secret: every demo log is sealed (1.5.0)."""
 STRIPE_SECRET_ENV: Final = "DEMO_STRIPE_WEBHOOK_SECRET"  # noqa: S105 - a variable's name
 DIRECTIVE: Final = b"Stop retrying."
 
@@ -594,16 +597,26 @@ def _write_config(world: World) -> None:
         '[[sinks]]\nname = "stripe"\ncost_per_call = "0.01"\nidempotency = "header"\n'
         'max_payload_bytes = 65536\noperations = [{ name = "refunds.create" }]\n'
     )
-    (root / "interlock.toml").write_text(
-        f'substrate = "sqlite"\ndatabase = "{world.back_office}"\n' + tables + sinks
-    )
     service = root / "keys" / "service.key"
+    night = root / "keys" / "night-shift.key"
+    operators = (
+        f'[operators]\nlog = "{world.operator_log}"\n'
+        f'[operators.keys]\nfiduciary = "{spec(load_key(service).public_key())}"\n'
+        f'night-shift = "{spec(load_key(night).public_key())}"\n'
+    )
+    (root / "interlock.toml").write_text(
+        f'substrate = "sqlite"\ndatabase = "{world.back_office}"\n' + tables + sinks + operators
+    )
+    seal = root / "keys" / "seal.key"
+    if not seal.exists():
+        seal.write_text(SEAL_KEY.hex() + "\n")
+        seal.chmod(0o600)
     (root / "fiduciary.toml").write_text(
         f'database = "{root / "fiduciary.db"}"\n'
         f'ledger = "{root / "ledger.db"}"\n'
         f'interlock = "{root / "interlock.toml"}"\n'
         f'[charter]\nfile = "{root / "charter.json"}"\ndigest = "{world.charter.digest}"\n'
-        f'[service]\nkey = "{service}"\n'
+        f'[service]\nkey = "{service}"\nseal_key = "{seal}"\n'
         f"[binding]\ntools = {json.dumps(tools)}\n"
         f'directives = ["{root / "stop-retrying.txt"}"]\nchains = "{world.chains}"\n'
         f'[executor]\nkey = "{service}"\noutbox = "{world.back_office}"\n'
@@ -665,7 +678,8 @@ def build(root: Path) -> World:
 
     store = SqliteStore(root / "fiduciary.db")
     closers.append(store.close)
-    log = Log(store, signers["service"], ledger=governor)
+    # Sealed, as every demo log is (1.5.0): either bundle format exports.
+    log = Log(store, signers["service"], ledger=governor, sealer=Sealer(SEAL_KEY))
     charter = Charter.from_json(
         {
             "v": "FIDU1",

@@ -1,6 +1,6 @@
 [project]
 name = "interlock-fiduciary"
-version = "1.4.0"
+version = "1.5.0"
 description = "Signed mandates, quorum warrants and offline compliance proofs over Interlock and AgentGov."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,9 +18,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "interlock-escrow>=1.2.0",
+    "interlock-escrow>=1.3.0",
     # Signing is part of every install: keygen, approve, the service and the demo sign.
-    "interlock-agentgov[sign]>=1.1.0",
+    "interlock-agentgov[sign]>=1.1.1",
 ]
 
 [project.scripts]
@@ -28,14 +28,14 @@ fiduciary = "fiduciary.cli:main_entry"
 
 [project.optional-dependencies]
 # The PostgreSQL store (fiduciary.postgres), and AgentGov and Interlock on PostgreSQL.
-postgres = ["psycopg[binary]>=3.2", "interlock-escrow[postgres]>=1.2.0"]
+postgres = ["psycopg[binary]>=3.2", "interlock-escrow[postgres]>=1.3.0"]
 # Signing with an Ed25519 key held locally. In the base install since 1.1.0; the
 # extra stays so that `interlock-fiduciary[sign]` still resolves.
-sign = ["interlock-agentgov[sign]>=1.1.0"]
+sign = ["interlock-agentgov[sign]>=1.1.1"]
 # Signing with an Ed25519 key held by AWS KMS (agentgov.receipts.kms_aws.AwsKmsSigner).
-kms-aws = ["interlock-agentgov[kms-aws]>=1.1.0"]
+kms-aws = ["interlock-agentgov[kms-aws]>=1.1.1"]
 # AgentGov's OpenTelemetry metrics, for the governor fiduciary anchors into.
-otel = ["interlock-agentgov[otel]>=1.1.0"]
+otel = ["interlock-agentgov[otel]>=1.1.1"]
 # The Cedar policy engine, for the input gateway `fiduciary demo` compares with;
 # without it the demo's built-in evaluator of the same policies decides.
 cedar = ["cedarpy>=4.12"]

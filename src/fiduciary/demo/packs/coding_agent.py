@@ -798,14 +798,77 @@ def acts(run: PackRun) -> None:
     _hotfix(run, repository, start)
 
     run.say("Act 7  " + TITLES["audit"])
+    reconciled = _github_audit(run, repository, start)
+    run.say(
+        f"  the code host's audit log: {reconciled['matched']} push(es) explained by a "
+        f"receipt, {reconciled['phantom']} phantom ({', '.join(reconciled['phantoms']) or 'none'})"
+    )
     act_audit(
         run,
         7,
         "The lineage is exported twice, before and after the administrator's hotfix. An "
         "auditor verifies both with networking disabled, holding only the charter digest and "
         "public keys, and searches both for every file's contents, every payload and every "
-        "secret.",
+        "secret. The code host's audit log of pushes to main is then reconciled against the "
+        "receipts: every push must be explained by one.",
+        reconciliation=reconciled,
     )
+
+
+AUDIT_EXPORT: Final = "audit/github-audit.json"
+"""Where the deployment keeps the code host's audit log of pushes to main."""
+
+
+def _github_audit(run: PackRun, repository: Repository, start: str) -> dict[str, Any]:
+    """Every push to main since the substrate took the branch over, as the
+    code host's audit log records it (``git.push``, with the commit it moved
+    the branch to), written beside the deployment and reconciled against the
+    receipt log, as ``agentgov reconcile-actions --format github-audit-json``
+    does it. A commit a stage made carries its receipt's commit id; one pushed
+    around the queue carries none a receipt explains."""
+    from agentgov.receipts import document_from_json
+    from agentgov.receipts.canonical import loads_strict
+    from agentgov.reconciliation import load_actions, reconcile_actions
+
+    root = run.world.root
+    log = _git(
+        repository.origin, "log", "--reverse", "--format=%H %P|%an|%at", f"{start}..{BRANCH}"
+    )
+    events = []
+    for line in log.splitlines():
+        shas, author, at = line.split("|")
+        sha, *parents = shas.split()
+        events.append(
+            {
+                "_document_id": f"push-{sha[:12]}",
+                "@timestamp": int(at) * 1000,
+                "action": "git.push",
+                "actor": author,
+                "repo": f"acme/{REPO}",
+                "ref": f"refs/heads/{BRANCH}",
+                "before": parents[0] if parents else None,
+                "after": sha,
+            }
+        )
+    export = root / AUDIT_EXPORT
+    export.parent.mkdir(exist_ok=True)
+    export.write_text(json.dumps(events, indent=1) + "\n")
+    receipts = [
+        document_from_json(loads_strict(line))
+        for line in (root / "receipts.jsonl").read_bytes().splitlines()
+        if line.strip()
+    ]
+    report = reconcile_actions(receipts, load_actions(str(export), fmt="github-audit-json"))
+    return {
+        "export": AUDIT_EXPORT,
+        "format": "github-audit-json",
+        "matched": len(report.matched),
+        "phantom": len(report.phantom),
+        "phantoms": [f"{r.action} by {r.actor}" for r in report.phantom],
+        "command": (
+            f"agentgov reconcile-actions receipts.jsonl {AUDIT_EXPORT} --format github-audit-json"
+        ),
+    }
 
 
 def _trailer(repository: Repository) -> str:
