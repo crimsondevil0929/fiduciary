@@ -526,12 +526,8 @@ wheels = [
 
 [[package]]
 name = "interlock-agentgov"
-version = "1.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/39/7b/ab9bf347d16499799a876ec142fb7986ecc755bf9cca5c580c45ad2518fe/interlock_agentgov-1.1.0.tar.gz", hash = "sha256:e4ddfd2f9cd050067419357d281a73bb4c969908641c9f379d3f48f2d31d6317", size = 1048586, upload-time = "2026-10-31T07:08:43.816Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/20/db6bc47fc29adb2ddcdb01ada3944aff57498fa35076654b48c2a077d37b/interlock_agentgov-1.1.0-py3-none-any.whl", hash = "sha256:f4c063a7e0ee07ee2fd5df7fd4fa7474c29a74013aa1a0548dc4c57546d1b1f3", size = 320457, upload-time = "2026-10-31T07:08:41.671Z" },
-]
+version = "1.1.1"
+source = { git = "https://github.com/crimsondevil0929/agentgov?rev=2f1d04679e35de63cf41d2255f50e61638ffe8fb#2f1d04679e35de63cf41d2255f50e61638ffe8fb" }
 
 [package.optional-dependencies]
 kms-aws = [
@@ -546,14 +542,10 @@ sign = [
 
 [[package]]
 name = "interlock-escrow"
-version = "1.2.0"
-source = { registry = "https://pypi.org/simple" }
+version = "1.3.0"
+source = { git = "https://github.com/crimsondevil0929/interlock?rev=d8c5d50b39af14355c5cdc46bef7a53b29570eeb#d8c5d50b39af14355c5cdc46bef7a53b29570eeb" }
 dependencies = [
     { name = "interlock-agentgov" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/83/d8/1acdb04ea258cc4251b56448415507b91ac722b602003239b9e783d7f296/interlock_escrow-1.2.0.tar.gz", hash = "sha256:fa1980beba2bad71671bf92b8cfac836815e59adecf049a946fe119047a6665d", size = 1419356, upload-time = "2026-10-31T16:54:06.287Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/c7/fa25db5c472c51cab14405771631c6f233904d28d06301036b5cb6de9ee7/interlock_escrow-1.2.0-py3-none-any.whl", hash = "sha256:eaa180ce7cd4f89d7bd4dc14a1fe0690af3c2f4b72f2000751d775e14c7b393f", size = 534004, upload-time = "2026-10-31T16:54:04.41Z" },
 ]
 
 [package.optional-dependencies]
@@ -563,7 +555,7 @@ postgres = [
 
 [[package]]
 name = "interlock-fiduciary"
-version = "1.4.0"
+version = "1.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "interlock-agentgov", extra = ["sign"] },
@@ -607,12 +599,12 @@ dev = [
 requires-dist = [
     { name = "cedarpy", marker = "extra == 'cedar'", specifier = ">=4.12" },
     { name = "cedarpy", marker = "extra == 'demo'", specifier = ">=4.12" },
-    { name = "interlock-agentgov", extras = ["kms-aws"], marker = "extra == 'kms-aws'", specifier = ">=1.1.0" },
-    { name = "interlock-agentgov", extras = ["otel"], marker = "extra == 'otel'", specifier = ">=1.1.0" },
-    { name = "interlock-agentgov", extras = ["sign"], specifier = ">=1.1.0" },
-    { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'sign'", specifier = ">=1.1.0" },
-    { name = "interlock-escrow", specifier = ">=1.2.0" },
-    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=1.2.0" },
+    { name = "interlock-agentgov", extras = ["kms-aws"], marker = "extra == 'kms-aws'", git = "https://github.com/crimsondevil0929/agentgov?rev=2f1d04679e35de63cf41d2255f50e61638ffe8fb" },
+    { name = "interlock-agentgov", extras = ["otel"], marker = "extra == 'otel'", git = "https://github.com/crimsondevil0929/agentgov?rev=2f1d04679e35de63cf41d2255f50e61638ffe8fb" },
+    { name = "interlock-agentgov", extras = ["sign"], git = "https://github.com/crimsondevil0929/agentgov?rev=2f1d04679e35de63cf41d2255f50e61638ffe8fb" },
+    { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'sign'", git = "https://github.com/crimsondevil0929/agentgov?rev=2f1d04679e35de63cf41d2255f50e61638ffe8fb" },
+    { name = "interlock-escrow", git = "https://github.com/crimsondevil0929/interlock?rev=d8c5d50b39af14355c5cdc46bef7a53b29570eeb" },
+    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", git = "https://github.com/crimsondevil0929/interlock?rev=d8c5d50b39af14355c5cdc46bef7a53b29570eeb" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
 ]
 provides-extras = ["postgres", "sign", "kms-aws", "otel", "cedar", "demo"]
