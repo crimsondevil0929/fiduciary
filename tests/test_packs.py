@@ -227,7 +227,10 @@ def test_the_overview_counts_only_what_ran(stack: Outcome) -> None:
     assert rows["coding-agent"]["ran"] is ("coding-agent" in PACKS)
     assert rows["coding-agent"]["substrate"] == "Git" and rows["saas"]["substrate"] == "SQLite"
     assert not any(r.get("planned") for r in found["industries"])
-    assert rows["sre"]["note"] and "mirror" in rows["sre"]["note"]
+    assert (rows["sre"]["class"], rows["sre"]["substrate"]) == ("P", "Kubernetes")
+    assert not rows["sre"].get("note")
+    ladder = {rung["class"]: rung["shipped"] for rung in found["ladder"]}
+    assert ladder == {"T": True, "P": True, "V": False, "R": True}
     engine = {k: rows[k]["engine"] for k in ("fintech", *PACKS)}
     assert engine["fintech"]["rate_window"] == 45  # every fan-out session, not the sample
     assert engine["healthcare"]["fact_agreement"] == 1
