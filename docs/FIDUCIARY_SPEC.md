@@ -833,6 +833,13 @@ Fiduciary's own acts are records in a hash-chained, signed log. It is built as I
   - The first record's `prev` is 64 zeros.
   - Each record is anchored into AgentGov as a zero-value `ANCHOR` entry on the scope
     `fiduciary`, with the memo `FIDU1 <log> <seq> <hash>`.
+  - *Amended in 1.4.0.* A record of a **sealed log** (`[service] seal_key`) carries one
+    more member, `seal`: two tags, 64 hex each, sorted, that say whose the record is so
+    that only that party's keys can tell (F9-7). Its anchor's memo repeats them:
+    `FIDU1 <log> <seq> <hash> <tag> <tag>`. A log is sealed from its first record or
+    never: the service refuses to seal a log begun without seals, or to write an unsealed
+    record into a sealed one. A log that is not sealed writes no `seal`, and every record
+    and memo keeps its bytes.
 
   A log truncated or rewritten after its records were anchored disagrees with the ledger
   (V10).
@@ -1644,10 +1651,48 @@ against its digest, then on the member's own terms. A signature that is present 
   to the record and learns nothing else. Every check that counts across lineages
   (a parent's children, F5-6) then counts fewer, so a sealed bundle can only pass where its
   whole log would; and V7 still holds every ledger entry, receipt and escrow commit on the
-  lineage's footprint to a record the bundle carries. What a sealed bundle cannot prove is
-  that every withheld record is another lineage's: the service says so by signing the
-  manifest, and a withheld record of the lineage that left no trace on its footprint would
-  not be found. The report says how many records are withheld.
+  lineage's footprint to a record the bundle carries. The report says how many records are
+  withheld. *Amended in 1.4.0, before release:* a withheld record is also held to its seal
+  (F9-7), so that no record of the lineage's own can be withheld.
+- **F9-7.** *Added in 1.4.0.* **Seals.** A sealed bundle is cut from a sealed log (F4-26)
+  by the seals alone: `log.jsonl` holds exactly the records its keys open, and
+  `withheld.json` carries the keys. From the deployment's seal secret *S*, `key(all) =
+  HMAC-SHA-256(S, "fidb/2 all")`, a lineage's `key(X) = HMAC-SHA-256(S, "fidb/2 lineage\n"
+  ‖ X)` and its `line(X) = HMAC-SHA-256(key(X), "fidb/2 line")`; a tag of key *k* at record
+  *n* is `HMAC-SHA-256(k, "fidb/2 seal\n" ‖ canonical([log, n]))`. Whose a record is, when
+  it is written:
+
+  | Records | Whose | Seal |
+  |---|---|---|
+  | the charter's; approvals of a charter or a suspension | all | `tag(key(all))`, a pad |
+  | a lineage's versions and their events; its `amend` tickets, with what decided and executed them; approvals of its versions and revocations | the lineage's line | `tag(line(X))`, `tag(key(P))` (*P* the lineage it was issued under; *X* for a root) |
+  | a lineage's sessions; its other tickets, with what decided and executed them | the lineage | `tag(key(X))`, a pad |
+  | a refused submission that names no subject | no one | two pads |
+
+  A pad is a tag under a key only *S* derives, so every seal is two tags that look alike:
+  a withheld record's seal says nothing of its kind, its lineage or its depth, and since a
+  tag depends on the record's place, no two records share one. A bundle of lineage *R*
+  holds `key(all)`, `key(X)` of *R* and of every lineage below it, and `line(A)` of every
+  lineage above it: never a key of a lineage beside it, nor the `key` of one above it. V10
+  holds, besides the anchors:
+
+  - the keys are the log's: `key(all)` makes a tag of record 1's seal, and each lineage's
+    key (its `line`, for a lineage above) a tag of the seal of the record that issued its
+    first version;
+  - the keys are complete: one of each lineage the manifest names and of each lineage
+    above it, and no lineage the bundle shows issued below one of its lineages is missing
+    from them (a child's first version carries its parent's tag, so a parent's bundle
+    finds every child);
+  - every record `log.jsonl` holds carries a seal its keys open, and its anchor the same
+    seal;
+  - **no withheld record's anchored seal is one its keys open.** One that is names the
+    lineage it belongs to, and fails (exit 8).
+
+  So an exporter that holds every key and signs the manifest still cannot withhold a record
+  of the lineage's own, whether or not it left a trace in the ledger, the receipts or the
+  chains: its seal was written with it, and its anchor vouches for the seal. The seals are
+  honest because the service wrote them; `fiduciary verify` with the seal key configured
+  holds every record's seal to whose the record is.
 
 ## 9.3 `fiduciary verify-bundle`
 
@@ -1876,6 +1921,7 @@ digest = "<sha256 of charter version 1>"               # the root of authority
 
 [service]
 signer = "kms-fiduciary"                               # [signers.<name>], or key = "service.key"
+seal_key = "seal.key"                                  # 1.4: a sealed log (F4-26, F9-7), 32+ bytes in hex
 
 [executor]
 key    = "executor.key"                                # an [operators.keys] key; AWS KMS only with U-2
@@ -2301,8 +2347,9 @@ and `fidb/1` bundle written before byte for byte as it was, and every earlier go
 and golden bundle unchanged; a 1.3 verifier refuses a document that uses one, as it must,
 since it cannot enforce it. The sealed bundle is the new format `fidb/2` (F9-5), read
 beside `fidb/1`. New vectors cover each addition: two mandates in `valid.json`, and
-`valid-sealed-child`, `v10-withheld-rewritten` and `v9-withheld-dropped` among the golden
-bundles.
+`valid-sealed-child`, `v10-withheld-rewritten`, `v9-withheld-dropped` and
+`v10-own-record-withheld` among the golden bundles, and `seals.json`, a sealed log's
+records with their seals, anchors and one bundle's keys.
 
 **The upstream gaps (§12).** Each is released: U-1 (crimsondevil0929/interlock#20), U-2,
 U-3, U-4 and U-6 (crimsondevil0929/interlock#21) in interlock 1.0.3, and U-5
@@ -2406,6 +2453,7 @@ SQLite and on PostgreSQL. The test kinds:
 | F9-1: no row data | 5, 6 | the security audit | Implemented. `test_security_audit.py`, `test_bundle_export.py` |
 | F9-2, F9-3: self-contained, offline, specified | 5 | the offline run; golden bundles; byte-identical exports | Implemented, with the limits above. `test_bundle_tamper.py`, `test_bundle_vectors.py` |
 | F9-4: reports (`--json`, `--report`) and `fiduciary demo` | after 6 | every golden bundle's exit code and findings through `--json`; the demo's seven acts, measured; the control-framework packs by digest; each domain pack's acts, measured | Implemented (1.1.0; packs and domains 1.2.0; the coding-agent pack, on Git, 1.3.0), SQLite. `test_attest.py`, `test_demo.py`, `test_packs.py`, `test_coding_agent.py` |
+| F9-5 to F9-7: sealed bundles and sealed logs | 1.4.0 | a lineage's own record withheld, by an exporter that signs the manifest; a key swapped, left out, or a lineage below left out; another lineage's record carried; the seal vectors | Implemented (1.4.0). `test_sealed_bundles.py`, `test_vectors.py`, `test_bundle_vectors.py`, `test_cli_bundle.py` |
 | F10-1 to F10-4: the stores | 1, 3 | the projection fold; append-only enforcement on both stores; the intake role | Implemented. `test_store.py`, `test_postgres.py`, `test_upgrade.py` |
 | F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak | Implemented. `test_contention.py`, `test_cluster.py`, `test_soak.py` |
 | F10-9 to F10-11: crash points | 3 | crash | Implemented. `test_crash_recovery.py` |

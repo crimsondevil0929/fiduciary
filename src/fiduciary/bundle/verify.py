@@ -68,7 +68,8 @@ from fiduciary.compiler import (
 )
 from fiduciary.documents import Charter, Mandate, Record, ToolBinding
 from fiduciary.exceptions import FiduciaryError
-from fiduciary.log import LOG_ID, check_anchors, parse_memo
+from fiduciary.log import LOG_ID, check_anchors, memo_seal, parse_memo
+from fiduciary.seals import BundleKeys, line_key, tag
 from fiduciary.store import State, Store, StoredRecord, Withheld
 from fiduciary.verify import ordering_problems
 
@@ -223,6 +224,8 @@ class _Bundle:
     stored: list[StoredRecord] = field(default_factory=list)
     records: list[Record] = field(default_factory=list)
     withheld: list[Withheld] = field(default_factory=list)
+    seal_keys: BundleKeys | None = None
+    """A sealed bundle's keys (``withheld.json``)."""
     intake: dict[int, bytes] = field(default_factory=dict)
     entries: list[tuple[LedgerEntry, int, list[bytes]]] = field(default_factory=list)
     checkpoint: Checkpoint | None = None
@@ -304,6 +307,8 @@ def _v1(members: list[tuple[str, bytes]], report: BundleReport) -> _Bundle:
             raise  # this verifier cannot read it, which is no finding about the bundle
         except Exception as exc:  # each library's parser raises its own errors
             report.add("V1", "malformed", f"member {path} does not parse: {exc}")
+    if out.manifest.get("format") == SEALED and out.seal_keys is None:
+        report.add("V1", "malformed", "a sealed bundle holds no readable withheld.json")
     both = {r.seq for r in out.records} & {w.seq for w in out.withheld}
     for seq in sorted(both):
         report.add("V1", "malformed", f"record {seq} is both in log.jsonl and withheld")
@@ -358,8 +363,14 @@ def _parse(path: str, data: bytes, out: _Bundle) -> None:
                 )
             )
     elif path == "withheld.json" and out.manifest.get("format") == SEALED:
+        raw = fidu1.parse(data)
+        if not isinstance(raw, dict) or sorted(raw) != ["keys", "records"]:
+            raise FiduciaryError("it is {keys, records}")
+        out.seal_keys = BundleKeys.from_json(raw["keys"])
+        if not isinstance(raw["records"], list):
+            raise FiduciaryError("its records are a list")
         seqs = []
-        for item in fidu1.parse(data):
+        for item in raw["records"]:
             if not isinstance(item, dict) or sorted(item) != ["hash", "seq"]:
                 raise FiduciaryError("each withheld record is {seq, hash}")
             seq = item["seq"]
@@ -876,6 +887,77 @@ class _Checks:
         for seq in missing:
             what = "is withheld" if seq in withheld else "is in range"
             self.add("V10", "evidence", f"record {seq} {what} but has no ledger anchor")
+        if self.b.seal_keys is not None:
+            self._v10_seals(self.b.seal_keys)
+
+    def _v10_seals(self, keys: BundleKeys) -> None:
+        """A sealed bundle's seals (:mod:`fiduciary.seals`): its keys are the
+        ones its own records were sealed with, and of every lineage it is of,
+        and above it; every record it carries is one its keys open; and no
+        record it withholds is."""
+        state, lineages = self.state, set(self.b.manifest.get("lineages", ()))
+        above: list[str] = []
+        current = state.parent_lineage(str(self.b.manifest.get("lineage", "")))
+        while current is not None:
+            above.append(current)
+            current = state.parent_lineage(current)
+        if set(keys.lineages) != lineages:
+            self.add("V10", "evidence", "withheld.json does not hold a key of each of its lineages")
+        if set(keys.lines) != set(above):
+            self.add(
+                "V10", "evidence", "withheld.json does not hold a key of each lineage above it"
+            )
+        below = sorted(
+            x for x in state.lineages if x not in lineages and state.parent_lineage(x) in lineages
+        )
+        for lineage in below:
+            self.add("V10", "evidence", f"lineage {lineage} is below the bundle's but not in it")
+        # Each key is the one the log sealed with: a record it must open, it opens.
+        firsts = [("all", keys.all, 1)]
+        for lineage, key in sorted(keys.lineages.items()):
+            firsts.append((lineage, line_key(key), self._issued_at(lineage)))
+        for lineage, key in sorted(keys.lines.items()):
+            firsts.append((lineage, key, self._issued_at(lineage)))
+        for whose, key, seq in firsts:
+            record = self.by_seq.get(seq)
+            if record is None or record.seal is None or tag(key, LOG_ID, seq) not in record.seal:
+                name = "the charter's" if whose == "all" else f"lineage {whose}'s"
+                self.add(
+                    "V10", "evidence", f"withheld.json's key of {name} records is not the log's"
+                )
+        for record in self.b.records:
+            if record.seal is None:
+                self.add("V10", "evidence", f"record {record.seq} carries no seal")
+            elif keys.opens(LOG_ID, record.seq, record.seal) is None:
+                self.add(
+                    "V10",
+                    "evidence",
+                    f"record {record.seq} is another lineage's, by its seal: a sealed bundle "
+                    "carries only its own",
+                )
+        for withheld in self.b.withheld:
+            anchor = self.anchors.get(withheld.seq)
+            seal = None if anchor is None else memo_seal(anchor.memo)
+            if seal is None:
+                if anchor is not None:
+                    self.add(
+                        "V10", "evidence", f"record {withheld.seq} is withheld, its anchor unsealed"
+                    )
+                continue
+            opened = keys.opens(LOG_ID, withheld.seq, seal)
+            if opened is not None:
+                name = "the charter's" if opened == "all" else f"lineage {opened}'s"
+                self.add(
+                    "V10",
+                    "evidence",
+                    f"record {withheld.seq} is withheld, but its seal says it is {name}: a "
+                    "sealed bundle withholds only other lineages' records",
+                )
+
+    def _issued_at(self, lineage: str) -> int:
+        """The record that issued a lineage's first version; 0 for none here."""
+        versions = self.state.lineages.get(lineage)
+        return versions[0][3] if versions else 0
 
     # -- V7 completeness ---------------------------------------------------------------
 

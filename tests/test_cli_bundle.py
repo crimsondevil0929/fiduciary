@@ -14,16 +14,17 @@ import pytest
 
 from fiduciary import cli
 from fiduciary.bundle.format import unpack
+from fiduciary.seals import Sealer
 from fiduciary.store import Store
 from tests import bound
 from tests import bundle_kit as bk
 from tests.conftest import LiveClock
-from tests.test_cli_mcp import _configure, _key
+from tests.test_cli_mcp import SEAL_SECRET, _configure, _key
 
 
 @pytest.fixture
 def world(store: Store, tmp_path: Path) -> Iterator[bound.World]:
-    yield from bk.world(store, tmp_path)
+    yield from bk.world(store, tmp_path, sealer=Sealer(SEAL_SECRET))
 
 
 @pytest.fixture
@@ -91,6 +92,9 @@ def test_export_bundle_writes_a_bundle_verify_bundle_passes(
     assert json.loads(dict(unpack(sealed.read_bytes()))["manifest.json"])["format"] == "fidb/2"
     check = ["verify-bundle", str(sealed), "--charter", world.charter.digest, "--keys", str(keys)]
     assert cli.main(check) == 0
+    # The seal key holds every seal of the log to whose its record is.
+    capsys.readouterr()
+    assert cli.main(["--config", str(config), "verify"]) == 0, capsys.readouterr().out
 
 
 def test_export_bundle_refuses_without_the_ledger_key_or_a_lineage(

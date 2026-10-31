@@ -848,7 +848,7 @@ def _detached_executor(writer: _Writer) -> tuple[Executor, Callable[[], None]]:
         )
         assert governor is not None
         opened.append(governor.close)
-        log = Log(store, writer.keys.service, ledger=governor)
+        log = Log(store, writer.keys.service, ledger=governor, sealer=config.sealer())
         authority = Authority(log, pinned=config.pinned())
         binder = Binder(authority, governor, deployment=config.deployment(governor))
         outbox = None

@@ -10,7 +10,7 @@ needs nothing else, apart from the formats the bundle carries from its sources:
   `RECEIPTS_SPEC.md`);
 - ILOK1 records and escrow chains (interlock's `ESCROW_SPEC.md`).
 
-`vectors/fidu1/bundles/` holds 33 golden bundles: four valid (one of them
+`vectors/fidu1/bundles/` holds 34 golden bundles: four valid (one of them
 sealed), and the others each failing one or more checks. `index.json` records,
 for each one, what it is verified with and its verdict (§6).
 
@@ -189,26 +189,51 @@ Each key is trusted in its own way:
 
 ### 3.4 `withheld.json` (`fidb/2` only)
 
-*Added in 1.4.0.* A sealed bundle's manifest names `"format": "fidb/2"`, and its
-`log.jsonl` holds whole only the records its lineage's decisions are taken from
-(`FIDUCIARY_SPEC.md` F9-5). `withheld.json` holds every other record of the
-log's prefix, in order, as its place and its hash:
+*Added in 1.4.0.* A sealed bundle's manifest names `"format": "fidb/2"`. It is
+cut from a sealed log, whose every record carries a `seal` of two tags and
+whose every anchor memo repeats them (`FIDUCIARY_SPEC.md` F4-26, F9-7).
+`log.jsonl` holds whole exactly the records the bundle's keys open, and
+`withheld.json` holds the keys and every other record of the log's prefix, in
+order, as its place and its hash:
 
 ```json
-[{"hash": "<64 hex>", "seq": 3}, {"hash": "<64 hex>", "seq": 4}]
+{
+  "keys": {
+    "all": "<64 hex>",
+    "lineages": {"<the bundle's lineage, and each below it>": "<64 hex>"},
+    "lines": {"<each lineage above it>": "<64 hex>"}
+  },
+  "records": [{"hash": "<64 hex>", "seq": 3}, {"hash": "<64 hex>", "seq": 4}]
+}
 ```
 
-Each object has exactly those two members; the sequences rise, each once, and
-none is also in `log.jsonl` (else V1). Together the two members are the chain
-from record 1 to the range's last. A `withheld.json` in a `fidb/1` bundle is a
-member the format does not have (V1).
+Each record object has exactly those two members; the sequences rise, each
+once, and none is also in `log.jsonl` (else V1). Together the two members are
+the chain from record 1 to the range's last. A `fidb/2` bundle without a
+readable `withheld.json`, or a `withheld.json` in a `fidb/1` bundle, fails V1.
 
-The verifier holds a withheld record to two things, and to nothing else:
+A tag of key *k* at record *n* of log *L* is `HMAC-SHA-256(k, "fidb/2 seal\n" ‖
+canonical([L, n]))`; a lineage key *k* also makes the tags of its line key
+`HMAC-SHA-256(k, "fidb/2 line")`. The keys **open** a record when one of its
+seal's tags is one they make at its place: `all` makes one tag; each of
+`lineages` two, its own and its line key's; each of `lines` one.
+
+The verifier holds a withheld record to three things, and to nothing else:
 
 - **V9.** It sits in the chain at its place: the next record names its hash as
   `prev`, and no sequence is missing.
 - **V10.** The ledger anchors it, with that hash, whether or not it is in range.
   The anchor is in `ledger/entries.jsonl`, under the signed checkpoint.
+- **V10, its seal.** Its anchor's memo carries two tags, and the bundle's keys
+  open neither. A withheld record they open is the bundle's own, and V10 names
+  the lineage it belongs to.
+
+And V10 holds the keys themselves: `all` opens record 1; each lineage's key
+opens the record that issued its first version (each of `lines` makes a tag of
+it); `lineages` names exactly the manifest's lineages and `lines` exactly the
+lineages above them; no lineage `log.jsonl` shows issued below one of the
+bundle's is missing; and every record `log.jsonl` holds carries a seal, the
+one its anchor names, which the keys open.
 
 Replay folds a withheld record past: the state's head moves to it, and nothing
 else changes. The report says how many records were withheld.

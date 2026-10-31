@@ -37,11 +37,18 @@ Requires interlock-escrow 1.2.0 and interlock-agentgov 1.1.0.
 - **Receipts that name only the plan's own tenant** (`data.receipt_tenants:
   "declared"`), counting the others a refused plan reached (ARC1 1.3
   `summary.other_tenants`).
-- **Sealed bundles** (`fiduciary export-bundle --sealed`, format `fidb/2`, F9-5, F9-6,
+- **Sealed bundles** (`fiduciary export-bundle --sealed`, format `fidb/2`, F9-5 to F9-7,
   `BUNDLE_FORMAT.md` §3.4). One lineage's records whole, and of every other record its
   place and hash, each held to its place in the chain (V9) and the ledger's anchor of it
   (V10). A customer's bundle names no other customer's records, org keys or domains, and
   still verifies V1 to V12 offline.
+- **Sealed logs** (`[service] seal_key`, `fiduciary.seals`). Every record carries a `seal`
+  of two HMAC tags saying whose it is, and its anchor memo repeats them. A sealed bundle
+  is cut by the seals, and carries only its own lineage's keys. So V10 proves that no
+  withheld record is the bundle's own, even one that left no trace elsewhere, and learns
+  nothing about whose the others are. `fiduciary verify` with the seal key holds every
+  seal to its record. A log is sealed from its first record or never. Logs that are not
+  sealed keep their bytes.
 - **Measurement in the report.** The verifier notes how many receipts were measured short
   of a transaction (`plan-bound`, `predicted`, `request-only`), and says what each class
   promises.
@@ -60,8 +67,9 @@ Requires interlock-escrow 1.2.0 and interlock-agentgov 1.1.0.
   customer's org key or domain. Initech's bundle fails on purpose: it names the support
   engineer's hand-sent invitation in Initech's own workspace.
 - `scripts/make_bundles.py --add NAME`: records new golden bundles and keeps the others.
-  New vectors: `valid-sealed-child`, `v10-withheld-rewritten`, `v9-withheld-dropped`; and
-  two FIDU1 mandates with 1.4's members in `vectors/fidu1/valid.json`.
+  New vectors: `valid-sealed-child`, `v10-withheld-rewritten`, `v9-withheld-dropped`,
+  `v10-own-record-withheld`; two FIDU1 mandates with 1.4's members in
+  `vectors/fidu1/valid.json`; and `vectors/fidu1/seals.json`, a sealed log.
 
 ### Changed
 

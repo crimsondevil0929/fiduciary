@@ -235,13 +235,16 @@ def _tampered(valid: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _tampered_sealed(valid: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """The sealed bundle's own: a withheld record's hash rewritten, and one
-    withheld record dropped, each with the manifest rewritten to match."""
+    """The sealed bundle's own: a withheld record's hash rewritten, one
+    withheld record dropped, each with the manifest rewritten to match; and
+    one of the lineage's own records withheld, the manifest signed again, as
+    an exporter holding every key would."""
     held = dict(_members(valid["data"]))
-    withheld = json.loads(held["withheld.json"])
+    found = json.loads(held["withheld.json"])
+    withheld = found["records"]
 
     def relisted(items: list[dict[str, Any]]) -> bytes:
-        member = fidu1.canonical(items)
+        member = fidu1.canonical({**found, "records": items})
         manifest = fidu1.parse(held["manifest.json"])
         manifest.pop("sig")
         for entry in manifest["members"]:
@@ -261,9 +264,45 @@ def _tampered_sealed(valid: dict[str, Any]) -> dict[str, dict[str, Any]]:
             relisted(dropped),
             "a withheld record dropped: the chain has a gap",
         ),
+        "v10-own-record-withheld": (
+            _own_withheld(held, found),
+            "the lineage's own session record withheld, the manifest signed again: its seal "
+            "says it is the lineage's",
+        ),
     }
     base = {k: v for k, v in valid.items() if k != "data"}
     return {name: {**base, "data": data, "about": about} for name, (data, about) in cases.items()}
+
+
+def _own_withheld(held: dict[str, bytes], found: dict[str, Any]) -> bytes:
+    from tests import examples as e
+
+    from fiduciary.documents import Record
+
+    lines = held["log.jsonl"].splitlines()
+    lineage = fidu1.parse(held["manifest.json"])["lineage"]
+    line = [
+        x
+        for x in lines
+        if Record.loads(x).kind == "session.closed"
+        and Record.loads(x).content.get("mandate_id") == lineage
+    ][-1]
+    record = Record.loads(line)
+    lines.remove(line)
+    records = sorted(
+        [*found["records"], {"seq": record.seq, "hash": record.hash}], key=lambda w: w["seq"]
+    )
+    members = {
+        **held,
+        "log.jsonl": b"".join(x + b"\n" for x in lines),
+        "withheld.json": fidu1.canonical({**found, "records": records}),
+    }
+    manifest = fidu1.parse(held["manifest.json"])
+    manifest.pop("sig")
+    for entry in manifest["members"]:
+        entry["sha256"] = hashlib.sha256(members[entry["path"]]).hexdigest()
+    manifest["sig"] = fidu1.sign("bundle", manifest, e.SERVICE).to_json()
+    return pack({**members, "manifest.json": fidu1.canonical(manifest)})
 
 
 def _verdict(entry: dict[str, Any]) -> dict[str, Any]:

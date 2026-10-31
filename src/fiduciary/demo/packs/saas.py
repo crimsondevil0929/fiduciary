@@ -420,7 +420,7 @@ def _trust_center(run: PackRun) -> None:
         checked = verdict(run, f"customer-{org}", data, planted)
         (world.root / f"customer-{org}.fidb").write_bytes(data)
         members = dict(unpack(data))
-        withheld = len(json.loads(members["withheld.json"]))
+        withheld = len(json.loads(members["withheld.json"])["records"])
         disclosed = members["log.jsonl"].count(b"\n")
         scan_ = checked["scan"]
         customers.append(
@@ -466,7 +466,8 @@ def _trust_center(run: PackRun) -> None:
         "The AI admin does one piece of work in each customer's workspace. Each workspace's "
         "lineage is exported sealed, as that customer's own bundle: its own records whole, "
         "and of every other record only its place and hash, vouched for by the ledger. Each "
-        "is verified on its own.",
+        "record's seal, written with it, lets the customer's own keys show that no withheld "
+        "record is theirs. Each bundle is verified on its own.",
         customers=customers,
         pseudonym={
             "derivation": "org_ + the first 12 hex digits of HMAC-SHA-256(pseudonym key, "
@@ -477,6 +478,8 @@ def _trust_center(run: PackRun) -> None:
             "root": SEAL.root,
             "entries": len(ORGS),
             "salts": "HMAC-SHA-256(seal key, org key), one per entry",
+            "seals": "two HMAC-SHA-256 tags on every record and its anchor; each bundle "
+            "holds only its own lineage's keys",
         },
     )
 
@@ -622,6 +625,7 @@ def canaries(run: PackRun) -> dict[str, list[str]]:
 
 
 PACK: Final = Pack(
+    seal_key=SEAL_KEY,
     key="saas",
     industry="Multi-tenant SaaS",
     title="CRM AI admin",

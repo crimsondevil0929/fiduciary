@@ -90,11 +90,11 @@ What this does not claim:
   every other record in the log only its position and hash, which the ledger's anchor
   of that record vouches for. It names no other customer's records, names, account ids,
   org keys or email domains. What it does show is how many other records the log holds,
-  and when they were anchored. The trust that is left: the bundle cannot prove that
-  every withheld record belongs to someone else. The service says so when it signs the
-  bundle, and the completeness check still ties every ledger entry, receipt and commit
-  on the customer's own scope to a record the bundle carries. So a withheld record of
-  the customer's that acted would be caught. One that did nothing would not be.
+  and when they were anchored. Every record is sealed when it is written: two tags that
+  only the keys of the customer it belongs to can recognize, repeated in its ledger
+  anchor. The customer's bundle carries the customer's own keys, so the verifier proves
+  that none of the withheld records is the customer's, even one that left no other trace.
+  It learns nothing about whose the others are, or how many customers there are.
 
 ## Architecture
 
@@ -483,7 +483,12 @@ fiduciary export-bundle --mandate <customer mandate_id> --sealed --ledger-key le
 
 It carries that customer's records whole. Of every other record in the log it carries
 only its position and hash, each held to the ledger's signed anchor of it, so the log
-still checks end to end. With the vendor's mandate sealing its recipient map
+still checks end to end. It needs a sealed log: set `seal_key` under `[service]` to a
+file of at least 32 random bytes in hex, readable by the service alone, before the
+first record is written. Each record then carries a seal that the anchor repeats, and
+the bundle carries the customer's own keys. If an exporter withholds one of the
+customer's own records, `verify-bundle` names it and exits 8. `fiduciary verify` with
+the seal key configured checks every seal in the log. With the vendor's mandate sealing its recipient map
 (`outbound.recipients[].sealed`) and receipts naming only the declared tenant
 (`data.receipt_tenants = "declared"`), the bundle names no other customer at all.
 

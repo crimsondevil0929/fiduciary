@@ -64,6 +64,7 @@ from fiduciary.demo.world import DIRECTIVE, PRICING, World, _key
 from fiduciary.documents import Charter, Mandate, ToolBinding
 from fiduciary.keys import load_key
 from fiduciary.log import Log, ensure_anchor_scope
+from fiduciary.seals import Sealer
 from fiduciary.sqlite import SqliteStore
 
 __all__ = [
@@ -162,6 +163,10 @@ class Pack:
     """What the stage runs on, when not the back office's own tables: given the
     deployment's root and its control database, a factory and what the acts
     need to reach the system behind it. SQLite over ``tables`` by default."""
+    seal_key: bytes | None = None
+    """A sealed log's secret (:mod:`fiduciary.seals`), when the pack exports its
+    customers' bundles sealed: ``[service] seal_key``. Other packs' logs are
+    not sealed, and keep their bytes."""
     fingerprint: Callable[[PackWorld], str] | None = None
     """A digest of the system's state, to show a refused call changed nothing;
     the observed tables' rows by default."""
@@ -593,15 +598,21 @@ def interlock_toml(root: Path, pack: Pack, back_office: Path) -> str:
 
 
 def fiduciary_toml(
-    root: Path, *, charter: str, tools: Sequence[Path], units: Mapping[str, int] | None = None
+    root: Path,
+    *,
+    charter: str,
+    tools: Sequence[Path],
+    units: Mapping[str, int] | None = None,
+    sealed: bool = False,
 ) -> str:
     """``fiduciary.toml`` for the deployment under ``root``, as the fintech
     demo writes it: the store, the ledger, ``interlock.toml``, sessions in
     process as the demo runs them, the charter pinned by ``charter``, the
-    keys, ``tools``, and the ledger of each of ``units`` (code to places).
-    Every path is absolute."""
+    keys, ``tools``, the ledger of each of ``units`` (code to places), and,
+    ``sealed``, the log's seal key. Every path is absolute."""
     root = root.resolve()
     service = root / "keys" / "service.key"
+    seal = f"seal_key = {_toml(root / 'keys' / 'seal.key')}\n" if sealed else ""
     back_office = root / "back_office.db"
     return (
         f"database = {_toml(root / 'fiduciary.db')}\n"
@@ -609,7 +620,7 @@ def fiduciary_toml(
         f"interlock = {_toml(root / 'interlock.toml')}\n"
         'in_process = "tool-calls-only"\n'
         f'[charter]\nfile = {_toml(root / "charter.json")}\ndigest = "{charter}"\n'
-        f"[service]\nkey = {_toml(service)}\n"
+        f"[service]\nkey = {_toml(service)}\n{seal}"
         f"[binding]\ntools = {json.dumps([str(t.resolve()) for t in tools])}\n"
         f"directives = [{_toml(root / 'stop-retrying.txt')}]\nchains = {_toml(root / 'chains')}\n"
         f"[executor]\nkey = {_toml(service)}\noutbox = {_toml(back_office)}\n"
@@ -640,11 +651,26 @@ def _write_config(world: PackWorld) -> None:
     demo writes them. ``interlock.toml`` is written before the substrate is
     built (:func:`build`)."""
     tools = _write_tools(world.root, list(world.tools.values()))
+    _write_seal_key(world.root, world.spec)
     (world.root / "fiduciary.toml").write_text(
         fiduciary_toml(
-            world.root, charter=world.charter.digest, tools=tools, units=world.deployment.units
+            world.root,
+            charter=world.charter.digest,
+            tools=tools,
+            units=world.deployment.units,
+            sealed=world.spec.seal_key is not None,
         )
     )
+
+
+def _write_seal_key(root: Path, pack: Pack) -> None:
+    """``keys/seal.key``, the pack's seal secret in hex, readable by its owner only."""
+    if pack.seal_key is None:
+        return
+    path = root / "keys" / "seal.key"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(pack.seal_key.hex() + "\n")
+    path.chmod(0o600)
 
 
 def restore_config(root: Path, pack: Pack) -> list[str]:
@@ -673,8 +699,11 @@ def restore_config(root: Path, pack: Pack) -> list[str]:
     tools = _write_tools(root, bindings)
     charter = (root / "charter.digest").read_text().strip()
     units = {u: b["places"] for u, b in (pack.budgets() if pack.budgets else {}).items()}
+    _write_seal_key(root, pack)
     (root / "fiduciary.toml").write_text(
-        fiduciary_toml(root, charter=charter, tools=tools, units=units)
+        fiduciary_toml(
+            root, charter=charter, tools=tools, units=units, sealed=pack.seal_key is not None
+        )
     )
     return ["interlock.toml", *(f"tools/{t.name}" for t in tools), "fiduciary.toml"]
 
@@ -745,7 +774,8 @@ def build(root: Path, pack: Pack) -> PackWorld:
 
     store = SqliteStore(root / "fiduciary.db")
     closers.append(store.close)
-    log = Log(store, signers["service"], ledger=governor)
+    sealer = None if pack.seal_key is None else Sealer(pack.seal_key)
+    log = Log(store, signers["service"], ledger=governor, sealer=sealer)
     charter = Charter.from_json(
         {
             "v": "FIDU1",
@@ -1241,6 +1271,7 @@ def evidence(world: PackWorld) -> Evidence:
         chains=world.chains,
         outbox=world.outbox,
         service=world.signers["service"],
+        sealer=None if pack.seal_key is None else Sealer(pack.seal_key),
     )
 
 

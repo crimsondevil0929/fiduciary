@@ -33,6 +33,7 @@ from fiduciary.authority import Authority
 from fiduciary.binding import Binder
 from fiduciary.documents import Charter, Mandate, ToolBinding
 from fiduciary.log import Log, ensure_anchor_scope
+from fiduciary.seals import Sealer
 from fiduciary.store import Store
 from tests import deploy
 from tests import examples as e
@@ -113,6 +114,8 @@ class World:
     cleanups: list[Callable[[], None]] = field(default_factory=list)
     stage_dsn: str = ""
     """What the engine stages on: the SQLite file, or the stage role's DSN."""
+    sealer: Sealer | None = None
+    """A sealed log's sealer, when the world's log is sealed."""
 
     # -- documents under this world's charter ----------------------------------------
 
@@ -256,6 +259,7 @@ def build(
     ledger: Callable[[], BudgetManager] | None = None,
     tools: Sequence[ToolBinding] = (),
     charter: Mapping[str, Any] | None = None,
+    sealer: Sealer | None = None,
 ) -> Generator[World, None, None]:
     """A world on ``backend``, its fiduciary store ``store``; its AgentGov
     ledger a SQLite file, or what ``ledger`` opens (a shared one). ``tools``
@@ -294,7 +298,7 @@ def build(
         e.charter_json(deployment={"ledger": genesis, "label": "test"}, **(charter or {})),
         signed=False,
     ).signed(e.signer("cfo"))
-    log = Log(store, e.SERVICE, ledger=governor, clock=clock)
+    log = Log(store, e.SERVICE, ledger=governor, clock=clock, sealer=sealer)
     authority = Authority(log, pinned=adopted.digest)
     authority.propose(adopted)
     approve(store, e.PRINCIPALS, "charter", adopted.digest, **window(clock))
@@ -328,6 +332,7 @@ def build(
         relay_dsn,
         cleanups,
         stage_dsn,
+        sealer,
     )
     try:
         yield world

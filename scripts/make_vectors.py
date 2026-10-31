@@ -8,6 +8,9 @@ requires the files to be unchanged, which keeps the format frozen.
 - ``valid.json``: documents of every type, each with its canonical bytes'
   digest, its signing input (hex) and the public key it verifies under.
 - ``records.json``: a log of records, linked, with each one's hash.
+- ``seals.json`` (added in 1.4.0): a sealed log under a fixed seal secret:
+  each record with whose it is, its seal, its hash and its anchor memo; and
+  one bundle's keys, with whose each record is by them.
 - ``invalid.json``: documents (or raw text) that must be refused, each with
   the error a reader must raise: ``malformed:<code>`` at a path, or
   ``signature:<code>`` under a given key.
@@ -215,6 +218,59 @@ def records() -> dict[str, Any]:
         )
         prev = record.hash
     return {"key": e.SERVICE.public_key().spec(), "records": chain}
+
+
+def seals() -> dict[str, Any]:
+    """A sealed log: a root lineage, a child and the child's sibling, each
+    with a version and a session, and an ``amend`` ticket of the root."""
+    from fiduciary.documents import anchor_memo
+    from fiduciary.seals import Audience, Sealer
+
+    secret = bytes(range(32))
+    sealer = Sealer(secret)
+    root, north, south = "vendor", "north", "south"
+    entries = [
+        ("charter.adopted", Audience("all")),
+        ("mandate.issued", Audience("line", root)),
+        ("mandate.issued", Audience("line", north, root)),
+        ("mandate.issued", Audience("line", south, root)),
+        ("session.opened", Audience("lineage", root)),
+        ("session.opened", Audience("lineage", north)),
+        ("session.opened", Audience("lineage", south)),
+        ("ticket.raised", Audience("line", root)),
+        ("approval.refused", Audience("none")),
+    ]
+    chain = []
+    prev = fidu1.GENESIS
+    keys = sealer.keys([north], [root])
+    for seq, (kind, whose) in enumerate(entries, start=1):
+        record = Record.make(
+            e.SERVICE,
+            log="fiduciary",
+            seq=seq,
+            kind="principal.suspended",
+            body={"charter_id": e.CHARTER_ID, "principal": "cfo", "key": "k", "why": kind},
+            prev=prev,
+            issued_at=e.at(f"2026-10-31T10:0{seq}:00"),
+            seal=sealer.seal("fiduciary", seq, whose),
+        )
+        assert record.seal is not None
+        chain.append(
+            {
+                "of": {"scope": whose.scope, "lineage": whose.lineage, "parent": whose.parent},
+                "record": record.to_json(),
+                "hash": record.hash,
+                "memo": anchor_memo(record),
+                "opened_by": keys.opens("fiduciary", seq, record.seal),
+            }
+        )
+        prev = record.hash
+    return {
+        "secret": secret.hex(),
+        "key": e.SERVICE.public_key().spec(),
+        "bundle": {"lineages": [north], "above": [root], "keys": keys.to_json()},
+        "records": chain,
+    }
 
 
 def _bad(
@@ -494,6 +550,7 @@ def build() -> dict[str, str]:
     return {
         "valid.json": dump(valid()),
         "records.json": dump(records()),
+        "seals.json": dump(seals()),
         "invalid.json": dump(invalid()),
     }
 

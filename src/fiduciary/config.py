@@ -11,6 +11,7 @@
 
     [service]
     key = "service.key"                                  # or signer = "<name>"
+    seal_key = "seal.key"                                # a sealed log (1.4): 32+ bytes, hex
 
     [signers.<name>]                                     # fiduciary.keys
 
@@ -96,6 +97,7 @@ if TYPE_CHECKING:
     from fiduciary.bridge import Fiduciary
     from fiduciary.compiler import Deployment
     from fiduciary.documents import ToolBinding
+    from fiduciary.seals import Sealer
     from fiduciary.store import Store
 
 __all__ = [
@@ -197,6 +199,9 @@ class Config:
     charter_digest: str | None = None
     service_key: Path | None = None
     service_signer: str | None = None
+    seal_key: Path | None = None
+    """``[service] seal_key``: the secret a sealed log's seals are made with
+    (:mod:`fiduciary.seals`), a file of hex, readable by its owner only."""
     signers: Mapping[str, SignerSpec] = field(default_factory=dict)
     interlock: Path | None = None
     tools: tuple[str, ...] = ()
@@ -331,6 +336,20 @@ class Config:
         if self.service_key is None and self.service_signer is None:
             raise ConfigError("[service] names no key and no signer")
         return open_signer(self.signers, key=self.service_key, signer=self.service_signer)
+
+    def sealer(self) -> Sealer | None:
+        """The log's sealer, when ``[service] seal_key`` names one.
+
+        :raises ConfigError: On a file that is no seal secret.
+        """
+        if self.seal_key is None:
+            return None
+        from fiduciary.seals import Sealer
+
+        try:
+            return Sealer(bytes.fromhex(self.seal_key.read_text().strip()))
+        except (OSError, ValueError) as exc:
+            raise ConfigError(f"[service] seal_key {self.seal_key}: {exc}") from exc
 
     def executor(self) -> Signer:
         """The executor key, which signs ILOK1 operator records: AWS KMS only
@@ -545,7 +564,7 @@ def load_config(path: str | Path) -> Config:
     bridge = raw.get("bridge", {})
     for name, table, allowed in (
         ("charter", charter, {"file", "digest"}),
-        ("service", service, {"key", "signer"}),
+        ("service", service, {"key", "signer", "seal_key"}),
         ("executor", executor, {"key", "signer", "log", "outbox"}),
         ("runtime", runtime, {"records", "key", "signer"}),
         ("receipts", receipts, {"log", "key", "signer"}),
@@ -661,6 +680,9 @@ def load_config(path: str | Path) -> Config:
         charter_file=None if "file" not in charter else place(charter["file"], "[charter] file"),
         charter_digest=digest,
         service_key=None if "key" not in service else place(service["key"], "[service] key"),
+        seal_key=None
+        if "seal_key" not in service
+        else place(service["seal_key"], "[service] seal_key"),
         service_signer=signer,
         signers=signers,
         interlock=None if interlock is None else place(interlock, "interlock"),
@@ -882,7 +904,7 @@ def open_fiduciary(
         )
         assert governor is not None
         opened.append(governor.close)
-        log = Log(store, signer, ledger=governor)
+        log = Log(store, signer, ledger=governor, sealer=config.sealer())
         authority = Authority(log, pinned=config.pinned())
         deployment = config.deployment(governor)
         ledgers = config.open_units()

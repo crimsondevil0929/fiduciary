@@ -1,0 +1,329 @@
+{
+  "bundle": {
+    "above": [
+      "vendor"
+    ],
+    "keys": {
+      "all": "701077a418fa8de04960e75ed4d87e1abf5982ffffa556ab801717e906184aba",
+      "lineages": {
+        "north": "e9ff99752ef6c007eec60e65f6d61a7f85276621227c18fb57f8b5ecc743199a"
+      },
+      "lines": {
+        "vendor": "9b379e8843ca7582a0d7fcd3ed46ac368769b2484a2c2668b9f374caff6234af"
+      }
+    },
+    "lineages": [
+      "north"
+    ]
+  },
+  "key": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+  "records": [
+    {
+      "hash": "6449b3ff2a137789aff0128c5514694928eac432bda021a2aec8fd305cfd5aba",
+      "memo": "FIDU1 fiduciary 1 6449b3ff2a137789aff0128c5514694928eac432bda021a2aec8fd305cfd5aba 98d50a5958728db89552f5f8ee33edfaf54d9d42e65dcd6d635de71b5d4d3d2f e69657097daebc5673bf379a5bb1dace4b6e56445958b22a14b7c6dce17b98c4",
+      "of": {
+        "lineage": null,
+        "parent": null,
+        "scope": "all"
+      },
+      "opened_by": "all",
+      "record": {
+        "body": {
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "key": "k",
+          "principal": "cfo",
+          "why": "charter.adopted"
+        },
+        "issued_at": "2026-10-31T10:01:00.000000Z",
+        "kind": "principal.suspended",
+        "log": "fiduciary",
+        "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+        "seal": [
+          "98d50a5958728db89552f5f8ee33edfaf54d9d42e65dcd6d635de71b5d4d3d2f",
+          "e69657097daebc5673bf379a5bb1dace4b6e56445958b22a14b7c6dce17b98c4"
+        ],
+        "seq": 1,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "64ddf0a0ea1a11f0443e1cd687cbbcc6e174a371f4278c7ba72b9bcb307cc2fb962bb8a3d6779838d9bca29af65f175f44cbf56d19189e041d7a5ebf41558004"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      }
+    },
+    {
+      "hash": "1e1706d770fc751001e053e9c28d6ff1c6200c4de79585d596e0a9afcec9872e",
+      "memo": "FIDU1 fiduciary 2 1e1706d770fc751001e053e9c28d6ff1c6200c4de79585d596e0a9afcec9872e 2fc452461688435a47547ef5bc1d91f71ae1ba02cb72212f657a41ce930e0362 ff08e0829c020e3dea2b2529f79030bb5c861871aeb624f1e4b72d23777a81d2",
+      "of": {
+        "lineage": "vendor",
+        "parent": null,
+        "scope": "line"
+      },
+      "opened_by": "vendor",
+      "record": {
+        "body": {
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "key": "k",
+          "principal": "cfo",
+          "why": "mandate.issued"
+        },
+        "issued_at": "2026-10-31T10:02:00.000000Z",
+        "kind": "principal.suspended",
+        "log": "fiduciary",
+        "prev": "6449b3ff2a137789aff0128c5514694928eac432bda021a2aec8fd305cfd5aba",
+        "seal": [
+          "2fc452461688435a47547ef5bc1d91f71ae1ba02cb72212f657a41ce930e0362",
+          "ff08e0829c020e3dea2b2529f79030bb5c861871aeb624f1e4b72d23777a81d2"
+        ],
+        "seq": 2,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "0a3fd5b6fdd89b28386c6bb6f6abd83c0e630880a0219178cd2849e8bc6635a617ea61ad78f3d286a721a06e0a6595cc5471675c28605308f5c2c9fcda45cf02"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      }
+    },
+    {
+      "hash": "415bf949a34c96f80a6078f66e4e72a48f2c489746db8642c952f38a76ab22df",
+      "memo": "FIDU1 fiduciary 3 415bf949a34c96f80a6078f66e4e72a48f2c489746db8642c952f38a76ab22df 5ba814e75892895a69df820493d69cd19052713a4b227bbf557b4c6fae55b984 a4d14439354e7eba5ba93303910ad205a88ab4f5a61e85e29281a332b7f95936",
+      "of": {
+        "lineage": "north",
+        "parent": "vendor",
+        "scope": "line"
+      },
+      "opened_by": "north",
+      "record": {
+        "body": {
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "key": "k",
+          "principal": "cfo",
+          "why": "mandate.issued"
+        },
+        "issued_at": "2026-10-31T10:03:00.000000Z",
+        "kind": "principal.suspended",
+        "log": "fiduciary",
+        "prev": "1e1706d770fc751001e053e9c28d6ff1c6200c4de79585d596e0a9afcec9872e",
+        "seal": [
+          "5ba814e75892895a69df820493d69cd19052713a4b227bbf557b4c6fae55b984",
+          "a4d14439354e7eba5ba93303910ad205a88ab4f5a61e85e29281a332b7f95936"
+        ],
+        "seq": 3,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "2e5fa089cfe939b38d889e05ffe41f053872e007a824a6f3956dce4c923af0917971988fcac4dc5b58e79eaf63595b6e293362205ec9fe87a7d6aff68fda5d02"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      }
+    },
+    {
+      "hash": "9a8aabe10dcf4af947a76158cde655f6fdb24863b736b5ecf98a5c87df2b41d8",
+      "memo": "FIDU1 fiduciary 4 9a8aabe10dcf4af947a76158cde655f6fdb24863b736b5ecf98a5c87df2b41d8 2c89d203d3e3c39f706e6d3aaaa7870934bf174011a810fa30efa8c7435fc328 e46b88f2fc5667cb626d2068b989da89d1d2633a9e19f4c7dae30a2b497a0da2",
+      "of": {
+        "lineage": "south",
+        "parent": "vendor",
+        "scope": "line"
+      },
+      "opened_by": null,
+      "record": {
+        "body": {
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "key": "k",
+          "principal": "cfo",
+          "why": "mandate.issued"
+        },
+        "issued_at": "2026-10-31T10:04:00.000000Z",
+        "kind": "principal.suspended",
+        "log": "fiduciary",
+        "prev": "415bf949a34c96f80a6078f66e4e72a48f2c489746db8642c952f38a76ab22df",
+        "seal": [
+          "2c89d203d3e3c39f706e6d3aaaa7870934bf174011a810fa30efa8c7435fc328",
+          "e46b88f2fc5667cb626d2068b989da89d1d2633a9e19f4c7dae30a2b497a0da2"
+        ],
+        "seq": 4,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "a810b3e6bc4fa50f6b5d6330cf7e507858136359e823c7546e9b5d9fd545778184d24f76f96036e97a40ffe3663aff4a7e08217fbb409019b1fc9db58018f005"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      }
+    },
+    {
+      "hash": "a1cc036f7610ac25f5313fccab21bf17a739c76daeaf50717578e52686a3ce25",
+      "memo": "FIDU1 fiduciary 5 a1cc036f7610ac25f5313fccab21bf17a739c76daeaf50717578e52686a3ce25 2c02456270676a1de2ce9002b8a49788fc693ea9ad7c88094f0b45d31029a67c 8a7696fe276cc678ddeefc78b21c970317d205901714c8ceca03d1700b786d48",
+      "of": {
+        "lineage": "vendor",
+        "parent": null,
+        "scope": "lineage"
+      },
+      "opened_by": null,
+      "record": {
+        "body": {
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "key": "k",
+          "principal": "cfo",
+          "why": "session.opened"
+        },
+        "issued_at": "2026-10-31T10:05:00.000000Z",
+        "kind": "principal.suspended",
+        "log": "fiduciary",
+        "prev": "9a8aabe10dcf4af947a76158cde655f6fdb24863b736b5ecf98a5c87df2b41d8",
+        "seal": [
+          "2c02456270676a1de2ce9002b8a49788fc693ea9ad7c88094f0b45d31029a67c",
+          "8a7696fe276cc678ddeefc78b21c970317d205901714c8ceca03d1700b786d48"
+        ],
+        "seq": 5,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "a1e46293539d73acd69f2d27e996f76665846accb77742cbdb032bde23fdb76c463d7fa946a83b8ac4191ffc8fd3f5cdfdfa6455d68f702227dc750b849d7d06"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      }
+    },
+    {
+      "hash": "4ce34922fa4e9f919f849cca4604c6a5f980973680a1a26d977d3426f111a068",
+      "memo": "FIDU1 fiduciary 6 4ce34922fa4e9f919f849cca4604c6a5f980973680a1a26d977d3426f111a068 8527455bb211ea4cbfee9bbd6cff60b581818356b8e55faedf4fc725b2d9c4d3 bf51b6f8f2e9440825f5135ae33dd94db9c891b2f0d643caf663d4d2e18d03d6",
+      "of": {
+        "lineage": "north",
+        "parent": null,
+        "scope": "lineage"
+      },
+      "opened_by": "north",
+      "record": {
+        "body": {
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "key": "k",
+          "principal": "cfo",
+          "why": "session.opened"
+        },
+        "issued_at": "2026-10-31T10:06:00.000000Z",
+        "kind": "principal.suspended",
+        "log": "fiduciary",
+        "prev": "a1cc036f7610ac25f5313fccab21bf17a739c76daeaf50717578e52686a3ce25",
+        "seal": [
+          "8527455bb211ea4cbfee9bbd6cff60b581818356b8e55faedf4fc725b2d9c4d3",
+          "bf51b6f8f2e9440825f5135ae33dd94db9c891b2f0d643caf663d4d2e18d03d6"
+        ],
+        "seq": 6,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "c478635790f7406eeaef9015c1a67bf56bc1994426f382f7f0cfbf44c5ac391d0f820f26a3755b84e68b7b40a26b1690ab8f0b77d3aaea0fe6a8e7f3d172f600"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      }
+    },
+    {
+      "hash": "dde0db03e1e9f28d3ff8dbd9be07fcc0591e241533ff68444a4b1b1c15fb3217",
+      "memo": "FIDU1 fiduciary 7 dde0db03e1e9f28d3ff8dbd9be07fcc0591e241533ff68444a4b1b1c15fb3217 3900fbab4b9d13dcbfff5e096acdd55dc30d9d09312db8e7d99218fdbee721c7 700759644ffbf0941add2efb5fbbbc5311f1255275d5507fabe369adcc0bc62d",
+      "of": {
+        "lineage": "south",
+        "parent": null,
+        "scope": "lineage"
+      },
+      "opened_by": null,
+      "record": {
+        "body": {
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "key": "k",
+          "principal": "cfo",
+          "why": "session.opened"
+        },
+        "issued_at": "2026-10-31T10:07:00.000000Z",
+        "kind": "principal.suspended",
+        "log": "fiduciary",
+        "prev": "4ce34922fa4e9f919f849cca4604c6a5f980973680a1a26d977d3426f111a068",
+        "seal": [
+          "3900fbab4b9d13dcbfff5e096acdd55dc30d9d09312db8e7d99218fdbee721c7",
+          "700759644ffbf0941add2efb5fbbbc5311f1255275d5507fabe369adcc0bc62d"
+        ],
+        "seq": 7,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "a943146f20184a0f780d0e0dcc169956c6180ddc9aab6dc969988fdcce5448976d9293a023d5e14af9bc27284a1b9b350c9065aeb38cb27cbeace70029dd0009"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      }
+    },
+    {
+      "hash": "35fa9e6576f3c9a5f9a0e635f6d5a451efff9907c94b193901ab83a60096d5fd",
+      "memo": "FIDU1 fiduciary 8 35fa9e6576f3c9a5f9a0e635f6d5a451efff9907c94b193901ab83a60096d5fd 2b616a490a10056f19eb4143382a047b277f3ce938a2ed1f369f45a3c82c6d69 9dd30f5999720f9cd4d76be8b7ff81bf90f4876b570e73b4301670c92685a23e",
+      "of": {
+        "lineage": "vendor",
+        "parent": null,
+        "scope": "line"
+      },
+      "opened_by": "vendor",
+      "record": {
+        "body": {
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "key": "k",
+          "principal": "cfo",
+          "why": "ticket.raised"
+        },
+        "issued_at": "2026-10-31T10:08:00.000000Z",
+        "kind": "principal.suspended",
+        "log": "fiduciary",
+        "prev": "dde0db03e1e9f28d3ff8dbd9be07fcc0591e241533ff68444a4b1b1c15fb3217",
+        "seal": [
+          "2b616a490a10056f19eb4143382a047b277f3ce938a2ed1f369f45a3c82c6d69",
+          "9dd30f5999720f9cd4d76be8b7ff81bf90f4876b570e73b4301670c92685a23e"
+        ],
+        "seq": 8,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "cd2da505f2eedbe13f5e9c74b0b9e424c06419116cbff13a1fce73e165bea27c56767ef076540716442ebeafd3e51c2c6210d84451856aba9f2300827c49ed09"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      }
+    },
+    {
+      "hash": "3dc5312187a698eb2a3f34fc2c4189c372a9682bbaf56768f05fb29b7a719499",
+      "memo": "FIDU1 fiduciary 9 3dc5312187a698eb2a3f34fc2c4189c372a9682bbaf56768f05fb29b7a719499 559c8b10b2b65e1fcb20b1c719ea52d757256bff0869398efe9bb019628860fa 5f6e40ee931920c63b67528b0ac1ba887af53cb318cc5f1c6a4351d6d659827e",
+      "of": {
+        "lineage": null,
+        "parent": null,
+        "scope": "none"
+      },
+      "opened_by": null,
+      "record": {
+        "body": {
+          "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+          "key": "k",
+          "principal": "cfo",
+          "why": "approval.refused"
+        },
+        "issued_at": "2026-10-31T10:09:00.000000Z",
+        "kind": "principal.suspended",
+        "log": "fiduciary",
+        "prev": "35fa9e6576f3c9a5f9a0e635f6d5a451efff9907c94b193901ab83a60096d5fd",
+        "seal": [
+          "559c8b10b2b65e1fcb20b1c719ea52d757256bff0869398efe9bb019628860fa",
+          "5f6e40ee931920c63b67528b0ac1ba887af53cb318cc5f1c6a4351d6d659827e"
+        ],
+        "seq": 9,
+        "sig": {
+          "alg": "ed25519",
+          "key_id": "a6a17e3b834c9950",
+          "signature": "adfb8189472e11c6f4a02c93dea8a09b873f956f2e73596182544b4cca5a6c5820b5245a429ae0bea64b1b6abb2453e587ca7910ee96f0ca8e9e1a6359610e00"
+        },
+        "type": "record",
+        "v": "FIDU1"
+      }
+    }
+  ],
+  "secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+}

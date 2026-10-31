@@ -67,6 +67,30 @@ def test_the_record_vectors_chain_and_verify() -> None:
         prev = record.hash
 
 
+def test_the_seal_vectors_seal_and_open_as_recorded() -> None:
+    """A sealed log (1.4.0): each seal is made again from the secret and whose
+    the record is; the bundle's keys open exactly the records recorded."""
+    from fiduciary.documents import anchor_memo
+    from fiduciary.seals import Audience, BundleKeys, Sealer
+
+    found = _load("seals.json")
+    sealer = Sealer(bytes.fromhex(found["secret"]))
+    bundle = found["bundle"]
+    keys = BundleKeys.from_json(bundle["keys"])
+    assert keys.to_json() == sealer.keys(bundle["lineages"], bundle["above"]).to_json()
+    key = fidu1.key_of(found["key"])
+    prev = fidu1.GENESIS
+    for entry in found["records"]:
+        record = Record.from_json(entry["record"])
+        record.verify(key)
+        assert record.prev == prev and record.hash == entry["hash"]
+        assert record.seal == sealer.seal(record.log, record.seq, Audience(**entry["of"]))
+        assert anchor_memo(record) == entry["memo"]
+        assert record.seal is not None
+        assert keys.opens(record.log, record.seq, record.seal) == entry["opened_by"]
+        prev = record.hash
+
+
 @pytest.mark.parametrize("vector", _load("invalid.json"), ids=lambda v: v["name"])
 def test_an_invalid_vector_is_refused_with_its_error(vector: dict[str, Any]) -> None:
     kind, _, code = vector["error"].partition(":")

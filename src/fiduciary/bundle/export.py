@@ -23,12 +23,13 @@ one lineage over one range exports to identical bytes (§9.2). Nothing in it
 is row data, a payload or a transcript (F9-1): the logs it copies hold only
 digests, ids, amounts and the developer's own statements.
 
-A *sealed* bundle (``sealed=True``, format ``fidb/2``) is one customer's: of
-the log's prefix it carries whole only the records its lineage's decisions
-are taken from (:func:`disclosed`), and of every other record its place and
-hash alone (``withheld.json``), which the ledger's anchor of it vouches for.
-Other lineages' mandates, tickets and sessions, and the documents and intake
-only they name, are not in it.
+A *sealed* bundle (``sealed=True``, format ``fidb/2``) is one customer's, of a
+sealed log (:mod:`fiduciary.seals`): of the log's prefix it carries whole only
+the records its keys open, its lineage's own and those its decisions are
+taken from (:func:`disclosed`), and of every other record its place and hash
+alone (``withheld.json``, with the keys), which the ledger's anchor of it
+vouches for, seal and all. Other lineages' mandates, tickets and sessions,
+and the documents and intake only they name, are not in it.
 """
 
 from __future__ import annotations
@@ -55,6 +56,7 @@ from fiduciary.checkers import admits_scope
 from fiduciary.compiler import Deployment, canonical_digests
 from fiduciary.documents import Record, anchor_memo
 from fiduciary.log import ANCHOR_SCOPE, LOG_ID, parse_memo
+from fiduciary.seals import BundleKeys, Sealer
 from fiduciary.store import State, Store
 
 if TYPE_CHECKING:
@@ -92,6 +94,8 @@ class Evidence:
     :param witnesses: Ledger witnesses to cosign the checkpoint (each with
         ``cosign``, ``latest`` and ``path``, as AgentGov's ``FileWitness``).
     :param service: The service key; when a signer, it also signs the manifest.
+    :param sealer: A sealed log's sealer: what a sealed bundle is cut by, and
+        the keys it carries.
     """
 
     ledger: BudgetManager
@@ -106,6 +110,7 @@ class Evidence:
     outbox: OutboxOperations | None = None
     witnesses: Sequence[Any] = ()
     service: Signer | Verifier | None = None
+    sealer: Sealer | None = None
 
 
 def _json(value: Any) -> bytes:
@@ -195,7 +200,8 @@ def export_bundle(
         taken from, as its place and hash.
     :raises BundleError: On a range the log does not hold, a lineage it does
         not hold, a range whose last record the ledger has not anchored, or,
-        sealed, a record to withhold that the ledger has not anchored.
+        sealed, no sealer, a log not sealed, or a record to withhold that the
+        ledger has not anchored.
     """
     stored = list(store.records(log_id))
     head = len(stored)
@@ -214,11 +220,14 @@ def export_bundle(
         current = state.parent_lineage(current)
     members: dict[str, bytes] = {}
     intake = dict(store.intake())
-    shown = (
-        disclosed(records, state, lineages, ancestors, intake)
-        if sealed
-        else {r.seq for r in records}
-    )
+    keys = None
+    if sealed:
+        if evidence.sealer is None:
+            raise BundleError("a sealed bundle is cut by the log's seals: give the seal key")
+        keys = evidence.sealer.keys(lineages, ancestors)
+        shown = disclosed(records, keys)
+    else:
+        shown = {r.seq for r in records}
     carried = [r for r in records if r.seq in shown]
 
     # -- the authority history: the log's prefix, its documents and intake ------
@@ -272,8 +281,8 @@ def export_bundle(
         raise BundleError(f"record {last} is not anchored in the ledger yet: export after it is")
     cut, cut_at = cut_entry.sequence, cut_entry.timestamp
     entries = entries[:cut]
-    if sealed:
-        members["withheld.json"] = _withheld(records, shown, entries, log_id)
+    if keys is not None:
+        members["withheld.json"] = _withheld(records, shown, entries, log_id, keys)
 
     # -- ILOK1: recoveries and extensions; operator acts on the lineage ----------
     runtime = [
@@ -354,72 +363,38 @@ def export_bundle(
     return pack(members)
 
 
-def disclosed(
-    records: Sequence[Record],
-    state: State,
-    lineages: Sequence[str],
-    ancestors: Sequence[str],
-    intake: Mapping[int, bytes],
-) -> set[int]:
-    """The records a sealed bundle of ``lineages`` carries whole, by seq: the
-    charter's and its approvals; every record of the lineages; of their
-    ancestors, the versions, their approvals and events, and the ``amend``
-    tickets that made a version, with what decided and executed them. Every
-    other record is another lineage's, and is withheld. ``state`` is the
-    log's whole, so a record is placed by what the log says of its subject
-    after it, too."""
-    own = set(lineages)
-    line = own | set(ancestors)
+def disclosed(records: Sequence[Record], keys: BundleKeys) -> set[int]:
+    """The records a sealed bundle with ``keys`` carries whole, by seq: those
+    its keys open (:mod:`fiduciary.seals`). The charter's and its approvals;
+    every record of its lineages; of the lineages above them, the versions,
+    their approvals and events, and the ``amend`` tickets that made a version,
+    with what decided and executed them. Every other record is another
+    lineage's, and is withheld.
 
-    def ticket(mandate_id: str, ticket_class: str) -> bool:
-        return mandate_id in own or (mandate_id in line and ticket_class == "amend")
-
-    def subject(kind: str, digest: str) -> bool:
-        if kind in ("charter", "suspension"):
-            return True
-        if kind in ("mandate", "revocation"):
-            return state.issued.get(digest) in line
-        row = state.tickets.get(state.tickets_by_digest.get(digest, ""))
-        return row is not None and ticket(row.mandate_id, row.ticket_class)
-
+    :raises BundleError: On a record that carries no seal: only a log sealed
+        from its first record is cut so.
+    """
     shown = set()
     for record in records:
-        kind, body = record.kind, record.content
-        if kind in ("charter.adopted", "principal.suspended"):
-            ok = True
-        elif kind.startswith("mandate."):
-            ok = body["mandate_id"] in line
-        elif kind.startswith("session."):
-            ok = body["mandate_id"] in own
-        elif kind.startswith(("ticket.", "warrant.")):
-            ok = ticket(str(body["mandate_id"]), str(body["class"]))
-        elif kind.startswith("execution."):
-            warrant = state.warrants.get(str(body["warrant"]))
-            ok = warrant is not None and ticket(warrant.mandate_id, warrant.ticket_class)
-        elif kind == "approval.recorded":
-            ok = subject(str(body["subject"]["type"]), str(body["subject"]["digest"]))
-        else:  # approval.refused: whose it is, if what was submitted says
-            found = _submitted(intake.get(int(body["intake"])))
-            ok = found is not None and subject(*found)
-        if ok:
+        if record.seal is None:
+            raise BundleError(
+                f"record {record.seq} carries no seal: a sealed bundle is cut from a log sealed "
+                "from its first record ([service] seal_key)"
+            )
+        if keys.opens(record.log, record.seq, record.seal) is not None:
             shown.add(record.seq)
     return shown
 
 
-def _submitted(data: bytes | None) -> tuple[str, str] | None:
-    """The subject a refused submission names, when it names one."""
-    try:
-        raw = json.loads(data or b"")
-        found = raw["subject"]
-        return str(found["type"]), str(found["digest"])
-    except (ValueError, TypeError, KeyError):
-        return None
-
-
 def _withheld(
-    records: Sequence[Record], shown: set[int], entries: Sequence[LedgerEntry], log_id: str
+    records: Sequence[Record],
+    shown: set[int],
+    entries: Sequence[LedgerEntry],
+    log_id: str,
+    keys: BundleKeys,
 ) -> bytes:
-    """``withheld.json``: each withheld record's seq and hash, each anchored."""
+    """``withheld.json``: the bundle's keys, and each withheld record's seq and
+    hash, each anchored."""
     anchored = set()
     for entry in entries:
         found = parse_memo(entry.memo) if entry.entry_type is EntryType.ANCHOR else None
@@ -435,7 +410,7 @@ def _withheld(
                 "withholds only what an anchor vouches for"
             )
         withheld.append({"seq": record.seq, "hash": record.hash})
-    return _json(withheld)
+    return _json({"keys": keys.to_json(), "records": withheld})
 
 
 def _type_of(path: str) -> str:
