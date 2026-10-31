@@ -201,7 +201,7 @@ def test_the_overview_shows_git_beside_sql(played: Outcome) -> None:
     assert engine["fact_agreement"] == 1 and engine["blast_radius"] == 1
     assert engine["warrant"] == [{"action": "accept_repair", "approvals": 2}]
     page = (played.root / "dashboard.html").read_text()
-    assert "on SQL and on Git" in page
+    assert "on SQL, Git and Kubernetes" in page
 
 
 def test_bumped_files_are_what_ci_tests() -> None:
