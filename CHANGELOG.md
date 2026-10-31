@@ -30,6 +30,10 @@ Requires interlock-escrow 1.2.0 and interlock-agentgov 1.1.0.
   partition (`per: "partition:<dimension>"`).
 - **Caps by unit** (`outbound.caps[].unit_field`): a quantity capped in the unit of
   measure the request names.
+- **One agreement over several operations** (`data.agreements[].also`, interlock 1.2.0's
+  `CrossEffectAgreement(also=)`): a quantity held to its rows whichever of the sink's
+  operations carries it. Healthcare holds the dose of a standard order and of a held
+  Schedule II order to the row it writes.
 - **Sealed recipient maps** (`outbound.recipients[].sealed`, `.openings`;
   `fiduciary.sealing`). A vendor's root mandate holds one hash over every customer's
   allowed email domains and grants nothing from it; each customer's child opens only its
@@ -58,10 +62,11 @@ Requires interlock-escrow 1.2.0 and interlock-agentgov 1.1.0.
   on an unknown outcome. Its receipt is `request-only`. A held operation is recorded in
   the bundle's sink snapshot (only when held).
 - **The domain packs use all of it.** Healthcare: an MME ledger, a facility partition
-  beside the chart, a dose rise guard, and Schedule II orders held for a warrant on their
-  own FHIR operation. Cloud SRE: a vCPU ledger, an account partition beside the
-  environment, a replica rise guard, and security-group changes held. Supply chain: a
-  supplier partition beside the warehouse, and quantities capped per unit of measure.
+  beside the chart, a dose rise guard, Schedule II orders held for a warrant on their
+  own FHIR operation, and one dose agreement over both order operations. Cloud SRE: a
+  vCPU ledger, an account partition beside the environment, a replica rise guard, and
+  security-group changes held. Supply chain: a supplier partition beside the warehouse,
+  and quantities capped per unit of measure.
   SaaS: a sealed recipient map, a workspace mandate per customer for every scenario,
   receipts naming one org, and each customer's bundle sealed: none names another
   customer's org key or domain. Initech's bundle fails on purpose: it names the support
@@ -71,11 +76,6 @@ Requires interlock-escrow 1.2.0 and interlock-agentgov 1.1.0.
   `v10-own-record-withheld`; two FIDU1 mandates with 1.4's members in
   `vectors/fidu1/valid.json`; and `vectors/fidu1/seals.json`, a sealed log.
 
-### Changed
-
-- The healthcare pack's dose agreement is gone: each order tool's request carries the
-  dose its row records from one argument, and an agreement cannot span the pack's two
-  FHIR operations.
 
 ## [1.3.0] - 2026-10-30
 

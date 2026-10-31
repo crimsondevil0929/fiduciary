@@ -541,6 +541,7 @@ _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
         column=a["column"],
         measure=a["measure"],
         key=_key(a["key"]),
+        also=tuple(a.get("also", ())),
     ),
     "FactAgreement": lambda a: FactAgreement(
         list(a["kind"]),

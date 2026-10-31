@@ -16,7 +16,8 @@ order ever leaves the database. Each order is labeled with its facility too,
 and a plan may touch one. Opioid doses are conserved in a ledger of morphine
 milligram equivalents (MME), held per order before it stages; a plan may not
 raise the doses it writes by more than half; and every Schedule II order is
-held for a warrant before it reaches the EHR. Thresholds are placeholders,
+held for a warrant before it reaches the EHR. The dose an order sends the EHR
+is the dose its row records, on either operation. Thresholds are placeholders,
 not clinical guidance.
 """
 
@@ -297,9 +298,20 @@ def _data() -> dict[str, Any]:
             }
         ],
         "stated_footprint": {"tolerance": "2", "blocking": False},
-        # Each order tool's request carries the dose its row records, from one
-        # argument: there is nothing for an agreement to hold apart.
-        "agreements": [],
+        # The dose an order's request sends the EHR is the dose its row
+        # records, on the standard operation and on the held Schedule II one.
+        "agreements": [
+            {
+                "sink": "fhir",
+                "operation": "medicationrequest.create",
+                "also": ["medicationrequest.controlled"],
+                "field": "dose_mg",
+                "table": "med_orders",
+                "column": "dose_mg",
+                "measure": "inserted",
+                "key": None,
+            }
+        ],
         "facts": [
             {
                 "kind": ["pharmacy.verified"],

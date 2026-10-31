@@ -594,7 +594,7 @@ version 1, as interlock's configuration pins `[operators.keys]`.
     does today.
 - **F4-12.** The canonical document is at most 65,536 bytes. The bound caps parsing work.
   It is not a signing constraint (F3-6).
-- **F4-12a.** *Amended in 1.4.0.* A mandate may use six members that 1.4.0 adds. Each is
+- **F4-12a.** *Amended in 1.4.0.* A mandate may use seven members that 1.4.0 adds. Each is
   **written only when it is used**, so a mandate written without them keeps its bytes and
   its digest, and writing one with its default value is malformed:
   - `budgets.<unit>`: a budget in a unit other than the model spend's, conserved in an
@@ -609,6 +609,10 @@ version 1, as interlock's configuration pins `[operators.keys]`.
     declares and count the others (ARC1 1.3 `summary.other_tenants`).
   - `outbound.caps[].unit_field`: a cap per unit, read at that payload field, in place of
     `currency_field`.
+  - `data.agreements[].also`: the sink's other operations whose requests the rule holds
+    too, a set that names neither none nor the rule's own `operation`. One quantity that
+    travels by more than one call of a sink (an order, and the same order on a held
+    operation) is then held to its rows whichever call carries it.
   - `outbound.recipients[].sealed` and `.openings`: a sealed map of tenant domains. A root
     holds one SHA-256, the root of a Merkle tree over every tenant's entry (each leaf
     salted, `fiduciary.sealing`), and grants nothing from it. A child names its own entry
@@ -1089,7 +1093,7 @@ fiduciary adds three checkers of its own (§6.3).
 | `TenantIsolation(max, declared=, dimension=)` | each `data.partitions` entry (amended in 1.4.0) | per dimension |
 | `ColumnValueGuard`/`TenantDrawdownGuard(…, max_rise_fraction=, dimension=)` | a guard with `max_rise`, or `per: "partition:<dimension>"` (amended in 1.4.0) | per guard |
 | `Meter(ledger, measure, per_plan, scope=subject)`; the engine adds its `MeterCheck` | each `budgets` entry (amended in 1.4.0), held on the lineage's subject in that unit's ledger | per unit |
-| `CrossEffectAgreement(sink, operation, field=, table=, column=, measure=, key=)` | `data.agreements` | per rule |
+| `CrossEffectAgreement(sink, operation, field=, table=, column=, measure=, key=, also=)` | `data.agreements` | per rule; `also` only when the rule names it (interlock 1.2.0) |
 | `FactAgreement(kind, field=, table=, column=, key=, exempt=)` | `data.facts` | per rule |
 | `SinkAllowlist({sink: operations})` | `outbound.sinks` | when any sink is mandated |
 | `OutboundCount(max_per_plan, per_sink=)` | `outbound` | when bounded |

@@ -398,7 +398,9 @@ class Footprint:
 
 @dataclass(frozen=True, slots=True)
 class Agreement:
-    """A ``CrossEffectAgreement``: a request's field held to rows' column."""
+    """A ``CrossEffectAgreement``: a request's field held to rows' column.
+    ``also``: the sink's other operations that carry the same quantity (1.4),
+    written only when it names one."""
 
     sink: str
     operation: str
@@ -407,6 +409,7 @@ class Agreement:
     column: str
     measure: str
     key: tuple[str, str] | None
+    also: tuple[str, ...] = ()
 
     @property
     def identity(self) -> tuple[str, ...]:
@@ -418,10 +421,11 @@ class Agreement:
             self.column,
             self.measure,
             *(self.key or ()),
+            *(("|", *self.also) if self.also else ()),
         )
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        found: dict[str, Any] = {
             "sink": self.sink,
             "operation": self.operation,
             "field": self.field,
@@ -430,6 +434,9 @@ class Agreement:
             "measure": self.measure,
             "key": _pair(self.key),
         }
+        if self.also:
+            found["also"] = list(self.also)
+        return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -1234,17 +1241,31 @@ def _read_data(fields: Fields) -> Data:
     agreements = []
     for path, item in fields.array("agreements"):
         entry = Fields(
-            item, path, ("sink", "operation", "field", "table", "column", "measure", "key")
+            item,
+            path,
+            ("sink", "operation", "field", "table", "column", "measure", "key"),
+            optional=("also",),
         )
+        operation = entry.text("operation", OPERATION)
+        also: tuple[str, ...] = ()
+        if entry.has("also"):
+            also = entry.strings("also", OPERATION, "an operation")
+            if not also:
+                raise MalformedError("agreement", entry.path("also"), "names no operation")
+            if operation in also:
+                raise MalformedError(
+                    "agreement", entry.path("also"), f"names {operation}, the rule's own"
+                )
         agreements.append(
             Agreement(
                 entry.text("sink", SINK_NAME),
-                entry.text("operation", OPERATION),
+                operation,
                 entry.text("field", PATH),
                 entry.text("table", IDENTIFIER),
                 entry.text("column", IDENTIFIER),
                 entry.choice("measure", ("inserted", "net", "value")),
                 _key_pair(entry, "key"),
+                also,
             )
         )
     facts = []

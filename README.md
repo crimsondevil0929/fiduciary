@@ -273,6 +273,10 @@ verifying their bundles again, and plays only the rest.
   server's write tool is governed this way: a plan binding whose request goes to an
   `mcp` sink, called by the relay at most once, and dead-lettered when its outcome is
   unknown. Its receipt says only the request was measured.
+- **One agreement across operations.** A rule that holds a request's amount to the rows
+  it writes can cover more than one operation of the same system (`also`). The healthcare
+  pack holds the dose of a standard order and of a held Schedule II order to the row
+  each one writes.
 - **Audit bundle.** A lineage exports to one file with no row data, payloads, prompts or
   secrets. `verify-bundle` checks it offline (V1 to V12) and re-evaluates every recorded
   decision. A sealed bundle (`--sealed`) is one customer's: its own records whole, and of
