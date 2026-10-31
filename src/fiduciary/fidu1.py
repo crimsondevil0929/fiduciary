@@ -157,17 +157,22 @@ class Fields:
     """A JSON object read strictly: exactly the fields named, each checked as read.
 
     :param names: Every field the object must hold. One it lacks, or one it
-        holds beyond them, is ``fields``.
+        holds beyond them and ``optional``, is ``fields``.
+    :param optional: Fields it may hold or not: each added after the format
+        froze, written only when it is not its default, so every document
+        before it keeps its bytes (and its digest).
     """
 
     __slots__ = ("_path", "_value")
 
-    def __init__(self, value: object, path: str, names: Iterable[str]) -> None:
+    def __init__(
+        self, value: object, path: str, names: Iterable[str], optional: Iterable[str] = ()
+    ) -> None:
         if not isinstance(value, dict):
             raise MalformedError("type", path, "must be an object")
         expected = set(names)
         missing = sorted(expected - set(value))
-        unknown = sorted(set(value) - expected)
+        unknown = sorted(set(value) - expected - set(optional))
         if missing:
             raise MalformedError("fields", path, f"lacks {', '.join(missing)}")
         if unknown:
@@ -176,9 +181,17 @@ class Fields:
         self._path = path
 
     @classmethod
-    def document(cls, value: object, kind: str, names: Iterable[str], *, signed: bool) -> Fields:
+    def document(
+        cls,
+        value: object,
+        kind: str,
+        names: Iterable[str],
+        *,
+        signed: bool,
+        optional: Iterable[str] = (),
+    ) -> Fields:
         """A FIDU1 document of type ``kind``: ``v``, ``type``, ``names`` and,
-        when ``signed``, ``sig``."""
+        when ``signed``, ``sig``; and any of ``optional``."""
         if not isinstance(value, dict):
             raise MalformedError("type", "$", "a document is a JSON object")
         if value.get("v") != VERSION:
@@ -186,7 +199,7 @@ class Fields:
         if value.get("type") != kind:
             raise MalformedError("version", "$.type", f"must be {kind!r}")
         fields = ("v", "type", *names, *(("sig",) if signed else ()))
-        found = cls(value, "$", fields)
+        found = cls(value, "$", fields, optional)
         size = len(canonical(value))
         if size > MAX_DOCUMENT:
             raise MalformedError(
@@ -199,6 +212,10 @@ class Fields:
 
     def raw(self, name: str) -> Any:
         return self._value[name]
+
+    def has(self, name: str) -> bool:
+        """Whether the object holds ``name``: for an optional field."""
+        return name in self._value
 
     def is_null(self, name: str) -> bool:
         return self._value[name] is None
@@ -244,8 +261,8 @@ class Fields:
     def key(self, name: str) -> str:
         return self.text(name, PUBLIC_KEY, "ed25519:<64 lowercase hex>")
 
-    def object(self, name: str, names: Iterable[str]) -> Fields:
-        return Fields(self._value[name], self.path(name), names)
+    def object(self, name: str, names: Iterable[str], optional: Iterable[str] = ()) -> Fields:
+        return Fields(self._value[name], self.path(name), names, optional)
 
     def array(self, name: str, max_items: int = 1024) -> list[tuple[str, Any]]:
         """The array ``name``, as ``(path, item)`` pairs."""

@@ -12,8 +12,13 @@ with a legacy trigger, and with a census that resolves a bed to its patient:
   says who is in that bed now.
 
 The partition is the chart, labeled by an opaque chart key: no name, MRN or
-order ever leaves the database. Thresholds are placeholders, not clinical
-guidance.
+order ever leaves the database. Each order is labeled with its facility too,
+and a plan may touch one. Opioid doses are conserved in a ledger of morphine
+milligram equivalents (MME), held per order before it stages; a plan may not
+raise the doses it writes by more than half; and every Schedule II order is
+held for a warrant before it reaches the EHR. The dose an order sends the EHR
+is the dose its row records, on either operation. Thresholds are placeholders,
+not clinical guidance.
 """
 
 from __future__ import annotations
@@ -50,6 +55,8 @@ from fiduciary.demo.packs.kit import (
 
 CHARTS: Final = ("ch-7f3a91", "ch-2c8e04", "ch-b51d77", "ch-90ae3f")
 BEDS: Final = ("4A", "4B", "4C", "4D")
+FACILITIES: Final = ("fac-north", "fac-north", "fac-south", "fac-south")
+"""Each chart's facility: an opaque key, as the chart's is."""
 NAMES: Final = ("Ada Okafor", "Bruno Lindqvist", "Chiara Benedetti", "Dmitri Haldane")
 MRNS: Final = ("MRN-0048213", "MRN-0051907", "MRN-0062550", "MRN-0070384")
 ORDERS_PER_CHART: Final = 3
@@ -63,6 +70,7 @@ CREATE TABLE census (
     id INTEGER PRIMARY KEY,
     bed TEXT NOT NULL UNIQUE,
     chart TEXT NOT NULL,
+    facility TEXT NOT NULL,
     encounter TEXT NOT NULL,
     mrn TEXT NOT NULL,
     name TEXT NOT NULL
@@ -70,6 +78,7 @@ CREATE TABLE census (
 CREATE TABLE med_orders (
     id INTEGER PRIMARY KEY,
     chart TEXT NOT NULL,
+    facility TEXT NOT NULL,
     encounter TEXT NOT NULL,
     drug TEXT NOT NULL,
     dose_mg INTEGER NOT NULL,
@@ -104,11 +113,27 @@ END;
 """
 
 TABLES: Final = (
-    Table("census", ("id", "bed", "chart", "encounter", "mrn", "name"), "chart"),
+    Table(
+        "census",
+        ("id", "bed", "chart", "facility", "encounter", "mrn", "name"),
+        "chart",
+        {"facility": "facility"},
+    ),
     Table(
         "med_orders",
-        ("id", "chart", "encounter", "drug", "dose_mg", "mme_per_day", "schedule", "status"),
+        (
+            "id",
+            "chart",
+            "facility",
+            "encounter",
+            "drug",
+            "dose_mg",
+            "mme_per_day",
+            "schedule",
+            "status",
+        ),
         "chart",
+        {"facility": "facility"},
     ),
     Table("admin_schedule", ("id", "order_id", "chart", "due", "status"), "chart"),
     Table("pharmacy_queue", ("id", "order_id", "chart", "action"), "chart"),
@@ -123,17 +148,18 @@ def first_order(chart: int) -> int:
 
 
 def _seed(conn: sqlite3.Connection) -> None:
-    for i, (chart, bed, name, mrn) in enumerate(zip(CHARTS, BEDS, NAMES, MRNS, strict=True)):
+    rows = zip(CHARTS, BEDS, NAMES, MRNS, FACILITIES, strict=True)
+    for i, (chart, bed, name, mrn, facility) in enumerate(rows):
         encounter = f"enc-{chart[3:]}"
         conn.execute(
-            "INSERT INTO census VALUES (?, ?, ?, ?, ?, ?)",
-            (i + 1, bed, chart, encounter, mrn, name),
+            "INSERT INTO census VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (i + 1, bed, chart, facility, encounter, mrn, name),
         )
         for drug, dose, ahead in HOME:
             order = conn.execute(
-                "INSERT INTO med_orders (chart, encounter, drug, dose_mg, mme_per_day, schedule, "
-                "status) VALUES (?, ?, ?, ?, 0, 'daily', 'active')",
-                (chart, encounter, drug, dose),
+                "INSERT INTO med_orders (chart, facility, encounter, drug, dose_mg, mme_per_day, "
+                "schedule, status) VALUES (?, ?, ?, ?, ?, 0, 'daily', 'active')",
+                (chart, facility, encounter, drug, dose),
             ).lastrowid
             conn.executemany(
                 "INSERT INTO admin_schedule (order_id, chart, due, status) "
@@ -145,7 +171,11 @@ def _seed(conn: sqlite3.Connection) -> None:
 SINKS: Final = (
     SinkSpec(
         "fhir",
-        (OperationSpec("medicationrequest.create"),),
+        (
+            OperationSpec("medicationrequest.create"),
+            # Schedule II: every request waits for a warrant before the EHR sees it
+            OperationSpec("medicationrequest.controlled", hold=True),
+        ),
         cost_per_call=Decimal("0.01"),
         idempotency="header",
         max_payload_bytes=65536,
@@ -153,11 +183,12 @@ SINKS: Final = (
 )
 
 
-def _tools() -> list[dict[str, Any]]:
-    by_session = {"tenant": "$session.tenant"}
-    draft = plan_tool(
-        "draft_order",
-        "Draft an inpatient medication order for the patient in a bed, and send it to the EHR.",
+def _order_tool(name: str, description: str, operation: str) -> dict[str, Any]:
+    """A tool that drafts an order for the patient in a bed, and sends it to
+    the EHR by ``operation``."""
+    return plan_tool(
+        name,
+        description,
         {
             "bed": {"type": "string", "pattern": "^[0-9][A-H]$"},
             "drug": {"type": "string", "pattern": "^[a-z]{3,24}$"},
@@ -170,9 +201,9 @@ def _tools() -> list[dict[str, Any]]:
                 "order",
                 "insert",
                 "med_orders",
-                "INSERT INTO med_orders (chart, encounter, drug, dose_mg, mme_per_day, schedule, "
-                "status) SELECT chart, encounter, :drug, :dose_mg, :mme_per_day, :schedule, "
-                "'active' FROM census WHERE bed = :bed",
+                "INSERT INTO med_orders (chart, facility, encounter, drug, dose_mg, mme_per_day, "
+                "schedule, status) SELECT chart, facility, encounter, :drug, :dose_mg, "
+                ":mme_per_day, :schedule, 'active' FROM census WHERE bed = :bed",
                 {
                     "bed": "$.bed",
                     "drug": "$.drug",
@@ -186,7 +217,7 @@ def _tools() -> list[dict[str, Any]]:
             request(
                 "ehr",
                 "fhir",
-                "medicationrequest.create",
+                operation,
                 {
                     "chart": "$session.tenant",
                     "drug": "$.drug",
@@ -196,6 +227,21 @@ def _tools() -> list[dict[str, Any]]:
                 ["order"],
             )
         ],
+    )
+
+
+def _tools() -> list[dict[str, Any]]:
+    by_session = {"tenant": "$session.tenant"}
+    draft = _order_tool(
+        "draft_order",
+        "Draft an inpatient medication order for the patient in a bed, and send it to the EHR.",
+        "medicationrequest.create",
+    )
+    controlled = _order_tool(
+        "order_schedule_ii",
+        "Draft a Schedule II order (oxycodone, morphine, hydromorphone, fentanyl) for the "
+        "patient in a bed. It reaches the EHR once two principals release it.",
+        "medicationrequest.controlled",
     )
     discontinue = plan_tool(
         "discontinue_order",
@@ -227,7 +273,7 @@ def _tools() -> list[dict[str, Any]]:
             )
         ],
     )
-    return [draft, discontinue, verify]
+    return [draft, controlled, discontinue, verify]
 
 
 def _data() -> dict[str, Any]:
@@ -241,12 +287,24 @@ def _data() -> dict[str, Any]:
         "declared_tenants": True,
         "max_rows": 12,
         "max_tenants": 1,
-        "drawdown": [],
+        # a plan may raise the doses it writes by half, no more, on any chart
+        "drawdown": [
+            {
+                "table": "med_orders",
+                "column": "dose_mg",
+                "per": "tenant",
+                "max_drop": None,
+                "max_rise": "0.5",
+            }
+        ],
         "stated_footprint": {"tolerance": "2", "blocking": False},
+        # The dose an order's request sends the EHR is the dose its row
+        # records, on the standard operation and on the held Schedule II one.
         "agreements": [
             {
                 "sink": "fhir",
                 "operation": "medicationrequest.create",
+                "also": ["medicationrequest.controlled"],
                 "field": "dose_mg",
                 "table": "med_orders",
                 "column": "dose_mg",
@@ -264,6 +322,25 @@ def _data() -> dict[str, Any]:
                 "exempt": ["active", "discontinued"],
             }
         ],
+        "partitions": {"facility": {"max": 1, "declared": False}},
+    }
+
+
+def _budgets() -> dict[str, Any]:
+    """Opioid doses, conserved: a ledger of whole MME a day, of which each
+    order holds its bound before it stages and settles what it wrote."""
+    return {
+        "mme": {
+            "places": 0,
+            "envelope": "200",
+            "per_plan": "50",
+            "measure": {
+                "kind": "row_sum",
+                "table": "med_orders",
+                "column": "mme_per_day",
+                "rows": "inserted",
+            },
+        }
     }
 
 
@@ -271,7 +348,7 @@ def _outbound() -> dict[str, Any]:
     return {
         "sinks": {
             "fhir": {
-                "operations": ["medicationrequest.create"],
+                "operations": ["medicationrequest.controlled", "medicationrequest.create"],
                 "max_attempts": 10,
                 "not_after_seconds": 900,
                 "max_payload_bytes": 16384,
@@ -309,6 +386,12 @@ POLICIES: Final = (
         (limit("mme_per_day", 50), per_session("mme_per_day", 60)),
         "Draft orders: at most 50 MME a day per order, and 60 per session.",
     ),
+    Policy(
+        "controlled",
+        "order_schedule_ii",
+        (limit("mme_per_day", 50), per_session("mme_per_day", 60)),
+        "Schedule II orders: at most 50 MME a day per order, and 60 per session.",
+    ),
     Policy("discontinue", "discontinue_order", (OWN,), "Discontinue: the session's own chart."),
     Policy("verify", "mark_verified", (OWN,), "Verification notes: the session's own chart."),
 )
@@ -343,6 +426,16 @@ ACETAMINOPHEN: Final = {
 
 def _opioid(bed: str, mme: int) -> dict[str, Any]:
     return {"bed": bed, "drug": "oxycodone", "dose_mg": 10, "mme_per_day": mme, "schedule": "q6h"}
+
+
+TRAMADOL: Final = {
+    "bed": "4A",
+    "drug": "tramadol",
+    "dose_mg": 100,
+    "mme_per_day": 40,
+    "schedule": "q6h",
+}
+"""Schedule IV: 100 mg every six hours is 40 MME a day."""
 
 
 def acts(run: PackRun) -> None:
@@ -383,9 +476,9 @@ def acts(run: PackRun) -> None:
     run.say("Act 3  " + TITLES["injected"])
     note = INJECTED.format(order=first_order(0) + 1)
     with run.world.fid.session(run.pack.scope, tenant=CHARTS[0], trajectory="note") as session:
-        wrong = call(run, session, "draft_order", _opioid("4B", 30))
+        wrong = call(run, session, "order_schedule_ii", _opioid("4B", 30))
         claimed = call(run, session, "mark_verified", {"order_id": first_order(0) + 1})
-    say_call(run, wrong, "draft_order 4B from chart 4A's session")
+    say_call(run, wrong, "order_schedule_ii 4B from chart 4A's session")
     say_call(run, claimed, "mark_verified with no pharmacy event")
     run.act(
         3,
@@ -399,23 +492,29 @@ def acts(run: PackRun) -> None:
 
     run.say("Act 4  " + TITLES["fleet"])
     calls = [
-        one(run, "draft_order", _opioid("4A", 40), tenant=CHARTS[0], trajectory=f"sub-agent-{i}")
+        one(run, "draft_order", TRAMADOL, tenant=CHARTS[0], trajectory=f"sub-agent-{i}")
         for i in range(1, 4)
     ]
     committed = sum(c.committed for c in calls)
+    mme = run.world.ledgers["mme"]
+    mme.refresh()
+    left = format(mme.available(run.pack.scope).normalize(), "f")
     run.say(
         f"  3 sub-agent sessions, 40 MME/day each: gateway permitted "
         f"{sum(c.gateway.permitted for c in calls)}; stack committed {committed} "
-        f"(window 90 MME per chart per 24h)"
+        f"(window 90 MME per chart per 24h); MME ledger {left} of 200 left"
     )
     run.act(
         4,
         "fleet",
-        "Three sub-agents work the same chart in parallel, and each drafts an oxycodone "
+        "Three sub-agents work the same chart in parallel, and each drafts a tramadol "
         "order of 40 MME a day. The gateway counts per session, so each is within its "
-        "limit. The mandate's window counts every session on the chart.",
+        "limit. The mandate's window counts every session on the chart, and the MME ledger "
+        "holds each order's dose before it stages, so parallel sessions cannot each spend "
+        "what is left.",
         calls=[c.to_json() for c in calls],
         window={"limit": "90", "unit": "MME", "span_hours": 24, "per": "chart"},
+        meter={"unit": "mme", "envelope": "200", "per_plan": "50", "left": left},
         committed=committed,
         sessions=len(calls),
         refused_by=sorted({b for c in calls for b in blocked(c)}),
@@ -425,12 +524,12 @@ def acts(run: PackRun) -> None:
     act_quorum(
         run,
         5,
-        "Pharmacy pauses the agent for a controlled-substance review. The relay holds the "
-        "Schedule II order the agent just committed for bed 4B, and the service raises a "
-        "ticket for the principals.",
-        "draft_order",
+        "Every Schedule II order waits for a warrant: its FHIR operation is declared held. "
+        "The relay holds the oxycodone order the agent just committed for bed 4B, and the "
+        "service raises a ticket for the principals.",
+        "order_schedule_ii",
         _opioid("4B", 30),
-        "paused by pharmacy: Schedule II review",
+        None,
         forged=run.pack.operator,
         tenant=CHARTS[1],
     )
@@ -439,10 +538,10 @@ def acts(run: PackRun) -> None:
     act_break_glass(
         run,
         6,
-        "A second order, for bed 4C, is held during a second pause. An after-hours EHR "
-        "administrator releases it and resets the breaker directly, with the declared "
-        "break-glass key and no warrant. No agent call is involved.",
-        "draft_order",
+        "A second Schedule II order, for bed 4C, is held, and pharmacy pauses the agent. An "
+        "after-hours EHR administrator releases the order and resets the breaker directly, "
+        "with the declared break-glass key and no warrant. No agent call is involved.",
+        "order_schedule_ii",
         _opioid("4C", 20),
         "paused by pharmacy: second review",
         "after-hours: released by hand",
@@ -507,8 +606,13 @@ PACK: Final = Pack(
     windows=_windows,
     policies=POLICIES,
     entities=_entities,
-    resource={"draft_order": "bed", "discontinue_order": "order_id", "mark_verified": "order_id"},
-    summed={"draft_order": "mme_per_day"},
+    resource={
+        "draft_order": "bed",
+        "order_schedule_ii": "bed",
+        "discontinue_order": "order_id",
+        "mark_verified": "order_id",
+    },
+    summed={"draft_order": "mme_per_day", "order_schedule_ii": "mme_per_day"},
     titles=TITLES,
     acts=acts,
     canaries=canaries,
@@ -517,9 +621,10 @@ PACK: Final = Pack(
         "measure": "orders on a chart",
         "hidden": "an encounter-wide cascade; the wrong chart",
         "unit": "MME per day; USD",
-        "partition": "the patient's chart",
+        "partition": "the patient's chart, and its facility",
         "approvers": "chief pharmacist, CMIO, privacy officer",
         "vendor": "a FHIR MedicationRequest",
         "verifier": "regulator, privacy officer",
     },
+    budgets=_budgets,
 )

@@ -102,6 +102,10 @@ def _configure(
         database = f'database = "{world.store.path}"\n'
     else:
         database = f'database = "{PG_DSN}"\nschema = "{world.store.schema}"\n'  # type: ignore[attr-defined]
+    seal = ""
+    if world.sealer is not None:  # the world's seal secret, which tests.bound keeps
+        (tmp / "seal.key").write_text(SEAL_SECRET.hex() + "\n")
+        seal = f'seal_key = "{tmp / "seal.key"}"\n'
     config = tmp / "fiduciary.toml"
     config.write_text(
         top
@@ -109,7 +113,7 @@ def _configure(
         + f'ledger = "{ledger or tmp / "ledger.db"}"\n'
         + f'interlock = "{tmp / "interlock.toml"}"\n'
         + f'[charter]\ndigest = "{world.charter.digest}"\n'
-        + f'[service]\nkey = "{service}"\n'
+        + f'[service]\nkey = "{service}"\n{seal}'
         + f"[binding]\ntools = {json.dumps(tools)}\n"
         + f'directives = ["{tmp / "stop.txt"}"]\nchains = "{tmp / "chains"}"\n'
         + f'[executor]\nkey = "{service}"\noutbox = "{outbox}"\n'
@@ -118,6 +122,10 @@ def _configure(
         + '[bridge.handlers]\nlookup_order = "tests.bridge_kit:lookup"\n'
     )
     return config
+
+
+SEAL_SECRET = bytes(range(32))
+"""The seal secret of a sealed world (``tests.test_sealed_bundles.SEALER``)."""
 
 
 def _env() -> dict[str, str]:

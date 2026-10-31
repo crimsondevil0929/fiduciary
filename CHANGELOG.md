@@ -4,6 +4,81 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.4.0] - 2026-10-31
+
+Any unit, any partition, one customer's bundle.
+
+One engine for any industry's consequences, with no finance, SQL or single-tenant
+assumption left in what a mandate can say. Every new member of a document is written only
+when it is used, so every mandate, compiled policy, record and `fidb/1` bundle written
+before keeps its bytes and its digest, and every golden vector before is unchanged.
+Requires interlock-escrow 1.2.0 and interlock-agentgov 1.1.0.
+
+### Added
+
+- **Budgets in any unit** (`budgets.<unit>`, F4-12a): morphine milligram equivalents,
+  vCPUs, seats. Each is conserved in an AgentGov ledger of that unit (`[units.<code>]` in
+  `fiduciary.toml`: its ledger and the places it counts) and compiles to an Interlock
+  `Meter`, held on the lineage's subject before a plan stages and settled from what it
+  measurably consumed. Its receipts name each quantity and the ledger transaction that
+  settled it. A child's unit envelope is delegated from its parent's in that ledger and
+  only ever narrows.
+- **Partitions beside the tenant** (`data.partitions`): a plan may be confined to one
+  patient, facility, account or supplier, as it is to one tenant. Tool bindings may name
+  a partition's label from an argument (`partitions` on an effect or request).
+- **Guards on a rise** (`max_rise`) as well as a fall, on a table, a tenant or any
+  partition (`per: "partition:<dimension>"`).
+- **Caps by unit** (`outbound.caps[].unit_field`): a quantity capped in the unit of
+  measure the request names.
+- **One agreement over several operations** (`data.agreements[].also`, interlock 1.2.0's
+  `CrossEffectAgreement(also=)`): a quantity held to its rows whichever of the sink's
+  operations carries it. Healthcare holds the dose of a standard order and of a held
+  Schedule II order to the row it writes.
+- **Sealed recipient maps** (`outbound.recipients[].sealed`, `.openings`;
+  `fiduciary.sealing`). A vendor's root mandate holds one hash over every customer's
+  allowed email domains and grants nothing from it; each customer's child opens only its
+  own entry. No mandate names another customer's domains.
+- **Receipts that name only the plan's own tenant** (`data.receipt_tenants:
+  "declared"`), counting the others a refused plan reached (ARC1 1.3
+  `summary.other_tenants`).
+- **Sealed bundles** (`fiduciary export-bundle --sealed`, format `fidb/2`, F9-5 to F9-7,
+  `BUNDLE_FORMAT.md` §3.4). One lineage's records whole, and of every other record its
+  place and hash, each held to its place in the chain (V9) and the ledger's anchor of it
+  (V10). A customer's bundle names no other customer's records, org keys or domains, and
+  still verifies V1 to V12 offline.
+- **Sealed logs** (`[service] seal_key`, `fiduciary.seals`). Every record carries a `seal`
+  of two HMAC tags saying whose it is, and its anchor memo repeats them. A sealed bundle
+  is cut by the seals, and carries only its own lineage's keys. So V10 proves that no
+  withheld record is the bundle's own, even one that left no trace elsewhere, and learns
+  nothing about whose the others are. `fiduciary verify` with the seal key holds every
+  seal to its record. A log is sealed from its first record or never. Logs that are not
+  sealed keep their bytes.
+- **Measurement in the report.** The verifier notes how many receipts were measured short
+  of a transaction (`plan-bound`, `predicted`, `request-only`), and says what each class
+  promises.
+- **MCP write tools as plans.** A plan binding whose one request goes to a sink of kind
+  `mcp` is measured and judged before anything leaves, held for a warrant when its
+  operation is `hold = true`, and called by Interlock's relay at most once, dead-lettered
+  on an unknown outcome. Its receipt is `request-only`. A held operation is recorded in
+  the bundle's sink snapshot (only when held).
+- **The domain packs use all of it.** Healthcare: an MME ledger, a facility partition
+  beside the chart, a dose rise guard, Schedule II orders held for a warrant on their
+  own FHIR operation, and one dose agreement over both order operations. Cloud SRE: a
+  vCPU ledger, an account partition beside the environment, a replica rise guard, and
+  security-group changes held. Supply chain: a supplier partition beside the warehouse,
+  and quantities capped per unit of measure.
+  SaaS: a sealed recipient map, a workspace mandate per customer for every scenario,
+  receipts naming one org, and each customer's bundle sealed: none names another
+  customer's org key or domain. Initech's bundle fails on purpose: it names the support
+  engineer's hand-sent invitation in Initech's own workspace.
+- `scripts/make_bundles.py --add NAME`: records new golden bundles and keeps the others.
+  New vectors: `valid-sealed-child`, `v10-withheld-rewritten`, `v9-withheld-dropped`,
+  `v10-own-record-withheld`; two FIDU1 mandates with 1.4's members in
+  `vectors/fidu1/valid.json`; and `vectors/fidu1/seals.json`, a sealed log.
+
+
 ## [1.3.0] - 2026-10-30
 
 Coding agents, on Git. Nothing 1.2.0 writes or reads changes: FIDU1, the documents, the

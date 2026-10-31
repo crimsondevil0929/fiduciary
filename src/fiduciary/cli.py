@@ -147,11 +147,12 @@ def _service(args: argparse.Namespace) -> Any:
     config = _config(args)
     try:
         signer = config.service()
+        sealer = config.sealer()
         store = _opened(config.open_store())
         ledger = _opened(config.open_ledger())
     except (OSError, ValueError, FiduciaryError) as exc:
         _fail(str(exc))
-    log = Log(store, signer, ledger=ledger)
+    log = Log(store, signer, ledger=ledger, sealer=sealer)
     return config, log, Authority(log, pinned=config.pinned())
 
 
@@ -168,12 +169,13 @@ def _binder(args: argparse.Namespace, *, read_only: bool = False) -> Any:
         _fail("binding needs the deployment's AgentGov ledger: set ledger")
     try:
         signer = config.service()
+        sealer = config.sealer()
         store = _opened(config.open_store())
         governor = _opened(config.open_ledger(read_only=read_only))
         deployment = config.deployment(governor)
     except (OSError, ValueError, FiduciaryError) as exc:
         _fail(str(exc))
-    log = Log(store, signer, ledger=None if read_only else governor)
+    log = Log(store, signer, ledger=None if read_only else governor, sealer=sealer)
     authority = Authority(log, pinned=config.pinned())
     return _opened(Binder(authority, governor, deployment=deployment, chains=config.chains))
 
@@ -699,6 +701,10 @@ def _verify(args: argparse.Namespace) -> int:
             key = config.service().public_key()
         except (OSError, ValueError, FiduciaryError) as exc:
             _fail(f"cannot read the service key: {exc}")
+    try:
+        sealer = config.sealer()
+    except ValueError as exc:
+        _fail(str(exc))
     store = _opened(config.open_store())
     ledger = _opened(config.open_ledger(read_only=True))
     entries = None
@@ -712,6 +718,7 @@ def _verify(args: argparse.Namespace) -> int:
         pinned=config.pinned(),
         ledger=entries,
         skew_seconds=skew if entries is not None else None,
+        sealer=sealer,
     )
     for problem in report.problems:
         _out(f"FAIL {problem}")
@@ -1154,9 +1161,11 @@ def _export_bundle(args: argparse.Namespace) -> int:
                 chains=config.chains,
                 outbox=outbox,
                 service=service,
+                sealer=config.sealer(),
             ),
             from_seq=args.from_seq,
             to_seq=args.to_seq,
+            sealed=args.sealed,
         )
     except (ConfigError, BundleError, OSError, ValueError) as exc:
         _fail(str(exc), REFUSED if isinstance(exc, BundleError) else USAGE)
@@ -1611,6 +1620,11 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--out", required=True, help="the bundle file to write (.fidb)")
     export.add_argument("--ledger-key", help="the ledger's checkpoint key file")
     export.add_argument("--ledger-signer", help="the ledger's checkpoint key, a [signers.<name>]")
+    export.add_argument(
+        "--sealed",
+        action="store_true",
+        help="one party's bundle: other lineages' records as their place and hash only (fidb/2)",
+    )
     export.set_defaults(handler=_export_bundle)
 
     check = commands.add_parser("verify-bundle", help="verify a bundle offline, V1 to V12")

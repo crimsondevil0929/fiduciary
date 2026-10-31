@@ -10,13 +10,18 @@ Invitations go out by email. The schema came with what such a product has:
 - ``role_admin_rights``: a custom role whose template carries admin rights
   writes an admin grant when it is assigned.
 
-The vendor's root mandate governs the product; a derived child per customer
-can only narrow it, and each child's lineage is that customer's own bundle,
-for the vendor's trust center. The partition is the customer org, labeled by
-an org key that is a keyed pseudonym of the customer's account id
-(:func:`pseudonym`): the log, and so every bundle, names org keys, and an org
-key says nothing about which customer it is to anyone without the vendor's
-pseudonym key. Thresholds are placeholders.
+The vendor's root mandate governs the product; a derived child per customer,
+its workspace, can only narrow it, and the AI admin works in it. The
+partition is the customer org, labeled by an org key that is a keyed
+pseudonym of the customer's account id (:func:`pseudonym`).
+
+The root names no customer: the email domains each customer's invitations may
+go to are *sealed* into it (:data:`SEAL`), one hash over every customer's
+entry, and each workspace opens its own. Each workspace's lineage is exported
+*sealed*, as that customer's bundle for the vendor's trust center: whole only
+its own records, and of the rest of the log, places and hashes. So a
+customer's bundle names no other customer's org key or domain. Thresholds are
+placeholders.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from typing import Any, Final
 
 from interlock.outbound import OperationSpec, SinkSpec
 
+from fiduciary.bundle.format import unpack
 from fiduciary.demo.gateway import Policy
 from fiduciary.demo.packs.kit import (
     OWN,
@@ -54,6 +60,7 @@ from fiduciary.demo.packs.kit import (
     work,
 )
 from fiduciary.documents import Mandate
+from fiduciary.sealing import salts, seal
 
 PSEUDONYM_KEY: Final = b"demo pseudonym key; a deployment keeps its own, outside the log"
 """The vendor's key for org pseudonyms. The demo's is fixed, so its runs
@@ -73,6 +80,14 @@ def pseudonym(account: str) -> str:
 ORGS: Final = tuple(pseudonym(a) for a in ACCOUNTS)
 CUSTOMERS: Final = ("Acme Corp", "Globex", "Initech", "Umbrella")
 DOMAINS: Final = ("acme.example", "globex.example", "initech.example", "umbrella.example")
+SEAL_KEY: Final = b"demo seal key; a deployment keeps its own, outside the log"
+"""The vendor's key for the salts of its sealed recipient map: a secret, like
+the pseudonym key, so no entry can be confirmed by guessing it."""
+SEAL: Final = seal(
+    {org: [domain] for org, domain in zip(ORGS, DOMAINS, strict=True)}, salts(SEAL_KEY, ORGS)
+)
+"""Each org key's invitation domain, sealed: the root holds ``SEAL.root``, and
+each workspace opens its own entry."""
 TERRITORIES: Final = ("EMEA-North", "NA-East", "APAC")
 PER_ORG: Final = 12
 
@@ -253,6 +268,8 @@ def _data() -> dict[str, Any]:
             }
         ],
         "facts": [],
+        # Receipts go into one customer's bundle: each names only its own org.
+        "receipt_tenants": "declared",
     }
 
 
@@ -277,8 +294,9 @@ def _outbound() -> dict[str, Any]:
                 "fields": ["to"],
                 "domains": [],
                 "addresses": [],
-                "tenant_domains": {org: [d] for org, d in zip(ORGS, DOMAINS, strict=True)},
+                "tenant_domains": {},
                 "subdomains": False,
+                "sealed": SEAL.root,
             }
         ],
         "tenants": {"max_tenants": 1, "require_tenant": True, "fields": {"notify": "org"}},
@@ -327,13 +345,40 @@ TITLES: Final = {
 ACME: Final = ORGS[0]
 
 
-def _trust_center(run: PackRun) -> None:
-    """A derived child per customer, one action in each, and each child's
-    lineage exported and verified on its own, then searched for every other
-    customer's records and org key."""
+def _workspaces(run: PackRun) -> dict[str, Mandate]:
+    """A derived child per customer, narrowed to its org, and opening its own
+    entry of the root's sealed recipient map."""
     world = run.world
     parent = world.mandate
     assert parent is not None
+    for org, domain in zip(ORGS, DOMAINS, strict=True):
+        # The child's label is the org key, not the customer's name.
+        raw = child_json(
+            world,
+            parent,
+            org,
+            f"workspace {org}",
+            **{
+                "data.tenants": [org],
+                "outbound.recipients.0.tenant_domains": {org: [domain]},
+                "outbound.recipients.0.openings": {org: SEAL.openings[org].to_json()},
+            },
+        )
+        records = world.binder.derive(Mandate.from_json(raw, signed=False))
+        digest = str(records[0].content["mandate"])
+        world.binder.bind(digest)
+        child = world.authority.decide.load(digest, Mandate)
+        world.children[org] = child
+        run.observe(child)
+    run.say(f"  {len(ORGS)} workspaces derived from the vendor's mandate, one per customer org")
+    return dict(world.children)
+
+
+def _trust_center(run: PackRun) -> None:
+    """One action in each customer's workspace, and each workspace's lineage
+    exported sealed and verified on its own, then searched for every other
+    customer's records, org key and domain."""
+    world = run.world
     planted_rows = {
         org: [
             str(r[0])
@@ -347,16 +392,7 @@ def _trust_center(run: PackRun) -> None:
     }
     customers = []
     for o, (org, customer) in enumerate(zip(ORGS, CUSTOMERS, strict=True)):
-        # The child's label is the org key, not the customer's name: a later
-        # customer's bundle carries every child derived before its own.
-        raw = child_json(world, parent, org, f"workspace {org}", **{"data.tenants": [org]})
-        draft = Mandate.from_json(raw, signed=False)
-        records = world.binder.derive(draft)
-        digest = str(records[0].content["mandate"])
-        world.binder.bind(digest)
-        child = world.authority.decide.load(digest, Mandate)
-        world.children[org] = child
-        run.observe(child)
+        child = world.children[org]
         found = one(
             run,
             "update_opportunity",
@@ -365,19 +401,28 @@ def _trust_center(run: PackRun) -> None:
             trajectory=f"{org}-admin",
             scope=child.mandate_id,
         )
-        data = export(world, f"{org}-trust-center", child)
+        data = export(world, f"{org}-trust-center", child, sealed=True)
         others = [i for i in range(len(ORGS)) if i != o]
         planted = {
             "rows": [v for i in others for v in planted_rows[ORGS[i]]],
             "own": planted_rows[org],
             "names": [CUSTOMERS[i] for i in others],
             "accounts": [ACCOUNTS[i] for i in others],
-            "key": [PSEUDONYM_KEY.decode(), PSEUDONYM_KEY.hex()],
+            "key": [
+                PSEUDONYM_KEY.decode(),
+                PSEUDONYM_KEY.hex(),
+                SEAL_KEY.decode(),
+                SEAL_KEY.hex(),
+            ],
             "domains": [DOMAINS[i] for i in others],
             "labels": [ORGS[i] for i in others],
         }
         checked = verdict(run, f"customer-{org}", data, planted)
         (world.root / f"customer-{org}.fidb").write_bytes(data)
+        members = dict(unpack(data))
+        withheld = len(json.loads(members["withheld.json"])["records"])
+        disclosed = members["log.jsonl"].count(b"\n")
+        scan_ = checked["scan"]
         customers.append(
             {
                 "org": org,
@@ -392,46 +437,56 @@ def _trust_center(run: PackRun) -> None:
                 "sockets": checked["sockets"],
                 "bytes": checked["bytes"],
                 "sha256": checked["sha256"],
-                "members": checked["scan"]["members"],
-                "other_records": checked["scan"]["found"]["rows"],
-                "own_records": checked["scan"]["found"]["own"],
-                "other_names": checked["scan"]["found"]["names"],
-                "other_accounts": checked["scan"]["found"]["accounts"],
-                "pseudonym_key": checked["scan"]["found"]["key"],
-                "other_domains": len(
-                    {h.split(": ")[1] for h in checked["scan"]["hits"]["domains"]}
-                ),
-                "domains_where": sorted(
-                    {h.split("/")[0] for h in checked["scan"]["hits"]["domains"]}
-                ),
-                "other_labels": len({h.split(": ")[1] for h in checked["scan"]["hits"]["labels"]}),
-                "label_members": len({h.split(":")[0] for h in checked["scan"]["hits"]["labels"]}),
+                "members": scan_["members"],
+                "records": disclosed,
+                "withheld": withheld,
+                "other_records": scan_["found"]["rows"],
+                "own_records": scan_["found"]["own"],
+                "other_names": scan_["found"]["names"],
+                "other_accounts": scan_["found"]["accounts"],
+                "pseudonym_key": scan_["found"]["key"],
+                "other_domains": len({h.split(": ")[1] for h in scan_["hits"]["domains"]}),
+                "domains_where": sorted({h.split("/")[0] for h in scan_["hits"]["domains"]}),
+                "other_labels": len({h.split(": ")[1] for h in scan_["hits"]["labels"]}),
+                "label_members": len({h.split(":")[0] for h in scan_["hits"]["labels"]}),
             }
         )
+        c = customers[-1]
         run.say(
             f"  {org} ({customer}): bundle "
-            f"{'PASS' if checked['passed'] else checked['exit_code']}, "
-            f"{customers[-1]['other_records']} other customers' records, "
-            f"{customers[-1]['other_names']} names, {customers[-1]['other_accounts']} account "
-            f"ids; {customers[-1]['other_labels']} other org keys and "
-            f"{customers[-1]['other_domains']} email domains named"
+            f"{'PASS' if checked['passed'] else 'exit ' + str(checked['exit_code'])}, "
+            f"{c['records']} records whole and {c['withheld']} withheld; "
+            f"{c['other_records']} other customers' records, {c['other_names']} names, "
+            f"{c['other_accounts']} account ids, {c['other_labels']} org keys and "
+            f"{c['other_domains']} email domains of other customers"
         )
     run.act(
         6,
         "trust-center",
-        "The vendor derives one child mandate per customer, each narrowed to that customer's "
-        "org, and the AI admin does one piece of work in each. Each child's lineage is "
-        "exported as that customer's own bundle and verified on its own.",
+        "The AI admin does one piece of work in each customer's workspace. Each workspace's "
+        "lineage is exported sealed, as that customer's own bundle: its own records whole, "
+        "and of every other record only its place and hash, vouched for by the ledger. Each "
+        "record's seal, written with it, lets the customer's own keys show that no withheld "
+        "record is theirs. Each bundle is verified on its own.",
         customers=customers,
         pseudonym={
             "derivation": "org_ + the first 12 hex digits of HMAC-SHA-256(pseudonym key, "
             "account id)",
             "key_in_bundles": sum(c["pseudonym_key"] for c in customers),
         },
+        sealed={
+            "root": SEAL.root,
+            "entries": len(ORGS),
+            "salts": "HMAC-SHA-256(seal key, org key), one per entry",
+            "seals": "two HMAC-SHA-256 tags on every record and its anchor; each bundle "
+            "holds only its own lineage's keys",
+        },
     )
 
 
 def acts(run: PackRun) -> None:
+    workspaces = _workspaces(run)
+    acme = workspaces[ACME].mandate_id
     run.say("Act 1  " + TITLES["queue"])
     found = one(
         run,
@@ -439,13 +494,14 @@ def acts(run: PackRun) -> None:
         {"opportunity_id": opportunity(0, 4), "stage": "won"},
         tenant=ACME,
         trajectory="acme-admin",
+        scope=acme,
     )
     say_call(run, found, "update_opportunity acme")
     run.act(
         1,
         "queue",
-        "An Acme Corp admin asks the AI admin to mark one opportunity won. The gateway and "
-        "the stack both allow it.",
+        "An Acme Corp admin asks the AI admin, in Acme's workspace, to mark one opportunity "
+        "won. The gateway and the stack both allow it.",
         calls=[found.to_json()],
     )
 
@@ -457,6 +513,7 @@ def acts(run: PackRun) -> None:
         tenant=ACME,
         trajectory="acme-cleanup",
         request=REQUEST,
+        scope=acme,
     )
     for found in calls:
         say_call(run, found, f"{found.tool} {json.dumps(found.arguments, sort_keys=True)}")
@@ -477,6 +534,7 @@ def acts(run: PackRun) -> None:
         {"user": "pat@acme.example", "role": "viewer"},
         tenant=ACME,
         trajectory="acme-roles",
+        scope=acme,
     )
     owner = one(
         run,
@@ -484,6 +542,7 @@ def acts(run: PackRun) -> None:
         {"user": "contractor@acme.example", "role": "workspace-owner"},
         tenant=ACME,
         trajectory="acme-roles",
+        scope=acme,
     )
     say_call(run, viewer, "assign_role viewer")
     say_call(run, owner, "assign_role workspace-owner")
@@ -501,27 +560,30 @@ def acts(run: PackRun) -> None:
     act_quorum(
         run,
         4,
-        "Trust and safety pauses outbound mail during a phishing review. The relay holds "
-        "the invitation the AI admin just committed, and the service raises a ticket for "
-        "the principals.",
+        "Trust and safety pauses outbound mail in Globex's workspace during a phishing "
+        "review. The relay holds the invitation the AI admin just committed, and the service "
+        "raises a ticket for the principals.",
         "assign_role",
         {"user": "sam@globex.example", "role": "sales-rep"},
         "paused by trust and safety: phishing review",
         forged=run.pack.operator,
         tenant=ORGS[1],
+        mandate=workspaces[ORGS[1]],
     )
 
     run.say("Act 5  " + TITLES["break-glass"])
     act_break_glass(
         run,
         5,
-        "A second invitation is held during a second pause. A support engineer sends it by "
-        "hand and resets the breaker, with the declared break-glass key and no warrant.",
+        "A second invitation, in Initech's workspace, is held during a second pause. A "
+        "support engineer sends it by hand and resets the breaker, with the declared "
+        "break-glass key and no warrant.",
         "assign_role",
         {"user": "lee@initech.example", "role": "viewer"},
         "paused by trust and safety: second review",
         "customer escalation: sent by hand",
         tenant=ORGS[2],
+        mandate=workspaces[ORGS[2]],
     )
 
     run.say("Act 6  " + TITLES["trust-center"])
@@ -558,11 +620,12 @@ def canaries(run: PackRun) -> dict[str, list[str]]:
         "rows": rows,
         "payloads": payloads(run),
         "prompts": prompts(run),
-        "secrets": [*secrets(run), PSEUDONYM_KEY.decode()],
+        "secrets": [*secrets(run), PSEUDONYM_KEY.decode(), SEAL_KEY.decode()],
     }
 
 
 PACK: Final = Pack(
+    seal_key=SEAL_KEY,
     key="saas",
     industry="Multi-tenant SaaS",
     title="CRM AI admin",

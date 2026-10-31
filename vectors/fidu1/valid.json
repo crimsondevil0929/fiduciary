@@ -812,5 +812,577 @@
     "name": "warrant, quorum",
     "signing_input": "46494455312f77617272616e742f76310a9dc5af404578d33cfd7d4a59dedde64a1126f10a744649c29de21a8bbbc29e2eab452cb7d76901f09d121b0cb31128f431bc41b12a01059b8150cb29e0c92c80",
     "type": "warrant"
+  },
+  {
+    "canonical_sha256": "f459001fda23f1ba609d51ae798109453a75b79c24e5f3749442ae055823e241",
+    "document": {
+      "budget": {
+        "envelope": "250.00000000",
+        "max_output_tokens": 4096,
+        "models": [
+          "claude-opus-5-5",
+          "claude-sonnet-5-5"
+        ],
+        "per_call": "0.50000000"
+      },
+      "budgets": {
+        "mme": {
+          "envelope": "200",
+          "measure": {
+            "column": "total",
+            "kind": "row_sum",
+            "rows": "inserted",
+            "table": "orders"
+          },
+          "per_plan": "50",
+          "places": 0
+        }
+      },
+      "charter": {
+        "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+        "digest": "98347c4b45abe6de1575593fb59778032fe8d16fd454be740634a1f5d16ef85a",
+        "version": 1
+      },
+      "data": {
+        "agreements": [
+          {
+            "column": "amount",
+            "field": "amount",
+            "key": null,
+            "measure": "inserted",
+            "operation": "refunds.create",
+            "sink": "stripe",
+            "table": "refunds"
+          }
+        ],
+        "declared_tenants": true,
+        "drawdown": [
+          {
+            "column": "total",
+            "max_drop": null,
+            "max_rise": "0.5",
+            "per": "partition:region",
+            "table": "orders"
+          }
+        ],
+        "facts": [],
+        "max_rows": 20,
+        "max_tenants": 1,
+        "partitions": {
+          "region": {
+            "declared": false,
+            "max": 1
+          }
+        },
+        "receipt_tenants": "declared",
+        "stated_footprint": {
+          "blocking": false,
+          "tolerance": "2"
+        },
+        "tables": {
+          "orders": [
+            "update"
+          ],
+          "refunds": [
+            "insert"
+          ]
+        },
+        "tenants": "*"
+      },
+      "delegation": {
+        "envelope": "50.00000000",
+        "max_children": 4,
+        "max_depth": 1
+      },
+      "escalation": {
+        "auto": [
+          {
+            "class": "refused",
+            "id": "trim-refused",
+            "resolution": "accept_repair",
+            "when": {
+              "exhaustive": true,
+              "max_dropped": 1
+            }
+          }
+        ],
+        "max_open": 5,
+        "ttl_seconds": 86400
+      },
+      "extension": {
+        "auto": {
+          "max_grant": "5.00000000",
+          "max_total": "15.00000000"
+        },
+        "margin": "0.25",
+        "max_grant": "50.00000000",
+        "max_total": "150.00000000",
+        "ttl_seconds": 3600
+      },
+      "governance": {
+        "cognitive": {
+          "exempt_tools": [],
+          "max_cycle_period": 4,
+          "max_identical_repeats": 3,
+          "max_similar_streak": 3,
+          "min_cycle_repeats": 3,
+          "min_novelty_ratio": "0.02",
+          "result_similarity_threshold": "0.3",
+          "similarity_threshold": "0.7"
+        },
+        "fleet_velocity": true,
+        "max_calls": 60,
+        "seconds": 60
+      },
+      "issuance": "quorum",
+      "issued_at": "2026-10-18T09:30:00.000000Z",
+      "mandate_id": "2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31",
+      "outbound": {
+        "caps": [
+          {
+            "currency_field": null,
+            "field": "amount",
+            "maximum": {
+              "case": "40",
+              "each": "500"
+            },
+            "operation": "refunds.create",
+            "per": "request",
+            "sink": "stripe",
+            "unit_field": "uom"
+          }
+        ],
+        "max_per_plan": 5,
+        "per_sink": {
+          "mail": 1,
+          "stripe": 5
+        },
+        "recipients": [
+          {
+            "addresses": [],
+            "domains": [],
+            "fields": [
+              "to"
+            ],
+            "kind": "email",
+            "operation": "send",
+            "sealed": "e9b84213c0933a3e0185f32d58491b4bba07bb8108e96755fd3ae43617b15739",
+            "sink": "mail",
+            "subdomains": false,
+            "tenant_domains": {}
+          }
+        ],
+        "sinks": {
+          "mail": {
+            "max_attempts": 10,
+            "max_payload_bytes": 16384,
+            "not_after_seconds": 900,
+            "operations": [
+              "send"
+            ]
+          },
+          "stripe": {
+            "max_attempts": 10,
+            "max_payload_bytes": 16384,
+            "not_after_seconds": 900,
+            "operations": [
+              "refunds.create"
+            ]
+          }
+        },
+        "tenants": {
+          "fields": {},
+          "max_tenants": 1,
+          "require_tenant": true
+        }
+      },
+      "parent": null,
+      "prev": null,
+      "recovery": {
+        "channel": "system",
+        "directives": [
+          {
+            "answers": [
+              "thrashing"
+            ],
+            "id": "stop-retrying",
+            "sha256": "8a5d14b11334ec80b9265f457453a2097fcce14f477fcc422a46691b2bf1d1b4"
+          }
+        ],
+        "funding": null,
+        "guidance": true,
+        "max_steps": 4,
+        "reserve": "5.00000000",
+        "revocable": null,
+        "revoke_on": [
+          "runaway",
+          "thrashing"
+        ],
+        "step_estimate": "0.50000000",
+        "token_ceiling": 2048
+      },
+      "roster": {
+        "principals": [
+          "cfo",
+          "head-ops",
+          "security"
+        ],
+        "quorums": {
+          "accept_repair": 1,
+          "amend": 2,
+          "compensate": 1,
+          "compensate_late": 2,
+          "grant": 2,
+          "reduce": 1,
+          "release": 1,
+          "requeue": 1,
+          "reset": 2,
+          "reset_safety": 3,
+          "revoke": 1
+        }
+      },
+      "sig": {
+        "alg": "ed25519",
+        "key_id": "23458285dcdcf609",
+        "signature": "b09a9284d575ea4b3e2a314e42d9df340eae49703e10c6d1acad040a3cc7bdf5760bb5be2358a5626eb1124f3ea62398c3409526614a96e89371aff3dff7740c"
+      },
+      "subject": {
+        "funded_from": "support",
+        "label": "Tier-1 refunds",
+        "scope": "support-agent"
+      },
+      "term": {
+        "not_after": "2027-01-01T00:00:00.000000Z",
+        "not_before": "2026-10-18T00:00:00.000000Z"
+      },
+      "tools": {
+        "bindings": [
+          {
+            "digest": "675784cb90ac4a1e109e487781a9db86c87d5aed2886a8a43baaf60f5d1a74f6",
+            "name": "lookup_order"
+          },
+          {
+            "digest": "555cc2c0e0b38622f2b1fc3eecf9d01be4c5a6985d1896f53e514979fa21706b",
+            "name": "refund_order"
+          }
+        ],
+        "statements": "bound"
+      },
+      "type": "mandate",
+      "v": "FIDU1",
+      "version": 1,
+      "windows": [
+        {
+          "limit": "2000",
+          "measure": {
+            "field": "amount",
+            "kind": "request_sum",
+            "operation": "refunds.create",
+            "sink": "stripe"
+          },
+          "name": "refund_dollars",
+          "per": "lineage",
+          "span_seconds": 86400
+        }
+      ]
+    },
+    "key": "ed25519:b45b7f9f82f5923c8accfe5fb85afac575f70af1279e7fa625e62b7b6d77718d",
+    "name": "mandate, root, with 1.4 members",
+    "signing_input": "46494455312f6d616e646174652f76310a2dc9e691e5d61243d41a72c08032a72ca6ea7c95409557f9bec7f6ad3b7584eed50eb2a5f96babe67640451a5deb6078a317d83d741278d6cc3838caca5cc1c6",
+    "type": "mandate"
+  },
+  {
+    "canonical_sha256": "dc8796168302a9ad88fc849280605174c59aec82cd5a88946b8c32fe397f31f7",
+    "document": {
+      "budget": {
+        "envelope": "50.00000000",
+        "max_output_tokens": 4096,
+        "models": [
+          "claude-opus-5-5",
+          "claude-sonnet-5-5"
+        ],
+        "per_call": "0.50000000"
+      },
+      "budgets": {
+        "mme": {
+          "envelope": "200",
+          "measure": {
+            "column": "total",
+            "kind": "row_sum",
+            "rows": "inserted",
+            "table": "orders"
+          },
+          "per_plan": "50",
+          "places": 0
+        }
+      },
+      "charter": {
+        "charter_id": "6f1c0c8e-3c1f-4f0e-9a51-2b8a7f0d9e11",
+        "digest": "98347c4b45abe6de1575593fb59778032fe8d16fd454be740634a1f5d16ef85a",
+        "version": 1
+      },
+      "data": {
+        "agreements": [
+          {
+            "column": "amount",
+            "field": "amount",
+            "key": null,
+            "measure": "inserted",
+            "operation": "refunds.create",
+            "sink": "stripe",
+            "table": "refunds"
+          }
+        ],
+        "declared_tenants": true,
+        "drawdown": [
+          {
+            "column": "total",
+            "max_drop": null,
+            "max_rise": "0.5",
+            "per": "partition:region",
+            "table": "orders"
+          }
+        ],
+        "facts": [],
+        "max_rows": 20,
+        "max_tenants": 1,
+        "partitions": {
+          "region": {
+            "declared": false,
+            "max": 1
+          }
+        },
+        "receipt_tenants": "declared",
+        "stated_footprint": {
+          "blocking": false,
+          "tolerance": "2"
+        },
+        "tables": {
+          "orders": [
+            "update"
+          ],
+          "refunds": [
+            "insert"
+          ]
+        },
+        "tenants": "*"
+      },
+      "delegation": {
+        "envelope": "10.00000000",
+        "max_children": 0,
+        "max_depth": 0
+      },
+      "escalation": {
+        "auto": [
+          {
+            "class": "refused",
+            "id": "trim-refused",
+            "resolution": "accept_repair",
+            "when": {
+              "exhaustive": true,
+              "max_dropped": 1
+            }
+          }
+        ],
+        "max_open": 5,
+        "ttl_seconds": 86400
+      },
+      "extension": {
+        "auto": {
+          "max_grant": "5.00000000",
+          "max_total": "15.00000000"
+        },
+        "margin": "0.25",
+        "max_grant": "50.00000000",
+        "max_total": "150.00000000",
+        "ttl_seconds": 3600
+      },
+      "governance": {
+        "cognitive": {
+          "exempt_tools": [],
+          "max_cycle_period": 4,
+          "max_identical_repeats": 3,
+          "max_similar_streak": 3,
+          "min_cycle_repeats": 3,
+          "min_novelty_ratio": "0.02",
+          "result_similarity_threshold": "0.3",
+          "similarity_threshold": "0.7"
+        },
+        "fleet_velocity": true,
+        "max_calls": 60,
+        "seconds": 60
+      },
+      "issuance": "derived",
+      "issued_at": "2026-10-18T09:30:00.000000Z",
+      "mandate_id": "4b7f1e0a-9c2d-4e6f-8a1b-3c5d7e9f0a12",
+      "outbound": {
+        "caps": [
+          {
+            "currency_field": null,
+            "field": "amount",
+            "maximum": {
+              "case": "40",
+              "each": "500"
+            },
+            "operation": "refunds.create",
+            "per": "request",
+            "sink": "stripe",
+            "unit_field": "uom"
+          }
+        ],
+        "max_per_plan": 5,
+        "per_sink": {
+          "mail": 1,
+          "stripe": 5
+        },
+        "recipients": [
+          {
+            "addresses": [],
+            "domains": [],
+            "fields": [
+              "to"
+            ],
+            "kind": "email",
+            "openings": {
+              "acme": {
+                "proof": [
+                  "753cbee65c17fe1de5f76a025931a21779263cca8a126f29524e0d0be5284146"
+                ],
+                "salt": "f480d43f2274559add2212cf41417cc6d16b5bf36cab28fe5edb1f505d2fe9a6"
+              }
+            },
+            "operation": "send",
+            "sealed": "e9b84213c0933a3e0185f32d58491b4bba07bb8108e96755fd3ae43617b15739",
+            "sink": "mail",
+            "subdomains": false,
+            "tenant_domains": {
+              "acme": [
+                "acme.example"
+              ]
+            }
+          }
+        ],
+        "sinks": {
+          "mail": {
+            "max_attempts": 10,
+            "max_payload_bytes": 16384,
+            "not_after_seconds": 900,
+            "operations": [
+              "send"
+            ]
+          },
+          "stripe": {
+            "max_attempts": 10,
+            "max_payload_bytes": 16384,
+            "not_after_seconds": 900,
+            "operations": [
+              "refunds.create"
+            ]
+          }
+        },
+        "tenants": {
+          "fields": {},
+          "max_tenants": 1,
+          "require_tenant": true
+        }
+      },
+      "parent": {
+        "digest": "f459001fda23f1ba609d51ae798109453a75b79c24e5f3749442ae055823e241",
+        "mandate_id": "2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31",
+        "version": 1
+      },
+      "prev": null,
+      "recovery": {
+        "channel": "system",
+        "directives": [
+          {
+            "answers": [
+              "thrashing"
+            ],
+            "id": "stop-retrying",
+            "sha256": "8a5d14b11334ec80b9265f457453a2097fcce14f477fcc422a46691b2bf1d1b4"
+          }
+        ],
+        "funding": null,
+        "guidance": true,
+        "max_steps": 4,
+        "reserve": "5.00000000",
+        "revocable": null,
+        "revoke_on": [
+          "runaway",
+          "thrashing"
+        ],
+        "step_estimate": "0.50000000",
+        "token_ceiling": 2048
+      },
+      "roster": {
+        "principals": [
+          "cfo",
+          "head-ops",
+          "security"
+        ],
+        "quorums": {
+          "accept_repair": 1,
+          "amend": 2,
+          "compensate": 1,
+          "compensate_late": 2,
+          "grant": 2,
+          "reduce": 1,
+          "release": 1,
+          "requeue": 1,
+          "reset": 2,
+          "reset_safety": 3,
+          "revoke": 1
+        }
+      },
+      "sig": {
+        "alg": "ed25519",
+        "key_id": "a6a17e3b834c9950",
+        "signature": "1f0df6f55b97eb0ddcf299f84de5dd938da15ccb9dc4a9a0b8fc557f291fdd56a3f73fb391aeea94e0b9de46dd085bbab4dc12d4d21be0ef95cd8c6b53a2e706"
+      },
+      "subject": {
+        "funded_from": "support-agent",
+        "label": "Triage refunds",
+        "scope": "support-agent/triage"
+      },
+      "term": {
+        "not_after": "2027-01-01T00:00:00.000000Z",
+        "not_before": "2026-10-18T00:00:00.000000Z"
+      },
+      "tools": {
+        "bindings": [
+          {
+            "digest": "675784cb90ac4a1e109e487781a9db86c87d5aed2886a8a43baaf60f5d1a74f6",
+            "name": "lookup_order"
+          },
+          {
+            "digest": "555cc2c0e0b38622f2b1fc3eecf9d01be4c5a6985d1896f53e514979fa21706b",
+            "name": "refund_order"
+          }
+        ],
+        "statements": "bound"
+      },
+      "type": "mandate",
+      "v": "FIDU1",
+      "version": 1,
+      "windows": [
+        {
+          "limit": "2000",
+          "measure": {
+            "field": "amount",
+            "kind": "request_sum",
+            "operation": "refunds.create",
+            "sink": "stripe"
+          },
+          "name": "refund_dollars",
+          "per": "lineage",
+          "span_seconds": 86400
+        }
+      ]
+    },
+    "key": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+    "name": "mandate, derived child opening its sealed entry",
+    "signing_input": "46494455312f6d616e646174652f76310a5b46d27b21d3bbbba49c056e6112558a01687de4c5295757445b860f44023c6a682d43d792f1a0eca0b803980fbd8d337c50ba515a4be3404b547aefe9bd43af",
+    "type": "mandate"
   }
 ]

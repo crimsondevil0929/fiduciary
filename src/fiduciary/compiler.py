@@ -32,7 +32,7 @@ from decimal import Decimal
 from functools import cache
 from typing import Any, Final
 
-from agentgov import CognitivePolicy, GovernancePolicy
+from agentgov import BudgetManager, CognitivePolicy, GovernancePolicy, Unit
 from agentgov.receipts import CheckerRecord, ReceiptLog
 from interlock.invariants import (
     BlastRadius,
@@ -48,6 +48,7 @@ from interlock.invariants import (
     TenantIsolation,
     TruncationGuard,
 )
+from interlock.meters import Meter, MeterCheck
 from interlock.outbound import SinkRegistry, SinkSpec
 from interlock.outbound_checks import (
     OutboundCount,
@@ -72,6 +73,7 @@ from interlock.windows import (
 from fiduciary import fidu1
 from fiduciary.checkers import BoundStatements, MandateScope, TenantAllowlist
 from fiduciary.documents import Mandate, MandateRef, ToolBinding
+from fiduciary.documents.mandate import PER_PARTITION
 from fiduciary.exceptions import FiduciaryError
 
 __all__ = [
@@ -81,6 +83,7 @@ __all__ = [
     "Deployment",
     "GuardBounds",
     "InterceptorBounds",
+    "UnitMeter",
     "canonical_digests",
     "compile",
     "receipt_problems",
@@ -115,6 +118,9 @@ class Deployment:
     :ivar directives: Directive texts, by their SHA-256.
     :ivar root_depth: How deep in AgentGov's tree the lineage root's
         ``funded_from`` scope is: 0 for a root scope.
+    :ivar units: The units the deployment keeps an AgentGov ledger of, beside
+        its ledger of dollars, each with the places it counts (1.4): what a
+        mandate's ``budgets`` may conserve.
     """
 
     ledger: str
@@ -123,6 +129,7 @@ class Deployment:
     tools: Mapping[str, ToolBinding] = field(default_factory=dict)
     directives: Mapping[str, str] = field(default_factory=dict)
     root_depth: int = 0
+    units: Mapping[str, int] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +154,33 @@ class GuardBounds:
 
 
 @dataclass(frozen=True, slots=True)
+class UnitMeter:
+    """A mandate's budget in a unit, compiled: Interlock's ``Meter`` once the
+    deployment's ledger of the unit is given (:meth:`meter`)."""
+
+    unit: str
+    places: int
+    envelope: Decimal
+    per_plan: Decimal
+    measure: Measure
+
+    def meter(self, ledger: BudgetManager, *, scope: str | None = None) -> Meter:
+        """The meter over ``ledger``, which must conserve this unit."""
+        if ledger.unit != Unit(self.unit, self.places):
+            raise CompileError(
+                [f"budgets.{self.unit}: the ledger given conserves {ledger.unit.text()}"]
+            )
+        return Meter(ledger, self.measure, self.per_plan, scope=scope)
+
+    def check(self) -> MeterCheck:
+        """The meter's check, as an engine built over any ledger of the unit
+        runs it: its digest names the unit, the measure and the bound alone."""
+        return MeterCheck(
+            Meter(BudgetManager(unit=Unit(self.unit, self.places)), self.measure, self.per_plan)
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CompiledMandate:
     """A mandate version compiled (§6.2). Build an engine from ``checkers``,
     ``windows`` and ``sinks``; its receipts from :meth:`receipt_issuer`."""
@@ -168,18 +202,29 @@ class CompiledMandate:
     guard: GuardBounds | None
     issuer: str
     policy_epoch: int
+    meters: tuple[UnitMeter, ...] = ()
 
     def receipt_issuer(self, log: ReceiptLog, *, row_secret: bytes | None = None) -> ReceiptIssuer:
         """The issuer of this version's receipts: ``fiduciary:<mandate_id>``, at
-        epoch ``version`` (F6-7)."""
+        epoch ``version`` (F6-7), naming the tenants ``data.receipt_tenants``
+        says."""
         return ReceiptIssuer(
-            log, issuer=self.issuer, row_secret=row_secret, policy_epoch=self.policy_epoch
+            log,
+            issuer=self.issuer,
+            row_secret=row_secret,
+            policy_epoch=self.policy_epoch,
+            tenants=self.description["receipts"].get("tenants", "touched"),
         )
 
     def engine_checkers(self) -> tuple[InvariantChecker, ...]:
-        """Every checker an engine built from this runs: the compiled ones, and
-        the ``RateWindowCheck`` the engine adds for each window."""
-        return self.checkers + tuple(RateWindowCheck(w) for w in self.windows)
+        """Every checker an engine built from this runs: the compiled ones, the
+        ``RateWindowCheck`` the engine adds for each window, and the
+        ``MeterCheck`` it adds for each meter."""
+        return (
+            self.checkers
+            + tuple(RateWindowCheck(w) for w in self.windows)
+            + tuple(m.check() for m in self.meters)
+        )
 
     def checker_records(self) -> tuple[CheckerRecord, ...]:
         """What a receipt of this version records in ``decision.checkers``."""
@@ -231,6 +276,17 @@ def _describe(
         column(rule.table, rule.column, "data.agreements")
     for fact in data.facts:
         column(fact.table, fact.column, "data.facts")
+    for unit, budget in sorted(mandate.budgets.items()):
+        places = deployment.units.get(unit)
+        if places is None:
+            problems.append(f"budgets.{unit}: the deployment keeps no ledger of {unit}")
+        elif places != budget.places:
+            problems.append(
+                f"budgets.{unit}: the deployment's ledger counts {unit} to {places} places, "
+                f"not {budget.places}"
+            )
+        if budget.measure.kind == "row_sum":
+            column(str(budget.measure.table), str(budget.measure.column), f"budgets.{unit}")
     installed: dict[str, SinkSpec] = {}
     for sink, bounds in sorted(outbound.sinks.items()):
         spec = deployment.sinks.get(sink)
@@ -289,7 +345,7 @@ def _describe(
                     "span_seconds": window.span_seconds,
                     "limit": _dec(window.limit),
                     "measure": measure.to_json(),
-                    "per": "global" if window.per == "lineage" else "tenant",
+                    "per": {"lineage": "global", "tenant": "tenant"}.get(window.per, window.per),
                 }
             )
     windows.sort(key=lambda w: str(w["name"]))
@@ -321,6 +377,13 @@ def _describe(
         ["NoSchemaChange", {}],
         ["BlastRadius", {"limit": data.max_rows}],
         ["TenantIsolation", {"max_tenants": data.max_tenants, "declared": data.declared_tenants}],
+        *(
+            [
+                "TenantIsolation",
+                {"max_tenants": rule.max, "declared": rule.declared, "dimension": dimension},
+            ]
+            for dimension, rule in sorted(data.partitions.items())
+        ),
         ["TableAllowlist", {"tables": sorted(data.tables)}],
         ["NoDelete", {"granted": sorted(t for t, ops in data.tables.items() if "delete" in ops)}],
     ]
@@ -336,9 +399,17 @@ def _describe(
         )
     for guard in data.drawdown:
         kind = "ColumnValueGuard" if guard.per == "table" else "TenantDrawdownGuard"
-        checkers.append(
-            [kind, {"table": guard.table, "column": guard.column, "max_drop": _dec(guard.max_drop)}]
-        )
+        args: dict[str, Any] = {
+            "table": guard.table,
+            "column": guard.column,
+            "max_drop": None if guard.max_drop is None else _dec(guard.max_drop),
+        }
+        # Only when used, so a guard compiled before keeps its description.
+        if guard.max_rise is not None:
+            args["max_rise"] = _dec(guard.max_rise)
+        if guard.per.startswith(PER_PARTITION):
+            args["dimension"] = guard.per.removeprefix(PER_PARTITION)
+        checkers.append([kind, args])
     for rule in data.agreements:
         checkers.append(["CrossEffectAgreement", rule.to_json()])
     for fact in data.facts:
@@ -419,6 +490,10 @@ def _describe(
         "guard": None if mandate.extension is None else mandate.extension.to_json(),
         "receipts": {"issuer": f"fiduciary:{mandate.mandate_id}", "policy_epoch": mandate.version},
     }
+    if mandate.budgets:
+        description["budgets"] = {u: b.to_json() for u, b in sorted(mandate.budgets.items())}
+    if mandate.data.receipt_tenants != "touched":
+        description["receipts"]["tenants"] = mandate.data.receipt_tenants
     return description, problems
 
 
@@ -439,7 +514,9 @@ _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
     "TruncationGuard": lambda a: TruncationGuard(),
     "NoSchemaChange": lambda a: NoSchemaChange(),
     "BlastRadius": lambda a: BlastRadius(a["limit"]),
-    "TenantIsolation": lambda a: TenantIsolation(a["max_tenants"], declared=a["declared"]),
+    "TenantIsolation": lambda a: TenantIsolation(
+        a["max_tenants"], declared=a["declared"], dimension=a.get("dimension", "tenant")
+    ),
     "TableAllowlist": lambda a: TableAllowlist(a["tables"]),
     "NoDelete": lambda a: NoDelete(a["granted"]),
     "StatedFootprint": lambda a: StatedFootprint(
@@ -447,10 +524,14 @@ _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
         severity=Severity.BLOCKING if a["blocking"] else Severity.ADVISORY,
     ),
     "ColumnValueGuard": lambda a: ColumnValueGuard(
-        a["table"], a["column"], max_drop_fraction=float(Decimal(a["max_drop"]))
+        a["table"], a["column"], max_drop_fraction=_drop(a), max_rise_fraction=_rise(a)
     ),
     "TenantDrawdownGuard": lambda a: TenantDrawdownGuard(
-        a["table"], a["column"], max_drop_fraction=float(Decimal(a["max_drop"]))
+        a["table"],
+        a["column"],
+        max_drop_fraction=_drop(a),
+        max_rise_fraction=_rise(a),
+        dimension=a.get("dimension", "tenant"),
     ),
     "CrossEffectAgreement": lambda a: CrossEffectAgreement(
         a["sink"],
@@ -460,6 +541,7 @@ _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
         column=a["column"],
         measure=a["measure"],
         key=_key(a["key"]),
+        also=tuple(a.get("also", ())),
     ),
     "FactAgreement": lambda a: FactAgreement(
         list(a["kind"]),
@@ -480,12 +562,13 @@ _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
         maximum=_maximum(a["maximum"]),
         per=a["per"],
         currency_field=a["currency_field"],
+        unit_field=a.get("unit_field"),
     ),
     "RecipientAllowlist": lambda a: RecipientAllowlist(
         a["sink"],
         a["operation"],
         fields=list(a["fields"]),
-        domains=list(a["domains"]),
+        domains=_domains(a),
         addresses=list(a["addresses"]),
         tenant_domains={t: list(d) for t, d in a["tenant_domains"].items()},
         subdomains=a["subdomains"],
@@ -495,6 +578,28 @@ _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
         fields=dict(a["fields"]), max_tenants=a["max_tenants"], require_tenant=a["require_tenant"]
     ),
 }
+
+
+SEALED_NOWHERE: Final = "sealed.invalid"
+"""What a rule whose every tenant is sealed admits where it is sealed: a name
+RFC 2606 reserves, at which no address is, so it admits nothing until a child
+opens an entry (``fiduciary.sealing``)."""
+
+
+def _domains(args: Mapping[str, Any]) -> list[str]:
+    domains = list(args["domains"])
+    if args.get("sealed") and not (domains or args["addresses"] or args["tenant_domains"]):
+        return [SEALED_NOWHERE]
+    return domains
+
+
+def _drop(args: Mapping[str, Any]) -> float | None:
+    # A float, as every guard was built before: its digest is unchanged.
+    return None if args["max_drop"] is None else float(Decimal(args["max_drop"]))
+
+
+def _rise(args: Mapping[str, Any]) -> Decimal | None:
+    return None if "max_rise" not in args else Decimal(args["max_rise"])
 
 
 def _measure(raw: Mapping[str, Any]) -> Measure:
@@ -605,6 +710,16 @@ def _build(description: Mapping[str, Any], digest: str, deployment: Deployment) 
             auto_max_grant=None if auto is None else Decimal(auto["max_grant"]),
             auto_max_total=None if auto is None else Decimal(auto["max_total"]),
         )
+    meters = tuple(
+        UnitMeter(
+            unit,
+            b["places"],
+            Decimal(b["envelope"]),
+            Decimal(b["per_plan"]),
+            _measure(b["measure"]),
+        )
+        for unit, b in sorted(description.get("budgets", {}).items())
+    )
     return {
         "checkers": tuple(checkers),
         "windows": windows,
@@ -614,6 +729,7 @@ def _build(description: Mapping[str, Any], digest: str, deployment: Deployment) 
         "interceptor": interceptor,
         "recovery": recovery,
         "guard": guard,
+        "meters": meters,
     }
 
 

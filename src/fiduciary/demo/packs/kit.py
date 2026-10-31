@@ -32,10 +32,11 @@ from collections.abc import Callable, Mapping, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final
 
-from agentgov import BudgetManager
+from agentgov import BudgetManager, Unit
 from agentgov.receipts import ReceiptLog
 from agentgov.receipts.signing import Signer, verifier_of
 from interlock.deliveries import operations
@@ -63,6 +64,7 @@ from fiduciary.demo.world import DIRECTIVE, PRICING, World, _key
 from fiduciary.documents import Charter, Mandate, ToolBinding
 from fiduciary.keys import load_key
 from fiduciary.log import Log, ensure_anchor_scope
+from fiduciary.seals import Sealer
 from fiduciary.sqlite import SqliteStore
 
 __all__ = [
@@ -109,6 +111,8 @@ class Table:
     columns: tuple[str, ...]
     tenant: str | None
     """The column the stage reads each row's partition from, or none."""
+    partitions: Mapping[str, str] = field(default_factory=dict)
+    """Each other dimension a row is labeled in, and its column."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +163,10 @@ class Pack:
     """What the stage runs on, when not the back office's own tables: given the
     deployment's root and its control database, a factory and what the acts
     need to reach the system behind it. SQLite over ``tables`` by default."""
+    seal_key: bytes | None = None
+    """A sealed log's secret (:mod:`fiduciary.seals`), when the pack exports its
+    customers' bundles sealed: ``[service] seal_key``. Other packs' logs are
+    not sealed, and keep their bytes."""
     fingerprint: Callable[[PackWorld], str] | None = None
     """A digest of the system's state, to show a refused call changed nothing;
     the observed tables' rows by default."""
@@ -166,6 +174,9 @@ class Pack:
     """The head of ``interlock.toml`` (its substrate, and what the substrate
     needs), given the deployment's root and its control database: SQLite over
     ``tables`` by default. The sinks and the inbox follow it."""
+    budgets: Callable[[], dict[str, Any]] | None = None
+    """The root mandate's ``budgets``: what it conserves in other units, each
+    in an AgentGov ledger of that unit the deployment opens."""
 
 
 # --------------------------------------------------------------------------
@@ -331,6 +342,8 @@ def per_session(name: str, maximum: int) -> Condition:
 class PackWorld(World):
     pack: Pack | None = None
     children: dict[str, Mandate] = field(default_factory=dict)
+    ledgers: dict[str, BudgetManager] = field(default_factory=dict)
+    """The ledger of each other unit the mandate budgets."""
     system: Any = None
     """What a pack's own substrate set up for its acts (:attr:`Pack.substrate`)."""
 
@@ -454,6 +467,7 @@ def mandate_json(world: PackWorld, *, envelope: str = "25.00000000") -> dict[str
                 "exempt_tools": [],
             },
         },
+        **({"budgets": pack.budgets()} if pack.budgets is not None else {}),
         "data": pack.data(),
         "outbound": pack.outbound(),
         "windows": pack.windows(),
@@ -546,12 +560,23 @@ def interlock_toml(root: Path, pack: Pack, back_office: Path) -> str:
         head = f'substrate = "sqlite"\ndatabase = {_toml(back_office)}\n' + "".join(
             f'[[tables]]\nname = "{t.name}"\ncolumns = {json.dumps(list(t.columns))}\n'
             + (f'tenant_column = "{t.tenant}"\n' if t.tenant else "")
+            + (
+                "partitions = { "
+                + ", ".join(f'{d} = "{c}"' for d, c in sorted(t.partitions.items()))
+                + " }\n"
+                if t.partitions
+                else ""
+            )
             for t in pack.tables
         )
     sinks = "".join(
         f'[[sinks]]\nname = "{s.name}"\ncost_per_call = "{s.cost_per_call}"\n'
         f'idempotency = "{s.idempotency}"\nmax_payload_bytes = {s.max_payload_bytes}\n'
-        "operations = [" + ", ".join(f'{{ name = "{op.name}" }}' for op in s.operations) + "]\n"
+        "operations = ["
+        + ", ".join(
+            f'{{ name = "{op.name}"{", hold = true" if op.hold else ""} }}' for op in s.operations
+        )
+        + "]\n"
         for s in pack.sinks
     )
     inbox = ""
@@ -572,13 +597,22 @@ def interlock_toml(root: Path, pack: Pack, back_office: Path) -> str:
     return head + sinks + inbox
 
 
-def fiduciary_toml(root: Path, *, charter: str, tools: Sequence[Path]) -> str:
+def fiduciary_toml(
+    root: Path,
+    *,
+    charter: str,
+    tools: Sequence[Path],
+    units: Mapping[str, int] | None = None,
+    sealed: bool = False,
+) -> str:
     """``fiduciary.toml`` for the deployment under ``root``, as the fintech
     demo writes it: the store, the ledger, ``interlock.toml``, sessions in
     process as the demo runs them, the charter pinned by ``charter``, the
-    keys, and ``tools``. Every path is absolute."""
+    keys, ``tools``, the ledger of each of ``units`` (code to places), and,
+    ``sealed``, the log's seal key. Every path is absolute."""
     root = root.resolve()
     service = root / "keys" / "service.key"
+    seal = f"seal_key = {_toml(root / 'keys' / 'seal.key')}\n" if sealed else ""
     back_office = root / "back_office.db"
     return (
         f"database = {_toml(root / 'fiduciary.db')}\n"
@@ -586,7 +620,7 @@ def fiduciary_toml(root: Path, *, charter: str, tools: Sequence[Path]) -> str:
         f"interlock = {_toml(root / 'interlock.toml')}\n"
         'in_process = "tool-calls-only"\n'
         f'[charter]\nfile = {_toml(root / "charter.json")}\ndigest = "{charter}"\n'
-        f"[service]\nkey = {_toml(service)}\n"
+        f"[service]\nkey = {_toml(service)}\n{seal}"
         f"[binding]\ntools = {json.dumps([str(t.resolve()) for t in tools])}\n"
         f"directives = [{_toml(root / 'stop-retrying.txt')}]\nchains = {_toml(root / 'chains')}\n"
         f"[executor]\nkey = {_toml(service)}\noutbox = {_toml(back_office)}\n"
@@ -594,6 +628,10 @@ def fiduciary_toml(root: Path, *, charter: str, tools: Sequence[Path]) -> str:
         f"[runtime]\nrecords = {_toml(root / 'runtime.jsonl')}\nkey = {_toml(service)}\n"
         f"[receipts]\nlog = {_toml(root / 'receipts.jsonl')}\n"
         f"key = {_toml(root / 'keys' / 'receipts.key')}\n"
+        + "".join(
+            f"[units.{code}]\nledger = {_toml(root / f'{code}.db')}\nplaces = {places}\n"
+            for code, places in sorted((units or {}).items())
+        )
     )
 
 
@@ -613,9 +651,26 @@ def _write_config(world: PackWorld) -> None:
     demo writes them. ``interlock.toml`` is written before the substrate is
     built (:func:`build`)."""
     tools = _write_tools(world.root, list(world.tools.values()))
+    _write_seal_key(world.root, world.spec)
     (world.root / "fiduciary.toml").write_text(
-        fiduciary_toml(world.root, charter=world.charter.digest, tools=tools)
+        fiduciary_toml(
+            world.root,
+            charter=world.charter.digest,
+            tools=tools,
+            units=world.deployment.units,
+            sealed=world.spec.seal_key is not None,
+        )
     )
+
+
+def _write_seal_key(root: Path, pack: Pack) -> None:
+    """``keys/seal.key``, the pack's seal secret in hex, readable by its owner only."""
+    if pack.seal_key is None:
+        return
+    path = root / "keys" / "seal.key"
+    path.parent.mkdir(exist_ok=True)
+    path.write_text(pack.seal_key.hex() + "\n")
+    path.chmod(0o600)
 
 
 def restore_config(root: Path, pack: Pack) -> list[str]:
@@ -643,7 +698,13 @@ def restore_config(root: Path, pack: Pack) -> list[str]:
     (root / "interlock.toml").write_text(interlock_toml(root, pack, back_office))
     tools = _write_tools(root, bindings)
     charter = (root / "charter.digest").read_text().strip()
-    (root / "fiduciary.toml").write_text(fiduciary_toml(root, charter=charter, tools=tools))
+    units = {u: b["places"] for u, b in (pack.budgets() if pack.budgets else {}).items()}
+    _write_seal_key(root, pack)
+    (root / "fiduciary.toml").write_text(
+        fiduciary_toml(
+            root, charter=charter, tools=tools, units=units, sealed=pack.seal_key is not None
+        )
+    )
     return ["interlock.toml", *(f"tools/{t.name}" for t in tools), "fiduciary.toml"]
 
 
@@ -678,7 +739,10 @@ def build(root: Path, pack: Pack) -> PackWorld:
     install_sqlite_outbox(back_office, pack.sinks, pack.sources)
     (root / "interlock.toml").write_text(interlock_toml(root, pack, back_office))
     specs = [
-        TableSpec(t.name, columns=list(t.columns), tenant_column=t.tenant) for t in pack.tables
+        TableSpec(
+            t.name, columns=list(t.columns), tenant_column=t.tenant, partitions=dict(t.partitions)
+        )
+        for t in pack.tables
     ]
     system: Any = None
     substrate: Callable[[], ShadowSubstrate]
@@ -693,10 +757,25 @@ def build(root: Path, pack: Pack) -> PackWorld:
     ensure_anchor_scope(governor, OPERATOR_SCOPE)
     governor.open_root(pack.funding, "1000", memo=f"{pack.funding}: the {pack.industry} budget")
     genesis = governor.entry(1).entry_hash
+    budgets = pack.budgets() if pack.budgets is not None else {}
+    ledgers: dict[str, BudgetManager] = {}
+    for code, budget in sorted(budgets.items()):
+        ledger = BudgetManager.open_sqlite(
+            str(root / f"{code}.db"), unit=Unit(code, int(budget["places"]))
+        )
+        closers.append(ledger.close)
+        # the funding scope holds ten of the mandate's envelopes in the unit
+        ledger.open_root(
+            pack.funding,
+            Decimal(budget["envelope"]) * 10,
+            memo=f"{pack.funding}: the {pack.industry} {code} envelope",
+        )
+        ledgers[code] = ledger
 
     store = SqliteStore(root / "fiduciary.db")
     closers.append(store.close)
-    log = Log(store, signers["service"], ledger=governor)
+    sealer = None if pack.seal_key is None else Sealer(pack.seal_key)
+    log = Log(store, signers["service"], ledger=governor, sealer=sealer)
     charter = Charter.from_json(
         {
             "v": "FIDU1",
@@ -728,6 +807,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
         sinks=SinkRegistry(pack.sinks),
         tools={t.digest: t for t in tools.values()},
         directives={hashlib.sha256(DIRECTIVE).hexdigest(): DIRECTIVE.decode()},
+        units={code: int(b["places"]) for code, b in sorted(budgets.items())},
     )
     receipts = ReceiptLog("fiduciary-receipts", signers["receipts"], path=root / "receipts.jsonl")
     closers.append(receipts.close)
@@ -741,6 +821,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
         inbox=Keyring({world_key(signers, "inbox"): signers["inbox"].public_key()})
         if pack.sources
         else None,
+        ledgers=ledgers,
     )
     closers.append(binder.close)
     service = signers["service"].public_key()
@@ -785,6 +866,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
         closers=closers,
         pack=pack,
         system=system,
+        ledgers=ledgers,
     )
     try:
         authority.propose(charter)
@@ -955,16 +1037,19 @@ def work(
     tenant: str,
     trajectory: str,
     request: str,
+    scope: str | None = None,
 ) -> tuple[list[Called], dict[str, Any]]:
     """A pack's signature act: the fixed call, or, with a live model, the
     calls the model chooses for the same ``request``, each behind both
     controls. The second value is what the act records about how its calls
     were chosen."""
     if run.live is None:
-        found = one(run, tool, arguments, tenant=tenant, trajectory=trajectory)
+        found = one(run, tool, arguments, tenant=tenant, trajectory=trajectory, scope=scope)
         return [found], {"mode": "reference", "request": request}
     live = run.live
-    with run.world.fid.session(run.pack.scope, tenant=tenant, trajectory=trajectory) as session:
+    with run.world.fid.session(
+        scope or run.pack.scope, tenant=tenant, trajectory=trajectory
+    ) as session:
         calls, model = converse(
             run.world,
             session,
@@ -1042,18 +1127,23 @@ def hold(
     run: PackRun,
     tool: str,
     arguments: Mapping[str, Any],
-    why: str,
+    why: str | None,
     *,
     trajectory: str,
     tenant: str | None = None,
+    mandate: Mandate | None = None,
 ) -> tuple[str, Called]:
     """A call committed, the scope paused before the relay reaches its
-    request, the message held. Returns the message and the call."""
+    request (``why``), the message held. Returns the message and the call.
+    In ``mandate``'s lineage, and its scope paused, when one is given. With
+    no ``why``, the operation is one held for a warrant: nothing is paused."""
     world = run.world
     drain(world, run.vendor)  # what earlier acts committed is delivered first
-    found = one(run, tool, arguments, trajectory=trajectory, tenant=tenant)
+    lineage = None if mandate is None else mandate.mandate_id
+    found = one(run, tool, arguments, trajectory=trajectory, tenant=tenant, scope=lineage)
     assert found.committed, found.to_json()
-    world.governor.trip(run.pack.scope, why)
+    if why is not None:
+        world.governor.trip(run.pack.scope if mandate is None else mandate.subject.scope, why)
     drain(world, run.vendor)
     held = [m for m, s in world.outbox_states().items() if s == "held"]
     assert len(held) == 1, world.outbox_states()
@@ -1066,20 +1156,25 @@ def act_quorum(
     lede: str,
     tool: str,
     arguments: Mapping[str, Any],
-    why: str,
+    why: str | None,
     *,
     forged: str,
     tenant: str | None = None,
+    mandate: Mandate | None = None,
 ) -> None:
     """A request held by a pause, a ``held`` ticket, and its release on 2 of
     3 principals: the first counts once however often it signs, and an
-    approval in the second's name under another key is refused."""
+    approval in the second's name under another key is refused. In
+    ``mandate``'s lineage when one is given."""
     world = run.world
-    assert world.mandate is not None
+    lineage = mandate or world.mandate
+    assert lineage is not None
     first, second, third = run.pack.principals
-    message, found = hold(run, tool, arguments, why, trajectory="held-request", tenant=tenant)
+    message, found = hold(
+        run, tool, arguments, why, trajectory="held-request", tenant=tenant, mandate=mandate
+    )
     escalation = world.fid.escalation
-    ticket, _ = escalation.raise_held(world.mandate.mandate_id, world.outbox)
+    ticket, _ = escalation.raise_held(lineage.mandate_id, world.outbox)
     assert ticket is not None
     release = next(o for o in ticket.options if o.resolution.action == "release")
     votes: list[dict[str, Any]] = []
@@ -1176,12 +1271,16 @@ def evidence(world: PackWorld) -> Evidence:
         chains=world.chains,
         outbox=world.outbox,
         service=world.signers["service"],
+        sealer=None if pack.seal_key is None else Sealer(pack.seal_key),
     )
 
 
-def export(world: PackWorld, shift: str, mandate: Mandate | None = None) -> bytes:
+def export(
+    world: PackWorld, shift: str, mandate: Mandate | None = None, *, sealed: bool = False
+) -> bytes:
     """A lineage's bundle, exported once ``shift``'s session has opened and
-    closed, so everything before that record is inside the bundle's range."""
+    closed, so everything before that record is inside the bundle's range;
+    ``sealed``, withholding other lineages' records."""
     found = mandate or world.mandate
     assert found is not None
     tenant = (found.data.tenants or world.spec.tenants)[0]
@@ -1189,7 +1288,11 @@ def export(world: PackWorld, shift: str, mandate: Mandate | None = None) -> byte
         pass
     world.governor.refresh()
     return export_bundle(
-        world.store, found.mandate_id, deployment=world.deployment, evidence=evidence(world)
+        world.store,
+        found.mandate_id,
+        deployment=world.deployment,
+        evidence=evidence(world),
+        sealed=sealed,
     )
 
 
@@ -1218,13 +1321,17 @@ def act_break_glass(
     reason: str,
     *,
     tenant: str | None = None,
+    mandate: Mandate | None = None,
 ) -> None:
     """A second request held, and released by hand with the declared
-    break-glass key, with the breaker reset: no ticket, no warrant."""
+    break-glass key, with the breaker reset: no ticket, no warrant. In
+    ``mandate``'s lineage when one is given."""
     world = run.world
     pack = run.pack
     run.bundles["before"] = export(world, "handover")
-    message, found = hold(run, tool, arguments, why, trajectory="second-hold", tenant=tenant)
+    message, found = hold(
+        run, tool, arguments, why, trajectory="second-hold", tenant=tenant, mandate=mandate
+    )
     names = ("service", pack.operator)
     keyring = Keyring({world.key_id(name): world.signers[name].public_key() for name in names})
     log = OperatorLog(
@@ -1234,7 +1341,7 @@ def act_break_glass(
         Operator(log, world.outbox).release([uuid.UUID(message)], reason=reason)
     finally:
         log.close()
-    world.governor.reset(pack.scope)
+    world.governor.reset(pack.scope if mandate is None else mandate.subject.scope)
     drain(world, run.vendor)
     run.say(
         f"  {pack.operator} key released message {message[:8]} and reset the breaker without "

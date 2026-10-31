@@ -594,6 +594,30 @@ version 1, as interlock's configuration pins `[operators.keys]`.
     does today.
 - **F4-12.** The canonical document is at most 65,536 bytes. The bound caps parsing work.
   It is not a signing constraint (F3-6).
+- **F4-12a.** *Amended in 1.4.0.* A mandate may use seven members that 1.4.0 adds. Each is
+  **written only when it is used**, so a mandate written without them keeps its bytes and
+  its digest, and writing one with its default value is malformed:
+  - `budgets.<unit>`: a budget in a unit other than the model spend's, conserved in an
+    AgentGov ledger of that unit (AgentGov `docs/LEDGER_FORMAT.md` §3.8): `places` (0 to
+    8), `envelope`, `per_plan` and `measure`, a window's measure. `usd` is refused: model
+    spend is `budget`'s.
+  - `data.partitions.<dimension>`: a dimension beside the tenant that plans are confined
+    in (`max`, `declared`); `tenant` is refused, since it is `max_tenants`'.
+  - `data.drawdown[].max_rise`: a bound on a rise as well as a fall; `max_drop` may then be
+    null. `per` may also be `partition:<dimension>`.
+  - `data.receipt_tenants`: `"declared"`, for receipts that name only the tenants a plan
+    declares and count the others (ARC1 1.3 `summary.other_tenants`).
+  - `outbound.caps[].unit_field`: a cap per unit, read at that payload field, in place of
+    `currency_field`.
+  - `data.agreements[].also`: the sink's other operations whose requests the rule holds
+    too, a set that names neither none nor the rule's own `operation`. One quantity that
+    travels by more than one call of a sink (an order, and the same order on a held
+    operation) is then held to its rows whichever call carries it.
+  - `outbound.recipients[].sealed` and `.openings`: a sealed map of tenant domains. A root
+    holds one SHA-256, the root of a Merkle tree over every tenant's entry (each leaf
+    salted, `fiduciary.sealing`), and grants nothing from it. A child names its own entry
+    in `tenant_domains` and opens it under its parent's seal in `openings` (a salt and the
+    sibling hashes). No mandate names another tenant's entry.
 
 ## 4.3 Tool binding
 
@@ -813,6 +837,13 @@ Fiduciary's own acts are records in a hash-chained, signed log. It is built as I
   - The first record's `prev` is 64 zeros.
   - Each record is anchored into AgentGov as a zero-value `ANCHOR` entry on the scope
     `fiduciary`, with the memo `FIDU1 <log> <seq> <hash>`.
+  - *Amended in 1.4.0.* A record of a **sealed log** (`[service] seal_key`) carries one
+    more member, `seal`: two tags, 64 hex each, sorted, that say whose the record is so
+    that only that party's keys can tell (F9-7). Its anchor's memo repeats them:
+    `FIDU1 <log> <seq> <hash> <tag> <tag>`. A log is sealed from its first record or
+    never: the service refuses to seal a log begun without seals, or to write an unsealed
+    record into a sealed one. A log that is not sealed writes no `seal`, and every record
+    and memo keeps its bytes.
 
   A log truncated or rewritten after its records were anchored disagrees with the ledger
   (V10).
@@ -875,13 +906,16 @@ when `child ⊑ parent`.
 | `data.declared_tenants` | `TenantIsolation(declared=…)` | true if the parent's is |
 | `data.max_rows` | `BlastRadius` | ≤ |
 | `data.max_tenants` | `TenantIsolation` | ≤ |
-| `data.drawdown` | `ColumnValueGuard`, `TenantDrawdownGuard` | every parent guard `(table, column, per)` is kept, with `max_drop ≤` |
+| `data.drawdown` | `ColumnValueGuard`, `TenantDrawdownGuard` | every parent guard `(table, column, per)` is kept, with `max_drop ≤` and `max_rise ≤` (a bound the parent sets is kept) |
+| `data.partitions` | `TenantIsolation(dimension=…)` | *amended in 1.4.0:* every parent dimension is kept, `max ≤`, declared if the parent's is |
+| `data.receipt_tenants` | the `ReceiptIssuer`'s `tenants` | *amended in 1.4.0:* `"declared"` if the parent's is |
+| `budgets` | an Interlock `Meter` per unit | *amended in 1.4.0:* every parent unit is kept, with the same `places` and `measure`; `envelope ≤`, `per_plan ≤` |
 | `data.stated_footprint` | `StatedFootprint` | `tolerance ≤`; blocking if the parent's is |
 | `data.agreements`, `data.facts` | `CrossEffectAgreement`, `FactAgreement` | ⊇: every parent rule, verbatim |
 | `outbound.sinks` | `SinkAllowlist`, the narrowed `SinkRegistry` | sinks ⊆; per sink, operations ⊆, `max_attempts ≤`, `not_after_seconds ≤`, `max_payload_bytes ≤` |
 | `outbound.max_per_plan`, `outbound.per_sink` | `OutboundCount` | ≤ (absent means unbounded, and is allowed only where the parent's is absent) |
 | `outbound.caps` | `PayloadAmountCap` | every parent cap is kept; currencies ⊆; each `maximum ≤` |
-| `outbound.recipients` | `RecipientAllowlist` | every parent rule is kept: `fields ⊇`, `domains ⊆`, `addresses ⊆`, tenant domains ⊆ per tenant, `subdomains` only if the parent allows it |
+| `outbound.recipients` | `RecipientAllowlist` | every parent rule is kept: `fields ⊇`, `domains ⊆`, `addresses ⊆`, tenant domains ⊆ per tenant, `subdomains` only if the parent allows it. *Amended in 1.4.0:* a tenant's entry with an opening is exactly the entry it opens under the parent's `sealed`; a child's `sealed` is its parent's or absent |
 | `outbound.tenants` | `OutboundTenantIsolation` | `max_tenants ≤`; `require_tenant` if the parent's is |
 | `windows` | `RateWindow`, namespaced (§5.3) | inherited, never listed: a child names only windows it adds |
 | `tools.statements` | `bound_statements` | `"bound"` if the parent's is |
@@ -1056,7 +1090,10 @@ fiduciary adds three checkers of its own (§6.3).
 | `StatedFootprint(tolerance=, severity=)` | `BLOCKING` if `blocking`, else `ADVISORY` | when present |
 | `ColumnValueGuard(table, column, max_drop_fraction=)` | each guard with `per: "table"` | per guard |
 | `TenantDrawdownGuard(table, column, max_drop_fraction=)` | each guard with `per: "tenant"` | per guard |
-| `CrossEffectAgreement(sink, operation, field=, table=, column=, measure=, key=)` | `data.agreements` | per rule |
+| `TenantIsolation(max, declared=, dimension=)` | each `data.partitions` entry (amended in 1.4.0) | per dimension |
+| `ColumnValueGuard`/`TenantDrawdownGuard(…, max_rise_fraction=, dimension=)` | a guard with `max_rise`, or `per: "partition:<dimension>"` (amended in 1.4.0) | per guard |
+| `Meter(ledger, measure, per_plan, scope=subject)`; the engine adds its `MeterCheck` | each `budgets` entry (amended in 1.4.0), held on the lineage's subject in that unit's ledger | per unit |
+| `CrossEffectAgreement(sink, operation, field=, table=, column=, measure=, key=, also=)` | `data.agreements` | per rule; `also` only when the rule names it (interlock 1.2.0) |
 | `FactAgreement(kind, field=, table=, column=, key=, exempt=)` | `data.facts` | per rule |
 | `SinkAllowlist({sink: operations})` | `outbound.sinks` | when any sink is mandated |
 | `OutboundCount(max_per_plan, per_sink=)` | `outbound` | when bounded |
@@ -1071,6 +1108,13 @@ fiduciary adds three checkers of its own (§6.3).
 Fractions enter interlock's float parameters (`max_drop_fraction`, `tolerance`) as
 `float(Decimal(s))`. The strings have at most six places, so the values round-trip exactly.
 
+*Amended in 1.4.0.* The compiled description gains a member only where the mandate uses
+the member it comes from: `budgets`, a checker's `dimension` or `max_rise_fraction`, a
+cap's `unit_field`, `receipts.tenants`. Every mandate written before keeps its compiled
+digest. A recipient rule whose every tenant is sealed, and that names no domain or
+address, compiles to one domain no address can have (`sealed.invalid`), so it admits
+nothing.
+
 Beyond the checkers:
 
 | Compiled | Constructed as |
@@ -1081,7 +1125,7 @@ Beyond the checkers:
 | `Interceptor` bounds | `hold ≤ per_call`, `max_output_tokens ≤ budget.max_output_tokens`, and the model allowlist |
 | `RecoveryPolicy` | `reserve`, `step_estimate`, `max_steps`, `revoke_on`, `revocable`, `token_ceiling`, `guidance`, `channel` and `funding`; and the directives whose `sha256` matches the deployment's directive texts |
 | `BudgetGuard` parameters | `margin` and `ttl`. Fiduciary enforces `max_grant` and `max_total` itself, before calling `grant`. |
-| `ReceiptIssuer` | `issuer="fiduciary:<mandate_id>"` and `policy_epoch=version`, over fiduciary's receipt log |
+| `ReceiptIssuer` | `issuer="fiduciary:<mandate_id>"` and `policy_epoch=version`, over fiduciary's receipt log; `tenants="declared"` when `data.receipt_tenants` says so (amended in 1.4.0) |
 
 - **F6-4.** `TruncationGuard` and `NoSchemaChange` are compiled into every mandate, and no
   field controls them. A mandate cannot omit them, so neither can any child.
@@ -1597,6 +1641,63 @@ with the service key. The verifier never relies on that signature: it checks eve
 against its digest, then on the member's own terms. A signature that is present must verify
 (V9).
 
+- **F9-5.** *Amended in 1.4.0.* A **sealed** bundle (`fiduciary export-bundle --sealed`,
+  format `fidb/2`) is one lineage's, to hand to the party it serves: one customer of a
+  vendor's product. `log.jsonl` holds whole only the records the lineage's decisions are
+  taken from: the charter's and its approvals; every record of the lineage and its
+  descendants; of its ancestors, their versions, events and approvals, and the `amend`
+  tickets that made a version, with what decided and executed them. Every other record is
+  another lineage's, and `withheld.json` holds its place and hash alone. The documents and
+  intake items in the bundle are only those the records it holds name.
+- **F9-6.** A withheld record is held to two things: its place in the chain (the record
+  after it links to its hash, V9) and the ledger's anchor of it (V10), which the signed
+  ledger checkpoint vouches for. It is folded past, not replayed: the state moves its head
+  to the record and learns nothing else. Every check that counts across lineages
+  (a parent's children, F5-6) then counts fewer, so a sealed bundle can only pass where its
+  whole log would; and V7 still holds every ledger entry, receipt and escrow commit on the
+  lineage's footprint to a record the bundle carries. The report says how many records are
+  withheld. *Amended in 1.4.0, before release:* a withheld record is also held to its seal
+  (F9-7), so that no record of the lineage's own can be withheld.
+- **F9-7.** *Added in 1.4.0.* **Seals.** A sealed bundle is cut from a sealed log (F4-26)
+  by the seals alone: `log.jsonl` holds exactly the records its keys open, and
+  `withheld.json` carries the keys. From the deployment's seal secret *S*, `key(all) =
+  HMAC-SHA-256(S, "fidb/2 all")`, a lineage's `key(X) = HMAC-SHA-256(S, "fidb/2 lineage\n"
+  ‖ X)` and its `line(X) = HMAC-SHA-256(key(X), "fidb/2 line")`; a tag of key *k* at record
+  *n* is `HMAC-SHA-256(k, "fidb/2 seal\n" ‖ canonical([log, n]))`. Whose a record is, when
+  it is written:
+
+  | Records | Whose | Seal |
+  |---|---|---|
+  | the charter's; approvals of a charter or a suspension | all | `tag(key(all))`, a pad |
+  | a lineage's versions and their events; its `amend` tickets, with what decided and executed them; approvals of its versions and revocations | the lineage's line | `tag(line(X))`, `tag(key(P))` (*P* the lineage it was issued under; *X* for a root) |
+  | a lineage's sessions; its other tickets, with what decided and executed them | the lineage | `tag(key(X))`, a pad |
+  | a refused submission that names no subject | no one | two pads |
+
+  A pad is a tag under a key only *S* derives, so every seal is two tags that look alike:
+  a withheld record's seal says nothing of its kind, its lineage or its depth, and since a
+  tag depends on the record's place, no two records share one. A bundle of lineage *R*
+  holds `key(all)`, `key(X)` of *R* and of every lineage below it, and `line(A)` of every
+  lineage above it: never a key of a lineage beside it, nor the `key` of one above it. V10
+  holds, besides the anchors:
+
+  - the keys are the log's: `key(all)` makes a tag of record 1's seal, and each lineage's
+    key (its `line`, for a lineage above) a tag of the seal of the record that issued its
+    first version;
+  - the keys are complete: one of each lineage the manifest names and of each lineage
+    above it, and no lineage the bundle shows issued below one of its lineages is missing
+    from them (a child's first version carries its parent's tag, so a parent's bundle
+    finds every child);
+  - every record `log.jsonl` holds carries a seal its keys open, and its anchor the same
+    seal;
+  - **no withheld record's anchored seal is one its keys open.** One that is names the
+    lineage it belongs to, and fails (exit 8).
+
+  So an exporter that holds every key and signs the manifest still cannot withhold a record
+  of the lineage's own, whether or not it left a trace in the ledger, the receipts or the
+  chains: its seal was written with it, and its anchor vouches for the seal. The seals are
+  honest because the service wrote them; `fiduciary verify` with the seal key configured
+  holds every record's seal to whose the record is.
+
 ## 9.3 `fiduciary verify-bundle`
 
 ```
@@ -1824,6 +1925,7 @@ digest = "<sha256 of charter version 1>"               # the root of authority
 
 [service]
 signer = "kms-fiduciary"                               # [signers.<name>], or key = "service.key"
+seal_key = "seal.key"                                  # 1.4: a sealed log (F4-26, F9-7), 32+ bytes in hex
 
 [executor]
 key    = "executor.key"                                # an [operators.keys] key; AWS KMS only with U-2
@@ -2242,6 +2344,17 @@ A change to any of them is a new domain version (`FIDU1/<type>/v2`) or a new bun
 (`vectors/fidu1/`) and the golden bundles (`vectors/fidu1/bundles/`) hold every release to
 this.
 
+*Amended in 1.4.0.* The freeze is lifted for additions, under one rule: **a new member is
+written only when it is used**, and a document that writes it with its default is
+malformed. So 1.4.0's members (F4-12a) leave every document, compiled description, record
+and `fidb/1` bundle written before byte for byte as it was, and every earlier golden vector
+and golden bundle unchanged; a 1.3 verifier refuses a document that uses one, as it must,
+since it cannot enforce it. The sealed bundle is the new format `fidb/2` (F9-5), read
+beside `fidb/1`. New vectors cover each addition: two mandates in `valid.json`, and
+`valid-sealed-child`, `v10-withheld-rewritten`, `v9-withheld-dropped` and
+`v10-own-record-withheld` among the golden bundles, and `seals.json`, a sealed log's
+records with their seals, anchors and one bundle's keys.
+
 **The upstream gaps (§12).** Each is released: U-1 (crimsondevil0929/interlock#20), U-2,
 U-3, U-4 and U-6 (crimsondevil0929/interlock#21) in interlock 1.0.3, and U-5
 (crimsondevil0929/agentgov#8) in agentgov 1.0.1. Fiduciary 1.0.0 required interlock 1.0.2
@@ -2344,6 +2457,7 @@ SQLite and on PostgreSQL. The test kinds:
 | F9-1: no row data | 5, 6 | the security audit | Implemented. `test_security_audit.py`, `test_bundle_export.py` |
 | F9-2, F9-3: self-contained, offline, specified | 5 | the offline run; golden bundles; byte-identical exports | Implemented, with the limits above. `test_bundle_tamper.py`, `test_bundle_vectors.py` |
 | F9-4: reports (`--json`, `--report`) and `fiduciary demo` | after 6 | every golden bundle's exit code and findings through `--json`; the demo's seven acts, measured; the control-framework packs by digest; each domain pack's acts, measured | Implemented (1.1.0; packs and domains 1.2.0; the coding-agent pack, on Git, 1.3.0), SQLite. `test_attest.py`, `test_demo.py`, `test_packs.py`, `test_coding_agent.py` |
+| F9-5 to F9-7: sealed bundles and sealed logs | 1.4.0 | a lineage's own record withheld, by an exporter that signs the manifest; a key swapped, left out, or a lineage below left out; another lineage's record carried; the seal vectors | Implemented (1.4.0). `test_sealed_bundles.py`, `test_vectors.py`, `test_bundle_vectors.py`, `test_cli_bundle.py` |
 | F10-1 to F10-4: the stores | 1, 3 | the projection fold; append-only enforcement on both stores; the intake role | Implemented. `test_store.py`, `test_postgres.py`, `test_upgrade.py` |
 | F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak | Implemented. `test_contention.py`, `test_cluster.py`, `test_soak.py` |
 | F10-9 to F10-11: crash points | 3 | crash | Implemented. `test_crash_recovery.py` |

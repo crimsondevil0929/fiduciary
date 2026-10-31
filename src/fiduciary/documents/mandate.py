@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, ClassVar, Final
@@ -29,6 +29,7 @@ from fiduciary.fidu1 import (
     check_strings,
     check_text,
 )
+from fiduciary.sealing import Opening
 
 __all__ = [
     "AUTO_RESOLUTIONS",
@@ -57,6 +58,7 @@ __all__ = [
     "Measure",
     "Outbound",
     "OutboundTenants",
+    "PartitionRule",
     "Recipients",
     "Recovery",
     "Roster",
@@ -64,6 +66,7 @@ __all__ = [
     "Subject",
     "ToolPin",
     "Tools",
+    "UnitBudget",
     "Window",
 ]
 
@@ -114,6 +117,27 @@ DOMAIN: Final = re.compile(
 )
 ADDRESS: Final = re.compile(r"[^\s@\x00-\x1f\x7f]{1,64}@[a-z0-9.-]{1,255}")
 CURRENCY: Final = re.compile(r"[a-z]{3}")
+UNIT: Final = re.compile(r"[a-z][a-z0-9_.-]{0,31}")
+"""A unit's code, as AgentGov declares a ledger's (amended in 1.4.0): every
+lowercase ISO 4217 currency code is one, so every cap by currency still reads."""
+PARTITION: Final = re.compile(r"[a-z][a-z0-9_]{0,31}")
+"""A partition dimension's name, as Interlock's ``TableSpec.partitions`` names one."""
+PER_PARTITION: Final = "partition:"
+_HEX64: Final = re.compile(r"[0-9a-f]{64}")
+
+
+def _per(fields: Fields, name: str, options: tuple[str, ...]) -> str:
+    """One of ``options``, or ``partition:<dimension>`` for another partition
+    dimension than the tenant (amended in 1.4.0)."""
+    raw = fields.raw(name)
+    if isinstance(raw, str) and raw.startswith(PER_PARTITION):
+        dimension = raw.removeprefix(PER_PARTITION)
+        if PARTITION.fullmatch(dimension) and dimension != "tenant":
+            return raw
+        raise MalformedError(
+            "format", fields.path(name), "names a partition dimension other than tenant"
+        )
+    return fields.choice(name, options)
 
 
 def _scope(fields: Fields, name: str) -> str:
@@ -229,6 +253,28 @@ class Budget:
 
 
 @dataclass(frozen=True, slots=True)
+class UnitBudget:
+    """A budget in a unit other than the model spend's (amended in 1.4.0): an
+    envelope conserved in an AgentGov ledger of the unit, held per plan and
+    settled from what the plan measurably consumed (Interlock's ``Meter``)."""
+
+    places: int
+    """How many decimal places of the unit the ledger counts: 0 for whole things."""
+    envelope: Decimal
+    per_plan: Decimal
+    measure: Measure
+    """What a plan consumes: a window's measure."""
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "places": self.places,
+            "envelope": format(self.envelope, "f"),
+            "per_plan": format(self.per_plan, "f"),
+            "measure": self.measure.to_json(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Cognitive:
     """The bounds of AgentGov's ``CognitivePolicy`` a mandate sets."""
 
@@ -305,20 +351,40 @@ class Drawdown:
     table: str
     column: str
     per: str
-    """``table`` (``ColumnValueGuard``) or ``tenant`` (``TenantDrawdownGuard``)."""
-    max_drop: Decimal
+    """``table`` (``ColumnValueGuard``), ``tenant`` (``TenantDrawdownGuard``),
+    or ``partition:<dimension>`` (one per label of that dimension)."""
+    max_drop: Decimal | None
+    """The largest fall allowed; ``None`` for a guard that bounds only a rise."""
+    max_rise: Decimal | None = None
+    """The largest rise allowed (amended in 1.4.0): written only when set."""
 
     @property
     def identity(self) -> tuple[str, str, str]:
         return (self.table, self.column, self.per)
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        found: dict[str, Any] = {
             "table": self.table,
             "column": self.column,
             "per": self.per,
-            "max_drop": str(self.max_drop),
+            "max_drop": None if self.max_drop is None else str(self.max_drop),
         }
+        if self.max_rise is not None:
+            found["max_rise"] = str(self.max_rise)
+        return found
+
+
+@dataclass(frozen=True, slots=True)
+class PartitionRule:
+    """A partition dimension a plan is confined in (amended in 1.4.0): at most
+    ``max`` labels, and with ``declared`` only the ones its effects declare
+    (Interlock's ``TenantIsolation(dimension=...)``)."""
+
+    max: int
+    declared: bool
+
+    def to_json(self) -> dict[str, Any]:
+        return {"max": self.max, "declared": self.declared}
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,7 +398,9 @@ class Footprint:
 
 @dataclass(frozen=True, slots=True)
 class Agreement:
-    """A ``CrossEffectAgreement``: a request's field held to rows' column."""
+    """A ``CrossEffectAgreement``: a request's field held to rows' column.
+    ``also``: the sink's other operations that carry the same quantity (1.4),
+    written only when it names one."""
 
     sink: str
     operation: str
@@ -341,6 +409,7 @@ class Agreement:
     column: str
     measure: str
     key: tuple[str, str] | None
+    also: tuple[str, ...] = ()
 
     @property
     def identity(self) -> tuple[str, ...]:
@@ -352,10 +421,11 @@ class Agreement:
             self.column,
             self.measure,
             *(self.key or ()),
+            *(("|", *self.also) if self.also else ()),
         )
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        found: dict[str, Any] = {
             "sink": self.sink,
             "operation": self.operation,
             "field": self.field,
@@ -364,6 +434,9 @@ class Agreement:
             "measure": self.measure,
             "key": _pair(self.key),
         }
+        if self.also:
+            found["also"] = list(self.also)
+        return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,8 +478,22 @@ class Data:
     stated_footprint: Footprint | None
     agreements: tuple[Agreement, ...]
     facts: tuple[FactRule, ...]
+    partitions: Mapping[str, PartitionRule] = field(default_factory=dict)
+    """Dimensions beside the tenant a plan is confined in: written only when set."""
+    receipt_tenants: str = "touched"
+    """Which tenants a receipt names: every one its plan touched, or, when
+    ``"declared"``, only those the plan declares, the rest counted (1.4).
+    Written only when ``"declared"``."""
 
     def to_json(self) -> dict[str, Any]:
+        found = self._json()
+        if self.partitions:
+            found["partitions"] = {d: r.to_json() for d, r in sorted(self.partitions.items())}
+        if self.receipt_tenants != "touched":
+            found["receipt_tenants"] = self.receipt_tenants
+        return found
+
+    def _json(self) -> dict[str, Any]:
         return {
             "tables": {t: list(ops) for t, ops in sorted(self.tables.items())},
             "tenants": "*" if self.tenants is None else list(self.tenants),
@@ -451,9 +538,13 @@ class AmountCap:
     operation: str
     field: str
     maximum: Decimal | Mapping[str, Decimal]
-    """One cap, or a cap per currency (read at ``currency_field``)."""
+    """One cap, or a cap per currency or unit (read at ``currency_field``, or
+    ``unit_field``)."""
     per: str
     currency_field: str | None
+    unit_field: str | None = None
+    """Where a request names its unit, for a cap by unit (amended in 1.4.0);
+    ``currency_field`` is then null. Written only when set."""
 
     @property
     def identity(self) -> tuple[str, str, str, str]:
@@ -465,7 +556,7 @@ class AmountCap:
             if isinstance(self.maximum, Mapping)
             else str(self.maximum)
         )
-        return {
+        found: dict[str, Any] = {
             "sink": self.sink,
             "operation": self.operation,
             "field": self.field,
@@ -473,6 +564,9 @@ class AmountCap:
             "per": self.per,
             "currency_field": self.currency_field,
         }
+        if self.unit_field is not None:
+            found["unit_field"] = self.unit_field
+        return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -487,13 +581,20 @@ class Recipients:
     addresses: tuple[str, ...]
     tenant_domains: Mapping[str, tuple[str, ...]]
     subdomains: bool
+    sealed: str | None = None
+    """The root of more tenants' domains, sealed (:mod:`fiduciary.sealing`;
+    amended in 1.4.0): named by no tenant, and granting nothing here until a
+    child opens one. Written only when set."""
+    openings: Mapping[str, Opening] = field(default_factory=dict)
+    """For a child: what opens each of its ``tenant_domains`` entries under
+    its parent's ``sealed``. Written only when set."""
 
     @property
     def identity(self) -> tuple[str, str, str]:
         return (self.sink, self.operation, self.kind)
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        found: dict[str, Any] = {
             "sink": self.sink,
             "operation": self.operation,
             "kind": self.kind,
@@ -503,6 +604,11 @@ class Recipients:
             "tenant_domains": {t: list(d) for t, d in sorted(self.tenant_domains.items())},
             "subdomains": self.subdomains,
         }
+        if self.sealed is not None:
+            found["sealed"] = self.sealed
+        if self.openings:
+            found["openings"] = {t: o.to_json() for t, o in sorted(self.openings.items())}
+        return found
 
 
 @dataclass(frozen=True, slots=True)
@@ -603,7 +709,8 @@ class Measure:
 @dataclass(frozen=True, slots=True)
 class Window:
     """At most ``limit`` of ``measure`` within any ``span_seconds``, over the
-    lineage (``per="lineage"``) or each tenant in it (``per="tenant"``)."""
+    lineage (``per="lineage"``), each tenant in it (``per="tenant"``), or each
+    label of another partition (``per="partition:patient"``, amended in 1.4.0)."""
 
     name: str
     measure: Measure
@@ -802,6 +909,7 @@ class Mandate(Document):
         "delegation",
         "issued_at",
     )
+    OPTIONAL: ClassVar[tuple[str, ...]] = ("budgets",)
 
     mandate_id: str
     version: int
@@ -824,6 +932,9 @@ class Mandate(Document):
     escalation: Escalation
     delegation: Delegation | None
     issued_at: datetime
+    budgets: Mapping[str, UnitBudget] = field(default_factory=dict)
+    """Budgets in units other than the model spend's, by unit (amended in
+    1.4.0): written only when set."""
     signature: Signature | None = None
 
     @property
@@ -855,6 +966,11 @@ class Mandate(Document):
             "escalation": self.escalation.to_json(),
             "delegation": None if self.delegation is None else self.delegation.to_json(),
             "issued_at": fidu1.format_instant(self.issued_at),
+            **(
+                {"budgets": {u: b.to_json() for u, b in sorted(self.budgets.items())}}
+                if self.budgets
+                else {}
+            ),
         }
 
     # -- reading ------------------------------------------------------------------
@@ -887,7 +1003,9 @@ class Mandate(Document):
             "governance": _read_governance(
                 fields.object("governance", ("max_calls", "seconds", "fleet_velocity", "cognitive"))
             ),
-            "data": _read_data(fields.object("data", _DATA_FIELDS)),
+            "data": _read_data(
+                fields.object("data", _DATA_FIELDS, ("partitions", "receipt_tenants"))
+            ),
             "outbound": _read_outbound(fields.object("outbound", _OUTBOUND_FIELDS)),
             "windows": _read_windows(fields),
             "tools": _read_tools(fields.object("tools", ("statements", "bindings"))),
@@ -910,6 +1028,7 @@ class Mandate(Document):
                 fields.object("delegation", ("max_depth", "max_children", "envelope"))
             ),
             "issued_at": fields.instant("issued_at"),
+            "budgets": _read_budgets(fields) if fields.has("budgets") else {},
         }
 
     def _agree(self) -> None:
@@ -1084,15 +1203,37 @@ def _read_data(fields: Fields) -> Data:
     tenants = None if raw == "*" else fields.strings("tenants", fidu1.TEXT, "a tenant")
     drawdown = []
     for path, item in fields.array("drawdown"):
-        entry = Fields(item, path, ("table", "column", "per", "max_drop"))
+        entry = Fields(item, path, ("table", "column", "per", "max_drop"), ("max_rise",))
+        max_drop = None if entry.is_null("max_drop") else _fraction(entry, "max_drop", Decimal(1))
+        max_rise = _fraction(entry, "max_rise") if entry.has("max_rise") else None
+        if max_drop is None and max_rise is None:
+            raise MalformedError("agreement", path, "bounds neither a fall nor a rise")
         drawdown.append(
             Drawdown(
                 entry.text("table", IDENTIFIER),
                 entry.text("column", IDENTIFIER),
-                entry.choice("per", ("table", "tenant")),
-                _fraction(entry, "max_drop", Decimal(1)),
+                _per(entry, "per", ("table", "tenant")),
+                max_drop,
+                max_rise,
             )
         )
+    partitions: dict[str, PartitionRule] = {}
+    if fields.has("partitions"):
+        for dimension, path, raw in fields.mapping("partitions", PARTITION):
+            if dimension == "tenant":
+                raise MalformedError("agreement", path, "the tenant is max_tenants'")
+            entry = Fields(raw, path, ("max", "declared"))
+            partitions[dimension] = PartitionRule(
+                entry.integer("max", 1, 1_000_000), entry.boolean("declared")
+            )
+        if not partitions:
+            raise MalformedError(
+                "agreement", fields.path("partitions"), "is written only when it holds one"
+            )
+    receipt_tenants = "touched"
+    if fields.has("receipt_tenants"):
+        # the default is never written: one mandate has one encoding
+        receipt_tenants = fields.choice("receipt_tenants", ("declared",))
     footprint = None
     if not fields.is_null("stated_footprint"):
         entry = fields.object("stated_footprint", ("tolerance", "blocking"))
@@ -1100,17 +1241,31 @@ def _read_data(fields: Fields) -> Data:
     agreements = []
     for path, item in fields.array("agreements"):
         entry = Fields(
-            item, path, ("sink", "operation", "field", "table", "column", "measure", "key")
+            item,
+            path,
+            ("sink", "operation", "field", "table", "column", "measure", "key"),
+            optional=("also",),
         )
+        operation = entry.text("operation", OPERATION)
+        also: tuple[str, ...] = ()
+        if entry.has("also"):
+            also = entry.strings("also", OPERATION, "an operation")
+            if not also:
+                raise MalformedError("agreement", entry.path("also"), "names no operation")
+            if operation in also:
+                raise MalformedError(
+                    "agreement", entry.path("also"), f"names {operation}, the rule's own"
+                )
         agreements.append(
             Agreement(
                 entry.text("sink", SINK_NAME),
-                entry.text("operation", OPERATION),
+                operation,
                 entry.text("field", PATH),
                 entry.text("table", IDENTIFIER),
                 entry.text("column", IDENTIFIER),
                 entry.choice("measure", ("inserted", "net", "value")),
                 _key_pair(entry, "key"),
+                also,
             )
         )
     facts = []
@@ -1139,6 +1294,8 @@ def _read_data(fields: Fields) -> Data:
         stated_footprint=footprint,
         agreements=sorted_by(agreements, lambda a: a.identity, fields.path("agreements")),
         facts=sorted_by(facts, lambda f: f.identity, fields.path("facts")),
+        partitions=partitions,
+        receipt_tenants=receipt_tenants,
     )
 
 
@@ -1164,21 +1321,28 @@ def _read_outbound(fields: Fields) -> Outbound:
     caps = []
     for path, item in fields.array("caps"):
         entry = Fields(
-            item, path, ("sink", "operation", "field", "maximum", "per", "currency_field")
+            item,
+            path,
+            ("sink", "operation", "field", "maximum", "per", "currency_field"),
+            ("unit_field",),
         )
         raw_max = entry.raw("maximum")
         maximum: Decimal | dict[str, Decimal]
         if isinstance(raw_max, dict):
             maximum = {
-                currency: check_decimal(v, p)
-                for currency, p, v in entry.mapping("maximum", CURRENCY)
+                currency: check_decimal(v, p) for currency, p, v in entry.mapping("maximum", UNIT)
             }
             if not maximum:
                 raise MalformedError("agreement", entry.path("maximum"), "caps no currency")
         else:
             maximum = entry.decimal("maximum")
         currency = None if entry.is_null("currency_field") else entry.text("currency_field", PATH)
-        if isinstance(maximum, dict) and currency is None:
+        unit = entry.text("unit_field", PATH) if entry.has("unit_field") else None
+        if unit is not None and currency is not None:
+            raise MalformedError(
+                "agreement", path, "reads its unit at currency_field or unit_field, not both"
+            )
+        if isinstance(maximum, dict) and currency is None and unit is None:
             raise MalformedError(
                 "agreement",
                 entry.path("currency_field"),
@@ -1192,6 +1356,7 @@ def _read_outbound(fields: Fields) -> Outbound:
                 maximum,
                 entry.choice("per", ("plan", "request", "tenant")),
                 currency,
+                unit,
             )
         )
     recipients = []
@@ -1209,11 +1374,30 @@ def _read_outbound(fields: Fields) -> Outbound:
                 "tenant_domains",
                 "subdomains",
             ),
+            ("sealed", "openings"),
         )
         tenant_domains = {
             tenant: check_strings(raw, p, DOMAIN, "a domain name")
             for tenant, p, raw in entry.mapping("tenant_domains", fidu1.TEXT)
         }
+        sealed = entry.text("sealed", _HEX64, "a SHA-256 in hex") if entry.has("sealed") else None
+        openings: dict[str, Opening] = {}
+        if entry.has("openings"):
+            for tenant, p, raw in entry.mapping("openings", fidu1.TEXT):
+                opening = Fields(raw, p, ("salt", "proof"))
+                openings[tenant] = Opening(
+                    opening.text("salt", _HEX64, "a 32-byte salt in hex"),
+                    tuple(
+                        check_text(v, q, _HEX64, "a SHA-256 in hex")
+                        for q, v in opening.array("proof", 64)
+                    ),
+                )
+                if tenant not in tenant_domains:
+                    raise MalformedError("agreement", p, "opens a tenant it names no domains of")
+            if not openings:
+                raise MalformedError(
+                    "agreement", entry.path("openings"), "is written only when it opens one"
+                )
         rule = Recipients(
             sink=entry.text("sink", SINK_NAME),
             operation=entry.text("operation", OPERATION),
@@ -1223,12 +1407,14 @@ def _read_outbound(fields: Fields) -> Outbound:
             addresses=entry.strings("addresses", ADDRESS, "an address"),
             tenant_domains=tenant_domains,
             subdomains=entry.boolean("subdomains"),
+            sealed=sealed,
+            openings=openings,
         )
         if not rule.fields:
             raise MalformedError(
                 "agreement", entry.path("fields"), "names no field recipients are at"
             )
-        if not (rule.domains or rule.addresses or rule.tenant_domains):
+        if not (rule.domains or rule.addresses or rule.tenant_domains or rule.sealed):
             raise MalformedError("agreement", path, "allows no recipient at all")
         if rule.kind == "url" and rule.addresses:
             raise MalformedError(
@@ -1268,10 +1454,34 @@ def _read_windows(fields: Fields) -> tuple[Window, ...]:
                 measure=Measure.read(entry.raw("measure"), entry.path("measure")),
                 span_seconds=entry.integer("span_seconds", 1, 86_400 * 366),
                 limit=entry.decimal("limit"),
-                per=entry.choice("per", ("lineage", "tenant")),
+                per=_per(entry, "per", ("lineage", "tenant")),
             )
         )
     return sorted_by(windows, lambda w: (w.name,), fields.path("windows"))
+
+
+def _read_budgets(fields: Fields) -> dict[str, UnitBudget]:
+    budgets: dict[str, UnitBudget] = {}
+    for unit, path, raw in fields.mapping("budgets", UNIT):
+        if unit == "usd":
+            raise MalformedError("agreement", path, "model spend is the budget section's")
+        entry = Fields(raw, path, ("places", "envelope", "per_plan", "measure"))
+        envelope, per_plan = entry.decimal("envelope"), entry.decimal("per_plan")
+        if envelope <= 0 or per_plan <= 0:
+            raise MalformedError("range", path, "an envelope and its per-plan bound are positive")
+        if per_plan > envelope:
+            raise MalformedError("agreement", entry.path("per_plan"), "is more than the envelope")
+        budgets[unit] = UnitBudget(
+            entry.integer("places", 0, 8),
+            envelope,
+            per_plan,
+            Measure.read(entry.raw("measure"), entry.path("measure")),
+        )
+    if not budgets:
+        raise MalformedError(
+            "agreement", fields.path("budgets"), "is written only when it holds one"
+        )
+    return budgets
 
 
 def _read_tools(fields: Fields) -> Tools:

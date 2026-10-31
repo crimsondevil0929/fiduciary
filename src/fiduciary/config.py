@@ -11,6 +11,7 @@
 
     [service]
     key = "service.key"                                  # or signer = "<name>"
+    seal_key = "seal.key"                                # a sealed log (1.4): 32+ bytes, hex
 
     [signers.<name>]                                     # fiduciary.keys
 
@@ -18,6 +19,11 @@
     tools      = ["refund.tool.json", "acme.tools:lookup"] # tool bindings: files or module:name
     directives = ["stop-retrying.txt"]                   # directive texts, by their bytes' SHA-256
     chains     = "chains"                                # each lineage's <mandate_id>.chain
+
+    [units.mme]                                          # a budget in another unit (1.4)
+    ledger = "mme.db"                                    # its AgentGov ledger: a file or a DSN
+    places = 8                                           # the places it counts; 0 for whole things
+    # schema = "agentgov_mme"                            # PostgreSQL: one schema per unit
 
     [executor]
     key = "executor.key"                                 # or signer; an [operators.keys] key
@@ -91,6 +97,7 @@ if TYPE_CHECKING:
     from fiduciary.bridge import Fiduciary
     from fiduciary.compiler import Deployment
     from fiduciary.documents import ToolBinding
+    from fiduciary.seals import Sealer
     from fiduciary.store import Store
 
 __all__ = [
@@ -122,8 +129,10 @@ _TOP: Final = frozenset(
         "serve",
         "metrics",
         "cluster",
+        "units",
     }
 )
+_UNIT: Final = re.compile(r"[a-z][a-z0-9_.-]{0,31}")
 NODE_ENV: Final = "FIDUCIARY_NODE"
 CLUSTER_DATABASE_ENV: Final = "FIDUCIARY_CLUSTER_DATABASE"
 _PRICE_FIELDS: Final = ("input", "output", "cache_read", "cache_write")
@@ -132,6 +141,15 @@ _DECIMAL: Final = re.compile(r"(0|[1-9][0-9]{0,5})(\.[0-9]{1,8})?")
 
 class ConfigError(ValueError):
     """``fiduciary.toml`` says something it may not."""
+
+
+@dataclass(frozen=True, slots=True)
+class UnitLedger:
+    """``[units.<code>]``: the AgentGov ledger of one other unit (1.4)."""
+
+    ledger: str
+    places: int
+    schema: str
 
 
 def is_dsn(text: str) -> bool:
@@ -181,6 +199,9 @@ class Config:
     charter_digest: str | None = None
     service_key: Path | None = None
     service_signer: str | None = None
+    seal_key: Path | None = None
+    """``[service] seal_key``: the secret a sealed log's seals are made with
+    (:mod:`fiduciary.seals`), a file of hex, readable by its owner only."""
     signers: Mapping[str, SignerSpec] = field(default_factory=dict)
     interlock: Path | None = None
     tools: tuple[str, ...] = ()
@@ -207,6 +228,30 @@ class Config:
     cluster: ClusterSettings | None = None
     bridge_tls: tuple[Path, Path] | None = None
     agents: Mapping[str, AgentSettings] = field(default_factory=dict)
+    units: Mapping[str, UnitLedger] = field(default_factory=dict)
+    """``[units.<code>]``: the ledger of each other unit mandates may budget."""
+
+    def open_units(self, *, read_only: bool = False) -> dict[str, BudgetManager]:
+        """A governor of each ``[units]`` ledger, which conserves its unit."""
+        from agentgov import BudgetManager, Unit
+
+        opened: dict[str, BudgetManager] = {}
+        try:
+            for code, spec in sorted(self.units.items()):
+                unit = Unit(code, spec.places)
+                if is_dsn(spec.ledger):
+                    opened[code] = BudgetManager.open_postgres(
+                        spec.ledger, schema=spec.schema, read_only=read_only, unit=unit
+                    )
+                else:
+                    opened[code] = BudgetManager.open_sqlite(
+                        spec.ledger, read_only=read_only, unit=unit
+                    )
+        except BaseException:
+            for governor in opened.values():
+                governor.close()
+            raise
+        return opened
 
     def open_store(
         self, *, application_name: str = "fiduciary", idle_timeout: float | None = None
@@ -291,6 +336,20 @@ class Config:
         if self.service_key is None and self.service_signer is None:
             raise ConfigError("[service] names no key and no signer")
         return open_signer(self.signers, key=self.service_key, signer=self.service_signer)
+
+    def sealer(self) -> Sealer | None:
+        """The log's sealer, when ``[service] seal_key`` names one.
+
+        :raises ConfigError: On a file that is no seal secret.
+        """
+        if self.seal_key is None:
+            return None
+        from fiduciary.seals import Sealer
+
+        try:
+            return Sealer(bytes.fromhex(self.seal_key.read_text().strip()))
+        except (OSError, ValueError) as exc:
+            raise ConfigError(f"[service] seal_key {self.seal_key}: {exc}") from exc
 
     def executor(self) -> Signer:
         """The executor key, which signs ILOK1 operator records: AWS KMS only
@@ -394,6 +453,7 @@ class Config:
             sinks=found.sink_registry(),
             tools=tools,
             directives=directives,
+            units={code: spec.places for code, spec in self.units.items()},
         )
 
     def receipts(self) -> Signer:
@@ -504,7 +564,7 @@ def load_config(path: str | Path) -> Config:
     bridge = raw.get("bridge", {})
     for name, table, allowed in (
         ("charter", charter, {"file", "digest"}),
-        ("service", service, {"key", "signer"}),
+        ("service", service, {"key", "signer", "seal_key"}),
         ("executor", executor, {"key", "signer", "log", "outbox"}),
         ("runtime", runtime, {"records", "key", "signer"}),
         ("receipts", receipts, {"log", "key", "signer"}),
@@ -620,6 +680,9 @@ def load_config(path: str | Path) -> Config:
         charter_file=None if "file" not in charter else place(charter["file"], "[charter] file"),
         charter_digest=digest,
         service_key=None if "key" not in service else place(service["key"], "[service] key"),
+        seal_key=None
+        if "seal_key" not in service
+        else place(service["seal_key"], "[service] seal_key"),
         service_signer=signer,
         signers=signers,
         interlock=None if interlock is None else place(interlock, "interlock"),
@@ -649,7 +712,35 @@ def load_config(path: str | Path) -> Config:
         cluster=_cluster(raw.get("cluster"), where),
         bridge_tls=bridge_tls,
         agents=_agents(bridge.get("agents", {}), where),
+        units=_units(raw.get("units", {}), where, place),
     )
+
+
+def _units(raw: object, where: Path, place: Callable[[str, str], Path]) -> dict[str, UnitLedger]:
+    if not isinstance(raw, dict):
+        raise ConfigError(f"{where}: [units] is a table of [units.<code>] tables")
+    found = {}
+    for code, table in raw.items():
+        name = f"[units.{code}]"
+        if not _UNIT.fullmatch(code) or code == "usd":
+            raise ConfigError(f"{where}: {name}: a unit's code, other than usd, the ledger's")
+        if not isinstance(table, dict):
+            raise ConfigError(f"{where}: {name} is a table")
+        extra = sorted(set(table) - {"ledger", "places", "schema"})
+        if extra:
+            raise ConfigError(f"{where}: {name} has unknown key(s) {', '.join(extra)}")
+        ledger, places = table.get("ledger"), table.get("places", 8)
+        if not isinstance(ledger, str) or not ledger:
+            raise ConfigError(f"{where}: {name} ledger is a SQLite file or a postgresql:// DSN")
+        if isinstance(places, bool) or not isinstance(places, int) or not 0 <= places <= 8:
+            raise ConfigError(f"{where}: {name} places is 0 to 8")
+        schema = table.get("schema", f"agentgov_{code.replace('.', '_').replace('-', '_')}")
+        if not isinstance(schema, str) or not schema:
+            raise ConfigError(f"{where}: {name} schema is a name")
+        found[code] = UnitLedger(
+            ledger if is_dsn(ledger) else str(place(ledger, f"{name} ledger")), places, schema
+        )
+    return found
 
 
 def _seconds(table: Mapping[str, Any], key: str, default: float, where: Path, name: str) -> float:
@@ -813,9 +904,11 @@ def open_fiduciary(
         )
         assert governor is not None
         opened.append(governor.close)
-        log = Log(store, signer, ledger=governor)
+        log = Log(store, signer, ledger=governor, sealer=config.sealer())
         authority = Authority(log, pinned=config.pinned())
         deployment = config.deployment(governor)
+        ledgers = config.open_units()
+        opened.extend(g.close for g in ledgers.values())
         interlock = config.interlock_config()
         receipts = None
         if config.receipts_log is not None:
@@ -832,6 +925,7 @@ def open_fiduciary(
             chains=config.chains,
             receipts=receipts,
             inbox=interlock.inbox_keyring(),
+            ledgers=ledgers,
         )
         runtime = None
         if config.runtime_records is not None:

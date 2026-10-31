@@ -135,6 +135,33 @@
     "witness": null
   },
   {
+    "about": "the lineage's own session record withheld, the manifest signed again: its seal says it is the lineage's",
+    "charter": "6907f671ea513b52351840c964946cfab0a5c1e1059415272f89b53ab565bb1e",
+    "checks": [
+      "V10"
+    ],
+    "exit_code": 8,
+    "file": "v10-own-record-withheld.fidb",
+    "findings": [
+      "V10 evidence: record 16 is withheld, but its seal says it is lineage 1f801d9b-d6da-4793-b2b7-bc23ace89f76's: a sealed bundle withholds only other lineages' records"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v10-own-record-withheld",
+    "sha256": "eae8d4eb6294dfa7d0796b9dcead7614aac0ab2af604a45d65a2c9660f7eb39c",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "a record in range that no ledger anchor names",
     "charter": "fdd5328ed79a43fb809f97a7e0cfdbba979f9b22e8df07d611ae688c47df4ac1",
     "checks": [
@@ -158,6 +185,34 @@
     },
     "name": "v10-unanchored-record",
     "sha256": "f0c631259a214db447813324b0870f4a8ffdab8f59ed91eb4e52eca46effe512",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a withheld record's hash rewritten: its anchor names another",
+    "charter": "6907f671ea513b52351840c964946cfab0a5c1e1059415272f89b53ab565bb1e",
+    "checks": [
+      "V10"
+    ],
+    "exit_code": 8,
+    "file": "v10-withheld-rewritten.fidb",
+    "findings": [
+      "V10 evidence: the ledger anchors record 11 of log 'fiduciary' as 8855593ba6f2abd6, but the log holds abababababababab: it was rewritten",
+      "V10 evidence: record 11 is withheld but has no ledger anchor"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v10-withheld-rewritten",
+    "sha256": "816e5ee82470fd18570aa279e08023bd43807ad674ecc7a9439a92f65999ad8a",
     "skew_seconds": 5,
     "witness": null
   },
@@ -767,6 +822,36 @@
     "witness": null
   },
   {
+    "about": "a withheld record dropped: the chain has a gap",
+    "charter": "6907f671ea513b52351840c964946cfab0a5c1e1059415272f89b53ab565bb1e",
+    "checks": [
+      "V9",
+      "V10"
+    ],
+    "exit_code": 4,
+    "file": "v9-withheld-dropped.fidb",
+    "findings": [
+      "V9 signature: record 18: expected record 17: records are missing or out of order",
+      "V9 signature: the log holds 19 records, not 20",
+      "V10 evidence: the ledger anchors record 17 of log 'fiduciary' (entry 31), which the log does not hold: it was truncated"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v9-withheld-dropped",
+    "sha256": "228f0986e2ce1570a045875d54e3778674e33cd42bfe38ee6b39be2bff95d4c0",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "a held message released by warrant: its reset's anchor, its operator intents",
     "charter": "5be04daef7934e6f60166299128a75264a044372757a2d8edeb0992405045245",
     "checks": [],
@@ -832,6 +917,29 @@
     },
     "name": "valid-phase-4-lifecycle",
     "sha256": "0f23a82a4f327708e9cd0e784df085e5b702a9f40e8d59e189e741196943e80a",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "fidb/2: one child's lineage whole, its sibling's and its parent's sessions withheld",
+    "charter": "6907f671ea513b52351840c964946cfab0a5c1e1059415272f89b53ab565bb1e",
+    "checks": [],
+    "exit_code": 0,
+    "file": "valid-sealed-child.fidb",
+    "findings": [],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "valid-sealed-child",
+    "sha256": "fe13be834f702681dd6d93499771bbc416c6cbec2f3ed29ce29ccd38936cb0c7",
     "skew_seconds": 5,
     "witness": null
   }

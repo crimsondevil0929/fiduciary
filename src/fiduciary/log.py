@@ -28,19 +28,33 @@ from agentgov.receipts.signing import Signer
 from fiduciary import fidu1
 from fiduciary.documents import Document, Record, anchor_memo
 from fiduciary.documents.record import ANCHOR_PREFIX, Linked
-from fiduciary.exceptions import AnchorError
+from fiduciary.exceptions import AnchorError, FiduciaryError
+from fiduciary.seals import Sealer, audience
 from fiduciary.store import State, Store, StoredRecord, rows_for
 
 if TYPE_CHECKING:
     from agentgov import BudgetManager
 
-__all__ = ["ANCHOR_SCOPE", "LOG_ID", "Log", "check_anchors", "ensure_anchor_scope", "parse_memo"]
+__all__ = [
+    "ANCHOR_SCOPE",
+    "LOG_ID",
+    "Log",
+    "check_anchors",
+    "ensure_anchor_scope",
+    "memo_seal",
+    "parse_memo",
+]
 
 logger = logging.getLogger("fiduciary.log")
 
 LOG_ID: Final = "fiduciary"
 ANCHOR_SCOPE: Final = "fiduciary"
 _ANCHOR_ENVELOPE: Final = Decimal("0.00000001")
+
+
+_UNKNOWN: Final = object()
+"""What a record whose seal is not known here (a store's row, a withheld
+record) carries instead: its anchor's seal is not compared."""
 
 
 def ensure_anchor_scope(governor: BudgetManager, scope: str = ANCHOR_SCOPE) -> bool:
@@ -54,14 +68,25 @@ def ensure_anchor_scope(governor: BudgetManager, scope: str = ANCHOR_SCOPE) -> b
 
 
 def parse_memo(memo: str) -> tuple[str, int, str] | None:
-    """``(log, seq, hash)`` from a ``FIDU1 <log> <seq> <hash>`` memo, or ``None``."""
+    """``(log, seq, hash)`` from a ``FIDU1 <log> <seq> <hash>`` memo, or from a
+    sealed log's ``FIDU1 <log> <seq> <hash> <tag> <tag>``; else ``None``."""
     parts = memo.split(" ")
-    if len(parts) != 4 or f"{parts[0]} " != ANCHOR_PREFIX:
+    if len(parts) not in (4, 6) or f"{parts[0]} " != ANCHOR_PREFIX:
         return None
     log, seq, digest = parts[1], parts[2], parts[3]
     if not seq.isdigit() or not fidu1.HASH.fullmatch(digest):
         return None
+    if len(parts) == 6 and not all(fidu1.HASH.fullmatch(t) for t in parts[4:]):
+        return None
     return log, int(seq), digest
+
+
+def memo_seal(memo: str) -> tuple[str, str] | None:
+    """The two tags a sealed log's anchor memo carries, or ``None``."""
+    if parse_memo(memo) is None:
+        return None
+    parts = memo.split(" ")
+    return (parts[4], parts[5]) if len(parts) == 6 else None
 
 
 def check_anchors(
@@ -84,6 +109,7 @@ def check_anchors(
             continue
         _, seq, digest = found
         record = by_seq.get(seq)
+        sealed = getattr(record, "seal", _UNKNOWN)
         if record is None:
             problems.append(
                 f"the ledger anchors record {seq} of log {log!r} (entry {entry.sequence}), "
@@ -93,6 +119,11 @@ def check_anchors(
             problems.append(
                 f"the ledger anchors record {seq} of log {log!r} as {digest[:16]}, but the log "
                 f"holds {record.hash[:16]}: it was rewritten"
+            )
+        elif sealed is not _UNKNOWN and sealed != memo_seal(entry.memo):
+            problems.append(
+                f"the ledger anchors record {seq} of log {log!r} with another seal than the "
+                f"record carries: it was rewritten"
             )
         else:
             anchored.add(seq)
@@ -107,6 +138,8 @@ class Log:
     :param signer: The service key. Ed25519, local or remote.
     :param ledger: An AgentGov governor to anchor every record into, or none.
     :param clock: The time source; a test supplies its own.
+    :param sealer: A sealed log's (:mod:`fiduciary.seals`): every record it
+        writes carries a seal. A log is sealed from its first record or never.
     """
 
     def __init__(
@@ -118,8 +151,11 @@ class Log:
         ledger: BudgetManager | None = None,
         scope: str = ANCHOR_SCOPE,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+        sealer: Sealer | None = None,
     ) -> None:
         self._store = store
+        self._sealer = sealer
+        self._sealed: bool | None = None
         self._signer = signer
         self._log_id = log_id
         self._ledger = ledger
@@ -215,7 +251,13 @@ class Log:
             seq, head = self._store.head(self._log_id)
             for document in documents:
                 self.put(document)
+            state = self._sealing(seq)
             for kind, body in entries:
+                seal = None
+                if state is not None:
+                    assert self._sealer is not None
+                    whose = audience(kind, body, state, self._mandate, self._submitted)
+                    seal = self._sealer.seal(self._log_id, seq + 1, whose)
                 record = Record.make(
                     self._signer,
                     log=self._log_id,
@@ -224,7 +266,10 @@ class Log:
                     body=body,
                     prev=head,
                     issued_at=when,
+                    seal=seal,
                 )
+                if state is not None:
+                    state.apply(record)
                 self._store.insert_record(
                     StoredRecord(
                         self._log_id, record.seq, record.hash, record.prev, kind, record.canonical()
@@ -236,6 +281,42 @@ class Log:
                 seq, head = record.seq, record.hash
             self._store.after_commit(lambda: self._anchor_all(written))
         return written
+
+    def _sealing(self, head: int) -> State | None:
+        """The state to seal the next records after, a copy; ``None`` for a
+        log not sealed. A log is sealed from its first record or never.
+
+        :raises FiduciaryError: On a sealer for a log begun unsealed, or none
+            for a sealed one.
+        """
+        sealed = self._store_sealed() if head else self._sealer is not None
+        if sealed != (self._sealer is not None):
+            raise FiduciaryError(
+                f"log {self._log_id!r} is sealed: it needs the seal key ([service] seal_key)"
+                if sealed
+                else f"log {self._log_id!r} began without seals: it cannot be sealed now"
+            )
+        return self.state().copy() if sealed else None
+
+    def _store_sealed(self) -> bool:
+        if self._sealed is None:  # the first record never changes: read it once
+            first = next(iter(self._store.records(self._log_id)), None)
+            if first is None:
+                return False
+            self._sealed = Record.loads(first.data).seal is not None
+        return self._sealed
+
+    def _mandate(self, digest: str) -> tuple[str, str | None] | None:
+        found = self._store.document(digest)
+        if found is None or found[0] != "mandate":
+            return None
+        raw = fidu1.parse(found[1])
+        parent = raw.get("parent")
+        return str(raw["mandate_id"]), None if parent is None else str(parent["mandate_id"])
+
+    def _submitted(self, intake: int) -> bytes | None:
+        found = self._store.submissions([intake])
+        return found[0][1] if found else None
 
     def _anchor_all(self, records: Sequence[Record]) -> None:
         for record in records:
@@ -270,4 +351,5 @@ class Log:
         if problems:
             raise AnchorError("; ".join(problems))
         by_seq = {row.seq: row for row in rows}
-        return sum(1 for seq in unanchored if self._anchor(by_seq[seq]))
+        # the record itself, which carries a sealed log's seal for its memo
+        return sum(1 for seq in unanchored if self._anchor(Record.loads(by_seq[seq].data)))

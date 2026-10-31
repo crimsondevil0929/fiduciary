@@ -62,6 +62,7 @@ def evidence(
         runtime_key=service,
         chains=w.tmp / "chains",
         service=e.SERVICE,
+        sealer=w.sealer,
     )
     return dataclasses.replace(found, **changes)
 

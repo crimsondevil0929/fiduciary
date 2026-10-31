@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, ClassVar, Final
 
@@ -112,6 +112,27 @@ def check_schema(schema: object, path: str) -> None:
         raise MalformedError("type", f"{path}.enum", "must be an array")
 
 
+_ARGUMENT: Final = re.compile(r"\$\.[A-Za-z_][A-Za-z0-9_]{0,63}")
+_DIMENSION: Final = re.compile(r"[a-z][a-z0-9_]{0,31}")
+
+
+def _partitions(entry: Fields) -> dict[str, str]:
+    """A step's declared partitions: each dimension, other than the tenant,
+    labeled by one of the call's arguments."""
+    if not entry.has("partitions"):
+        return {}
+    found = {}
+    for dimension, path, source in entry.mapping("partitions", _DIMENSION):
+        if dimension == "tenant":
+            raise MalformedError("agreement", path, "the tenant is the binding's tenant field")
+        found[dimension] = fidu1.check_text(source, path, _ARGUMENT, "an argument, $.<name>")
+    if not found:
+        raise MalformedError(
+            "agreement", entry.path("partitions"), "is written only when it declares one"
+        )
+    return found
+
+
 def placeholders(statement: str) -> tuple[str, ...]:
     """The named placeholders of a statement, outside its string literals,
     sorted: ``:name``, as Interlock's SQLite substrate binds them, or
@@ -145,9 +166,13 @@ class Effect:
     ``$session.tenant`` or ``$session.trajectory``."""
     stated_rows: int | None
     after: tuple[str, ...]
+    partitions: Mapping[str, str] = field(default_factory=dict)
+    """The labels the effect declares beside its tenant, by dimension, each
+    from ``$.<argument>`` (amended in 1.4.0): what a mandate's
+    ``data.partitions`` with ``declared`` holds its rows to. Written only when set."""
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        found: dict[str, Any] = {
             "id": self.effect_id,
             "kind": self.kind,
             "table": self.table,
@@ -156,6 +181,9 @@ class Effect:
             "stated_rows": self.stated_rows,
             "after": list(self.after),
         }
+        if self.partitions:
+            found["partitions"] = dict(sorted(self.partitions.items()))
+        return found
 
     @property
     def statement_digest(self) -> str:
@@ -174,9 +202,11 @@ class Request:
     compensation: Mapping[str, Any] | None
     """``{"sink", "operation", "payload"}``, or ``None``."""
     after: tuple[str, ...]
+    partitions: Mapping[str, str] = field(default_factory=dict)
+    """As an effect's: the labels a window per partition counts it toward."""
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        found: dict[str, Any] = {
             "id": self.request_id,
             "sink": self.sink,
             "operation": self.operation,
@@ -184,6 +214,9 @@ class Request:
             "compensation": None if self.compensation is None else dict(self.compensation),
             "after": list(self.after),
         }
+        if self.partitions:
+            found["partitions"] = dict(sorted(self.partitions.items()))
+        return found
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -235,6 +268,7 @@ class ToolBinding(Document):
                 item,
                 path,
                 ("id", "kind", "table", "statement", "parameters", "stated_rows", "after"),
+                ("partitions",),
             )
             parameters = {
                 name: fidu1.check_text(
@@ -260,12 +294,16 @@ class ToolBinding(Document):
                     if entry.is_null("stated_rows")
                     else entry.integer("stated_rows"),
                     after=entry.strings("after", _EFFECT_ID, "an effect or request id"),
+                    partitions=_partitions(entry),
                 )
             )
         requests = []
         for path, item in fields.array("requests", MAX_ITEMS):
             entry = Fields(
-                item, path, ("id", "sink", "operation", "payload", "compensation", "after")
+                item,
+                path,
+                ("id", "sink", "operation", "payload", "compensation", "after"),
+                ("partitions",),
             )
             payload = entry.raw("payload")
             if not isinstance(payload, dict):
@@ -286,6 +324,7 @@ class ToolBinding(Document):
                     payload=payload,
                     compensation=compensation,
                     after=entry.strings("after", _EFFECT_ID, "an effect or request id"),
+                    partitions=_partitions(entry),
                 )
             )
         return {
@@ -353,8 +392,12 @@ class ToolBinding(Document):
                 )
             for name, source in effect.parameters.items():
                 self._check_source(source, f"{path}.parameters.{name}", arguments)
+            for dimension, source in effect.partitions.items():
+                self._check_source(source, f"{path}.partitions.{dimension}", arguments)
         for i, request in enumerate(self.requests):
             self._check_payload(request.payload, f"$.requests[{i}].payload", arguments)
+            for dimension, source in request.partitions.items():
+                self._check_source(source, f"$.requests[{i}].partitions.{dimension}", arguments)
             if request.compensation is not None:
                 self._check_payload(
                     request.compensation["payload"],

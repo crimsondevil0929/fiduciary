@@ -38,7 +38,8 @@ from fiduciary.authority import replay
 from fiduciary.documents import Record
 from fiduciary.exceptions import FiduciaryError
 from fiduciary.log import LOG_ID, check_anchors, parse_memo
-from fiduciary.store import PROJECTIONS, Store, fold
+from fiduciary.seals import Sealer, audience
+from fiduciary.store import PROJECTIONS, State, Store, fold
 
 __all__ = ["Report", "ordering_problems", "verify_store"]
 
@@ -78,6 +79,7 @@ def verify_store(
     ledger: Iterable[LedgerEntry] | None = None,
     require_anchors: bool = True,
     skew_seconds: int | None = None,
+    sealer: Sealer | None = None,
 ) -> Report:
     """Verify everything a store holds (module docstring).
 
@@ -87,6 +89,9 @@ def verify_store(
     :param require_anchors: Count a record no anchor names as a problem.
     :param skew_seconds: With the ledger, hold every record's instant to the
         ledger order of its anchor, within this many seconds (§9.4).
+    :param sealer: The seal key's: every record's seal is then held to whose
+        the record is (:mod:`fiduciary.seals`), which a sealed bundle's
+        verifier, holding only its own keys, cannot do.
     """
     problems: list[str] = []
     records: list[Record] = []
@@ -164,6 +169,8 @@ def verify_store(
                 f"the service"
             )
     problems.extend(replay(records, store, pinned=pinned, service_key=service_key))
+    if sealer is not None:
+        problems.extend(_seal_problems(records, stored, store, sealer))
     anchored = 0
     unanchored: tuple[int, ...] = ()
     if ledger is not None:
@@ -182,6 +189,37 @@ def verify_store(
         if require_anchors:
             problems.extend(f"record {seq}: has no anchor in the ledger" for seq in missing)
     return Report(tuple(problems), len(records), count, anchored, unanchored)
+
+
+def _seal_problems(
+    records: Sequence[Record],
+    stored: Mapping[str, tuple[str, bytes]],
+    store: Store,
+    sealer: Sealer,
+) -> list[str]:
+    """Each record's seal, made again from whose it is, after the state before it."""
+
+    def mandate(digest: str) -> tuple[str, str | None] | None:
+        held = stored.get(digest)
+        if held is None or held[0] != "mandate":
+            return None
+        raw = fidu1.parse(held[1])
+        parent = raw.get("parent")
+        return str(raw["mandate_id"]), None if parent is None else str(parent["mandate_id"])
+
+    if records and all(r.seal is None for r in records):
+        return ["the log is not sealed, though the seal key is set"]
+    intake = dict(store.intake())
+    problems = []
+    state = State()
+    for record in records:
+        whose = audience(record.kind, record.content, state, mandate, intake.get)
+        if record.seal is None:
+            problems.append(f"record {record.seq}: carries no seal, though the seal key is set")
+        elif record.seal != sealer.seal(record.log, record.seq, whose):
+            problems.append(f"record {record.seq}: its seal does not say whose it is")
+        state.apply(record)
+    return problems
 
 
 def ordering_problems(
