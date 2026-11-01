@@ -6,6 +6,46 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.6.0] - unreleased
+
+The fourth rung: a FHIR server, predicted and verified. Every new member is written only
+when it is used, so every mandate, binding, compiled policy, record, bundle and golden
+vector written before keeps its bytes. Requires interlock-escrow 1.4.0 and
+interlock-agentgov 1.2.0.
+
+### Added
+
+- **A tool's effect declares its undo** (`compensation`, F4-14): a statement in its
+  substrate's language that puts the write back (`void <table>`, `restore <table>` on a FHIR
+  server). The plan carries it as the effect's compensation. `Tool.insert/update/delete`
+  take `compensation=`.
+- **The healthcare pack runs on a FHIR server, predicted and verified** (Interlock's
+  loopback FHIR R4 server: the real REST protocol, versions, `If-Match`, search, one server
+  rule, an `AuditEvent` log). Orders and tasks are `MedicationRequest` and `Task`
+  resources; a bed resolves to its chart by search when an order is predicted. Scenario 2:
+  the EHR's encounter-stop rule fires on the write, the read-back catches it, and every
+  change is put back, the pharmacy task it opened marked `entered-in-error`; the receipt
+  says `compensated`. Scenario 4 adds a dose change raced by a nurse's edit: `412`, nothing
+  lands. Scenario 6 adds the administrator's `PUT` with the agent's token, the phantom
+  scenario 7 reconciles out of the EHR's `AuditEvent` log. Dispenses go to the pharmacy,
+  Schedule II held for a warrant.
+- **A compensated call** (F4-14): a plan written and put back (a read-back that was not the
+  prediction, a write that failed part way) is refused to the agent, told what was put back
+  in counts, and shown to the engine's observers with its diff and verdict.
+- **Overview**: healthcare is class V on FHIR R4, and the V rung is shipped: all four rungs
+  run in `fiduciary demo --domain all`. Two new counts: a commit refused at the measured
+  version (`412`), and a write read back and put back. Every pack's audit scenario shows
+  its system-of-record reconciliation.
+
+### Changed
+
+- **The SRE and coding-agent reconciliations expect only the receipts of writes to their
+  own system** (agentgov 1.2.0's scope): the cluster's audit log no longer counts the
+  requests to the cloud API as unobserved, nor the code host's log the requests to CI. Each
+  reconciliation records its unobserved and out-of-scope counts.
+- The console draws a permitted call stopped at its commit as not written (it was drawn as
+  denied by the gateway).
+
 ## [1.5.0] - 2026-10-31
 
 Plan-bound infrastructure, analyzers' word, and pinned checker packs.
