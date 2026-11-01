@@ -6,7 +6,9 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-### 1.5.0: plan-bound infrastructure, analyzers' word, and pinned checker packs
+## [1.5.0] - 2026-10-31
+
+Plan-bound infrastructure, analyzers' word, and pinned checker packs.
 
 Mandates for systems that cannot roll back, measured by their own planners. Every new
 member is written only when it is used, so every mandate, compiled policy, record, bundle
