@@ -34,7 +34,7 @@ INDUSTRIES: Final = (
         },
     },
     {"key": "healthcare", "class": "T"},
-    {"key": "sre", "class": "T", "note": "measures a mirror of the cluster, not the cluster"},
+    {"key": "sre", "class": "P", "substrate": "Kubernetes"},
     {"key": "supply-chain", "class": "T"},
     {"key": "saas", "class": "T"},
     {
@@ -72,8 +72,10 @@ LADDER: Final = (
         "name": "Plan-bound",
         "promise": "What was measured is the plan that was applied, and the apply refuses if "
         "the system has moved.",
-        "where": "Terraform saved plans, Kubernetes dry-run with version preconditions",
-        "shipped": False,
+        "where": "a Kubernetes API server's dry run, admission webhooks included, applied on the "
+        "resourceVersion measured; Terraform and OpenTofu saved plans, on the state's serial "
+        "(shipped)",
+        "shipped": True,
     },
     {
         "class": "V",
@@ -88,7 +90,7 @@ LADDER: Final = (
         "name": "Request-only",
         "promise": "The request was measured, judged and delivered exactly once; the effect "
         "itself is the vendor's signed word.",
-        "where": "every outbound request in every pack: Stripe, FHIR, EDI, the cluster API, email",
+        "where": "every outbound request in every pack: Stripe, FHIR, EDI, the cloud API, email",
         "shipped": True,
     },
 )

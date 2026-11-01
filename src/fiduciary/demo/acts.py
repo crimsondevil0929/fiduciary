@@ -67,6 +67,7 @@ from fiduciary.demo.world import (
     ORDERS,
     PRICING,
     SCOPE,
+    SEAL_KEY,
     SOURCES,
     STRIPE_SECRET_ENV,
     World,
@@ -76,6 +77,7 @@ from fiduciary.demo.world import (
 from fiduciary.documents import Mandate
 from fiduciary.exceptions import FiduciaryError
 from fiduciary.refines import refines
+from fiduciary.seals import Sealer
 
 __all__ = ["ACTS", "Run", "run_acts"]
 
@@ -1036,6 +1038,7 @@ def evidence(world: World) -> Evidence:
         chains=world.chains,
         outbox=world.outbox,
         service=world.signers["service"],
+        sealer=Sealer(SEAL_KEY),
     )
 
 

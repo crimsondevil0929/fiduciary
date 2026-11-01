@@ -922,15 +922,15 @@
       h("p", { class: "small" }, "Live Claude models (" + acc.models.join(", ") + ") in front of " + acc.domains.length + " unrelated domains on one interlock kernel: " + acc.domains.join("; ") + ". " + acc.plans.proposed + " plans proposed: " + acc.plans.committed + " committed, " + acc.plans.refused + " refused by a checker. $" + acc.metered_usd + " of model spend, metered by AgentGov."),
       h("p", { class: "small muted" }, acc.note + " Source: " + acc.source + ", generated " + acc.generated + " on interlock " + acc.interlock + "."));
     return h("section", { id: "overview" }, h("div", { class: "wrap" },
-      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Same engine, different nouns"), h("h2", null, "One consequence-control engine, six industries, on SQL and on Git"),
-        h("p", null, "Every industry below runs the same loop: stage the agent's change, measure what it actually did, check it, hold exceptions for a quorum, commit once, and prove it offline. Only the tables, the limits and the approvers change. Five industries stage in a SQL transaction; coding agents stage in a Git worktree and commit with a compare-and-swap of the branch. Fintech is where we started, not what the engine is.")),
+      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Same engine, different nouns"), h("h2", null, "One consequence-control engine, six industries, on SQL, Git and Kubernetes"),
+        h("p", null, "Every industry below runs the same loop: stage the agent's change, measure what it actually did, check it, hold exceptions for a quorum, commit once, and prove it offline. Only the tables, the limits and the approvers change. Four industries stage in a SQL transaction; coding agents stage in a Git worktree and commit with a compare-and-swap of the branch; cloud SRE stages plan-bound on a Kubernetes API server, measured by its own dry run and applied on the version measured. Fintech is where we started, not what the engine is.")),
       h("div", { class: "kpis ov" }, tiles.map(function (t) { return h("div", { class: "card kpi" }, h("div", { class: "label" }, t[0]), h("div", { class: "value tnum" }, t[1]), h("div", { class: "note" }, t[2]), h("span", { class: "layer-tag" }, t[3])); })),
       h("div", { class: "inds" }, cards),
       h("h3", { class: "ov-h" }, "What refused what, in this run"),
       h("p", { class: "small ink2" }, "Counted from the plans each industry's acts measured: how many plans each checker refused, which warrants formed, and whether the bundles verified offline. A zero means that checker refused nothing here, not that it was missing."),
       h("div", { class: "card pad" }, grid),
       h("h3", { class: "ov-h" }, "The measurement ladder"),
-      h("p", { class: "small ink2" }, "How strongly each kind of system can be measured. Every industry in this dashboard runs on class T, and their outbound requests on class R. Classes P and V are the substrate roadmap."),
+      h("p", { class: "small ink2" }, "How strongly each kind of system can be measured. Cloud SRE runs on class P, every other industry in this dashboard on class T, and their outbound requests on class R. Class V is the substrate roadmap."),
       ladder,
       matrixCard));
   }

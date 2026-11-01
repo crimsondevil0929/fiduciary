@@ -34,6 +34,7 @@ from typing import Any, Final
 
 from agentgov import BudgetManager, CognitivePolicy, GovernancePolicy, Unit
 from agentgov.receipts import CheckerRecord, ReceiptLog
+from interlock.checker_packs import CheckerPackError, PackPin, load_pack
 from interlock.invariants import (
     BlastRadius,
     ColumnValueGuard,
@@ -59,6 +60,7 @@ from interlock.outbound_checks import (
 )
 from interlock.receipts import ReceiptIssuer, checker_records
 from interlock.recovery import Channel, Directive, RecoveryPolicy, TripKind
+from interlock.sensors import SensorAttestation
 from interlock.types import Severity, canonical_hash
 from interlock.windows import (
     Measure,
@@ -373,7 +375,14 @@ def _describe(
 
     # -- the checkers ---------------------------------------------------------------
     checkers: list[list[Any]] = [
-        ["TruncationGuard", {}],
+        # The unmeasured values a mandate accepts only when it names some, so
+        # every policy compiled before keeps its description (1.5.0).
+        [
+            "TruncationGuard",
+            {"acknowledged_unknown": list(data.acknowledge_unknown)}
+            if data.acknowledge_unknown
+            else {},
+        ],
         ["NoSchemaChange", {}],
         ["BlastRadius", {"limit": data.max_rows}],
         ["TenantIsolation", {"max_tenants": data.max_tenants, "declared": data.declared_tenants}],
@@ -414,6 +423,10 @@ def _describe(
         checkers.append(["CrossEffectAgreement", rule.to_json()])
     for fact in data.facts:
         checkers.append(["FactAgreement", fact.to_json()])
+    for sensor in data.sensors:
+        checkers.append(["SensorAttestation", sensor.to_json()])
+    for pinned in data.checkers:
+        checkers.append(["CheckerPack", pinned.to_json()])
     if outbound.sinks:
         checkers.append(
             [
@@ -511,7 +524,7 @@ def _maximum(value: Any) -> Any:
 
 
 _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
-    "TruncationGuard": lambda a: TruncationGuard(),
+    "TruncationGuard": lambda a: TruncationGuard(a.get("acknowledged_unknown", ())),
     "NoSchemaChange": lambda a: NoSchemaChange(),
     "BlastRadius": lambda a: BlastRadius(a["limit"]),
     "TenantIsolation": lambda a: TenantIsolation(
@@ -552,6 +565,8 @@ _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
         exempt=list(a["exempt"]),
     ),
     "SinkAllowlist": lambda a: SinkAllowlist({s: list(ops) for s, ops in a["allowed"].items()}),
+    "SensorAttestation": lambda a: SensorAttestation(a["sensor"], a["keys"]),
+    "CheckerPack": lambda a: _pack_checker(a),
     "OutboundCount": lambda a: OutboundCount(
         a["max_per_plan"], per_sink=dict(a["per_sink"]) or None
     ),
@@ -584,6 +599,19 @@ SEALED_NOWHERE: Final = "sealed.invalid"
 """What a rule whose every tenant is sealed admits where it is sealed: a name
 RFC 2606 reserves, at which no address is, so it admits nothing until a child
 opens an entry (``fiduciary.sealing``)."""
+
+
+def _pack_checker(args: Mapping[str, Any]) -> InvariantChecker:
+    """A pinned pack's checker, if exactly the code pinned is installed.
+
+    :raises CompileError: If it is not, naming the pack, so a verifier
+        replaying the policy (V4) says which pack it needs.
+    """
+    try:
+        pack = load_pack(PackPin(args["module"], args["version"], args["digest"]))
+        return pack.checker(args["checker"], args["config"])
+    except CheckerPackError as exc:
+        raise CompileError([f"data.checkers[{args['module']}.{args['checker']}]: {exc}"]) from exc
 
 
 def _domains(args: Mapping[str, Any]) -> list[str]:

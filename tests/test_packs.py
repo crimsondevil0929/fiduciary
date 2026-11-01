@@ -18,7 +18,7 @@ from agentgov.interceptor import TokenUsage
 from fiduciary import cli
 from fiduciary.demo import DOMAINS, Live, Outcome, run
 from fiduciary.demo.overview import ACCEPTANCE, overview
-from fiduciary.demo.packs import PACKS, coding_agent, healthcare, saas, sre, supply_chain
+from fiduciary.demo.packs import PACKS, coding_agent, healthcare, saas, supply_chain
 from fiduciary.demo.packs.kit import PackGateway
 
 
@@ -89,15 +89,37 @@ def test_healthcare(stack: Outcome) -> None:
 
 
 def test_sre(stack: Outcome) -> None:
+    """On Kubernetes, plan-bound: the API server's dry run measures the
+    webhook's 60 replicas and the forced replacement, the policy analyzer
+    signs every diff, and the cluster's audit log reconciles (1.5.0)."""
+    (queue,) = _act(stack, "sre", "queue")["calls"]
+    assert queue["outcome"] == "committed"
     (cascade,) = _act(stack, "sre", "cascade")["calls"]
     m = cascade["measured"]
-    assert m["tables"] == {"deployments": 1, "pods": 56}
-    assert {"blast_radius", "cross_effect_agreement", "rate_window"} <= _blocking(cascade)
+    assert m["tables"] == {"deployments": 1}
+    assert {
+        "meter",
+        "rate_window",
+        "sensor_attestation",
+        "tenant_drawdown_guard",
+    } <= _blocking(cascade)
     (replace,) = _act(stack, "sre", "replace")["calls"]
-    assert _blocking(replace) == {"no_delete"}
-    assert replace["measured"]["tables"] == {"db_instances": 2, "node_groups": 1}
+    assert _blocking(replace) == {"no_delete", "sensor_attestation"}
+    # one object, deleted and created again: no_delete sees the deletion
+    assert replace["measured"]["tables"] == {"statefulsets": 1}
     fleet = _act(stack, "sre", "fleet")
     assert (fleet["sessions"], fleet["committed"]) == (5, 3)
+    audit = _act(stack, "sre", "audit")
+    reconciled = audit["reconciliation"]
+    assert (reconciled["matched"], reconciled["phantom"]) == (4, 1)
+    assert reconciled["phantoms"] == ["patch deployments/staging/auth"]
+    assert (stack.root / "sre" / reconciled["export"]).is_file()
+    receipts = [
+        json.loads(line)
+        for line in (stack.root / "sre" / "receipts.jsonl").read_text().splitlines()
+    ]
+    measured = {r["coverage"].get("measurement", "transactional") for r in receipts}
+    assert measured == {"plan-bound", "request-only"}
 
 
 def test_supply_chain(stack: Outcome) -> None:
@@ -160,7 +182,7 @@ def test_every_audit_finds_no_planted_value_and_names_the_break_glass_act(stack:
             assert verdict["scan"]["planted"]["rows"] > 0 and verdict["scan"]["planted"]["secrets"]
         assert audit["labels"]["partition"] == pack.partition
         attestation = _page(stack, key)["attestations"]["after"]
-        if pack.substrate is not None:
+        if "hotfix" in pack.titles:
             # The administrator's hotfix is a plan, not an operator act (test_coding_agent).
             assert attestation["verdict"]["status"] == "AMBIENT AUTHORITY DETECTED", key
             assert any("not a pinned tool's call" in f for f in after["findings"]), key
@@ -205,7 +227,10 @@ def test_the_overview_counts_only_what_ran(stack: Outcome) -> None:
     assert rows["coding-agent"]["ran"] is ("coding-agent" in PACKS)
     assert rows["coding-agent"]["substrate"] == "Git" and rows["saas"]["substrate"] == "SQLite"
     assert not any(r.get("planned") for r in found["industries"])
-    assert rows["sre"]["note"] and "mirror" in rows["sre"]["note"]
+    assert (rows["sre"]["class"], rows["sre"]["substrate"]) == ("P", "Kubernetes")
+    assert not rows["sre"].get("note")
+    ladder = {rung["class"]: rung["shipped"] for rung in found["ladder"]}
+    assert ladder == {"T": True, "P": True, "V": False, "R": True}
     engine = {k: rows[k]["engine"] for k in ("fintech", *PACKS)}
     assert engine["fintech"]["rate_window"] == 45  # every fan-out session, not the sample
     assert engine["healthcare"]["fact_agreement"] == 1
@@ -322,7 +347,7 @@ def test_each_pack_names_shipped_frameworks_and_distinct_parties() -> None:
 
 SIGNATURE: dict[str, tuple[str, dict[str, Any]]] = {
     "healthcare": ("discontinue_order", {"order_id": healthcare.first_order(3)}),
-    "sre": ("scale_deployment", {"deployment_id": sre.deployment(0, "api"), "replicas": 6}),
+    "sre": ("scale_deployment", {"deployment": "api", "replicas": 6}),
     "supply-chain": (
         "set_reorder_point",
         {"reorder_point_id": supply_chain.reorder_point(0, "A-1001"), "point": 500},
@@ -439,3 +464,35 @@ def test_the_packs_live_acts_hold_to_their_budget_together(stack: Outcome, tmp_p
     spent = Decimal(pages[0]["demo"]["model"]["metered"])
     assert spent == Decimal("0.0078") and budget - spent < turn_floor("claude-opus-5-5")
     assert len(client.messages.requests) == 1
+
+
+def test_every_demo_directory_exports_both_formats_from_the_command_line(stack: Outcome) -> None:
+    """``fiduciary export-bundle``, standard and ``--sealed``, from each
+    deployment the demo writes: its interlock.toml registers the keys that
+    sign its operator log, and its log is sealed (1.5.0)."""
+    for directory in [stack.root, *(stack.root / key for key in PACKS)]:
+        mandate = json.loads((directory / "mandate.json").read_text())["mandate_id"]
+        for sealed in (False, True):
+            out = directory / ("cli-sealed.fidb" if sealed else "cli.fidb")
+            argv = [
+                "--config",
+                str(directory / "fiduciary.toml"),
+                "export-bundle",
+                "--mandate",
+                mandate,
+                "--ledger-key",
+                str(directory / "keys" / "ledger-checkpoints.key"),
+                "--out",
+                str(out),
+                *(["--sealed"] if sealed else []),
+            ]
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert cli.main(argv) == 0, (directory.name, sealed)
+            assert out.stat().st_size > 0
+
+
+def test_the_coding_agents_pushes_reconcile_with_its_receipts(stack: Outcome) -> None:
+    reconciled = _act(stack, "coding-agent", "audit")["reconciliation"]
+    assert (reconciled["matched"], reconciled["phantom"]) == (3, 1)
+    assert (stack.root / "coding-agent" / reconciled["export"]).is_file()
+    assert "--format github-audit-json" in reconciled["command"]

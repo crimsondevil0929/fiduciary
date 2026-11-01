@@ -6,6 +6,56 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-31
+
+Plan-bound infrastructure, analyzers' word, and pinned checker packs.
+
+Mandates for systems that cannot roll back, measured by their own planners. Every new
+member is written only when it is used, so every mandate, compiled policy, record, bundle
+and golden vector written before keeps its bytes. Requires interlock-escrow 1.3.0 and
+interlock-agentgov 1.1.1.
+
+### Added
+
+- **`apply`** (F4-12b, F4-14): a tool binding's effect may be in a plan-bound substrate's
+  own language (a Kubernetes manifest or patch, a Terraform input), and a mandate may allow
+  `apply` on a table. What it does is judged on the measured diff, so a deletion it measures
+  still needs `delete`.
+- **`data.sensors`** (F4-12b): the analyzers whose clean result, signed by a key the mandate
+  pins and bound to the exact diff the stage measured, every plan needs before it commits
+  (Interlock's `SensorAttestation`). The deployment runs them as `[sensors.<name>]` in
+  `interlock.toml`.
+- **`data.checkers`: pinned checker packs** (F4-12b, F4-16a): a checker of a pack pinned by
+  module, version and the digest of its code, as a tool binding is pinned by its document's.
+  Compilation, and a verifier's replay of the policy (V4), refuse a pack that is missing,
+  another version, or not the code pinned, and say which.
+- **`data.acknowledge_unknown`** (F4-12b): values a plan-bound substrate knows only after
+  the apply, accepted unmeasured; without one, such a value refuses the plan.
+- **The Cloud SRE pack runs on Kubernetes, plan-bound.** Every workload change is staged on
+  a cluster (Interlock's loopback API server: the real wire protocol, admission webhooks
+  called over HTTP, no credentials): the API server's dry run measures the mutating
+  webhook's 60 replicas, and the volume resize that forces the orders database's
+  replacement as a deletion `NoDelete` refuses. An admission-policy analyzer
+  (`fiduciary.demo.analyzer`), run as a sensor in its own process with its own key, signs
+  every diff; the mandate pins its key. Receipts say `plan-bound`. Security groups stay in
+  the cloud account, as held requests.
+- **Audit exports, reconciled.** The SRE deployment keeps the cluster's audit log
+  (`audit/kubernetes-audit.jsonl`) and the coding-agent deployment the code host's log of
+  pushes (`audit/github-audit.json`); act 7 reconciles each against the receipts, and
+  `agentgov reconcile-actions` runs on either out of the box. Each names its phantom: the
+  administrator's `kubectl` with the remediator's shared token, and the teammate's push
+  around the queue.
+
+### Changed
+
+- **Every demo deployment opens from the command line**: its `interlock.toml` registers the
+  keys that sign its operator log (`[operators.keys]`), and its log is sealed, so
+  `fiduciary --config <dir>/fiduciary.toml export-bundle` exits 0, standard and `--sealed`,
+  on each.
+- The SRE pack's tools are `scale_deployment`, `resize_database_volume` and `open_port`;
+  its acts 3 and 6 are the database's forced replacement and an administrator working
+  around the agent twice (a break-glass release, and a `kubectl` the bundle cannot see).
+
 ## [1.4.0] - 2026-10-31
 
 Any unit, any partition, one customer's bundle.

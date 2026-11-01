@@ -618,6 +618,22 @@ version 1, as interlock's configuration pins `[operators.keys]`.
     salted, `fiduciary.sealing`), and grants nothing from it. A child names its own entry
     in `tenant_domains` and opens it under its parent's seal in `openings` (a salt and the
     sibling hashes). No mandate names another tenant's entry.
+- **F4-12b.** *Added in 1.5.0.* Three more members, each written only when used and
+  malformed when empty, and one more operation:
+  - `data.tables.<table>` may allow `apply`: an effect in a plan-bound substrate's own
+    statement language (a Kubernetes manifest or patch, a Terraform input). What it does
+    is judged on the measured diff, so a deletion it measures still needs `delete`.
+  - `data.sensors[]`: `{sensor, keys}`, an analyzer whose clean result, signed by one of
+    `keys` (Ed25519 public keys only: a mandate is a public document) and bound to the
+    measured diff's hash, every plan needs before it commits. Sorted by `sensor`.
+  - `data.checkers[]`: `{module, version, digest, checker, config}`, one checker of a
+    pinned checker pack (F4-16a), with its configuration, a JSON object.
+  - `data.acknowledge_unknown`: `<table>.<column>` names whose values a plan-bound
+    substrate knows only after the apply, accepted unmeasured. Without one, such a value
+    refuses the plan (`TruncationGuard`).
+
+  A child keeps every parent sensor, signed by a subset of the parent's keys; every parent
+  checker, as pinned; and acknowledges no value its parent does not.
 
 ## 4.3 Tool binding
 
@@ -672,6 +688,9 @@ parameters only; the statements are the developer's.
   - A statement names its parameters as its substrate's driver binds them: `:name` for
     SQLite, `%(name)s` for psycopg on PostgreSQL. A statement uses one style, never both, and
     never a positional `?`. A binding is therefore written for one database.
+  - *Amended in 1.5.0.* An effect's `kind` may be `apply`: its statement is in a
+    plan-bound substrate's own language (`scale deployments :namespace :name :replicas`,
+    `set 'nodes' :value`), with `:name` parameters, and the substrate vets it.
   - `tenant: "session"` stamps every effect's `tenant_id` with the session's tenant. With
     `data.declared_tenants`, that refuses a row of any other tenant
     (`TenantIsolation(declared=True)`).
@@ -684,6 +703,13 @@ parameters only; the statements are the developer's.
   changes its digest, and the session refuses the binding until a mandate version pins the
   new digest. A code change to a tool is a change of authority, so it goes through the same
   quorum.
+- **F4-16a.** *Added in 1.5.0.* A mandate pins each checker pack it uses
+  (`data.checkers[]`) as it pins a tool binding: by module, version and the SHA-256 of the
+  pack's code (`interlock.checker_packs.pack_digest`, over every file of the package). A
+  checker of a pack runs only if exactly that code is installed: compilation, and so a
+  verifier's replay of the policy (V4), refuses otherwise, naming the pack and whether it is
+  missing, another version, or not the code pinned. A change to a pack's code is a change of
+  authority.
 
 ## 4.4 Ticket
 
@@ -1069,7 +1095,8 @@ first. `deployment` is a snapshot of:
   - a table the substrate does not observe;
   - a sink or operation the installed registry lacks;
   - a pinned tool binding with no matching document;
-  - a window name longer than 63 characters once namespaced.
+  - a window name longer than 63 characters once namespaced;
+  - *(1.5.0)* a pinned checker pack not installed as pinned (F4-16a).
 
   Nothing is bound.
 
@@ -1081,7 +1108,7 @@ fiduciary adds three checkers of its own (§6.3).
 
 | Compiled | Constructed as | When |
 |---|---|---|
-| `TruncationGuard()` | — | always |
+| `TruncationGuard()` | `acknowledged_unknown` from `data.acknowledge_unknown`, only when it names some (1.5.0) | always |
 | `NoSchemaChange()` | — | always |
 | `BlastRadius(max_rows)` | `data.max_rows` | always |
 | `TenantIsolation(max_tenants, declared=…)` | `data.max_tenants`, `data.declared_tenants` | always |
@@ -1095,6 +1122,8 @@ fiduciary adds three checkers of its own (§6.3).
 | `Meter(ledger, measure, per_plan, scope=subject)`; the engine adds its `MeterCheck` | each `budgets` entry (amended in 1.4.0), held on the lineage's subject in that unit's ledger | per unit |
 | `CrossEffectAgreement(sink, operation, field=, table=, column=, measure=, key=, also=)` | `data.agreements` | per rule; `also` only when the rule names it (interlock 1.2.0) |
 | `FactAgreement(kind, field=, table=, column=, key=, exempt=)` | `data.facts` | per rule |
+| `SensorAttestation(sensor, keys)` (1.5.0) | `data.sensors` | per sensor |
+| a pinned pack's checker, `load_pack(PackPin(module, version, digest)).checker(checker, config)` (1.5.0) | `data.checkers` | per checker |
 | `SinkAllowlist({sink: operations})` | `outbound.sinks` | when any sink is mandated |
 | `OutboundCount(max_per_plan, per_sink=)` | `outbound` | when bounded |
 | `PayloadAmountCap(sink, operation, field=, maximum=, per=, currency_field=)` | `outbound.caps` | per cap |
@@ -2355,6 +2384,10 @@ beside `fidb/1`. New vectors cover each addition: two mandates in `valid.json`, 
 `v10-own-record-withheld` among the golden bundles, and `seals.json`, a sealed log's
 records with their seals, anchors and one bundle's keys.
 
+*Amended in 1.5.0.* The same rule holds for 1.5.0's members (F4-12b): `apply`, sensors,
+pinned checker packs and acknowledged unknowns are written only when used, so every earlier
+document, compiled description, vector and bundle is unchanged.
+
 **The upstream gaps (§12).** Each is released: U-1 (crimsondevil0929/interlock#20), U-2,
 U-3, U-4 and U-6 (crimsondevil0929/interlock#21) in interlock 1.0.3, and U-5
 (crimsondevil0929/agentgov#8) in agentgov 1.0.1. Fiduciary 1.0.0 required interlock 1.0.2
@@ -2431,6 +2464,8 @@ SQLite and on PostgreSQL. The test kinds:
 | F4-1 to F4-6: the charter | 1 | golden; property: adoption and suspension quorums | Implemented. `test_authority.py`, `test_vectors.py` |
 | F4-7 to F4-12: the mandate schema | 1 | golden; strict parsing | Implemented. `test_documents.py`, `test_vectors.py` |
 | F4-13 to F4-16: tool bindings | 1, 4 | golden; the adversarial agent suite | Implemented. `test_tools.py`, `test_adversarial_agent.py` |
+| F4-12b: `apply`, sensors, pinned checker packs, acknowledged unknowns (1.5.0) | 4, 6 | written only when used; a child only narrows them; each compiles | Implemented. `test_wave2_members.py`, `test_packs.py` (the SRE pack, on Kubernetes) |
+| F4-16a: checker packs pinned by code digest; V4 refuses a pack missing or changed (1.5.0) | 4, 9 | a tampered and a missing pack | Implemented. `test_wave2_members.py` |
 | F4-17 to F4-20: tickets | 3 | evidence tests per class; narrowing tests | Implemented. `test_tickets_warrants.py` |
 | F4-21 to F4-25: approvals and warrants | 1, 3 | golden; the quorum property test | Implemented. `test_escalation_quorum.py`, `test_decide.py` |
 | F4-26, F4-27: the log and its anchors | 1 | tamper: truncation and rewriting; the anchor check | Implemented. `test_tamper.py`, `test_security_audit.py` |

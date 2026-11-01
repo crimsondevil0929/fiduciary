@@ -104,7 +104,18 @@ WHEN: Final[Mapping[str, tuple[str, ...]]] = {
 }
 DROP_CAUSES: Final = ("depends", "inadmissible", "refused", "unevaluated")
 TRIP_KINDS: Final = ("budget", "halted", "refused", "runaway", "thrashing")
-OPERATIONS: Final = ("delete", "insert", "update")
+OPERATIONS: Final = ("apply", "delete", "insert", "update")
+"""What a plan may do to a table. ``apply`` (1.5.0) is a statement in a
+plan-bound substrate's own language (a manifest, an input): what it does is
+judged on the measured diff, so a deletion it measures still needs
+``delete``."""
+SENSOR: Final = re.compile(r"[a-z][a-z0-9_-]{0,62}")
+"""A sensor's name, as ``[sensors.<name>]`` registers it."""
+SENSOR_KEY: Final = re.compile(r"ed25519:[0-9a-f]{64}")
+"""An analyzer's public key. A mandate is a public document, so it names
+only public halves: never a shared secret."""
+PACK_MODULE: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*")
+QUALIFIED: Final = re.compile(r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*")
 TOOL: Final = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 SINK_NAME: Final = TOOL
 OPERATION: Final = re.compile(r"[a-z][a-z0-9_.-]{0,126}")
@@ -466,6 +477,48 @@ class FactRule:
 
 
 @dataclass(frozen=True, slots=True)
+class SensorRule:
+    """``data.sensors[]`` (1.5.0): an analyzer whose clean result, signed by
+    one of ``keys``, each measured diff needs."""
+
+    sensor: str
+    keys: tuple[str, ...]
+
+    @property
+    def identity(self) -> tuple[str, ...]:
+        return (self.sensor,)
+
+    def to_json(self) -> dict[str, Any]:
+        return {"sensor": self.sensor, "keys": list(self.keys)}
+
+
+@dataclass(frozen=True, slots=True)
+class PackChecker:
+    """``data.checkers[]`` (1.5.0): one checker of a pinned checker pack,
+    with its configuration. The pack is pinned by module, version and the
+    digest of its code, as a tool binding is pinned by its document's."""
+
+    module: str
+    version: str
+    digest: str
+    checker: str
+    config: Mapping[str, Any]
+
+    @property
+    def identity(self) -> tuple[str, ...]:
+        return (self.module, self.checker, fidu1.canonical(dict(self.config)).decode("utf-8"))
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "module": self.module,
+            "version": self.version,
+            "digest": self.digest,
+            "checker": self.checker,
+            "config": dict(self.config),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Data:
     tables: Mapping[str, tuple[str, ...]]
     """Each table the plans may write, and the operations they may make on it."""
@@ -484,6 +537,14 @@ class Data:
     """Which tenants a receipt names: every one its plan touched, or, when
     ``"declared"``, only those the plan declares, the rest counted (1.4).
     Written only when ``"declared"``."""
+    sensors: tuple[SensorRule, ...] = ()
+    """The analyzers whose clean, signed result on each measured diff a plan
+    needs before it commits (1.5.0). Written only when set."""
+    checkers: tuple[PackChecker, ...] = ()
+    """Checkers of pinned checker packs (1.5.0). Written only when set."""
+    acknowledge_unknown: tuple[str, ...] = ()
+    """``<table>.<column>`` names whose values a plan-bound substrate knows
+    only after the apply, accepted unmeasured (1.5.0). Written only when set."""
 
     def to_json(self) -> dict[str, Any]:
         found = self._json()
@@ -491,6 +552,12 @@ class Data:
             found["partitions"] = {d: r.to_json() for d, r in sorted(self.partitions.items())}
         if self.receipt_tenants != "touched":
             found["receipt_tenants"] = self.receipt_tenants
+        if self.sensors:
+            found["sensors"] = [r.to_json() for r in self.sensors]
+        if self.checkers:
+            found["checkers"] = [c.to_json() for c in self.checkers]
+        if self.acknowledge_unknown:
+            found["acknowledge_unknown"] = list(self.acknowledge_unknown)
         return found
 
     def _json(self) -> dict[str, Any]:
@@ -1004,7 +1071,11 @@ class Mandate(Document):
                 fields.object("governance", ("max_calls", "seconds", "fleet_velocity", "cognitive"))
             ),
             "data": _read_data(
-                fields.object("data", _DATA_FIELDS, ("partitions", "receipt_tenants"))
+                fields.object(
+                    "data",
+                    _DATA_FIELDS,
+                    ("partitions", "receipt_tenants", "sensors", "checkers", "acknowledge_unknown"),
+                )
             ),
             "outbound": _read_outbound(fields.object("outbound", _OUTBOUND_FIELDS)),
             "windows": _read_windows(fields),
@@ -1193,7 +1264,9 @@ def _read_governance(fields: Fields) -> Governance:
 def _read_data(fields: Fields) -> Data:
     tables: dict[str, tuple[str, ...]] = {}
     for table, path, ops in fields.mapping("tables", IDENTIFIER):
-        operations = check_strings(ops, path, fidu1.one_of(OPERATIONS), "insert, update or delete")
+        operations = check_strings(
+            ops, path, fidu1.one_of(OPERATIONS), "apply, insert, update or delete"
+        )
         if not operations:
             raise MalformedError("agreement", path, "allows no operation: leave the table out")
         tables[table] = operations
@@ -1284,6 +1357,45 @@ def _read_data(fields: Fields) -> Data:
                 entry.strings("exempt", fidu1.TEXT),
             )
         )
+    sensors = []
+    if fields.has("sensors"):
+        for path, item in fields.array("sensors"):
+            entry = Fields(item, path, ("sensor", "keys"))
+            keys = entry.strings("keys", SENSOR_KEY, "an Ed25519 public key, ed25519:<hex>")
+            if not keys:
+                raise MalformedError("agreement", entry.path("keys"), "names no key")
+            sensors.append(SensorRule(entry.text("sensor", SENSOR), keys))
+        if not sensors:
+            raise MalformedError(
+                "agreement", fields.path("sensors"), "is written only when it holds one"
+            )
+    checkers = []
+    if fields.has("checkers"):
+        for path, item in fields.array("checkers"):
+            entry = Fields(item, path, ("module", "version", "digest", "checker", "config"))
+            config = entry.raw("config")
+            if not isinstance(config, dict):
+                raise MalformedError("agreement", entry.path("config"), "is a JSON object")
+            checkers.append(
+                PackChecker(
+                    entry.text("module", PACK_MODULE),
+                    entry.text("version", fidu1.TEXT),
+                    entry.text("digest", fidu1.HASH),
+                    entry.text("checker", IDENTIFIER),
+                    config,
+                )
+            )
+        if not checkers:
+            raise MalformedError(
+                "agreement", fields.path("checkers"), "is written only when it holds one"
+            )
+    acknowledged: tuple[str, ...] = ()
+    if fields.has("acknowledge_unknown"):
+        acknowledged = fields.strings("acknowledge_unknown", QUALIFIED, "a table.column")
+        if not acknowledged:
+            raise MalformedError(
+                "agreement", fields.path("acknowledge_unknown"), "is written only when it holds one"
+            )
     return Data(
         tables=tables,
         tenants=tenants,
@@ -1296,6 +1408,9 @@ def _read_data(fields: Fields) -> Data:
         facts=sorted_by(facts, lambda f: f.identity, fields.path("facts")),
         partitions=partitions,
         receipt_tenants=receipt_tenants,
+        sensors=sorted_by(sensors, lambda r: r.identity, fields.path("sensors")),
+        checkers=sorted_by(checkers, lambda c: c.identity, fields.path("checkers")),
+        acknowledge_unknown=acknowledged,
     )
 
 

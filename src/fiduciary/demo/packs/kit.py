@@ -177,6 +177,9 @@ class Pack:
     budgets: Callable[[], dict[str, Any]] | None = None
     """The root mandate's ``budgets``: what it conserves in other units, each
     in an AgentGov ledger of that unit the deployment opens."""
+    sensors: Callable[[Path], tuple[Any, ...]] | None = None
+    """The deployment's analyzers, given its root (1.5.0): each is shown
+    every diff a stage measures, and signs what it finds."""
 
 
 # --------------------------------------------------------------------------
@@ -594,7 +597,21 @@ def interlock_toml(root: Path, pack: Pack, back_office: Path) -> str:
                 f"references = {json.dumps(list(source.references))}\nfields = [{fields}]\n"
             )
         inbox += f'[inbox.keys]\ninbox = "{key_spec(load_key(key).public_key())}"\n'
-    return head + sinks + inbox
+    return head + sinks + inbox + operators_toml(root, pack.operator)
+
+
+def operators_toml(root: Path, operator: str) -> str:
+    """``[operators]``: the operator log, and the keys that sign it: the
+    executor's (the service's, as ``fiduciary``) and the declared break-glass
+    holder's. With them, ``fiduciary export-bundle`` reads the log a
+    break-glass act wrote (1.5.0)."""
+    keys = root / "keys"
+    service = key_spec(load_key(keys / "service.key").public_key())
+    held = key_spec(load_key(keys / f"{operator}.key").public_key())
+    return (
+        f"[operators]\nlog = {_toml(root / 'operators.jsonl')}\n"
+        f'[operators.keys]\nfiduciary = "{service}"\n{json.dumps(operator)} = "{held}"\n'
+    )
 
 
 def fiduciary_toml(
@@ -658,18 +675,23 @@ def _write_config(world: PackWorld) -> None:
             charter=world.charter.digest,
             tools=tools,
             units=world.deployment.units,
-            sealed=world.spec.seal_key is not None,
+            sealed=True,
         )
     )
 
 
+def seal_key(pack: Pack) -> bytes:
+    """The pack's seal secret: its own, or one derived from its key. Every
+    demo log is sealed (1.5.0), so ``fiduciary export-bundle`` writes either
+    format, ``--sealed`` too, from any deployment the demo writes."""
+    return pack.seal_key or hashlib.sha256(b"fiduciary demo seal\n" + pack.key.encode()).digest()
+
+
 def _write_seal_key(root: Path, pack: Pack) -> None:
     """``keys/seal.key``, the pack's seal secret in hex, readable by its owner only."""
-    if pack.seal_key is None:
-        return
     path = root / "keys" / "seal.key"
     path.parent.mkdir(exist_ok=True)
-    path.write_text(pack.seal_key.hex() + "\n")
+    path.write_text(seal_key(pack).hex() + "\n")
     path.chmod(0o600)
 
 
@@ -699,11 +721,14 @@ def restore_config(root: Path, pack: Pack) -> list[str]:
     tools = _write_tools(root, bindings)
     charter = (root / "charter.digest").read_text().strip()
     units = {u: b["places"] for u, b in (pack.budgets() if pack.budgets else {}).items()}
-    _write_seal_key(root, pack)
+    # A recorded log is sealed if it was written sealed: its seal key says so.
+    # One written before every demo log was sealed (1.5.0) stays unsealed.
+    sealed = (root / "keys" / "seal.key").exists()
+    if not sealed and pack.seal_key is not None:
+        _write_seal_key(root, pack)
+        sealed = True
     (root / "fiduciary.toml").write_text(
-        fiduciary_toml(
-            root, charter=charter, tools=tools, units=units, sealed=pack.seal_key is not None
-        )
+        fiduciary_toml(root, charter=charter, tools=tools, units=units, sealed=sealed)
     )
     return ["interlock.toml", *(f"tools/{t.name}" for t in tools), "fiduciary.toml"]
 
@@ -748,6 +773,9 @@ def build(root: Path, pack: Pack) -> PackWorld:
     substrate: Callable[[], ShadowSubstrate]
     if pack.substrate is not None:
         substrate, system = pack.substrate(root, back_office)
+        stop = getattr(system, "close", None)
+        if callable(stop):
+            closers.append(stop)
     else:
         substrate = lambda: SqliteSubstrate(str(back_office), tables=specs)  # noqa: E731
 
@@ -774,8 +802,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
 
     store = SqliteStore(root / "fiduciary.db")
     closers.append(store.close)
-    sealer = None if pack.seal_key is None else Sealer(pack.seal_key)
-    log = Log(store, signers["service"], ledger=governor, sealer=sealer)
+    log = Log(store, signers["service"], ledger=governor, sealer=Sealer(seal_key(pack)))
     charter = Charter.from_json(
         {
             "v": "FIDU1",
@@ -822,6 +849,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
         if pack.sources
         else None,
         ledgers=ledgers,
+        sensors=pack.sensors(root) if pack.sensors is not None else (),
     )
     closers.append(binder.close)
     service = signers["service"].public_key()
@@ -1271,7 +1299,7 @@ def evidence(world: PackWorld) -> Evidence:
         chains=world.chains,
         outbox=world.outbox,
         service=world.signers["service"],
-        sealer=None if pack.seal_key is None else Sealer(pack.seal_key),
+        sealer=Sealer(seal_key(pack)),
     )
 
 
