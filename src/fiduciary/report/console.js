@@ -320,6 +320,10 @@
     var m = c.measured;
     if (!m) {
       if (c.outcome === "served") return h("div", { class: "outcome good" }, icon("check"), "Served: read-only call, metered on the ledger");
+      // Permitted, and stopped before a measure was recorded: a conflict at
+      // the commit (a moved branch, a 412), or a stage that never opened.
+      if (c.gateway && c.gateway.decision === "PERMIT") return h("div", null, h("div", { class: "outcome good" }, icon("shield"), "NOT WRITTEN · " + (c.outcome === "error" ? "stopped at the commit; nothing of it landed" : c.outcome)),
+        c.feedback ? h("pre", { class: "small", style: "margin-top:6px;white-space:pre-wrap" }, c.feedback) : null);
       return h("div", { class: "outcome bad" }, icon("x"), "Not sent: denied by the gateway");
     }
     var kids = [];
@@ -349,18 +353,6 @@
       x.model.answer ? h("details", { open: true }, h("summary", null, "Model's final reply"), h("pre", null, x.model.answer),
         h("p", { class: "small muted", style: "margin-top:6px" }, "The agent only sees that the plan lowered orders.total by more than the 30% limit. It cannot see the repricing trigger that turned a 10% discount into a 90% drop, so the limit looks wrong from its side.")) : null) : null;
     var right = calls.map(function (c) { return h("div", { class: "callrow" }, h("div", { class: "line", style: "margin-bottom:6px" }, h("span", { class: "tool" }, c.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(c.arguments))), measuredBlock(c)); });
-    if (x.read_back) {
-      var rb = x.read_back;
-      right.push(h("div", { class: "callrow" }, h("div", { class: "line" }, pill("READ-BACK", "warn"), h("span", { class: "small" }, "the chart read again after the write, and held to the prediction")),
-        h("p", { class: "small ink2", style: "margin-top:4px" }, "The prediction was one order, stopped. What the EHR held after the write was more: the rule had stopped the encounter's other orders and cancelled their doses. Every record the write changed was put back, conditional on the version read back, and the task the rule opened was marked entered-in-error, never deleted."),
-        table(["", "Active orders", "Doses scheduled", "Marked entered-in-error"], [["before", String(rb.before.active_orders), String(rb.before.scheduled_doses), String(rb.before.voided)], ["after", String(rb.after.active_orders), String(rb.after.scheduled_doses), String(rb.after.voided)]])));
-    }
-    if (x.race) {
-      var rc = x.race;
-      right.push(h("div", { class: "callrow" }, h("div", { class: "line" }, pill("NURSE", "warn"), h("span", { class: "small" }, rc.edited_by + " annotated order " + rc.order + " after the stage read it at version " + rc.measured_at)),
-        h("div", { class: "outcome good" }, icon("shield"), (rc.status ? "WRITE REFUSED · " + rc.status + " Precondition Failed" : "WRITE REFUSED") + (rc.landed ? "" : " · the change is not on the chart")),
-        h("p", { class: "small ink2" }, "Each update carries If-Match on the version the stage read. The nurse's edit moved the order on, so the EHR refused the write, and nothing of the plan was written. The nurse's note stands.")));
-    }
     var permitted = calls.filter(function (c) { return c.gateway && c.gateway.decision === "PERMIT"; }).length;
     var committed = calls.filter(function (c) { return c.outcome === "committed"; }).length;
     var refused = calls.filter(function (c) { return c.outcome === "refused"; }).length;
@@ -617,7 +609,7 @@
     var parts = Object.keys(m.tenants);
     var kids = [];
     var git = PACK.nouns.substrate === "Git", rowsName = PACK.nouns.rows || "rows", tablesName = PACK.nouns.tables || "tables";
-    var held = PACK.nouns.state || (git ? "every branch" : "database");
+    var held = PACK.nouns.state || (git ? "every branch" : "database"), fhir = PACK.nouns.state === "chart";
     if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " " + (git ? "file(s)" : rowsName) + ", " + m.outbound.length + " outbound request(s) queued"));
     else if (m.compensated) kids.push(h("div", { class: "outcome good" }, icon("shield"), "WRITTEN · READ BACK · PUT BACK · nothing of it stands" + (c.unchanged ? " · " + held + " as it was" : "")));
     else kids.push(h("div", { class: "outcome good" }, icon("shield"), "ROLLED BACK · nothing written" + (c.unchanged ? " · " + held + " unchanged" : "")));
@@ -625,14 +617,14 @@
       h("div", { class: "mini" }, h("b", { class: "tnum" }, num(m.rows)), h("span", null, rowsName + " the plan changed")),
       h("div", { class: "mini" }, h("b", { class: "tnum" }, String(Object.keys(m.tables).length)), h("span", null, tablesName + " reached")),
       h("div", { class: "mini" }, h("b", { class: "tnum" }, String(parts.length)), h("span", null, PACK.partition + (parts.length === 1 ? "" : "s") + " reached"))));
-    kids.push(h("p", { class: "small ink2" }, (git ? "By path class: " : "By table: ") + Object.keys(m.tables).map(function (k) { return k + " " + m.tables[k]; }).join(" · ")));
+    kids.push(h("p", { class: "small ink2" }, (git ? "By path class: " : fhir ? "By type: " : "By table: ") + Object.keys(m.tables).map(function (k) { return k + " " + m.tables[k]; }).join(" · ")));
     if (parts.length > 1) kids.push(tenantBar(m, mandate.max_rows, PACK.partition));
     kids.push(findingList(m.findings.filter(function (f) { return !m.committed || f.severity !== "advisory"; })));
     if (m.changed.length) {
-      kids.push(h("details", null, h("summary", null, (git ? "Files measured in the stage's worktree (" : "Rows measured in the transaction (") + (m.changed.length < m.rows ? "first " + m.changed.length + " of " + m.rows : m.rows) + ")"),
-        table(git ? ["Path class", "Path", PACK.partition, "Change"] : ["Table", "Row", PACK.partition, "Change"], m.changed.slice(0, 12).map(function (r) { return [h("span", { class: "mono" }, r.table), git ? h("span", { class: "mono small" }, r.id) : String(r.id), h("span", { class: "mono small" }, r.tenant || "—"), h("span", { class: "small" }, changesText(r.changes))]; }))));
+      kids.push(h("details", null, h("summary", null, (git ? "Files measured in the stage's worktree (" : fhir ? "Records predicted from the chart as read (" : "Rows measured in the transaction (") + (m.changed.length < m.rows ? "first " + m.changed.length + " of " + m.rows : m.rows) + ")"),
+        table(git ? ["Path class", "Path", PACK.partition, "Change"] : fhir ? ["Type", "Record", PACK.partition, "Change"] : ["Table", "Row", PACK.partition, "Change"], m.changed.slice(0, 12).map(function (r) { return [h("span", { class: "mono" }, r.table), git ? h("span", { class: "mono small" }, r.id) : String(r.id), h("span", { class: "mono small" }, r.tenant || "—"), h("span", { class: "small" }, changesText(r.changes))]; }))));
     }
-    kids.push(h("p", { class: "small muted", style: "margin-top:8px" }, m.checkers + " checks evaluated · " + m.captured + (git ? " file images measured" : " row images captured") + " · plan " + m.plan));
+    kids.push(h("p", { class: "small muted", style: "margin-top:8px" }, m.checkers + " checks evaluated · " + m.captured + (git ? " file images measured" : fhir ? " record images predicted" : " row images captured") + " · plan " + m.plan));
     return h("div", null, kids);
   }
   function gitLine(g) {
@@ -758,16 +750,29 @@
         })),
         h("p", { class: "small ink2", style: "margin-top:6px" }, x.committed + " of " + x.sessions + " sessions committed (blue)")));
     }
+    if (x.read_back) {
+      var rb = x.read_back;
+      right.push(h("div", { class: "callrow" }, h("div", { class: "line" }, pill("READ-BACK", "warn"), h("span", { class: "small" }, "the chart read again after the write, and held to the prediction")),
+        h("p", { class: "small ink2", style: "margin-top:4px" }, "The prediction was one order, stopped. What the EHR held after the write was more: the rule had stopped the encounter's other orders and cancelled their doses. Every record the write changed was put back, conditional on the version read back, and the task the rule opened was marked entered-in-error, never deleted."),
+        table(["", "Active orders", "Doses scheduled", "Marked entered-in-error"], [["before", String(rb.before.active_orders), String(rb.before.scheduled_doses), String(rb.before.voided)], ["after", String(rb.after.active_orders), String(rb.after.scheduled_doses), String(rb.after.voided)]])));
+    }
+    if (x.race) {
+      var rc = x.race;
+      right.push(h("div", { class: "callrow" }, h("div", { class: "line" }, pill("NURSE", "warn"), h("span", { class: "small" }, rc.edited_by + " annotated order " + rc.order + " after the stage read it at version " + rc.measured_at)),
+        h("div", { class: "outcome good" }, icon("shield"), (rc.status ? "WRITE REFUSED · " + rc.status + " Precondition Failed" : "WRITE REFUSED") + (rc.landed ? "" : " · the change is not on the chart")),
+        h("p", { class: "small ink2" }, "Each update carries If-Match on the version the stage read. The nurse's edit moved the order on, so the EHR refused the write, and nothing of the plan was written. The nurse's note stands.")));
+    }
     var permitted = calls.filter(function (c) { return c.gateway && c.gateway.decision === "PERMIT"; }).length;
     var committed = calls.filter(function (c) { return c.outcome === "committed"; }).length;
-    var refused = calls.filter(function (c) { return c.outcome === "refused"; }).length;
+    var undone = calls.filter(function (c) { return c.measured && c.measured.compensated; }).length;
+    var refused = calls.filter(function (c) { return c.outcome === "refused" || c.outcome === "error"; }).length - undone;
     var by = {};
     calls.forEach(function (c) { if (c.measured && !c.measured.committed) c.measured.findings.forEach(function (f) { if (f.severity === "blocking") by[f.check.split(":")[0]] = 1; }); });
     var names = Object.keys(by);
     return [h("div", { class: "split" },
       gatewaySide([x.note ? noteBlock(x.note) : null, x.mode === "live" && x.model ? liveBlock(x) : null, calls.map(function (c) { return callRow(c); })]),
       stackSide(x.git ? right.concat([gitLine(x.git)]) : right)),
-      verdictLine(permitted + " of " + calls.length + " permitted", committed + " committed, " + refused + " rolled back" + (names.length ? " by " + names.join(", ") : ""))];
+      verdictLine(permitted + " of " + calls.length + " permitted", committed + " committed, " + refused + " rolled back" + (names.length ? " by " + names.join(", ") : "") + (undone ? ", " + undone + " written, read back and put back" : ""))];
   }
   function heldCall(x) {
     var c = x.call;
