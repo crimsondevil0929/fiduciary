@@ -77,6 +77,7 @@ from agentgov.interceptor import (
 )
 from interlock.builder import PlanBuilder
 from interlock.exceptions import (
+    CompensatedError,
     InterlockError,
     PlanError,
     RecoveryError,
@@ -86,7 +87,7 @@ from interlock.extension import BudgetGuard, ExtensionGrant, ExtensionRequest
 from interlock.feedback import AgentFeedback, feedback_for_error
 from interlock.outbound import schema_problems
 from interlock.recovery import RecoveryRuntime, RecoveryStep, Trip, TripKind
-from interlock.types import EffectId, EffectKind, EffectPlan, OutboundRequest
+from interlock.types import Compensation, EffectId, EffectKind, EffectPlan, OutboundRequest
 
 from fiduciary import fidu1
 from fiduciary._upstream import RECOVERY_REOPENS
@@ -356,6 +357,12 @@ def build_plan(
             effect_id=EffectId(effect.effect_id),
             after=[EffectId(a) for a in effect.after],
             partitions=_labels(effect.partitions, arguments),
+            compensation=None
+            if effect.compensation is None
+            else Compensation(
+                effect.compensation,
+                idempotency_key=f"{binding.digest[:16]}:{effect.effect_id}",
+            ),
         )
     for request in binding.requests:
         compensation = None
@@ -946,6 +953,27 @@ class Session:
             result = engine.execute(plan)
         except BindingError:
             return CallResult(name, "halted", "This mandate no longer governs; nothing changed.")
+        except CompensatedError as exc:
+            # Admitted and written, then put back from the undo written first
+            # (a class P apply that failed part way, a class V read-back that
+            # was not the prediction): nothing of the plan stands (1.6.0).
+            feedback = (
+                exc.feedback
+                if isinstance(exc.feedback, AgentFeedback)
+                else feedback_for_error(plan, exc)
+            )
+            return CallResult(
+                name,
+                "refused",
+                feedback.render(),
+                value={
+                    "compensated": {
+                        "restored": exc.restored,
+                        "discrepancies": len(exc.discrepancies),
+                        "undo": exc.undo,
+                    }
+                },
+            )
         except InterlockError as exc:
             feedback = (
                 exc.feedback

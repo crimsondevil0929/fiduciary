@@ -400,7 +400,11 @@ def effect(
     statement: str,
     parameters: Mapping[str, str],
     after: Sequence[str] = (),
+    *,
+    compensation: str | None = None,
 ) -> dict[str, Any]:
+    """A binding's row effect; ``compensation``, the undo it declares, for a
+    substrate that cannot roll back (1.6.0)."""
     return {
         "id": effect_id,
         "kind": kind,
@@ -409,6 +413,7 @@ def effect(
         "parameters": dict(parameters),
         "stated_rows": 1,
         "after": list(after),
+        **({"compensation": compensation} if compensation is not None else {}),
     }
 
 
@@ -987,6 +992,9 @@ def measured(result: StageResult) -> dict[str, Any]:
     found.pop("orders_total", None)
     verdict = result.verdict
     found["checkers_run"] = sorted(verdict.checkers_run) if verdict is not None else []
+    if result.state.value == "compensated":
+        # Written, read back, and put back (1.6.0): nothing of it stands.
+        found["compensated"] = True
     distinct = {(d.table, d.primary_key) for d in (result.diff.deltas if result.diff else ())}
     found["tables"] = dict(sorted(Counter(table for table, _ in distinct).items()))
     return found
@@ -1111,6 +1119,8 @@ def say_call(run: PackRun, found: Called, what: str) -> None:
     stack = (
         "committed"
         if found.committed
+        else "written, read back, put back"
+        if m.get("compensated")
         else f"rolled back ({', '.join(blocked(found)) or (found.result and found.result.outcome)})"
     )
     rows = f"{m.get('rows', 0)} rows" if m else "nothing measured"

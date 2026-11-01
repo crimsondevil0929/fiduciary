@@ -349,6 +349,18 @@
       x.model.answer ? h("details", { open: true }, h("summary", null, "Model's final reply"), h("pre", null, x.model.answer),
         h("p", { class: "small muted", style: "margin-top:6px" }, "The agent only sees that the plan lowered orders.total by more than the 30% limit. It cannot see the repricing trigger that turned a 10% discount into a 90% drop, so the limit looks wrong from its side.")) : null) : null;
     var right = calls.map(function (c) { return h("div", { class: "callrow" }, h("div", { class: "line", style: "margin-bottom:6px" }, h("span", { class: "tool" }, c.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(c.arguments))), measuredBlock(c)); });
+    if (x.read_back) {
+      var rb = x.read_back;
+      right.push(h("div", { class: "callrow" }, h("div", { class: "line" }, pill("READ-BACK", "warn"), h("span", { class: "small" }, "the chart read again after the write, and held to the prediction")),
+        h("p", { class: "small ink2", style: "margin-top:4px" }, "The prediction was one order, stopped. What the EHR held after the write was more: the rule had stopped the encounter's other orders and cancelled their doses. Every record the write changed was put back, conditional on the version read back, and the task the rule opened was marked entered-in-error, never deleted."),
+        table(["", "Active orders", "Doses scheduled", "Marked entered-in-error"], [["before", String(rb.before.active_orders), String(rb.before.scheduled_doses), String(rb.before.voided)], ["after", String(rb.after.active_orders), String(rb.after.scheduled_doses), String(rb.after.voided)]])));
+    }
+    if (x.race) {
+      var rc = x.race;
+      right.push(h("div", { class: "callrow" }, h("div", { class: "line" }, pill("NURSE", "warn"), h("span", { class: "small" }, rc.edited_by + " annotated order " + rc.order + " after the stage read it at version " + rc.measured_at)),
+        h("div", { class: "outcome good" }, icon("shield"), (rc.status ? "WRITE REFUSED · " + rc.status + " Precondition Failed" : "WRITE REFUSED") + (rc.landed ? "" : " · the change is not on the chart")),
+        h("p", { class: "small ink2" }, "Each update carries If-Match on the version the stage read. The nurse's edit moved the order on, so the EHR refused the write, and nothing of the plan was written. The nurse's note stands.")));
+    }
     var permitted = calls.filter(function (c) { return c.gateway && c.gateway.decision === "PERMIT"; }).length;
     var committed = calls.filter(function (c) { return c.outcome === "committed"; }).length;
     var refused = calls.filter(function (c) { return c.outcome === "refused"; }).length;
@@ -574,7 +586,7 @@
     function walk(node) {
       if (!node || typeof node !== "object") return;
       if (Array.isArray(node)) { node.forEach(walk); return; }
-      if (node.measured && !node.measured.committed && !seen[node.measured.plan]) { seen[node.measured.plan] = 1; out.push(node.measured); }
+      if (node.measured && !node.measured.committed && !node.measured.compensated && !seen[node.measured.plan]) { seen[node.measured.plan] = 1; out.push(node.measured); }
       Object.keys(node).forEach(function (k) { if (k !== "measured") walk(node[k]); });
     }
     walk(DEMO.acts);
@@ -605,8 +617,10 @@
     var parts = Object.keys(m.tenants);
     var kids = [];
     var git = PACK.nouns.substrate === "Git", rowsName = PACK.nouns.rows || "rows", tablesName = PACK.nouns.tables || "tables";
-    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " " + (git ? "file(s)" : "row(s)") + ", " + m.outbound.length + " outbound request(s) queued"));
-    else kids.push(h("div", { class: "outcome good" }, icon("shield"), "ROLLED BACK · nothing written" + (c.unchanged ? (git ? " · every branch unchanged" : " · database unchanged") : "")));
+    var held = PACK.nouns.state || (git ? "every branch" : "database");
+    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " " + (git ? "file(s)" : rowsName) + ", " + m.outbound.length + " outbound request(s) queued"));
+    else if (m.compensated) kids.push(h("div", { class: "outcome good" }, icon("shield"), "WRITTEN · READ BACK · PUT BACK · nothing of it stands" + (c.unchanged ? " · " + held + " as it was" : "")));
+    else kids.push(h("div", { class: "outcome good" }, icon("shield"), "ROLLED BACK · nothing written" + (c.unchanged ? " · " + held + " unchanged" : "")));
     kids.push(h("div", { class: "mini-stats" },
       h("div", { class: "mini" }, h("b", { class: "tnum" }, num(m.rows)), h("span", null, rowsName + " the plan changed")),
       h("div", { class: "mini" }, h("b", { class: "tnum" }, String(Object.keys(m.tables).length)), h("span", null, tablesName + " reached")),
@@ -638,6 +652,12 @@
       r.unmediated.length ? h("ul", { class: "findings" }, r.unmediated.map(function (w) {
         return h("li", null, h("span", { class: "sev blocking" }, "unmediated " + w.what), h("span", { class: "small" }, h("code", null, short(w.commit, 10)), " by " + (w.by || "unknown") + ", " + w.at + ": no stage made it"));
       })) : h("p", { class: "small" }, "Every commit carries a stage the chain records as committed."));
+  }
+  function actionsBlock(r) {
+    return h("div", { class: "callrow", style: "margin-top:10px" }, h("div", { class: "line" }, pill("SYSTEM OF RECORD", r.phantom ? "warn" : "good"), h("span", { class: "small muted" }, r.export + " · " + r.format)),
+      h("p", { class: "small ink2", style: "margin-top:4px" }, r.matched + " write(s)" + (r.actor ? " by " + r.actor : "") + " explained by a receipt" + (r.receipts ? " (" + r.receipts + " receipt(s))" : "") + "; " + r.phantom + " phantom" + (r.unobserved !== undefined ? "; " + r.unobserved + " receipt(s) of writes to this system not seen" : "") + (r.out_of_scope ? "; " + r.out_of_scope + " receipt(s) of other systems' actions, not expected here" : "") + "."),
+      r.phantoms.length ? h("ul", { class: "findings" }, r.phantoms.map(function (w) { return h("li", null, h("span", { class: "sev blocking" }, "phantom"), h("span", { class: "small" }, w + ": the system saw it, and no receipt explains it")); })) : null,
+      h("p", { class: "small muted" }, h("code", null, r.command)));
   }
   function actRace(x) {
     var c = x.calls[0], g = x.git;
@@ -803,7 +823,8 @@
           h("thead", null, h("tr", null, ["Bundle", "Verdict", "Findings", "Network calls", "Members", "Planted values found", "SHA-256"].map(function (t) { return h("th", null, t); }))),
           h("tbody", null, rows))),
         h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for: " + scan.planted.rows + " record values from the database, " + scan.planted.payloads + " payload values the vendor received, " + scan.planted.prompts + " injected instruction(s), " + scan.planted.secrets + " private keys and secrets, each as written and as SHA-256. Ledger conservation: " + x.conservation + "."),
-        x.labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "Partition labels: the bundle names " + x.labels.named + " of the " + x.labels.known + " " + x.labels.partition + " keys, in " + x.labels.members + " members (session records and receipts say which " + x.labels.partition + " each action was for). They are opaque keys; no record behind them is in the bundle.") : null])),
+        x.labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "Partition labels: the bundle names " + x.labels.named + " of the " + x.labels.known + " " + x.labels.partition + " keys, in " + x.labels.members + " members (session records and receipts say which " + x.labels.partition + " each action was for). They are opaque keys; no record behind them is in the bundle.") : null,
+        x.reconciliation ? actionsBlock(x.reconciliation) : null])),
       verdictLine("its own decisions only", "both bundles verified offline against independently pinned keys; the break-glass act is reported")];
   }
   function actTrust(x) {
@@ -846,7 +867,7 @@
     });
     return h("section", { id: "theatre" }, h("div", { class: "wrap" },
       h("div", { class: "sec-head" }, h("span", { class: "kicker" }, PACK.industry + " · demo scenarios"), h("h2", null, PACK.title),
-        h("p", null, "The same engine as every other industry here, on this one's own " + (PACK.nouns.substrate === "Git" ? "Git repository, hooks" : "schema, triggers") + ", mandate and approvers: " + PACK.principals.join(", ") + ". Each call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + (DEMO.mode === "live" && DEMO.model ? "Act 2 was worked by " + DEMO.model.served + ", live; the other acts replay a fixed sequence, with no model." : "The calls are a fixed sequence, with no model; pass --live to have a model work act 2.") + " All figures were measured during the run (" + DEMO.seconds + " s).")),
+        h("p", null, "The same engine as every other industry here, on this one's own " + (PACK.nouns.substrate === "Git" ? "Git repository, hooks" : PACK.nouns.state === "chart" ? "EHR, its server rules" : "schema, triggers") + ", mandate and approvers: " + PACK.principals.join(", ") + ". Each call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + (DEMO.mode === "live" && DEMO.model ? "Act 2 was worked by " + DEMO.model.served + ", live; the other acts replay a fixed sequence, with no model." : "The calls are a fixed sequence, with no model; pass --live to have a model work act 2.") + " All figures were measured during the run (" + DEMO.seconds + " s).")),
       tabs, body));
   }
 
@@ -867,7 +888,8 @@
     var v = e[key];
     if (key === "warrant") return h("td", null, v.length ? v.map(function (w) { return pill(w.action + " · " + w.approvals + " of 3", "good"); }) : "—");
     if (key === "break-glass") return h("td", null, v ? pill("NAMED", "good") : "—");
-    if (key === "stale_head" && row.substrate !== "Git") return h("td", { class: "muted" }, "n/a");
+    if (key === "stale_head" && row.substrate !== "Git" && row.substrate !== "FHIR R4") return h("td", { class: "muted" }, "n/a");
+    if (key === "read_back" && row["class"] !== "V" && row["class"] !== "P") return h("td", { class: "muted" }, "n/a");
     if (key === "offline") return h("td", null, v ? pill("VERIFIED", "good") : pill("NO", "bad"));
     return h("td", { class: "num" }, v ? h("b", null, String(v)) : h("span", { class: "muted" }, "0"));
   }
@@ -922,15 +944,15 @@
       h("p", { class: "small" }, "Live Claude models (" + acc.models.join(", ") + ") in front of " + acc.domains.length + " unrelated domains on one interlock kernel: " + acc.domains.join("; ") + ". " + acc.plans.proposed + " plans proposed: " + acc.plans.committed + " committed, " + acc.plans.refused + " refused by a checker. $" + acc.metered_usd + " of model spend, metered by AgentGov."),
       h("p", { class: "small muted" }, acc.note + " Source: " + acc.source + ", generated " + acc.generated + " on interlock " + acc.interlock + "."));
     return h("section", { id: "overview" }, h("div", { class: "wrap" },
-      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Same engine, different nouns"), h("h2", null, "One consequence-control engine, six industries, on SQL, Git and Kubernetes"),
-        h("p", null, "Every industry below runs the same loop: stage the agent's change, measure what it actually did, check it, hold exceptions for a quorum, commit once, and prove it offline. Only the tables, the limits and the approvers change. Four industries stage in a SQL transaction; coding agents stage in a Git worktree and commit with a compare-and-swap of the branch; cloud SRE stages plan-bound on a Kubernetes API server, measured by its own dry run and applied on the version measured. Fintech is where we started, not what the engine is.")),
+      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Same engine, different nouns"), h("h2", null, "One consequence-control engine, six industries, on SQL, Git, Kubernetes and FHIR"),
+        h("p", null, "Every industry below runs the same loop: stage the agent's change, measure what it actually did, check it, hold exceptions for a quorum, commit once, and prove it offline. Only the tables, the limits and the approvers change. Three industries stage in a SQL transaction; coding agents stage in a Git worktree and commit with a compare-and-swap of the branch; cloud SRE stages plan-bound on a Kubernetes API server, measured by its own dry run and applied on the version measured; healthcare stages predicted and verified on a FHIR server, written on the version read and read back against the prediction. Fintech is where we started, not what the engine is.")),
       h("div", { class: "kpis ov" }, tiles.map(function (t) { return h("div", { class: "card kpi" }, h("div", { class: "label" }, t[0]), h("div", { class: "value tnum" }, t[1]), h("div", { class: "note" }, t[2]), h("span", { class: "layer-tag" }, t[3])); })),
       h("div", { class: "inds" }, cards),
       h("h3", { class: "ov-h" }, "What refused what, in this run"),
       h("p", { class: "small ink2" }, "Counted from the plans each industry's acts measured: how many plans each checker refused, which warrants formed, and whether the bundles verified offline. A zero means that checker refused nothing here, not that it was missing."),
       h("div", { class: "card pad" }, grid),
       h("h3", { class: "ov-h" }, "The measurement ladder"),
-      h("p", { class: "small ink2" }, "How strongly each kind of system can be measured. Cloud SRE runs on class P, every other industry in this dashboard on class T, and their outbound requests on class R. Class V is the substrate roadmap."),
+      h("p", { class: "small ink2" }, "How strongly each kind of system can be measured. Healthcare runs on class V, cloud SRE on class P, every other industry in this dashboard on class T, and their outbound requests on class R: all four rungs, in one run."),
       ladder,
       matrixCard));
   }

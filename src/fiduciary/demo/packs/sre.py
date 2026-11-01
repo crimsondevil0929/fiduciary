@@ -699,16 +699,24 @@ def _reconcile(run: PackRun, cluster: Cluster) -> dict[str, Any]:
         for line in (root / "receipts.jsonl").read_bytes().splitlines()
         if line.strip()
     ]
+    # The cluster's log sees writes to the cluster, so it expects the receipts
+    # of those, not of the requests the agent sent the cloud API (1.6.0).
     report = reconcile_actions(
-        receipts, load_actions(str(export), fmt="k8s-audit-jsonl"), actors=(AGENT,)
+        receipts,
+        load_actions(str(export), fmt="k8s-audit-jsonl"),
+        actors=(AGENT,),
+        substrates=("kubernetes",),
     )
     return {
         "export": AUDIT_EXPORT,
         "format": "k8s-audit-jsonl",
         "actor": AGENT,
         "matched": len(report.matched),
+        "receipts": len({m.receipt_id for m in report.matched}),
         "phantom": len(report.phantom),
         "phantoms": [f"{r.action} {r.resource}" for r in report.phantom],
+        "unobserved": len(report.unobserved),
+        "out_of_scope": report.out_of_scope,
         "command": (
             f"agentgov reconcile-actions receipts.jsonl {AUDIT_EXPORT} "
             f"--format k8s-audit-jsonl --actor {AGENT}"

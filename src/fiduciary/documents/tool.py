@@ -170,6 +170,11 @@ class Effect:
     """The labels the effect declares beside its tenant, by dimension, each
     from ``$.<argument>`` (amended in 1.4.0): what a mandate's
     ``data.partitions`` with ``declared`` holds its rows to. Written only when set."""
+    compensation: str | None = None
+    """The undo the effect declares, in its substrate's language (amended in
+    1.6.0): what a substrate that cannot roll back runs to put the write back
+    (a FHIR server's ``void <table>`` or ``restore <table>``). Written only
+    when set."""
 
     def to_json(self) -> dict[str, Any]:
         found: dict[str, Any] = {
@@ -183,6 +188,8 @@ class Effect:
         }
         if self.partitions:
             found["partitions"] = dict(sorted(self.partitions.items()))
+        if self.compensation is not None:
+            found["compensation"] = self.compensation
         return found
 
     @property
@@ -268,7 +275,7 @@ class ToolBinding(Document):
                 item,
                 path,
                 ("id", "kind", "table", "statement", "parameters", "stated_rows", "after"),
-                ("partitions",),
+                ("partitions", "compensation"),
             )
             parameters = {
                 name: fidu1.check_text(
@@ -295,6 +302,11 @@ class ToolBinding(Document):
                     else entry.integer("stated_rows"),
                     after=entry.strings("after", _EFFECT_ID, "an effect or request id"),
                     partitions=_partitions(entry),
+                    compensation=entry.text(
+                        "compensation", fidu1.STATEMENT, "a statement of 1 to 8192 characters"
+                    )
+                    if entry.has("compensation")
+                    else None,
                 )
             )
         requests = []
