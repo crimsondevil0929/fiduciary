@@ -58,13 +58,6 @@ dev = [
     "cedarpy>=4.12",
 ]
 
-[tool.uv.sources]
-# Until interlock-agentgov 1.2.0 and interlock-escrow 1.4.0 are on PyPI: the commits this
-# release is built against (each repository's feature branch). Remove before tagging, and
-# relock. The wheel's metadata names the PyPI versions only.
-interlock-agentgov = { git = "https://github.com/crimsondevil0929/agentgov", rev = "a3eb8046f1ce0a754a9ab341fa9ceb21ba7fa6e7" }
-interlock-escrow = { git = "https://github.com/crimsondevil0929/interlock", rev = "d394741db76dcf10d3d1bef5eeac4c450b1b74f6" }
-
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra --strict-markers --strict-config"

@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.6.0] - unreleased
+## [1.6.0] - 2026-11-01
 
 The fourth rung: a FHIR server, predicted and verified. Every new member is written only
 when it is used, so every mandate, binding, compiled policy, record, bundle and golden
