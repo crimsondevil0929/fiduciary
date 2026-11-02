@@ -104,6 +104,16 @@ def test_healthcare(stack: Outcome) -> None:
     ]
     assert {r["coverage"].get("measurement") for r in receipts} == {"predicted"}
     assert {r["outcome"]["status"] for r in receipts} == {"committed", "compensated", "refused"}
+    from fiduciary.bundle import TrustedKeys, verify_bundle
+
+    hc_root = stack.root / "healthcare"
+    hc_report = verify_bundle(
+        (hc_root / "before.fidb").read_bytes(),
+        charter=(hc_root / "charter.digest").read_text().strip(),
+        keys=TrustedKeys(json.loads((hc_root / "pinned-keys.json").read_text())),
+    )
+    assert hc_report.passed, hc_report.render()
+    assert any("measured predicted:" in note for note in hc_report.notes)
 
 
 def test_sre(stack: Outcome) -> None:

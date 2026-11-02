@@ -255,6 +255,52 @@ def test_a_plan_no_pinned_tool_built_is_ambient(world: bound.World) -> None:
     _only(report, "V7")
 
 
+def test_a_compensated_record_without_an_admitted_plan_is_ambient(world: bound.World) -> None:
+    """A COMPENSATED record appended directly to the lineage's escrow chain,
+    for a plan never admitted on the chain, is named by V7 (1.6.0)."""
+    from interlock.chain import RecordType
+    from interlock.types import PlanId
+
+    mandate, fid = _lineage(world)
+    chain = world.binder.engine(mandate.mandate_id).engine.chain
+    last = list(chain.records())[-1]
+    chain.append(
+        RecordType.COMPENSATED,
+        plan_id=PlanId(str(uuid.uuid4())),
+        payload_hash="0" * 64,
+        stage_id=uuid.uuid4(),
+        anchored=last.anchored,
+        agentgov_head_hash=last.agentgov_head_hash,
+        agentgov_sequence=last.agentgov_sequence,
+        note="unexplained put-back",
+    )
+    _later(fid)
+    report = _report(world, mandate)
+    _fails(report, "V7", "settled as compensated without being admitted on the chain", code=7)
+    _only(report, "V7")
+
+
+def test_a_compensated_receipt_anchored_to_a_commit_is_ambient(world: bound.World) -> None:
+    """An ARC1 1.4 compensated receipt whose escrow anchor points to a
+    COMMITTED record on the lineage's chain is named by V7 (1.6.0)."""
+    from agentgov.receipts import ActionReceipt, Outcome, OutcomeStatus
+
+    mandate, fid = _lineage(world)
+    (existing,) = [r for r in world.receipts.receipts() if isinstance(r, ActionReceipt)]
+    world.receipts.issue(
+        dataclasses.replace(
+            existing,
+            receipt_id=str(uuid.uuid4()),
+            coverage=dataclasses.replace(existing.coverage, measurement="predicted"),
+            outcome=Outcome(status=OutcomeStatus.COMPENSATED, substrate_txid="fhir:stage-1"),
+        )
+    )
+    _later(fid)
+    report = _report(world, mandate)
+    _fails(report, "V7", "has outcome compensated, but references committed record", code=7)
+    _only(report, "V7")
+
+
 def test_a_tool_hold_that_names_no_session_after_named_ones_is_ambient(
     world: bound.World,
 ) -> None:
