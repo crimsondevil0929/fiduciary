@@ -18,9 +18,10 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from importlib.resources import files
+from pathlib import Path
 from typing import Any, Final
 
-__all__ = ["html", "markdown", "payload"]
+__all__ = ["html", "markdown", "payload", "serve_console"]
 
 _ASSETS: Final = files("fiduciary.report")
 
@@ -179,3 +180,10 @@ def markdown(data: Mapping[str, Any]) -> str:
         "exit code and findings come directly from `verify-bundle`._"
     )
     return "\n".join(out) + "\n"
+
+
+def serve_console(root: Path, where: str = "127.0.0.1:8740") -> tuple[Any, str]:
+    """Start the interactive loopback control plane server over ``root``."""
+    from fiduciary.demo.control import serve_control_plane
+
+    return serve_control_plane(root, where)

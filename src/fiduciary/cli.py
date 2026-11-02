@@ -1276,6 +1276,29 @@ def _demo(args: argparse.Namespace) -> int:
     if args.out is not None:
         root = Path(args.out).resolve()
         if root.exists() and any(root.iterdir()):
+            if (
+                args.serve is not None
+                and not args.live
+                and (
+                    (root / "demo.json").is_file()
+                    or (root / "dashboard.html").is_file()
+                    or (root / "fiduciary.toml").is_file()
+                )
+            ):
+                say = (lambda _: None) if args.quiet else _out
+                server, url = _serve_dashboard(root, args.serve)
+                say(f"serving     {url} (existing deployment in {root}; Ctrl-C stops)")
+                if args.open:
+                    import webbrowser
+
+                    webbrowser.open(url)
+                try:
+                    server.serve_forever()
+                except KeyboardInterrupt:
+                    pass
+                finally:
+                    server.server_close()
+                return OK
             _fail(f"{root} is not empty: the demo writes a fresh deployment there")
     else:
         root = Path(tempfile.mkdtemp(prefix="fiduciary-demo-"))
@@ -1371,24 +1394,15 @@ def _live_model(args: argparse.Namespace) -> Any:
 
 
 def _serve_dashboard(root: Path, where: str) -> tuple[Any, str]:
-    """A loopback HTTP server over the demo's directory."""
-    import functools
-    import http.server
+    """A loopback interactive control plane HTTP server over ``root``."""
+    from fiduciary.demo.control import serve_control_plane
 
-    host, _, port = (where or "127.0.0.1:8740").rpartition(":")
-    host = host or "127.0.0.1"
-    if host not in ("127.0.0.1", "localhost", "::1"):
-        _fail("--serve listens on loopback only: 127.0.0.1:<port>")
     try:
-        number = int(port)
-    except ValueError:
-        _fail("--serve is HOST:PORT")
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
-    try:
-        server = http.server.ThreadingHTTPServer((host, number), handler)
+        return serve_control_plane(root, where or "127.0.0.1:8740")
+    except ValueError as exc:
+        _fail(str(exc))
     except OSError as exc:
         _fail(f"--serve: {exc}")
-    return server, f"http://{host}:{server.server_address[1]}/dashboard.html"
 
 
 # --------------------------------------------------------------------------

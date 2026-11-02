@@ -151,6 +151,7 @@
     var toc = h("nav", { class: "toc" },
       OVERVIEW ? h("a", { href: "#overview" }, "Overview") : null,
       DEMO ? h("a", { href: "#theatre" }, "Acts") : null,
+      DEMO ? h("a", { href: "#sandbox", class: "noprint" }, "Try & sign") : null,
       h("a", { href: "#lineage" }, "Lineage"),
       h("a", { href: "#inspector" }, "Warrants & operators"),
       h("a", { href: "#matrix" }, "Controls"));
@@ -159,7 +160,8 @@
       h("div", { class: "layers" },
         h("span", { class: "layer", title: "the budget ledger" }, "agentgov " + v.agentgov),
         h("span", { class: "layer", title: "the side-effect reference monitor" }, "interlock " + v.interlock),
-        h("span", { class: "layer", title: "mandates, warrants and offline proofs" }, "fiduciary " + v.fiduciary)),
+        h("span", { class: "layer", title: "mandates, warrants and offline proofs" }, "fiduciary " + v.fiduciary),
+        SERVER.live ? pill("LIVE CONTROL PLANE", "good") : null),
       h("div", { class: "spacer" }), toc,
       h("button", { class: "btn noprint", title: "Light or dark", onclick: function () { setTheme(dark() ? "light" : "dark"); render(); } }, icon("sun"), "Theme"),
       h("button", { class: "btn noprint", onclick: function () { window.print(); } }, icon("print"), "PDF")));
@@ -532,7 +534,7 @@
   function actAudit(x) {
     var rows = ["before", "after"].map(function (n) {
       var v = x.verdicts[n];
-      return h("tr", null, h("td", null, h("b", null, n + ".fidb")), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
+      return h("tr", null, h("td", null, h("b", null, n + ".fidb"), " ", h("button", { class: "btn sm noprint", style: "margin-left:6px", onclick: function () { pickGeneratedBundle(activeDomainKey(), n + ".fidb", n); } }, "Verify")), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
         h("td", { class: "num" }, String(v.findings.length)), h("td", { class: "num" }, String(v.sockets)),
         h("td", { class: "num" }, num(v.scan.members)), h("td", { class: "num" }, String(v.scan.found.rows + v.scan.found.payloads + v.scan.found.prompts + v.scan.found.secrets)), h("td", null, hash(v.sha256, 12)));
     });
@@ -544,7 +546,8 @@
         h("div", { class: "tablewrap" }, h("table", null,
           h("thead", null, h("tr", null, ["Bundle", "Verdict", "Findings", "Network calls", "Members", "Planted values found", "SHA-256"].map(function (t) { return h("th", null, t); }))),
           h("tbody", null, rows))),
-        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for: " + scan.planted.rows + " customer names, " + scan.planted.payloads + " payment IDs, " + scan.planted.prompts + " prompt and reply texts, " + scan.planted.secrets + " private keys and secrets, each as written and as a SHA-256. Ledger conservation: " + x.conservation + ".")])),
+        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for: " + scan.planted.rows + " customer names, " + scan.planted.payloads + " payment IDs, " + scan.planted.prompts + " prompt and reply texts, " + scan.planted.secrets + " private keys and secrets, each as written and as a SHA-256. Ledger conservation: " + x.conservation + "."),
+        verifierWidget("audit")])),
       verdictLine("its own decisions only", "both bundles verified offline against independently pinned keys; the DBA override is reported")];
   }
   var SHORT = { queue: "Order queue", settlement: "Settlement cascade", fleet: "Sub-agent fan-out", crash: "Relay crash", quorum: "Principal quorum", "break-glass": "DBA override", audit: "Offline audit" };
@@ -815,7 +818,7 @@
   function packAudit(x) {
     var rows = ["before", "after"].map(function (n) {
       var v = x.verdicts[n];
-      return h("tr", null, h("td", null, h("b", null, n + ".fidb")), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
+      return h("tr", null, h("td", null, h("b", null, n + ".fidb"), " ", h("button", { class: "btn sm noprint", style: "margin-left:6px", onclick: function () { pickGeneratedBundle(activeDomainKey(), n + ".fidb", n); } }, "Verify")), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
         h("td", { class: "num" }, String(v.findings.length)), h("td", { class: "num" }, String(v.sockets)),
         h("td", { class: "num" }, num(v.scan.members)), h("td", { class: "num" }, String(v.scan.found.rows + v.scan.found.payloads + v.scan.found.prompts + v.scan.found.secrets)), h("td", null, hash(v.sha256, 12)));
     });
@@ -829,13 +832,14 @@
           h("tbody", null, rows))),
         h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for: " + scan.planted.rows + " record values from the database, " + scan.planted.payloads + " payload values the vendor received, " + scan.planted.prompts + " injected instruction(s), " + scan.planted.secrets + " private keys and secrets, each as written and as SHA-256. Ledger conservation: " + x.conservation + "."),
         x.labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "Partition labels: the bundle names " + x.labels.named + " of the " + x.labels.known + " " + x.labels.partition + " keys, in " + x.labels.members + " members (session records and receipts say which " + x.labels.partition + " each action was for). They are opaque keys; no record behind them is in the bundle.") : null,
-        x.reconciliation ? actionsBlock(x.reconciliation) : null])),
+        x.reconciliation ? actionsBlock(x.reconciliation) : null,
+        verifierWidget("audit")])),
       verdictLine("its own decisions only", "both bundles verified offline against independently pinned keys; the break-glass act is reported")];
   }
   function actTrust(x) {
     var n = x.customers.length - 1;
     var rows = x.customers.map(function (c) {
-      return [h("b", null, c.customer), h("span", { class: "mono small" }, c.org), c.passed ? pill("PASS", "good") : pill("EXIT " + c.exit_code, "bad"), num(c.members), c.withheld === undefined ? "—" : num(c.records) + " / " + num(c.withheld), String(c.other_records), String((c.other_names || 0) + (c.other_accounts || 0)), String(c.other_labels) + " of " + n, c.other_domains === undefined ? "—" : String(c.other_domains) + " of " + n];
+      return [h("span", null, h("b", null, c.customer), " ", h("button", { class: "btn sm noprint", style: "margin-left:6px", onclick: function () { pickCustomerBundle(c); } }, "Verify fidb/2")), h("span", { class: "mono small" }, c.org), c.passed ? pill("PASS", "good") : pill("EXIT " + c.exit_code, "bad"), num(c.members), c.withheld === undefined ? "—" : num(c.records) + " / " + num(c.withheld), String(c.other_records), String((c.other_names || 0) + (c.other_accounts || 0)), String(c.other_labels) + " of " + n, c.other_domains === undefined ? "—" : String(c.other_domains) + " of " + n];
     });
     var labels = x.customers.reduce(function (t, c) { return Math.max(t, c.other_labels); }, 0);
     var domains = x.customers.reduce(function (t, c) { return Math.max(t, c.other_domains || 0); }, 0);
@@ -851,7 +855,8 @@
         sealed ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How a bundle leaves the others out. "), "Each bundle is sealed. It carries the customer's own records whole. Of every other record in the log it carries only the record's position and hash, and the ledger's signed anchor of that record vouches for both, so the log still checks end to end. Every record was sealed when it was written" + (sealed.seals ? " (" + sealed.seals + ")" : "") + ", and the bundle carries the customer's own keys, so its verifier proves that no withheld record is the customer's, and learns nothing about whose the others are. The vendor's mandate names no customer: it holds one hash over every customer's allowed email domains (" + sealed.entries + " entries, each salted with " + sealed.salts + "), and each workspace mandate opens only its own entry. Receipts name only the customer the action was for, and count any others a refused action reached.") : null,
         flagged.length ? h("p", { class: "small", style: "margin-top:6px" }, flagged.map(function (c) { return c.customer; }).join(", ") + ": the bundle fails on purpose. It records the support engineer's hand-sent invitation in that customer's own workspace (scenario 5), the break-glass act the customer is entitled to see.") : null,
         ps ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How org keys are made. "), "Each org key is " + ps.derivation + ". The vendor holds the pseudonym key, as it holds its signing keys. Without it, an org key cannot be reversed or linked to an account; with it, the vendor or an auditor it chooses recomputes the key from the account id. Every bundle was searched for the key, as written and in hex, and for each other customer's name and account id: " + (ps.key_in_bundles + x.customers.reduce(function (t, c) { return t + (c.other_names || 0) + (c.other_accounts || 0); }, 0)) + " found.") : null,
-        labels || domains ? h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others" + (labels ? ": their org keys, in session records and receipts, because the bundle carries the deployment's whole log" : "") + (domains ? "; and each org key's email domain, in the mandate documents only: the vendor-wide mandate maps every org key to its allowed recipient domain, and every customer's mandate is derived from it" : "") + ". So these bundles are not anonymous.") : h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others: how many records the log holds that are not theirs, and when the ledger anchored them. Nothing names who those records were for.")])),
+        labels || domains ? h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others" + (labels ? ": their org keys, in session records and receipts, because the bundle carries the deployment's whole log" : "") + (domains ? "; and each org key's email domain, in the mandate documents only: the vendor-wide mandate maps every org key to its allowed recipient domain, and every customer's mandate is derived from it" : "") + ". So these bundles are not anonymous.") : h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others: how many records the log holds that are not theirs, and when the ledger anchored them. Nothing names who those records were for."),
+        verifierWidget("trust-center")])),
       verdictLine("not available", x.customers.length + " customer bundles, each verified on its own; " + (labels || domains ? "0 records, names or account ids of any other customer" : "0 records, names, account ids, org keys or email domains of any other customer"))];
   }
   var PACK_SHORT = { queue: "Everyday action", cascade: "Hidden cascade", replace: "Forced replacement", drawdown: "Stock drawdown", injected: "Injected instruction", grant: "Admin rights", fleet: "Sub-agent fan-out", quorum: "2-of-3 warrant", amend: "Amend ticket", "break-glass": "Break-glass", "trust-center": "Trust center", race: "Concurrent push", warrant: "CI + 2-of-3", hotfix: "Break-glass push", audit: "Offline audit" };
@@ -959,7 +964,8 @@
       h("h3", { class: "ov-h" }, "The measurement ladder"),
       h("p", { class: "small ink2" }, "How strongly each kind of system can be measured. Healthcare runs on class V, cloud SRE on class P, every other industry in this dashboard on class T, and their outbound requests on class R: all four rungs, in one run."),
       ladder,
-      matrixCard));
+      matrixCard,
+      verifierWidget("overview")));
   }
   function domainBar() {
     if (PAGES.length < 2) return null;
@@ -1193,14 +1199,1054 @@
       h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline: tamper-evident, not tamper-proof. This page makes no network requests.")));
   }
 
+  // -- interactive control plane, .fidb verifier & warrant quorum desk --------------------
+  var SERVER = { checked: false, live: false, status: null, domains: {} };
+  var VERIFIER = { loading: false, result: null, error: null };
+  var SANDBOX = {};
+
+  function activeDomainKey() { return PACK ? PACK.key : "fintech"; }
+  function pageOfDomain(key) {
+    for (var i = 0; i < PAGES.length; i++) {
+      var k = PAGES[i].demo && PAGES[i].demo.domain ? PAGES[i].demo.domain.key : "fintech";
+      if (k === key) return PAGES[i];
+    }
+    return P;
+  }
+
+  function sha256Pure(bytes) {
+    var K = [
+      0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+      0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+      0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+      0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+      0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+      0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+      0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+      0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+    ];
+    var H = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19];
+    var l = bytes.length, bitHi = Math.floor((l * 8) / 0x100000000), bitLo = (l * 8) >>> 0;
+    var padLen = ((l + 9 + 63) & ~63);
+    var buf = new Uint8Array(padLen);
+    buf.set(bytes);
+    buf[l] = 0x80;
+    var dv = new DataView(buf.buffer);
+    dv.setUint32(padLen - 8, bitHi, false);
+    dv.setUint32(padLen - 4, bitLo, false);
+    var W = new Int32Array(64);
+    function rotr(x, n) { return (x >>> n) | (x << (32 - n)); }
+    for (var off = 0; off < padLen; off += 64) {
+      for (var i = 0; i < 16; i++) W[i] = dv.getInt32(off + i * 4, false);
+      for (var j = 16; j < 64; j++) {
+        var s0 = rotr(W[j - 15], 7) ^ rotr(W[j - 15], 18) ^ (W[j - 15] >>> 3);
+        var s1 = rotr(W[j - 2], 17) ^ rotr(W[j - 2], 19) ^ (W[j - 2] >>> 10);
+        W[j] = (W[j - 16] + s0 + W[j - 7] + s1) | 0;
+      }
+      var a = H[0], b = H[1], c = H[2], d = H[3], e = H[4], f = H[5], g = H[6], hh = H[7];
+      for (var t = 0; t < 64; t++) {
+        var S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+        var ch = (e & f) ^ (~e & g);
+        var temp1 = (hh + S1 + ch + K[t] + W[t]) | 0;
+        var S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+        var maj = (a & b) ^ (a & c) ^ (b & c);
+        var temp2 = (S0 + maj) | 0;
+        hh = g; g = f; f = e; e = (d + temp1) | 0;
+        d = c; c = b; b = a; a = (temp1 + temp2) | 0;
+      }
+      H[0] = (H[0] + a) | 0; H[1] = (H[1] + b) | 0; H[2] = (H[2] + c) | 0; H[3] = (H[3] + d) | 0;
+      H[4] = (H[4] + e) | 0; H[5] = (H[5] + f) | 0; H[6] = (H[6] + g) | 0; H[7] = (H[7] + hh) | 0;
+    }
+    return H.map(function (v) { return (v >>> 0).toString(16).padStart(8, "0"); }).join("");
+  }
+
+  function sha256Hex(bytes) {
+    var u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (typeof crypto !== "undefined" && crypto.subtle && typeof crypto.subtle.digest === "function") {
+      try {
+        return crypto.subtle.digest("SHA-256", u8).then(function (ab) {
+          var arr = new Uint8Array(ab), hex = "";
+          for (var i = 0; i < arr.length; i++) hex += arr[i].toString(16).padStart(2, "0");
+          return hex;
+        }, function () { return sha256Pure(u8); });
+      } catch (e) { /* fall through */ }
+    }
+    return Promise.resolve(sha256Pure(u8));
+  }
+
+  function bytesToBase64(u8) {
+    var parts = [], step = 8192;
+    for (var i = 0; i < u8.length; i += step) {
+      parts.push(String.fromCharCode.apply(null, Array.from(u8.subarray(i, i + step))));
+    }
+    return btoa(parts.join(""));
+  }
+
+  function decodeUtf8(u8) {
+    if (typeof TextDecoder !== "undefined") return new TextDecoder("utf-8").decode(u8);
+    var out = "";
+    for (var i = 0; i < u8.length; i++) out += String.fromCharCode(u8[i]);
+    return out;
+  }
+
+  function asciiField(u8, start, len) {
+    var end = start + len, s = "";
+    for (var i = start; i < end && u8[i] !== 0; i++) s += String.fromCharCode(u8[i]);
+    return s;
+  }
+
+  function unpackTar(u8) {
+    if (!u8 || u8.length < 512 || u8.length % 512 !== 0) return null;
+    var pos = 0, out = [];
+    while (pos + 512 <= u8.length) {
+      var zero = true;
+      for (var z = 0; z < 512; z++) { if (u8[pos + z] !== 0) { zero = false; break; } }
+      if (zero) break;
+      var magic = asciiField(u8, pos + 257, 6).trim();
+      var name = asciiField(u8, pos, 100);
+      var prefix = asciiField(u8, pos + 345, 155);
+      if (prefix) name = prefix + "/" + name;
+      var sizeRaw = asciiField(u8, pos + 124, 12).trim();
+      var size = sizeRaw ? parseInt(sizeRaw, 8) : 0;
+      if (!name || !isFinite(size) || size < 0 || pos + 512 + size > u8.length) return null;
+      if (magic && magic.indexOf("ustar") !== 0) return null;
+      out.push({ name: name, bytes: u8.subarray(pos + 512, pos + 512 + size) });
+      pos += 512 + Math.ceil(size / 512) * 512;
+    }
+    return out.length ? out : null;
+  }
+
+  function findEmbeddedAttestation(sha) {
+    for (var i = 0; i < PAGES.length; i++) {
+      var atts = PAGES[i].attestations || {};
+      var keys = Object.keys(atts);
+      for (var j = 0; j < keys.length; j++) {
+        var att = atts[keys[j]];
+        if (att && att.bundle && att.bundle.sha256 === sha) return att;
+      }
+    }
+    return null;
+  }
+
+  function buildOfflineResultFromAttestation(att, filename, domainKey, sealOverride) {
+    var fmt = (sealOverride && sealOverride.format) || att.bundle.format || "fidb/1";
+    var isSealed = fmt === "fidb/2";
+    return {
+      source: "offline-embedded",
+      passed: att.verdict.passed,
+      exit_code: att.verdict.exit_code,
+      domain: domainKey,
+      verdict: att.verdict,
+      bundle: {
+        filename: filename,
+        domain: domainKey,
+        sha256: att.bundle.sha256,
+        size_bytes: att.bundle.bytes,
+        format: fmt,
+        members: att.bundle.members,
+        lineage: att.bundle.lineage,
+        subjects: att.bundle.subjects,
+        range: att.bundle.range
+      },
+      seal: sealOverride || {
+        format: fmt,
+        sealed: isSealed,
+        verified: att.verdict.passed || att.verdict.exit_code === 7,
+        status: isSealed ? "verified" : "unsealed",
+        records_whole: att.bundle.range ? (att.bundle.range.to - att.bundle.range.from + 1) : 0,
+        records_two_tag: att.bundle.range ? (att.bundle.range.to - att.bundle.range.from + 1) : 0,
+        records_withheld: 0
+      },
+      checks: att.checks,
+      findings: [].concat.apply([], att.checks.map(function (c) {
+        return (c.findings || []).map(function (f) { return { check: c.id, kind: f.kind, label: f.label, message: f.message, exit_code: f.exit_code }; });
+      })),
+      frameworks: att.frameworks,
+      mappings: att.mappings,
+      records_preview: []
+    };
+  }
+
+  function verifyBytesClientSide(filename, u8, domainKey) {
+    return sha256Hex(u8).then(function (bundleSha) {
+      var trimmed = 0;
+      while (trimmed < u8.length && (u8[trimmed] === 0x20 || u8[trimmed] === 0x0a || u8[trimmed] === 0x0d || u8[trimmed] === 0x09)) trimmed++;
+      if (trimmed < u8.length && u8[trimmed] === 0x7b) {
+        try {
+          var parsed = JSON.parse(decodeUtf8(u8));
+          if (parsed && parsed.verdict && parsed.checks && parsed.bundle) {
+            return buildOfflineResultFromAttestation(parsed, filename, domainKey, null);
+          }
+          if (parsed && parsed.format && parsed.members) {
+            var baseAtt = pageOfDomain(domainKey).attestations[pageOfDomain(domainKey).primary];
+            var isS = parsed.format === "fidb/2";
+            return {
+              source: "offline-json",
+              passed: true,
+              exit_code: 0,
+              domain: domainKey,
+              verdict: { passed: true, status: "MANIFEST PARSED (CLIENT)", exit_code: 0, findings: 0, labels: [] },
+              bundle: {
+                filename: filename,
+                domain: domainKey,
+                sha256: bundleSha,
+                size_bytes: u8.length,
+                format: parsed.format,
+                members: parsed.members.length,
+                lineage: parsed.lineage,
+                subjects: parsed.subjects || [],
+                range: parsed.range || { from: 1, to: 1 }
+              },
+              seal: { format: parsed.format, sealed: isS, verified: true, status: isS ? "verified" : "unsealed", records_whole: 0, records_two_tag: 0, records_withheld: 0 },
+              checks: baseAtt.checks.map(function (c) { return { id: c.id, name: c.name, status: c.id === "V1" ? "pass" : "client", proves: c.proves, findings: [], controls: c.controls }; }),
+              findings: [],
+              frameworks: baseAtt.frameworks,
+              mappings: baseAtt.mappings,
+              records_preview: []
+            };
+          }
+        } catch (err) { /* try tar */ }
+      }
+
+      var entries = unpackTar(u8);
+      if (!entries) {
+        return {
+          source: "offline-crypto",
+          passed: false,
+          exit_code: 2,
+          domain: domainKey,
+          verdict: { passed: false, status: "UNREADABLE BUNDLE", exit_code: 2, findings: 1, labels: [] },
+          bundle: { filename: filename, domain: domainKey, sha256: bundleSha, size_bytes: u8.length, format: null, members: 0, lineage: "—", subjects: [] },
+          seal: { format: null, sealed: false, verified: false, status: "failed", records_whole: 0, records_two_tag: 0, records_withheld: 0 },
+          checks: [{ id: "V1", name: "schema", status: "fail", proves: "Archive framing and SHA-256 manifest digests", findings: [{ kind: "malformed", label: "", message: "File is neither a POSIX .fidb tar archive nor an attestation JSON document", exit_code: 2 }], controls: {} }],
+          findings: [{ check: "V1", kind: "malformed", label: "", message: "File is neither a POSIX .fidb tar archive nor an attestation JSON document", exit_code: 2 }],
+          frameworks: {},
+          mappings: { packs: [] },
+          records_preview: []
+        };
+      }
+
+      var byName = {};
+      entries.forEach(function (e) { byName[e.name] = e.bytes; });
+      var manifest = null;
+      var v1Findings = [];
+      if (!byName["manifest.json"]) {
+        v1Findings.push({ check: "V1", kind: "malformed", label: "", message: "manifest.json is missing from archive", exit_code: 3 });
+      } else {
+        try { manifest = JSON.parse(decodeUtf8(byName["manifest.json"])); }
+        catch (e) { v1Findings.push({ check: "V1", kind: "malformed", label: "", message: "manifest.json is not valid JSON", exit_code: 3 }); }
+      }
+
+      var nonManifest = entries.filter(function (e) { return e.name !== "manifest.json"; });
+      return Promise.all(nonManifest.map(function (e) {
+        return sha256Hex(e.bytes).then(function (d) { return { name: e.name, sha256: d }; });
+      })).then(function (computed) {
+        var computedMap = {};
+        computed.forEach(function (c) { computedMap[c.name] = c.sha256; });
+        if (manifest && Array.isArray(manifest.members)) {
+          var declaredMap = {};
+          manifest.members.forEach(function (m) {
+            declaredMap[m.path] = m.sha256;
+            if (!computedMap[m.path]) {
+              v1Findings.push({ check: "V1", kind: "malformed", label: "", message: "member " + m.path + " declared in manifest.json is missing from archive", exit_code: 3 });
+            } else if (computedMap[m.path] !== m.sha256) {
+              v1Findings.push({ check: "V1", kind: "malformed", label: "", message: "SHA-256 mismatch on " + m.path + ": manifest " + short(m.sha256, 12) + " != computed " + short(computedMap[m.path], 12), exit_code: 3 });
+            }
+          });
+          computed.forEach(function (c) {
+            if (!declaredMap[c.name]) {
+              v1Findings.push({ check: "V1", kind: "malformed", label: "", message: "undeclared archive member " + c.name, exit_code: 3 });
+            }
+          });
+        }
+
+        var logRecords = [];
+        if (byName["log.jsonl"]) {
+          try {
+            logRecords = decodeUtf8(byName["log.jsonl"]).split("\n").filter(function (ln) { return ln.trim().length > 0; }).map(function (ln) { return JSON.parse(ln); });
+          } catch (e) { logRecords = []; }
+        } else if (byName["log.json"]) {
+          try { logRecords = JSON.parse(decodeUtf8(byName["log.json"])); } catch (e) { logRecords = []; }
+        }
+        var withheld = [];
+        if (byName["withheld.json"]) {
+          try {
+            var whParsed = JSON.parse(decodeUtf8(byName["withheld.json"]));
+            withheld = Array.isArray(whParsed) ? whParsed : (whParsed && Array.isArray(whParsed.records) ? whParsed.records : []);
+          } catch (e) { withheld = []; }
+        }
+        var fmt = (manifest && manifest.format) || (byName["withheld.json"] ? "fidb/2" : "fidb/1");
+        var isSealed = fmt === "fidb/2";
+        var twoTag = logRecords.filter(function (r) {
+          if (!r || !r.seal) return false;
+          return Array.isArray(r.seal) ? r.seal.length > 0 : (typeof r.seal === "object" && Object.keys(r.seal).length > 0);
+        }).length;
+        var sealInfo = {
+          format: fmt,
+          sealed: isSealed,
+          verified: v1Findings.length === 0,
+          status: v1Findings.length ? "failed" : (isSealed ? "verified" : "unsealed"),
+          records_whole: logRecords.length,
+          records_two_tag: twoTag,
+          records_withheld: withheld.length
+        };
+        var preview = logRecords.slice(0, 8).map(function (r) {
+          var sealTags = Array.isArray(r.seal) ? r.seal : (r.seal && typeof r.seal === "object" ? Object.keys(r.seal).map(function (k) { return r.seal[k]; }) : []);
+          return { seq: r.seq, kind: r.kind, at: r.issued_at || r.at, seal: sealTags.length ? sealTags.map(function (t) { return short(t, 12); }).join(" · ") : "—" };
+        });
+
+        var embedded = v1Findings.length === 0 ? findEmbeddedAttestation(bundleSha) : null;
+        if (embedded) {
+          var res = buildOfflineResultFromAttestation(embedded, filename, domainKey, sealInfo);
+          res.source = "offline-crypto+embedded";
+          res.records_preview = preview;
+          return res;
+        }
+
+        var refAtt = pageOfDomain(domainKey).attestations[pageOfDomain(domainKey).primary];
+        var v1Ok = v1Findings.length === 0;
+        var checks = refAtt.checks.map(function (c) {
+          if (c.id === "V1") {
+            return { id: "V1", name: c.name, status: v1Ok ? "pass" : "fail", proves: c.proves, findings: v1Findings, controls: c.controls };
+          }
+          return { id: c.id, name: c.name, status: v1Ok ? "pass" : "not_run", proves: c.proves, findings: [], controls: c.controls };
+        });
+        return {
+          source: "offline-crypto",
+          passed: v1Ok,
+          exit_code: v1Ok ? 0 : 3,
+          domain: domainKey,
+          verdict: {
+            passed: v1Ok,
+            status: v1Ok ? "MANIFEST & SHA-256 VERIFIED (CLIENT)" : "TAMPERED · V1 SHA-256 MISMATCH",
+            exit_code: v1Ok ? 0 : 3,
+            findings: v1Findings.length,
+            labels: []
+          },
+          bundle: {
+            filename: filename,
+            domain: domainKey,
+            sha256: bundleSha,
+            size_bytes: u8.length,
+            format: fmt,
+            members: entries.length,
+            lineage: manifest ? manifest.lineage : "—",
+            subjects: manifest && manifest.subjects ? manifest.subjects : [],
+            range: manifest && manifest.range ? manifest.range : { from: 1, to: logRecords.length + withheld.length }
+          },
+          seal: sealInfo,
+          checks: checks,
+          findings: v1Findings,
+          frameworks: refAtt.frameworks,
+          mappings: refAtt.mappings,
+          records_preview: preview
+        };
+      });
+    });
+  }
+
+  function scrollToVerifier() {
+    var el = document.querySelector(".verifier-result");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function pickGeneratedBundle(domainKey, fileName, slotKey) {
+    VERIFIER.loading = true; VERIFIER.error = null; render();
+    if (SERVER.live) {
+      fetch("api/verify-bundle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: domainKey, bundle: fileName })
+      }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+        .then(function (res) {
+          VERIFIER.loading = false;
+          if (!res.ok) { VERIFIER.error = res.data.error || "Verification request failed"; }
+          else { res.data.source = "live-server"; VERIFIER.result = res.data; }
+          render(); scrollToVerifier();
+        })
+        .catch(function (err) { VERIFIER.loading = false; VERIFIER.error = String(err); render(); });
+      return;
+    }
+    var page = pageOfDomain(domainKey);
+    var slot = slotKey || (fileName.indexOf("before") === 0 ? "before" : "after");
+    var relUrl = (domainKey !== "fintech" && PAGES.length > 1 ? domainKey + "/" : "") + fileName;
+    if (typeof location !== "undefined" && (location.protocol === "http:" || location.protocol === "https:")) {
+      fetch(relUrl).then(function (r) {
+        if (!r.ok) throw new Error("static");
+        return r.arrayBuffer();
+      }).then(function (ab) {
+        return verifyBytesClientSide(relUrl, new Uint8Array(ab), domainKey);
+      }).then(function (out) {
+        VERIFIER.loading = false; VERIFIER.result = out; render(); scrollToVerifier();
+      }).catch(function () {
+        var att = page.attestations[slot] || page.attestations[page.primary];
+        VERIFIER.loading = false;
+        VERIFIER.result = buildOfflineResultFromAttestation(att, relUrl, domainKey, null);
+        render(); scrollToVerifier();
+      });
+      return;
+    }
+    var att = page.attestations[slot] || page.attestations[page.primary];
+    VERIFIER.loading = false;
+    VERIFIER.result = buildOfflineResultFromAttestation(att, relUrl, domainKey, null);
+    render(); scrollToVerifier();
+  }
+
+  function pickCustomerBundle(c) {
+    var relFile = c.file;
+    VERIFIER.loading = true; VERIFIER.error = null; render();
+    if (SERVER.live) {
+      fetch("api/verify-bundle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: "saas", bundle: relFile })
+      }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+        .then(function (res) {
+          VERIFIER.loading = false;
+          if (!res.ok) VERIFIER.error = res.data.error || "Verification request failed";
+          else { res.data.source = "live-server"; VERIFIER.result = res.data; }
+          render(); scrollToVerifier();
+        })
+        .catch(function (err) { VERIFIER.loading = false; VERIFIER.error = String(err); render(); });
+      return;
+    }
+    var saasPage = pageOfDomain("saas");
+    var relUrl = (PAGES.length > 1 ? "saas/" : "") + relFile;
+    function fallbackFromCustomer() {
+      var refAtt = saasPage.attestations[c.passed ? "before" : "after"] || saasPage.attestations[saasPage.primary];
+      var res = buildOfflineResultFromAttestation(refAtt, relUrl, "saas", {
+        format: "fidb/2",
+        sealed: true,
+        verified: true,
+        status: "verified",
+        records_whole: c.records || 0,
+        records_two_tag: c.records || 0,
+        records_withheld: c.withheld || 0
+      });
+      res.passed = c.passed;
+      res.exit_code = c.exit_code;
+      res.verdict = { passed: c.passed, status: c.passed ? "VERIFIED (SEALED FIDB/2)" : "BREAK-GLASS DETECTED", exit_code: c.exit_code, findings: (c.findings || []).length, labels: c.passed ? [] : ["break-glass"] };
+      res.bundle.sha256 = c.sha256 || res.bundle.sha256;
+      res.bundle.members = c.members || res.bundle.members;
+      VERIFIER.loading = false; VERIFIER.result = res; render(); scrollToVerifier();
+    }
+    if (typeof location !== "undefined" && (location.protocol === "http:" || location.protocol === "https:")) {
+      fetch(relUrl).then(function (r) {
+        if (!r.ok) throw new Error("static");
+        return r.arrayBuffer();
+      }).then(function (ab) {
+        return verifyBytesClientSide(relUrl, new Uint8Array(ab), "saas");
+      }).then(function (out) {
+        VERIFIER.loading = false; VERIFIER.result = out; render(); scrollToVerifier();
+      }).catch(fallbackFromCustomer);
+      return;
+    }
+    fallbackFromCustomer();
+  }
+
+  function verifySandboxBundle(domainKey, sealed) {
+    if (!SERVER.live) return;
+    VERIFIER.loading = true; VERIFIER.error = null; render();
+    fetch("api/verify-bundle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain: domainKey, bundle: sealed ? "@sandbox-sealed" : "@sandbox", sealed: !!sealed })
+    }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+      .then(function (res) {
+        VERIFIER.loading = false;
+        if (!res.ok) VERIFIER.error = res.data.error || "Sandbox bundle verification failed";
+        else { res.data.source = "live-server"; VERIFIER.result = res.data; }
+        render(); scrollToVerifier();
+      })
+      .catch(function (err) { VERIFIER.loading = false; VERIFIER.error = String(err); render(); });
+  }
+
+  function handleDroppedFile(file, domainKey) {
+    if (!file) return;
+    VERIFIER.loading = true; VERIFIER.error = null; render();
+    file.arrayBuffer().then(function (ab) {
+      var u8 = new Uint8Array(ab);
+      if (SERVER.live) {
+        return fetch("api/verify-bundle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domain: domainKey, filename: file.name, data_base64: bytesToBase64(u8) })
+        }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+          .then(function (res) {
+            VERIFIER.loading = false;
+            if (!res.ok) VERIFIER.error = res.data.error || "Upload verification failed";
+            else { res.data.source = "live-server"; VERIFIER.result = res.data; }
+            render(); scrollToVerifier();
+          });
+      }
+      return verifyBytesClientSide(file.name, u8, domainKey).then(function (out) {
+        VERIFIER.loading = false; VERIFIER.result = out; render(); scrollToVerifier();
+      });
+    }).catch(function (err) {
+      VERIFIER.loading = false; VERIFIER.error = String(err); render();
+    });
+  }
+
+  function renderVerifierResult(res) {
+    var b = res.bundle || {}, sInfo = res.seal || {}, checks = res.checks || [];
+    var modePill = res.source === "live-server"
+      ? pill("LIVE SERVER · V1–V12 ED25519 + OFFLINE", "good")
+      : res.source === "offline-crypto+embedded"
+        ? pill("CLIENT SHA-256 VERIFIED + EMBEDDED ATTESTATION", "info")
+        : pill("CLIENT-SIDE TAR + SHA-256 INSPECTOR", "permit");
+    var verdictPill = res.passed ? pill("PASS · EXIT 0", "good") : pill((res.verdict && res.verdict.status ? res.verdict.status : "FAIL") + " · EXIT " + res.exit_code, res.exit_code === 7 ? "warn" : "bad");
+    var sealPill = sInfo.sealed
+      ? pill("SEALED FIDB/2 · " + sInfo.records_whole + " WHOLE / " + sInfo.records_withheld + " WITHHELD", sInfo.verified ? "good" : "bad")
+      : pill((sInfo.format || "fidb/1").toUpperCase() + " · " + sInfo.records_whole + " RECORDS (" + sInfo.records_two_tag + " TWO-TAG SEALED)", sInfo.verified ? "info" : "bad");
+
+    var checkRows = checks.map(function (c) {
+      var st = c.status === "pass" ? pill("PASS", "good") : c.status === "fail" ? pill("FAIL", "bad") : pill(String(c.status || "OK").toUpperCase(), "permit");
+      var fText = (c.findings && c.findings.length)
+        ? h("ul", { class: "findings" }, c.findings.map(function (f) { return h("li", null, h("span", { class: "sev blocking" }, f.label || kindLabel(f.kind)), h("span", { class: "small" }, f.message)); }))
+        : null;
+      return [h("b", null, c.id + " " + c.name), st, h("div", null, h("span", { class: "small" }, c.proves || ""), fText)];
+    });
+
+    var packs = res.mappings && res.mappings.packs ? res.mappings.packs : [];
+    var fwChips = packs.map(function (m) {
+      return h("span", { class: "chip static" }, fwLabel(m.framework) + " · " + m.covered + "/" + m.controls);
+    });
+
+    var recDetails = res.records_preview && res.records_preview.length
+      ? h("details", { style: "margin-top:8px" }, h("summary", null, "Inspect unpacked log.json records & two-tag HMAC seals (first " + res.records_preview.length + ")"),
+        table(["Seq", "Kind", "Timestamp", "Two-tag seal (HMAC-SHA-256)"], res.records_preview.map(function (r) {
+          return [String(r.seq), h("span", { class: "mono small" }, r.kind), h("span", { class: "small" }, r.at || "—"), h("span", { class: "mono small" }, r.seal)];
+        })))
+      : null;
+
+    return h("div", { class: "callrow verifier-result", style: "margin-top:12px" },
+      h("div", { class: "line" }, verdictPill, sealPill, modePill, h("span", { class: "spacer" }),
+        h("button", { class: "btn sm noprint", onclick: function () { VERIFIER.result = null; VERIFIER.error = null; render(); } }, "Close")),
+      h("dl", { class: "facts", style: "margin-top:10px" },
+        h("dt", null, "Bundle"), h("dd", null, h("b", null, b.filename || "bundle.fidb"), b.size_bytes ? h("span", { class: "muted" }, " · " + num(b.size_bytes) + " bytes · " + num(b.members || 0) + " members") : null),
+        h("dt", null, "SHA-256"), h("dd", null, b.sha256 ? hash(b.sha256) : "—"),
+        h("dt", null, "Lineage"), h("dd", null, h("span", { class: "mono small" }, b.lineage || "—"), b.subjects && b.subjects.length ? h("span", { class: "muted small" }, " · " + b.subjects.join(" · ")) : null),
+        h("dt", null, "Two-tag seals"), h("dd", { class: "small" }, sInfo.sealed
+          ? "fidb/2 party-scoped archive: " + sInfo.records_whole + " own record(s) whole (" + sInfo.records_two_tag + " with 2-tag HMAC seals), " + sInfo.records_withheld + " other-party record(s) represented by (seq, hash) in withheld.json."
+          : "fidb/1 full-lineage archive: " + sInfo.records_whole + " record(s), " + sInfo.records_two_tag + " carrying 2-tag HMAC seals.")),
+      recDetails,
+      h("details", { open: !res.passed, style: "margin-top:10px" },
+        h("summary", null, "V1–V12 check breakdown (" + checks.filter(function (c) { return c.status === "pass"; }).length + " of " + checks.length + " passed)"),
+        table(["Check", "Status", "Proof & findings"], checkRows)),
+      fwChips.length ? h("div", { style: "margin-top:10px" },
+        h("div", { class: "small muted", style: "margin-bottom:6px" }, "9-framework compliance coverage:"),
+        h("div", { class: "chips" }, fwChips)) : null);
+  }
+
+  function verifierWidget(where) {
+    var domKey = activeDomainKey();
+    var fileInput = h("input", {
+      type: "file",
+      accept: ".fidb,.tar,.json",
+      style: "display:none",
+      onchange: function (ev) {
+        if (ev.target.files && ev.target.files[0]) handleDroppedFile(ev.target.files[0], domKey);
+      }
+    });
+    var dz = h("div", {
+      class: "dropzone",
+      onclick: function () { fileInput.click(); },
+      ondragover: function (ev) { ev.preventDefault(); dz.classList.add("over"); },
+      ondragleave: function () { dz.classList.remove("over"); },
+      ondrop: function (ev) {
+        ev.preventDefault(); dz.classList.remove("over");
+        if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0]) {
+          handleDroppedFile(ev.dataTransfer.files[0], domKey);
+        }
+      }
+    },
+      h("div", { class: "line" }, icon("shield"), h("b", null, "Drop any .fidb bundle here to verify (" + (SERVER.live ? "live V1–V12 cryptographic verifier" : "client-side SHA-256 & tar inspector") + ")")),
+      h("span", { class: "small muted" }, "Accepts fidb/1 and customer-sealed fidb/2 (.fidb) archives or attestation JSON · click to browse"),
+      fileInput);
+
+    var picks = [];
+    if (where === "overview") {
+      PAGES.forEach(function (pg) {
+        var k = pg.demo && pg.demo.domain ? pg.demo.domain.key : "fintech";
+        var label = pg.demo && pg.demo.domain ? pg.demo.domain.industry : "Fintech";
+        picks.push(h("button", { class: "btn sm", onclick: function () { pickGeneratedBundle(k, "before.fidb", "before"); } }, label + " before.fidb"));
+        picks.push(h("button", { class: "btn sm", onclick: function () { pickGeneratedBundle(k, "after.fidb", "after"); } }, label + " after.fidb"));
+        if (k === "saas" && pg.demo) {
+          var tc = pg.demo.acts.filter(function (a) { return a.key === "trust-center"; })[0];
+          if (tc && tc.customers) {
+            tc.customers.forEach(function (c) {
+              picks.push(h("button", { class: "btn sm", onclick: function () { pickCustomerBundle(c); } }, c.customer + " fidb/2"));
+            });
+          }
+        }
+      });
+    } else {
+      picks.push(h("button", { class: "btn sm", onclick: function () { pickGeneratedBundle(domKey, "before.fidb", "before"); } }, "Verify before.fidb"));
+      picks.push(h("button", { class: "btn sm", onclick: function () { pickGeneratedBundle(domKey, "after.fidb", "after"); } }, "Verify after.fidb"));
+      if (domKey === "saas" && act("trust-center")) {
+        act("trust-center").customers.forEach(function (c) {
+          picks.push(h("button", { class: "btn sm", onclick: function () { pickCustomerBundle(c); } }, c.customer + " (fidb/2)"));
+        });
+      }
+      if (SERVER.live) {
+        picks.push(h("button", { class: "btn sm", onclick: function () { verifySandboxBundle(domKey, false); } }, "Export & verify sandbox fidb/1"));
+        picks.push(h("button", { class: "btn sm", onclick: function () { verifySandboxBundle(domKey, true); } }, "Export & verify sandbox fidb/2"));
+      }
+    }
+
+    var box = h("div", { class: "verifier-box noprint" + (where === "overview" ? " card pad" : "") },
+      where === "overview"
+        ? h("div", { class: "ind-head", style: "margin-bottom:8px" }, h("b", null, "Interactive .fidb bundle verifier & trust center"), pill("FIDB/1 & SEALED FIDB/2", "info"), h("span", { class: "spacer" }), SERVER.live ? pill("CONNECTED TO /api/verify-bundle", "good") : pill("CLIENT-SIDE CRYPTO FALLBACK", "permit"))
+        : h("div", { class: "ind-head", style: "margin:10px 0 8px" }, h("b", { class: "small" }, "Verify a generated or uploaded .fidb bundle"), SERVER.live ? pill("/api/verify-bundle", "good") : pill("OFFLINE SHA-256", "permit")),
+      h("div", { class: "bundle-picks", style: "margin-bottom:10px" }, picks),
+      dz,
+      VERIFIER.loading ? h("p", { class: "small ink2", style: "margin-top:8px" }, "Verifying bundle…") : null,
+      VERIFIER.error ? h("div", { class: "outcome bad", style: "margin-top:8px" }, icon("alert"), VERIFIER.error) : null,
+      VERIFIER.result ? renderVerifierResult(VERIFIER.result) : null);
+    return box;
+  }
+
+  // -- interactive sandbox & 2-of-3 warrant quorum desk ------------------------------------
+  function offlineDomainModel(key) {
+    var pg = pageOfDomain(key), dm = pg.demo, pk = dm && dm.domain ? dm.domain : null;
+    var att = pg.attestations[pg.primary];
+    var principals = pk ? pk.principals : att.authority.charter.principals.map(function (p) { return p.name; });
+    var qAct = dm ? dm.acts.filter(function (a) { return a.key === "queue"; })[0] : null;
+    var cAct = dm ? dm.acts.filter(function (a) { return a.key === "cascade" || a.key === "settlement"; })[0] : null;
+    var wAct = dm ? dm.acts.filter(function (a) { return a.key === "quorum" || a.key === "warrant" || a.key === "amend"; })[0] : null;
+    var normalCall = qAct && qAct.calls ? qAct.calls[0] : { tool: "action", arguments: {}, gateway: { decision: "PERMIT", policies: [] }, outcome: "committed", feedback: "Committed" };
+    var trapCall = cAct && cAct.calls ? cAct.calls[cAct.calls.length - 1] : normalCall;
+    var heldCallObj = (wAct && wAct.call) ? wAct.call : (wAct && wAct.calls ? wAct.calls[wAct.calls.length - 1] : normalCall);
+    var presets = [
+      { id: "normal", kind: "normal", label: "Everyday action (" + normalCall.tool + ")", description: qAct ? qAct.lede : "Permitted by gateway and committed by stack.", tool: normalCall.tool, arguments: normalCall.arguments, replay: normalCall },
+      { id: "trap", kind: "trap", label: "Hidden consequence trap (" + trapCall.tool + ")", description: cAct ? cAct.lede : "Permitted by gateway; blocked or compensated after staged measurement.", tool: trapCall.tool, arguments: trapCall.arguments, replay: trapCall },
+      { id: "held", kind: "held", label: "Held for 2-of-3 quorum warrant (" + heldCallObj.tool + ")", description: wAct ? wAct.lede : "Staged action requires a 2-of-3 principal warrant to release.", tool: heldCallObj.tool, arguments: heldCallObj.arguments, replay: heldCallObj, ticketTemplate: wAct ? wAct.ticket : null, warrantTemplate: wAct ? wAct.warrant : null }
+    ];
+    var seenTools = {};
+    var tools = [];
+    presets.forEach(function (pr) {
+      if (!seenTools[pr.tool]) {
+        seenTools[pr.tool] = true;
+        tools.push({ name: pr.tool, description: pr.label, sample: pr.arguments });
+      }
+    });
+    var rootM = mandateOf(att);
+    return {
+      key: key,
+      industry: pk ? pk.industry : "Fintech",
+      substrate: pk ? (pk.nouns.substrate || (pk.nouns.state === "chart" ? "FHIR R4" : "SQLite")) : "SQLite",
+      principals: principals,
+      presets: presets,
+      tools: tools,
+      ledger: {
+        scope: rootM.scope || "agent",
+        usd: { envelope: String(rootM.envelope || "25.00"), available: String(rootM.envelope || "25.00"), spent: "0.00", halted: false },
+        units: {}
+      },
+      windows: (rootM.windows || []).map(function (w) { return { name: w.name, limit: String(w.limit), span_seconds: w.span_seconds, used: "0" }; })
+    };
+  }
+
+  function sandboxState(key) {
+    if (!SANDBOX[key]) {
+      var model = SERVER.live && SERVER.domains[key] ? SERVER.domains[key] : offlineDomainModel(key);
+      var firstPreset = model.presets[0] || { id: "normal", tool: "", arguments: {} };
+      SANDBOX[key] = {
+        preset: firstPreset.id,
+        tool: firstPreset.tool,
+        argsText: JSON.stringify(firstPreset.arguments || {}, null, 2),
+        hold: false,
+        busy: false,
+        error: null,
+        lastCall: null,
+        ticket: (model.open_tickets && model.open_tickets[0]) || null,
+        ledger: model.ledger,
+        windows: model.windows,
+        outbox: (model.substrate_state && model.substrate_state.outbox) || {}
+      };
+    } else if (SERVER.live && SERVER.domains[key] && !SANDBOX[key].lastCall && !SANDBOX[key].ticket) {
+      var liveDom = SERVER.domains[key];
+      SANDBOX[key].ledger = liveDom.ledger;
+      SANDBOX[key].windows = liveDom.windows;
+      if (liveDom.open_tickets && liveDom.open_tickets.length) SANDBOX[key].ticket = liveDom.open_tickets[0];
+    }
+    return SANDBOX[key];
+  }
+
+  function runSandboxPreset(key, preset) {
+    var st = sandboxState(key);
+    st.preset = preset.id;
+    st.tool = preset.tool;
+    st.argsText = JSON.stringify(preset.arguments || {}, null, 2);
+    st.hold = preset.kind === "held";
+    executeSandboxCall(key, { preset: preset.id });
+  }
+
+  function executeSandboxCall(key, bodyOverride) {
+    var st = sandboxState(key);
+    st.error = null;
+    if (SERVER.live) {
+      var payload;
+      if (bodyOverride) {
+        payload = { domain: key, preset: bodyOverride.preset };
+      } else {
+        var parsedArgs;
+        try { parsedArgs = JSON.parse(st.argsText || "{}"); }
+        catch (e) { st.error = "Arguments must be valid JSON: " + e.message; render(); return; }
+        payload = { domain: key, tool: st.tool, arguments: parsedArgs, hold: st.hold };
+      }
+      st.busy = true; render();
+      fetch("api/sandbox/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+        .then(function (res) {
+          st.busy = false;
+          if (!res.ok) { st.error = res.data.error || "Call failed"; render(); return; }
+          var d = res.data;
+          st.lastCall = d;
+          st.ledger = d.ledger || st.ledger;
+          st.windows = d.windows || st.windows;
+          st.outbox = d.outbox || st.outbox;
+          if (d.ticket) st.ticket = d.ticket;
+          render();
+        })
+        .catch(function (err) { st.busy = false; st.error = String(err); render(); });
+      return;
+    }
+
+    // Static interactive replay fallback (file:// or GitHub Pages)
+    var model = offlineDomainModel(key);
+    var pr = model.presets.filter(function (p) { return bodyOverride ? p.id === bodyOverride.preset : p.tool === st.tool; })[0] || model.presets[0];
+    var replay = pr.replay || {};
+    var m = replay.measured || null;
+    st.lastCall = {
+      domain: key,
+      tool: bodyOverride ? pr.tool : st.tool,
+      arguments: bodyOverride ? pr.arguments : (function () { try { return JSON.parse(st.argsText); } catch (e) { return pr.arguments; } })(),
+      gateway: replay.gateway || { decision: "PERMIT", policies: ["permit-tool"] },
+      outcome: (m && m.compensated) ? "compensated" : (replay.outcome || "committed"),
+      feedback: replay.feedback || "",
+      measured: m,
+      unchanged: replay.unchanged,
+      findings: m ? m.findings : [],
+      receipt: m ? {
+        arc: "ARC1/1.4",
+        receipt_id: "rcpt_" + short(m.plan || "00000000", 12),
+        outcome: m.committed ? "committed" : (m.compensated ? "compensated" : "refused"),
+        measurement: key === "healthcare" ? "predicted" : (key === "sre" ? "plan-bound" : "transactional")
+      } : null,
+      static_replay: true
+    };
+    if ((bodyOverride && bodyOverride.preset === "held") || (!bodyOverride && st.hold)) {
+      var tmpl = pr.ticketTemplate || {};
+      st.ticket = {
+        domain: key,
+        ticket_id: tmpl.id || "tkt_replay_" + key,
+        digest: tmpl.digest || "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        class: tmpl["class"] || (key === "coding-agent" ? "refused" : "held"),
+        status: "open",
+        open: true,
+        principals: model.principals,
+        options: tmpl.options || [{ action: key === "coding-agent" ? "accept_repair" : "release", quorum: 2, expected_heads: ["head_01"] }],
+        quorum: { needed: 2, total_principals: model.principals.length, approved_by: [], declined_by: [], reached: false, status: "open" },
+        votes: [],
+        warrant: null,
+        warrantTemplate: pr.warrantTemplate || null,
+        static_replay: true
+      };
+      st.outbox = { msg_held_01: "held" };
+    }
+    render();
+  }
+
+  function castPrincipalVote(key, principal, decision) {
+    var st = sandboxState(key);
+    if (!st.ticket) return;
+    st.error = null;
+    if (SERVER.live) {
+      st.busy = true; render();
+      fetch("api/warrant/vote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: key, ticket_id: st.ticket.ticket_id, principal: principal, decision: decision })
+      }).then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+        .then(function (res) {
+          st.busy = false;
+          if (!res.ok) { st.error = res.data.error || "Vote failed"; render(); return; }
+          var d = res.data;
+          st.ticket = d.ticket;
+          st.outbox = d.outbox || st.outbox;
+          st.ledger = d.ledger || st.ledger;
+          st.windows = d.windows || st.windows;
+          render();
+        })
+        .catch(function (err) { st.busy = false; st.error = String(err); render(); });
+      return;
+    }
+
+    // Static replay quorum state machine
+    var t = st.ticket;
+    if (!t.open) return;
+    var q = t.quorum;
+    var isApprove = decision === "approve";
+    var list = isApprove ? q.approved_by : q.declined_by;
+    var dup = list.indexOf(principal) >= 0;
+    if (!dup) list.push(principal);
+    var fakeDigest = (principal + "_" + decision + "_" + (t.votes.length + 1) + "_ed25519").padEnd(32, "0");
+    t.votes.push({
+      principal: principal,
+      decision: decision,
+      resolution: t.options[0].action,
+      approval_digest: fakeDigest,
+      recorded: ["approval.recorded"],
+      counted: !dup,
+      duplicate: dup
+    });
+    if (q.approved_by.length >= q.needed) {
+      var wt = t.warrantTemplate || {};
+      q.reached = true;
+      q.status = "executed";
+      t.status = "executed";
+      t.open = false;
+      t.warrant = {
+        warrant_id: wt.id || "war_" + key + "_2of3",
+        digest: wt.digest || "4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a",
+        action: t.options[0].action,
+        basis: q.approved_by.slice(0, q.needed),
+        expected_heads: ["verified_at_pinned_head"],
+        formed_at: wt.formed_at || new Date().toISOString(),
+        executed: ["warrant.executed"],
+        released: true
+      };
+      st.outbox = { msg_held_01: "delivered" };
+    } else if (q.total_principals - q.declined_by.length < q.needed) {
+      q.status = "declined";
+      t.status = "declined";
+      t.open = false;
+    }
+    render();
+  }
+
+  function resetDomainSandbox(key) {
+    if (SERVER.live) {
+      var st = sandboxState(key);
+      st.busy = true; st.error = null; render();
+      fetch("api/sandbox/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: key })
+      }).then(function (r) { return r.json(); })
+        .then(function (dom) {
+          SERVER.domains[key] = dom;
+          delete SANDBOX[key];
+          render();
+        })
+        .catch(function (err) { st.busy = false; st.error = String(err); render(); });
+      return;
+    }
+    delete SANDBOX[key];
+    render();
+  }
+
+  function renderSandboxCallResult(c) {
+    var gw = c.gateway || {};
+    var rc = c.receipt;
+    var outStates = c.outbox ? Object.keys(c.outbox).map(function (m) { return short(m, 8) + ": " + c.outbox[m]; }).join(" · ") : "";
+    return h("div", { class: "callrow", style: "margin-top:8px" },
+      h("div", { class: "line", style: "margin-bottom:6px" },
+        h("span", { class: "tool" }, c.tool),
+        pill("GATEWAY: " + (gw.decision || "PERMIT"), gw.decision === "PERMIT" ? "permit" : "deny"),
+        c.outcome === "committed" ? pill("STACK: COMMITTED", "good")
+          : c.outcome === "compensated" ? pill("STACK: COMPENSATED (PUT BACK)", "warn")
+            : c.outcome === "halted" ? pill("SCOPE PAUSED", "warn")
+              : pill("STACK: " + String(c.outcome || "REFUSED").toUpperCase(), "bad")),
+      c.measured ? (PACK ? packMeasured(c) : measuredBlock(c)) : (c.feedback ? h("p", { class: "small ink2" }, c.feedback) : null),
+      rc ? h("div", { class: "small muted", style: "margin-top:6px" },
+        pill(rc.arc || "ARC1 1.4", "info"), " receipt ", hash(rc.receipt_id || "—", 14),
+        " · outcome ", h("b", null, rc.outcome || "—"),
+        rc.measurement ? " · class " + rc.measurement : "",
+        rc.substrate_txid ? " · tx " + short(rc.substrate_txid, 12) : "") : null,
+      outStates ? h("div", { class: "small ink2", style: "margin-top:4px" }, "Outbox: ", h("span", { class: "mono small" }, outStates)) : null);
+  }
+
+  function sandboxSection() {
+    var key = activeDomainKey();
+    var model = SERVER.live && SERVER.domains[key] ? SERVER.domains[key] : offlineDomainModel(key);
+    var st = sandboxState(key);
+    var presets = model.presets || [];
+    var principals = model.principals || [];
+    var heldPreset = presets.filter(function (p) { return p.kind === "held"; })[0] || presets[presets.length - 1];
+
+    var presetButtons = presets.map(function (pr, idx) {
+      var kindTag = pr.kind === "normal" ? pill("1 · COMMITS", "good") : pr.kind === "trap" ? pill("2 · CONSEQUENCE TRAP", "warn") : pill("3 · 2-OF-3 WARRANT", "info");
+      return h("button", {
+        class: "preset-btn" + (st.preset === pr.id ? " active" : ""),
+        disabled: st.busy,
+        onclick: function () { runSandboxPreset(key, pr); }
+      },
+        h("div", { class: "preset-head" }, kindTag, h("span", null, pr.label)),
+        h("span", { class: "small ink2" }, pr.description));
+    });
+
+    var toolSelect = h("select", {
+      onchange: function (ev) {
+        st.tool = ev.target.value;
+        var matchPr = presets.filter(function (p) { return p.tool === st.tool; })[0];
+        if (matchPr) st.argsText = JSON.stringify(matchPr.arguments || {}, null, 2);
+        render();
+      }
+    }, (model.tools || []).map(function (t) {
+      return h("option", { value: t.name, selected: t.name === st.tool ? "selected" : null }, t.name + " — " + t.description);
+    }));
+
+    var argsArea = h("textarea", {
+      "aria-label": "Tool arguments JSON",
+      oninput: function (ev) { st.argsText = ev.target.value; }
+    }, st.argsText);
+
+    var holdBox = h("input", {
+      type: "checkbox",
+      checked: st.hold ? "checked" : null,
+      onchange: function (ev) { st.hold = ev.target.checked; }
+    });
+
+    var led = st.ledger || model.ledger;
+    var unitEntries = led && led.units ? Object.keys(led.units).map(function (u) {
+      return u.toUpperCase() + " " + led.units[u].available + "/" + led.units[u].envelope + " avail";
+    }) : [];
+    var winEntries = (st.windows || []).map(function (w) {
+      return w.name.replace(/^[0-9a-f]+_/, "") + ": " + w.used + "/" + w.limit;
+    });
+
+    var leftCard = h("div", { class: "card cp-card" },
+      h("div", { class: "ind-head" },
+        h("b", null, "Try a tool call"),
+        pill(String(model.substrate || "SQLite").toUpperCase(), "info"),
+        h("span", { class: "spacer" }),
+        h("button", { class: "btn sm", disabled: st.busy, onclick: function () { resetDomainSandbox(key); } }, "Reset sandbox")),
+      h("p", { class: "small ink2" }, "Click a preset to run it through the Cedar input gateway and " + model.industry + "'s staged substrate, or customize the tool arguments below."),
+      h("div", { class: "preset-list" }, presetButtons),
+      h("details", null,
+        h("summary", null, "Custom tool call & JSON arguments"),
+        h("div", { class: "composer" },
+          toolSelect,
+          argsArea,
+          h("label", { class: "small ink2", style: "display:flex;align-items:center;gap:6px" }, holdBox, "Pause outbound delivery after commit to require a 2-of-3 release warrant"),
+          h("div", { class: "cp-toolbar" },
+            h("button", { class: "btn primary", disabled: st.busy, onclick: function () { executeSandboxCall(key, null); } }, st.busy ? "Running…" : "Execute tool call")))),
+      led ? h("div", { class: "small muted" },
+        "Ledger (" + led.scope + "): $" + Number(led.usd.available).toFixed(2) + " available of $" + Number(led.usd.envelope).toFixed(2) +
+        (led.usd.halted ? " · PAUSED" : "") +
+        (unitEntries.length ? " · " + unitEntries.join(" · ") : "") +
+        (winEntries.length ? " · window " + winEntries.join(", ") : "")) : null,
+      st.error ? h("div", { class: "outcome bad" }, icon("alert"), st.error) : null,
+      st.lastCall ? renderSandboxCallResult(st.lastCall) : null);
+
+    var t = st.ticket;
+    var deskBody;
+    if (!t) {
+      deskBody = h("div", { class: "empty-gw", style: "margin-top:6px" },
+        h("b", null, "No held or escalated ticket open yet."),
+        "Stage an exception or held operation to raise a signed FIDU1 ticket for " + principals.join(", ") + ".",
+        heldPreset ? h("div", { style: "margin-top:12px" },
+          h("button", { class: "btn primary", disabled: st.busy, onclick: function () { runSandboxPreset(key, heldPreset); } }, "Stage held operation (" + heldPreset.tool + ")")) : null);
+    } else {
+      var q = t.quorum || { needed: 2, total_principals: 3, approved_by: [], declined_by: [], reached: false, status: t.status };
+      var statusBadge = t.warrant
+        ? pill("WARRANT FORMED & EXECUTED", "good")
+        : t.status === "declined"
+          ? pill("TICKET DECLINED", "bad")
+          : pill("AWAITING QUORUM · " + q.approved_by.length + " OF " + q.needed, "warn");
+      var meterSegs = [0, 1, 2].map(function (i) {
+        return h("i", { class: i < q.approved_by.length ? "on" : "" });
+      });
+      var principalRows = principals.map(function (pName) {
+        var approved = q.approved_by.indexOf(pName) >= 0;
+        var declined = q.declined_by.indexOf(pName) >= 0;
+        return h("div", { class: "principal-row" },
+          h("b", null, pName),
+          approved ? pill("APPROVED", "good") : declined ? pill("DECLINED", "bad") : pill("READY", "permit"),
+          h("span", { class: "spacer" }),
+          h("button", { class: "btn sm approve", disabled: st.busy || !t.open, onclick: function () { castPrincipalVote(key, pName, "approve"); } }, approved ? "Sign again (dup test)" : "Sign Approve"),
+          h("button", { class: "btn sm reject", disabled: st.busy || !t.open, onclick: function () { castPrincipalVote(key, pName, "reject"); } }, "Sign Reject"));
+      });
+      var voteRows = (t.votes || []).map(function (v) {
+        var vPill = v.duplicate ? pill("DUPLICATE · 1 PER PRINCIPAL", "permit") : v.decision === "approve" ? pill("COUNTED", "good") : pill("DECLINED", "bad");
+        return h("div", { class: "vote" },
+          h("span", { style: "color:" + (v.decision === "approve" ? "var(--good-ink)" : "var(--critical-ink)") }, icon(v.decision === "approve" ? "check" : "x")),
+          h("span", null, h("b", null, v.principal), " signed ", h("code", null, v.decision), " (", v.resolution, ")",
+            h("div", { class: "small muted" }, "approval ", hash(v.approval_digest, 14), " → " + (v.recorded || []).join(", "))),
+          vPill);
+      });
+      var outboxSummary = Object.keys(st.outbox || {}).map(function (m) { return short(m, 8) + " → " + st.outbox[m].toUpperCase(); }).join(" · ");
+      var warrantCard = t.warrant ? h("div", { class: "callrow", style: "margin-top:8px;background:var(--good-wash)" },
+        h("div", { class: "line" }, pill("FIDU1 WARRANT", "good"), hash(t.warrant.digest, 16), h("span", { class: "small muted" }, "action: " + t.warrant.action)),
+        h("div", { class: "small ink2", style: "margin-top:4px" },
+          "Basis: " + t.warrant.basis.length + " distinct principal signatures · expected_heads verified · executed: " + (t.warrant.executed || ["warrant.executed"]).join(" → ") +
+          (outboxSummary ? " · outbox " + outboxSummary : ""))) : null;
+
+      deskBody = h("div", null,
+        h("div", { class: "callrow" },
+          h("div", { class: "line" }, pill("TICKET · " + String(t["class"]).toUpperCase(), "info"), hash(t.ticket_id, 12), statusBadge),
+          h("div", { class: "small muted", style: "margin-top:4px" }, "Ticket digest: ", hash(t.digest, 16),
+            t.options && t.options[0] && t.options[0].expected_heads && t.options[0].expected_heads.length
+              ? " · pinned expected_heads: " + t.options[0].expected_heads.map(function (eh) { return short(eh, 10); }).join(", ")
+              : "")),
+        h("div", { class: "small ink2", style: "margin:6px 0 4px;font-weight:600" }, "Quorum progress (" + q.needed + " of " + principals.length + " named principals required):"),
+        h("div", { class: "meter" }, meterSegs),
+        h("div", { class: "principal-list" }, principalRows),
+        voteRows.length ? h("div", { style: "margin-top:6px" }, voteRows) : null,
+        warrantCard);
+    }
+
+    var rightCard = h("div", { class: "card cp-card" },
+      h("div", { class: "ind-head" },
+        h("b", null, "Warrant quorum desk"),
+        pill("2 OF 3 PRINCIPALS", "info"),
+        h("span", { class: "spacer" }),
+        SERVER.live ? pill("ED25519 LIVE SIGNING", "good") : pill("INTERACTIVE REPLAY", "permit")),
+      h("p", { class: "small ink2" }, "Cast principal approvals or rejections in any order. Each principal key counts at most once; when 2 of 3 approve, Fiduciary forms the Warrant and releases at expected_heads."),
+      deskBody);
+
+    return h("section", { id: "sandbox", class: "cp-section noprint" }, h("div", { class: "wrap" },
+      h("div", { class: "sec-head" },
+        h("span", { class: "kicker" }, (PACK ? PACK.industry : "Fintech") + " · interactive control plane"),
+        h("h2", null, "Try a call & sign a 2-of-3 quorum warrant"),
+        h("p", null, SERVER.live
+          ? "Connected to the local control plane (/api/sandbox/call, /api/warrant/vote, /api/verify-bundle): calls execute against an isolated live " + model.substrate + " sandbox and votes sign real FIDU1 approvals."
+          : "Viewing as a standalone static file: presets and 2-of-3 quorum signing run in interactive replay mode. Start fiduciary demo --serve to run live calls and Ed25519 signing.")),
+      h("div", { class: "cp-grid" }, leftCard, rightCard)));
+  }
+
+  function probeServer() {
+    if (SERVER.checked) return;
+    SERVER.checked = true;
+    if (typeof location === "undefined" || (location.protocol !== "http:" && location.protocol !== "https:")) return;
+    fetch("api/status", { headers: { Accept: "application/json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (data) {
+        if (data && data.mode === "live-server") {
+          SERVER.live = true;
+          SERVER.status = data;
+          SERVER.domains = {};
+          (data.domains || []).forEach(function (d) { SERVER.domains[d.key] = d; });
+          SANDBOX = {};
+          render();
+        }
+      })
+      .catch(function () { /* static hosting: stay in offline mode */ });
+  }
+
   function render() {
     var y = window.scrollY;
     app.textContent = "";
     add(app, topbar());
     if (OVERVIEW) add(app, overview());
     add(app, domainBar());
-    add(app, h("section", null, h("div", { class: "wrap" }, h("div", { class: "hero" }, verdictCard(), privacyCard()), kpis())));
+    add(app, h("section", null, h("div", { class: "wrap" }, h("div", { class: "hero" }, verdictCard(), privacyCard()), kpis(), (!OVERVIEW && !DEMO) ? verifierWidget("standalone") : null)));
     if (DEMO) add(app, theatre());
+    if (DEMO) add(app, sandboxSection());
     add(app, tree());
     add(app, inspector());
     add(app, matrix());
@@ -1212,4 +2258,5 @@
     if (mq.addEventListener) mq.addEventListener("change", function () { render(); });
   }
   render();
+  probeServer();
 })();

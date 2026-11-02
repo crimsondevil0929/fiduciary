@@ -6,6 +6,39 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-02
+
+The interactive control plane and trust center: live loopback endpoints beside the static
+console, an in-browser `.fidb` verifier for `fidb/1` and sealed `fidb/2` bundles, and a
+sandboxed call runner and 2-of-3 quorum warrant desk on every industry tab, with offline
+fallbacks when `dashboard.html` is opened as a static file.
+
+### Added
+
+- **Interactive control plane server** (`fiduciary demo --serve`, `fiduciary.demo.control`):
+  serves a demo or deployment directory (including an existing recorded run) on loopback
+  with four JSON endpoints beside static files: `GET /api/status` (domains, open and held
+  tickets, bundles, substrate, ledger and rate-window state), `POST /api/verify-bundle`
+  (offline in-process `verify_bundle` and `attest` over `fidb/1` and sealed `fidb/2`
+  archives, returning `V1`–`V12`, two-tag seal and withheld-record counts, and the nine
+  control frameworks), `POST /api/sandbox/call` (executes preset or custom tool calls on an
+  isolated per-domain sandbox over SQLite, FHIR R4, Kubernetes or Git, returning the
+  gateway decision, `EffectDiff`, checker findings, `ARC1 1.4` receipt, raised ticket and
+  updated ledger and windows), and `POST /api/warrant/vote` (signs a `FIDU1` `Approval`
+  with a principal's key, records intake, forms the 2-of-3 `Warrant` at quorum, and
+  executes it at `expected_heads`).
+- **In-browser `.fidb` verifier** (`console.js`): click any generated `before.fidb`,
+  `after.fidb` or customer-sealed `fidb/2` bundle, or drag-and-drop any `.fidb` file on the
+  overview and audit/trust-center views. Uses `/api/verify-bundle` when served by the
+  control plane, and falls back on `file://` or static hosting to client-side POSIX tar
+  parsing and SHA-256 manifest verification (`crypto.subtle` with a pure-JS fallback),
+  inspecting records, two-tag seals, `withheld.json`, `V1`–`V12` and framework controls.
+- **Interactive warrant quorum desk and call sandbox** (`console.js`): every industry tab
+  lets the reader run preset or custom tool calls (normal commit, hidden cascade or
+  read-back put-back trap, and held or repair-escalated calls) and cast principal votes to
+  form and release a 2-of-3 warrant live, falling back to an interactive replay when
+  opened statically without the local server.
+
 ## [1.6.0] - 2026-11-01
 
 The fourth rung: a FHIR server, predicted and verified. Every new member is written only
