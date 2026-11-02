@@ -691,6 +691,19 @@ parameters only; the statements are the developer's.
   - *Amended in 1.5.0.* An effect's `kind` may be `apply`: its statement is in a
     plan-bound substrate's own language (`scale deployments :namespace :name :replicas`,
     `set 'nodes' :value`), with `:name` parameters, and the substrate vets it.
+  - *Amended in 1.6.0.* An effect may declare its undo, `compensation`: a statement in its
+    substrate's own language that puts the write back (a FHIR server's `void <table>` for a
+    create, `restore <table>` for a patch). A substrate that cannot roll back requires one
+    of every effect (Interlock's `requires_compensation`), and holds it to the verb. The
+    plan carries it as the effect's compensation, its idempotency key the binding's digest
+    and the effect's id. A predicted statement's template literal names its parameters
+    after it (`create med_orders '<template>' :bed :drug`), so the placeholders outside
+    its literals are still exactly the binding's parameters. Written only when set.
+  - *Amended in 1.6.0.* A plan admitted and written whose writes did not stand (a
+    read-back that was not the prediction, a write that failed part way) is put back from
+    its undo by the substrate; the call is refused, the agent told what was put back in
+    counts, never values, and the operator's view of the stage (its diff and verdict) is
+    shown to the engine's observers. Its receipt's outcome is `compensated` (ARC1 1.4).
   - `tenant: "session"` stamps every effect's `tenant_id` with the session's tenant. With
     `data.declared_tenants`, that refuses a row of any other tenant
     (`TenantIsolation(declared=True)`).
@@ -2387,6 +2400,10 @@ records with their seals, anchors and one bundle's keys.
 *Amended in 1.5.0.* The same rule holds for 1.5.0's members (F4-12b): `apply`, sensors,
 pinned checker packs and acknowledged unknowns are written only when used, so every earlier
 document, compiled description, vector and bundle is unchanged.
+
+*Amended in 1.6.0.* And for 1.6.0's one member, an effect's `compensation` (F4-14): written
+only when used, so every earlier binding, mandate, vector and bundle is unchanged. A bundle
+whose receipts include a `compensated` one (ARC1 1.4) verifies with agentgov 1.2.0 or later.
 
 **The upstream gaps (§12).** Each is released: U-1 (crimsondevil0929/interlock#20), U-2,
 U-3, U-4 and U-6 (crimsondevil0929/interlock#21) in interlock 1.0.3, and U-5

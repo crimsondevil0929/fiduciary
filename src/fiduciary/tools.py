@@ -75,6 +75,7 @@ class Tool:
         stated_rows: int | None,
         after: Sequence[str] | None,
         partitions: Mapping[str, str] | None = None,
+        compensation: str | None = None,
     ) -> Tool:
         previous = [self._effects[-1]["id"]] if self._effects else []
         self._effects.append(
@@ -87,6 +88,7 @@ class Tool:
                 "stated_rows": stated_rows,
                 "after": list(previous if after is None else after),
                 **({"partitions": dict(partitions)} if partitions else {}),
+                **({"compensation": compensation} if compensation is not None else {}),
             }
         )
         return self
@@ -100,15 +102,26 @@ class Tool:
         stated_rows: int | None = None,
         after: Sequence[str] | None = None,
         partitions: Mapping[str, str] | None = None,
+        compensation: str | None = None,
         **parameters: str,
     ) -> Tool:
         """An ``INSERT``. Each keyword is a placeholder and its source:
         ``$.<argument>``, ``$session.tenant`` or ``$session.trajectory``.
         Effects run in the order written unless ``after`` says otherwise.
         ``partitions`` declares labels beside the tenant, each from an
-        argument: ``{"patient": "$.patient_id"}``."""
+        argument: ``{"patient": "$.patient_id"}``. ``compensation`` is the undo
+        the effect declares, for a substrate that cannot roll back: a FHIR
+        server's ``void <table>`` or ``restore <table>`` (1.6.0)."""
         return self._effect(
-            "insert", effect_id, table, statement, parameters, stated_rows, after, partitions
+            "insert",
+            effect_id,
+            table,
+            statement,
+            parameters,
+            stated_rows,
+            after,
+            partitions,
+            compensation,
         )
 
     def update(
@@ -120,11 +133,20 @@ class Tool:
         stated_rows: int | None = None,
         after: Sequence[str] | None = None,
         partitions: Mapping[str, str] | None = None,
+        compensation: str | None = None,
         **parameters: str,
     ) -> Tool:
         """An ``UPDATE``; see :meth:`insert`."""
         return self._effect(
-            "update", effect_id, table, statement, parameters, stated_rows, after, partitions
+            "update",
+            effect_id,
+            table,
+            statement,
+            parameters,
+            stated_rows,
+            after,
+            partitions,
+            compensation,
         )
 
     def delete(
@@ -136,11 +158,20 @@ class Tool:
         stated_rows: int | None = None,
         after: Sequence[str] | None = None,
         partitions: Mapping[str, str] | None = None,
+        compensation: str | None = None,
         **parameters: str,
     ) -> Tool:
         """A ``DELETE``; see :meth:`insert`."""
         return self._effect(
-            "delete", effect_id, table, statement, parameters, stated_rows, after, partitions
+            "delete",
+            effect_id,
+            table,
+            statement,
+            parameters,
+            stated_rows,
+            after,
+            partitions,
+            compensation,
         )
 
     def request(

@@ -858,13 +858,20 @@ def _github_audit(run: PackRun, repository: Repository, start: str) -> dict[str,
         for line in (root / "receipts.jsonl").read_bytes().splitlines()
         if line.strip()
     ]
-    report = reconcile_actions(receipts, load_actions(str(export), fmt="github-audit-json"))
+    # The code host's log sees pushes, so it expects the receipts of writes to
+    # the repository, not of the requests the agent sent its CI (1.6.0).
+    report = reconcile_actions(
+        receipts, load_actions(str(export), fmt="github-audit-json"), substrates=("git",)
+    )
     return {
         "export": AUDIT_EXPORT,
         "format": "github-audit-json",
         "matched": len(report.matched),
+        "receipts": len({m.receipt_id for m in report.matched}),
         "phantom": len(report.phantom),
         "phantoms": [f"{r.action} by {r.actor}" for r in report.phantom],
+        "unobserved": len(report.unobserved),
+        "out_of_scope": report.out_of_scope,
         "command": (
             f"agentgov reconcile-actions receipts.jsonl {AUDIT_EXPORT} --format github-audit-json"
         ),

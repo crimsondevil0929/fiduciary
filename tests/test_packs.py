@@ -67,25 +67,53 @@ def test_every_permitted_call_that_rolled_back_left_the_database_as_it_was(stack
 
 
 def test_healthcare(stack: Outcome) -> None:
+    """On a FHIR server, predicted and verified: the bed resolves to its chart
+    before anything is written, the EHR's rule is caught by the read-back and
+    put back, a nurse's edit refuses a write on the version it moved, and the
+    EHR's AuditEvent log reconciles (1.6.0)."""
     (queue,) = _act(stack, "healthcare", "queue")["calls"]
     assert queue["outcome"] == "committed" and queue["measured"]["outbound"]
-    (cascade,) = _act(stack, "healthcare", "cascade")["calls"]
-    m = cascade["measured"]
-    assert m["rows"] == 31 and m["tables"] == {
-        "admin_schedule": 25,
-        "med_orders": 3,
-        "pharmacy_queue": 3,
-    }
-    assert "blast_radius" in _blocking(cascade)
+    cascade = _act(stack, "healthcare", "cascade")
+    (stop,) = cascade["calls"]
+    m = stop["measured"]
+    assert m["compensated"] and m["rows"] == 1 and m["tables"] == {"med_orders": 1}
+    assert not _blocking(stop) and stop["outcome"] == "refused" and stop["unchanged"]
+    assert "put_back" in stop["feedback"] and "nothing of the plan stands" in stop["feedback"]
+    read = cascade["read_back"]
+    assert read["before"] == {"active_orders": 3, "scheduled_doses": 25, "voided": 0}
+    assert read["after"] == {"active_orders": 3, "scheduled_doses": 25, "voided": 1}
     wrong, claimed = _act(stack, "healthcare", "injected")["calls"]
     assert "tenant_isolation" in _blocking(wrong)
     assert _blocking(claimed) == {"fact_agreement"}
     fleet = _act(stack, "healthcare", "fleet")
-    assert [c["outcome"] for c in fleet["calls"]] == ["committed", "committed", "refused"]
+    assert [c["outcome"] for c in fleet["calls"]] == ["committed", "committed", "refused", "error"]
     assert fleet["refused_by"] and fleet["refused_by"][0].startswith("rate_window:")
+    assert fleet["race"]["status"] == 412 and not fleet["race"]["landed"]
+    assert "write_conflict" in fleet["calls"][-1]["feedback"]
     quorum = _act(stack, "healthcare", "quorum")
     assert [v["counted"] for v in quorum["votes"]] == [True, True, False, True]
     assert len(quorum["warrant"]["basis"]) == 2 and quorum["delivered"] == "delivered"
+    reconciled = _act(stack, "healthcare", "audit")["reconciliation"]
+    assert reconciled["phantoms"] == ["update MedicationRequest/7"]
+    assert (reconciled["phantom"], reconciled["unobserved"]) == (1, 0)
+    assert reconciled["receipts"] == 6 and reconciled["matched"] > reconciled["receipts"]
+    assert (stack.root / "healthcare" / reconciled["export"]).is_file()
+    receipts = [
+        json.loads(line)
+        for line in (stack.root / "healthcare" / "receipts.jsonl").read_text().splitlines()
+    ]
+    assert {r["coverage"].get("measurement") for r in receipts} == {"predicted"}
+    assert {r["outcome"]["status"] for r in receipts} == {"committed", "compensated", "refused"}
+    from fiduciary.bundle import TrustedKeys, verify_bundle
+
+    hc_root = stack.root / "healthcare"
+    hc_report = verify_bundle(
+        (hc_root / "before.fidb").read_bytes(),
+        charter=(hc_root / "charter.digest").read_text().strip(),
+        keys=TrustedKeys(json.loads((hc_root / "pinned-keys.json").read_text())),
+    )
+    assert hc_report.passed, hc_report.render()
+    assert any("measured predicted:" in note for note in hc_report.notes)
 
 
 def test_sre(stack: Outcome) -> None:
@@ -112,6 +140,9 @@ def test_sre(stack: Outcome) -> None:
     audit = _act(stack, "sre", "audit")
     reconciled = audit["reconciliation"]
     assert (reconciled["matched"], reconciled["phantom"]) == (4, 1)
+    assert (reconciled["unobserved"], reconciled["out_of_scope"]) == (0, 2), (
+        "the requests to the cloud API are not the cluster's to see"
+    )
     assert reconciled["phantoms"] == ["patch deployments/staging/auth"]
     assert (stack.root / "sre" / reconciled["export"]).is_file()
     receipts = [
@@ -228,12 +259,15 @@ def test_the_overview_counts_only_what_ran(stack: Outcome) -> None:
     assert rows["coding-agent"]["substrate"] == "Git" and rows["saas"]["substrate"] == "SQLite"
     assert not any(r.get("planned") for r in found["industries"])
     assert (rows["sre"]["class"], rows["sre"]["substrate"]) == ("P", "Kubernetes")
+    assert (rows["healthcare"]["class"], rows["healthcare"]["substrate"]) == ("V", "FHIR R4")
     assert not rows["sre"].get("note")
     ladder = {rung["class"]: rung["shipped"] for rung in found["ladder"]}
-    assert ladder == {"T": True, "P": True, "V": False, "R": True}
+    assert ladder == {"T": True, "P": True, "V": True, "R": True}
+    assert {rows[k]["class"] for k in ("fintech", *PACKS)} == {"T", "P", "V"}
     engine = {k: rows[k]["engine"] for k in ("fintech", *PACKS)}
     assert engine["fintech"]["rate_window"] == 45  # every fan-out session, not the sample
     assert engine["healthcare"]["fact_agreement"] == 1
+    assert (engine["healthcare"]["read_back"], engine["healthcare"]["stale_head"]) == (1, 1)
     assert engine["sre"]["no_delete"] == 1
     assert engine["supply-chain"]["tenant_drawdown_guard"] == 1
     assert engine["saas"]["tenant_isolation"] == 1
@@ -494,5 +528,6 @@ def test_every_demo_directory_exports_both_formats_from_the_command_line(stack: 
 def test_the_coding_agents_pushes_reconcile_with_its_receipts(stack: Outcome) -> None:
     reconciled = _act(stack, "coding-agent", "audit")["reconciliation"]
     assert (reconciled["matched"], reconciled["phantom"]) == (3, 1)
+    assert (reconciled["unobserved"], reconciled["out_of_scope"]) == (0, 1)
     assert (stack.root / "coding-agent" / reconciled["export"]).is_file()
     assert "--format github-audit-json" in reconciled["command"]

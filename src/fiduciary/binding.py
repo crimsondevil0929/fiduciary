@@ -33,6 +33,7 @@ from agentgov.exceptions import AgentGovError
 from interlock.anchor import LedgerAnchor
 from interlock.chain import EscrowChain
 from interlock.engine import EscrowEngine, StageResult
+from interlock.exceptions import CompensatedError
 from interlock.sensors import Sensor
 from interlock.types import EffectPlan
 
@@ -169,7 +170,15 @@ class MandateEngine:
                 )
             self._staging += 1
             try:
-                result = self._engine.execute(plan, settle_cost=settle_cost)
+                try:
+                    result = self._engine.execute(plan, settle_cost=settle_cost)
+                except CompensatedError as exc:
+                    # Written, and put back (1.6.0): the operator's view sees
+                    # the stage as it was admitted, then the error goes on.
+                    if isinstance(exc.result, StageResult):
+                        for observer in self._observers:
+                            observer(exc.result)
+                    raise
                 for observer in self._observers:
                     observer(result)
                 return result

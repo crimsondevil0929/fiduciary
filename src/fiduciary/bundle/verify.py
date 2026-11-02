@@ -1077,11 +1077,19 @@ class _Checks:
                     trips[mandate_id] = min(trips.get(mandate_id, found[0]), *found)
         for mandate_id, trip in sorted(trips.items()):
             for step in self.escrow.get(mandate_id, ()):
-                if step.record_type is RecordType.COMMITTED and step.agentgov_sequence >= trip:
+                if (
+                    step.record_type in (RecordType.COMMITTED, RecordType.COMPENSATED)
+                    and step.agentgov_sequence >= trip
+                ):
+                    did = (
+                        "committed"
+                        if step.record_type is RecordType.COMMITTED
+                        else "wrote and compensated"
+                    )
                     self.add(
                         "V11",
                         "revocation",
-                        f"plan {step.plan_id} committed at ledger {step.agentgov_sequence}, "
+                        f"plan {step.plan_id} {did} at ledger {step.agentgov_sequence}, "
                         f"after the lineage was halted at {trip}",
                     )
             issuer = f"fiduciary:{mandate_id}"
@@ -1137,6 +1145,11 @@ class _Explained:
                 if event == "bound":
                     self.bound.update(str(e) for e in checks.record_at(seq).content["entries"])
         self.prefixes = {r.record_hash[:16] for records in checks.escrow.values() for r in records}
+        self.escrow_records = {
+            (lineage, r.sequence, r.record_hash): r
+            for lineage, records in checks.escrow.items()
+            for r in records
+        }
         runtime = checks.b.runtime
         self.runtime = {(r.log, r.seq, r.record_hash) for r in runtime}
         self.ilok1 = self.runtime | {(r.log, r.seq, r.record_hash) for r in checks.b.operators}
@@ -1290,20 +1303,45 @@ class _Explained:
         }
 
     def receipts(self) -> None:
+        outcomes: dict[str, tuple[RecordType, ...]] = {
+            "committed": (RecordType.COMMITTED,),
+            "recovered_committed": (RecordType.COMMITTED,),
+            "compensated": (RecordType.COMPENSATED,),
+            "refused": (RecordType.ABORTED, RecordType.ORPHANED),
+            "recovered_aborted": (RecordType.ABORTED, RecordType.ORPHANED),
+        }
         for name, bundle in sorted(self.c.b.receipts.items()):
             receipt = bundle.receipt
             if not isinstance(receipt, ActionReceipt):
                 continue
             escrow = receipt.anchors.escrow
-            if escrow is None or escrow.head[:16] not in self.prefixes:
+            mandate_id = (
+                receipt.issuer.removeprefix("fiduciary:")
+                if receipt.issuer.startswith("fiduciary:")
+                else ""
+            )
+            record = (
+                None
+                if escrow is None
+                else self.escrow_records.get((mandate_id, escrow.seq, escrow.head))
+            )
+            if record is None:
                 self.c.add(
                     "V7",
                     "ambient",
                     f"receipt {name} references no record in this lineage's escrow chain",
                 )
+            elif record.record_type not in outcomes.get(receipt.outcome.status.value, ()):
+                self.c.add(
+                    "V7",
+                    "ambient",
+                    f"receipt {name} has outcome {receipt.outcome.status.value}, "
+                    f"but references {record.record_type.value} record {record.sequence}",
+                )
 
     def plans(self) -> None:
-        """Every plan admitted on the lineage's chain was a pinned tool's call."""
+        """Every plan admitted on the lineage's chain was a pinned tool's call,
+        and every settled plan on the chain was admitted first."""
         pinned: set[str] = set()
         for mandate_id in self.c.lineages:
             for _, digest, _, _ in self.state.lineages.get(mandate_id, ()):
@@ -1313,16 +1351,27 @@ class _Explained:
                     assert isinstance(mandate, Mandate)
                     pinned.update(pin.digest[:16] for pin in mandate.tools.bindings)
         for lineage, records in sorted(self.c.escrow.items()):
+            admitted: set[str] = set()
             for record in records:
-                if record.record_type is not RecordType.PLAN_ADMITTED:
-                    continue
-                tool = _TOOL.fullmatch(record.note)
-                if tool is None or tool[2] not in pinned:
+                if record.record_type is RecordType.PLAN_ADMITTED:
+                    admitted.add(str(record.plan_id))
+                    tool = _TOOL.fullmatch(record.note)
+                    if tool is None or tool[2] not in pinned:
+                        self.c.add(
+                            "V7",
+                            "ambient",
+                            f"plan {record.plan_id} on {lineage}'s chain was admitted for "
+                            f"'{record.note[:60]}', which is not a pinned tool's call",
+                        )
+                elif (
+                    record.record_type in (RecordType.COMMITTED, RecordType.COMPENSATED)
+                    and str(record.plan_id) not in admitted
+                ):
                     self.c.add(
                         "V7",
                         "ambient",
-                        f"plan {record.plan_id} on {lineage}'s chain was admitted for "
-                        f"'{record.note[:60]}', which is not a pinned tool's call",
+                        f"plan {record.plan_id} on {lineage}'s chain settled as "
+                        f"{record.record_type.value} without being admitted on the chain",
                     )
 
     def operators(self) -> None:

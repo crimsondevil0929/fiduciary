@@ -123,12 +123,13 @@ def test_healthcare_holds_the_dose_on_both_order_operations() -> None:
     from fiduciary.demo.packs import healthcare
 
     (rule,) = healthcare.PACK.data()["agreements"]
-    assert (rule["operation"], rule["also"]) == (
-        "medicationrequest.create",
-        ["medicationrequest.controlled"],
-    )
+    assert (rule["operation"], rule["also"]) == ("dispense.create", ["dispense.controlled"])
     assert (rule["field"], rule["table"], rule["column"]) == ("dose_mg", "med_orders", "dose_mg")
     held = {
-        op.name for s in healthcare.PACK.sinks if s.name == "fhir" for op in s.operations if op.hold
+        op.name
+        for s in healthcare.PACK.sinks
+        if s.name == "pharmacy"
+        for op in s.operations
+        if op.hold
     }
-    assert held == {"medicationrequest.controlled"}
+    assert held == {"dispense.controlled"}

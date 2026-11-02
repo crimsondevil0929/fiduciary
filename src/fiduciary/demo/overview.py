@@ -1,5 +1,6 @@
-"""The console's overview: the same engine in six industries, on SQL and on
-Git, the measurement ladder, and the live acceptance matrix interlock recorded.
+"""The console's overview: the same engine in six industries, on SQL, Git,
+Kubernetes and a FHIR server, the measurement ladder, and the live
+acceptance matrix interlock recorded.
 
 :func:`overview` reads the payloads of the domains a run played and says,
 from what each one measured, which part of the engine refused a plan, formed
@@ -33,7 +34,7 @@ INDUSTRIES: Final = (
             "verifier": "auditor, insurer",
         },
     },
-    {"key": "healthcare", "class": "T"},
+    {"key": "healthcare", "class": "V", "substrate": "FHIR R4"},
     {"key": "sre", "class": "P", "substrate": "Kubernetes"},
     {"key": "supply-chain", "class": "T"},
     {"key": "saas", "class": "T"},
@@ -82,8 +83,10 @@ LADDER: Final = (
         "name": "Predicted and verified",
         "promise": "The before image was read, the after image predicted, the write made "
         "conditional, and the result read back and compared.",
-        "where": "Salesforce, ServiceNow, Jira, Workday, FHIR servers",
-        "shipped": False,
+        "where": "a FHIR R4 server: the chart read with its versions, the write on If-Match, "
+        "the chart read back against the prediction (shipped); Salesforce, ServiceNow, Jira "
+        "and Workday next",
+        "shipped": True,
     },
     {
         "class": "R",
@@ -124,7 +127,8 @@ ENGINE: Final = (
     ("table_allowlist", "TableAllowlist", "plans refused"),
     ("no_delete", "NoDelete", "plans refused"),
     ("rate_window", "RateWindow", "plans refused"),
-    ("stale_head", "Commit only at the measured head", "plans refused"),
+    ("stale_head", "Commit only at the measured head or version", "plans refused"),
+    ("read_back", "Read back, and put back", "plans undone"),
     ("warrant", "Quorum warrant", "formed"),
     ("break-glass", "Break-glass act named offline", "named"),
     ("offline", "Bundle verified offline", "verified"),
@@ -155,8 +159,11 @@ def _engine(payload: Mapping[str, Any]) -> dict[str, Any]:
             if name in refused:
                 refused[name].add(str(m.get("plan")))
     cells: dict[str, Any] = {k: len(v) for k, v in refused.items()}
+    # Refused before commit: not a write that was made, read back, and put back.
     plans = {
-        str(m.get("plan")): int(m.get("rows", 0)) for m in _measured(acts) if not m.get("committed")
+        str(m.get("plan")): int(m.get("rows", 0))
+        for m in _measured(acts)
+        if not m.get("committed") and not m.get("compensated")
     }
     for act in acts:
         # The fintech fan-out keeps a sample of its sessions' calls, and every
@@ -173,7 +180,13 @@ def _engine(payload: Mapping[str, Any]) -> dict[str, Any]:
     cells["stale_head"] = sum(
         1 for a in acts if isinstance(a.get("git"), Mapping) and a["git"].get("pushed")
         and not a["git"].get("landed")
+    ) + sum(
+        # A FHIR write on a version that moved after it was measured: 412.
+        1 for a in acts if isinstance(a.get("race"), Mapping) and a["race"].get("status")
+        and not a["race"].get("landed")
     )  # fmt: skip
+    # A predicted write the read-back did not match: written, then put back.
+    cells["read_back"] = sum(1 for m in _measured(acts) if m.get("compensated"))
     cells["refused_plans"] = len(plans) + cells["stale_head"]
     cells["rows_blocked"] = sum(plans.values())
     warrants = [a["warrant"] for a in acts if isinstance(a.get("warrant"), Mapping)]
