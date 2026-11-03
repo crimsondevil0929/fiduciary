@@ -68,9 +68,9 @@ from fiduciary.demo.world import (
 from fiduciary.demo.world import (
     build as build_fintech,
 )
-from fiduciary.documents import Charter, Mandate, Ticket, Warrant, loads
+from fiduciary.documents import Charter, Mandate, Record, Ticket, Warrant, loads
 from fiduciary.exceptions import FiduciaryError
-from fiduciary.log import LOG_ID, Record
+from fiduciary.log import LOG_ID
 from fiduciary.store import State
 
 __all__ = ["ControlPlane", "ControlPlaneServer", "serve_control_plane"]
