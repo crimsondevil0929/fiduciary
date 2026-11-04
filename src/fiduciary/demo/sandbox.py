@@ -376,7 +376,7 @@ class SandboxDeployment(Deployment):
 
     def holds(self) -> dict[tuple[str, str], bool]:
         sinks = self.built().world.deployment.sinks
-        return {(s.name, op.name): op.hold for s in sinks._sinks.values() for op in s.operations}  # noqa: SLF001
+        return {(s.name, op.name): op.hold for s in sinks._sinks.values() for op in s.operations}
 
     def pins(self) -> Pins | None:
         if self._built is None:

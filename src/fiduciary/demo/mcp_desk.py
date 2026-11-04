@@ -100,7 +100,10 @@ class Desk:
     def call(self, tool: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         tickets = self.load()
         if tool == "list_tickets":
-            rows = [{"id": k, "subject": v["subject"], "status": v["status"]} for k, v in sorted(tickets.items())]
+            rows = [
+                {"id": k, "subject": v["subject"], "status": v["status"]}
+                for k, v in sorted(tickets.items())
+            ]
             return {"tickets": rows}, False
         ticket = str(arguments.get("ticket", ""))
         if ticket not in tickets:
@@ -142,7 +145,11 @@ def handle(desk: Desk, message: dict[str, Any]) -> dict[str, Any] | None:
     elif method == "ping":
         result = {}
     else:
-        return {"jsonrpc": "2.0", "id": ident, "error": {"code": -32601, "message": "no such method"}}
+        return {
+            "jsonrpc": "2.0",
+            "id": ident,
+            "error": {"code": -32601, "message": "no such method"},
+        }
     return {"jsonrpc": "2.0", "id": ident, "result": result}
 
 

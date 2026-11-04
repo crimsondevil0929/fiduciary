@@ -77,7 +77,7 @@ _HARMLESS: Final = frozenset({"$schema", "$id", "examples", "default", "$comment
 _TYPES: Final = frozenset({"object", "array", "string", "integer", "boolean", "null"})
 
 
-class Unsupported(ValueError):
+class UnsupportedSchemaError(ValueError):
     """A tool the binding grammar cannot hold whole."""
 
 
@@ -128,29 +128,31 @@ def classify(tool: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def schema_of(schema: object, path: str = "inputSchema") -> dict[str, Any]:
-    """The tool's input schema in the binding grammar, or :class:`Unsupported`."""
+    """The tool's input schema in the binding grammar, or :class:`UnsupportedSchemaError`."""
     if not isinstance(schema, Mapping):
-        raise Unsupported(f"{path} is not an object")
+        raise UnsupportedSchemaError(f"{path} is not an object")
     out: dict[str, Any] = {}
     for key, value in schema.items():
         if key in _HARMLESS:
             continue
         if key not in _KEEP:
-            raise Unsupported(f"{path} uses {key!r}, which a binding would not enforce")
+            raise UnsupportedSchemaError(f"{path} uses {key!r}, which a binding would not enforce")
         if key == "type":
             kinds = [value] if isinstance(value, str) else value
             if not isinstance(kinds, list) or not all(isinstance(k, str) for k in kinds):
-                raise Unsupported(f"{path}.type is no type")
+                raise UnsupportedSchemaError(f"{path}.type is no type")
             if "number" in kinds:
-                raise Unsupported(
+                raise UnsupportedSchemaError(
                     f"{path} is a number: FIDU1 holds no floats (a decimal is a string)"
                 )
             if not set(kinds) <= _TYPES:
-                raise Unsupported(f"{path}.type {value!r} is outside the binding grammar")
+                raise UnsupportedSchemaError(
+                    f"{path}.type {value!r} is outside the binding grammar"
+                )
             out[key] = value
         elif key == "properties":
             if not isinstance(value, Mapping):
-                raise Unsupported(f"{path}.properties is not an object")
+                raise UnsupportedSchemaError(f"{path}.properties is not an object")
             out[key] = {
                 str(name): schema_of(sub, f"{path}.properties.{name}")
                 for name, sub in value.items()
@@ -158,7 +160,7 @@ def schema_of(schema: object, path: str = "inputSchema") -> dict[str, Any]:
         elif key == "items":
             out[key] = schema_of(value, f"{path}.items")
         elif key in ("minimum", "maximum") and isinstance(value, float):
-            raise Unsupported(f"{path}.{key} is a float")
+            raise UnsupportedSchemaError(f"{path}.{key} is a float")
         else:
             out[key] = copy.deepcopy(value)
     return out
@@ -173,7 +175,9 @@ def _binding(tool: Mapping[str, Any], mode: str) -> dict[str, Any]:
     schema.setdefault("properties", {})
     schema["additionalProperties"] = False
     properties = sorted(schema["properties"])
-    description = str(tool.get("description") or (tool.get("annotations") or {}).get("title") or name)
+    description = str(
+        tool.get("description") or (tool.get("annotations") or {}).get("title") or name
+    )
     base = {"v": "FIDU1", "type": "tool", "name": name, "description": description[:2000]}
     if mode == READ:
         return {
@@ -198,7 +202,13 @@ def _binding(tool: Mapping[str, Any], mode: str) -> dict[str, Any]:
     }
 
 
-def _pack(name: str, principals: tuple[str, str, str], tools: list[dict[str, Any]], modes: dict[str, str], schemas: dict[str, dict[str, Any]]) -> Any:
+def _pack(
+    name: str,
+    principals: tuple[str, str, str],
+    tools: list[dict[str, Any]],
+    modes: dict[str, str],
+    schemas: dict[str, dict[str, Any]],
+) -> Any:
     from interlock.mcp import mcp_sink
 
     from fiduciary.demo.packs.kit import Pack
@@ -235,7 +245,14 @@ def _pack(name: str, principals: tuple[str, str, str], tools: list[dict[str, Any
 
     def outbound() -> dict[str, Any]:
         if not writes:
-            return {"sinks": {}, "max_per_plan": 0, "per_sink": {}, "caps": [], "recipients": [], "tenants": {"max_tenants": 1, "require_tenant": False, "fields": {}}}
+            return {
+                "sinks": {},
+                "max_per_plan": 0,
+                "per_sink": {},
+                "caps": [],
+                "recipients": [],
+                "tenants": {"max_tenants": 1, "require_tenant": False, "fields": {}},
+            }
         return {
             "sinks": {
                 SINK: {
@@ -333,12 +350,14 @@ def init(
     for tool in listed:
         tool_name = str(tool.get("name") or "")
         if not _NAME.fullmatch(tool_name) or tool_name.startswith("fiduciary_"):
-            report.skipped.append({"name": tool_name, "why": "not a lowercase identifier the bridge can list"})
+            report.skipped.append(
+                {"name": tool_name, "why": "not a lowercase identifier the bridge can list"}
+            )
             continue
         mode, why = classify(tool)
         try:
             binding = _binding(tool, mode)
-        except Unsupported as exc:
+        except UnsupportedSchemaError as exc:
             report.skipped.append({"name": tool_name, "why": str(exc)})
             continue
         bindings.append(binding)
@@ -354,7 +373,12 @@ def init(
         (root / "README.md").write_text(_readme(report, command), encoding="utf-8")
         (root / "init.json").write_text(
             json.dumps(
-                {"scope": report.scope, "tools": report.tools, "skipped": report.skipped, "upstream": list(command or [])},
+                {
+                    "scope": report.scope,
+                    "tools": report.tools,
+                    "skipped": report.skipped,
+                    "upstream": list(command or []),
+                },
                 indent=2,
             )
             + "\n",
@@ -367,7 +391,7 @@ def init(
 
 def _relay_toml(root: Path, command: Sequence[str]) -> str:
     """``[relay]``: the relay that makes each released call on the MCP server."""
-    from fiduciary.demo.packs.kit import key_spec
+    from fiduciary.bundle.export import spec as key_spec
     from fiduciary.keys import load_key
 
     root = root.resolve()
@@ -387,7 +411,10 @@ def _relay_toml(root: Path, command: Sequence[str]) -> str:
 
 
 def _readme(report: InitReport, command: Sequence[str] | None) -> str:
-    rows = "\n".join(f"| `{t['name']}` | {t['mode']} | {t['why']} |" for t in report.tools) or "| (none) | | |"
+    rows = (
+        "\n".join(f"| `{t['name']}` | {t['mode']} | {t['why']} |" for t in report.tools)
+        or "| (none) | | |"
+    )
     skipped = "\n".join(f"- `{s['name']}`: {s['why']}" for s in report.skipped)
     upstream = " ".join(command or [])
     p1, p2, _ = report.principals

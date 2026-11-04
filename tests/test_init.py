@@ -17,7 +17,7 @@ import pytest
 from fiduciary import cli
 from fiduciary.control import ConfiguredDeployment
 from fiduciary.demo.mcp_desk import TOOLS
-from fiduciary.init import HELD, READ, WRITE, Unsupported, classify, init, schema_of
+from fiduciary.init import HELD, READ, WRITE, UnsupportedSchemaError, classify, init, schema_of
 from fiduciary.keys import load_key
 
 BIN = Path(sys.executable).parent
@@ -97,14 +97,17 @@ def test_tools_are_governed_by_what_the_server_says_of_them() -> None:
         ([], "not an object"),
         ({"properties": []}, "not an object"),
     ):
-        with pytest.raises(Unsupported, match=message):
+        with pytest.raises(UnsupportedSchemaError, match=message):
             schema_of(schema)
     assert schema_of({"$schema": "x", "type": "object", "default": {}}) == {"type": "object"}
 
 
 def test_a_tool_the_grammar_cannot_hold_is_left_out_and_named(tmp_path: Path) -> None:
     tools = [
-        {"name": "set_price", "inputSchema": {"type": "object", "properties": {"price": {"type": "number"}}}},
+        {
+            "name": "set_price",
+            "inputSchema": {"type": "object", "properties": {"price": {"type": "number"}}},
+        },
         {"name": "Bad-Name", "inputSchema": {"type": "object"}},
         TOOLS[0],
     ]
@@ -129,13 +132,25 @@ def test_a_deployment_with_no_tools_is_written_and_verifies(tmp_path: Path) -> N
 
 def _vote(root: Path, desk: ConfiguredDeployment, ticket: str, principal: str) -> None:
     draft = desk.draft({"ticket_id": ticket, "principal": principal, "option": "release"})
-    signature = load_key(root / "keys" / f"{principal}.key").sign(bytes.fromhex(draft["signing_input"]))
-    desk.accept({"approval": draft["approval"], "key_id": draft["key_id"], "signature": signature.hex()})
+    signature = load_key(root / "keys" / f"{principal}.key").sign(
+        bytes.fromhex(draft["signing_input"])
+    )
+    desk.accept(
+        {"approval": draft["approval"], "key_id": draft["key_id"], "signature": signature.hex()}
+    )
 
 
 def _relay(root: Path) -> str:
     done = subprocess.run(  # noqa: S603 - the venv's own interlock
-        [str(BIN / "interlock"), "relay", "--config", str(root / "interlock.toml"), "--once", "--relay-id", "relay-a"],
+        [
+            str(BIN / "interlock"),
+            "relay",
+            "--config",
+            str(root / "interlock.toml"),
+            "--once",
+            "--relay-id",
+            "relay-a",
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -149,12 +164,35 @@ def test_the_deployment_runs_as_written(desk: tuple[Path, Path], tmp_path: Path)
     root, state = desk
     config = root / "fiduciary.toml"
     proxy = Client(
-        [str(BIN / "fiduciary"), "--config", str(config), "mcp", "proxy", "--mandate", "desk-agent", "--", *desk_command(state)]
+        [
+            str(BIN / "fiduciary"),
+            "--config",
+            str(config),
+            "mcp",
+            "proxy",
+            "--mandate",
+            "desk-agent",
+            "--",
+            *desk_command(state),
+        ]
     )
     try:
-        proxy.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1"}})
+        proxy.call(
+            "initialize",
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"},
+            },
+        )
         listed = {t["name"]: t for t in proxy.call("tools/list")["tools"]}
-        assert set(listed) >= {"list_tickets", "get_ticket", "add_note", "close_ticket", "delete_ticket"}
+        assert set(listed) >= {
+            "list_tickets",
+            "get_ticket",
+            "add_note",
+            "close_ticket",
+            "delete_ticket",
+        }
         assert listed["add_note"]["inputSchema"]["required"] == ["note", "ticket"]
 
         text, error = proxy.tool("list_tickets", {})
@@ -183,7 +221,9 @@ def test_the_deployment_runs_as_written(desk: tuple[Path, Path], tmp_path: Path)
         (ticket,) = opened
         assert ticket["class"] == "held"
         full = desk_view.ticket(ticket["ticket_id"])
-        assert full["held"][0]["operation"] == "delete_ticket" and full["held"][0]["payload_matches"]
+        assert (
+            full["held"][0]["operation"] == "delete_ticket" and full["held"][0]["payload_matches"]
+        )
         for principal in ("approver-1", "approver-2"):
             _vote(root, desk_view, ticket["ticket_id"], principal)
         for _ in range(20):

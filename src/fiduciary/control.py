@@ -396,7 +396,11 @@ class Deployment:
                         continue
                     tool = binding.body()
                     requests = [
-                        {"sink": r["sink"], "operation": r["operation"], "held": holds.get((r["sink"], r["operation"]), False)}
+                        {
+                            "sink": r["sink"],
+                            "operation": r["operation"],
+                            "held": holds.get((r["sink"], r["operation"]), False),
+                        }
                         for r in tool.get("requests") or ()
                     ]
                     if tool["kind"] == "passthrough":
@@ -430,7 +434,11 @@ class Deployment:
                         "budget": body.get("budget"),
                         "quorums": (body.get("roster") or {}).get("quorums"),
                         "windows": [
-                            {"name": w["name"], "limit": w["limit"], "span_seconds": w["span_seconds"]}
+                            {
+                                "name": w["name"],
+                                "limit": w["limit"],
+                                "span_seconds": w["span_seconds"],
+                            }
                             for w in body.get("windows") or ()
                         ],
                         "tables": (body.get("data") or {}).get("tables"),

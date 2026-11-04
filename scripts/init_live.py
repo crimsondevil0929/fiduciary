@@ -94,7 +94,15 @@ class Proxy:
 
 def _relay(root: Path) -> None:
     subprocess.run(  # noqa: S603 - the venv's own interlock
-        [str(BIN / "interlock"), "relay", "--config", str(root / "interlock.toml"), "--once", "--relay-id", "relay-a"],
+        [
+            str(BIN / "interlock"),
+            "relay",
+            "--config",
+            str(root / "interlock.toml"),
+            "--once",
+            "--relay-id",
+            "relay-a",
+        ],
         check=True,
         capture_output=True,
         timeout=120,
@@ -107,7 +115,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--max-cost", default="0.08")
     args = parser.parse_args(argv)
-    import anthropic
+    import anthropic  # type: ignore[import-not-found,unused-ignore]
 
     cap = Decimal(args.max_cost)
     rates = PRICING[MODEL]
@@ -117,14 +125,40 @@ def main(argv: list[str]) -> int:
     upstream = [sys.executable, "-m", "fiduciary.demo.mcp_desk", "--state", str(state)]
     report = init(root, upstream)
     client = anthropic.Anthropic(api_key=_key(args.env_file), max_retries=3, timeout=180.0)
-    proxy = Proxy([str(BIN / "fiduciary"), "--config", str(root / "fiduciary.toml"), "mcp", "proxy", "--mandate", report.scope, "--", *upstream])
+    proxy = Proxy(
+        [
+            str(BIN / "fiduciary"),
+            "--config",
+            str(root / "fiduciary.toml"),
+            "mcp",
+            "proxy",
+            "--mandate",
+            report.scope,
+            "--",
+            *upstream,
+        ]
+    )
     transcript: list[dict[str, Any]] = []
     usage = {"input_tokens": 0, "output_tokens": 0}
     spent = Decimal(0)
     try:
-        proxy.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "init-live", "version": "1"}})
+        proxy.call(
+            "initialize",
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "init-live", "version": "1"},
+            },
+        )
         listed = proxy.call("tools/list")["tools"]
-        tools = [{"name": t["name"], "description": t.get("description", ""), "input_schema": t["inputSchema"]} for t in listed]
+        tools = [
+            {
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "input_schema": t["inputSchema"],
+            }
+            for t in listed
+        ]
         messages: list[dict[str, Any]] = [{"role": "user", "content": REQUEST}]
         for turn in range(1, 7):
             request = {"model": MODEL, "system": SYSTEM, "tools": tools, "messages": messages}
@@ -134,7 +168,9 @@ def main(argv: list[str]) -> int:
             if allowed < 256:
                 transcript.append({"turn": turn, "stopped": "max-cost"})
                 break
-            response = client.messages.create(max_tokens=allowed, output_config={"effort": "medium"}, **request)
+            response = client.messages.create(
+                max_tokens=allowed, output_config={"effort": "medium"}, **request
+            )
             usage["input_tokens"] += response.usage.input_tokens
             usage["output_tokens"] += response.usage.output_tokens
             spent += (
@@ -147,18 +183,44 @@ def main(argv: list[str]) -> int:
                 if block.type == "text":
                     blocks.append({"type": "text", "text": block.text})
                 elif block.type == "tool_use":
-                    found = proxy.call("tools/call", {"name": block.name, "arguments": dict(block.input)})
+                    found = proxy.call(
+                        "tools/call", {"name": block.name, "arguments": dict(block.input)}
+                    )
                     text = found["content"][0]["text"] if found.get("content") else ""
                     error = bool(found.get("isError"))
-                    blocks.append({"type": "tool_use", "tool": block.name, "arguments": dict(block.input), "result": text, "error": error})
-                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": text, "is_error": error})
-            transcript.append({"turn": turn, "stop": response.stop_reason, "model": response.model, "blocks": blocks})
+                    blocks.append(
+                        {
+                            "type": "tool_use",
+                            "tool": block.name,
+                            "arguments": dict(block.input),
+                            "result": text,
+                            "error": error,
+                        }
+                    )
+                    results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": text,
+                            "is_error": error,
+                        }
+                    )
+            transcript.append(
+                {
+                    "turn": turn,
+                    "stop": response.stop_reason,
+                    "model": response.model,
+                    "blocks": blocks,
+                }
+            )
             messages.append({"role": "assistant", "content": response.content})
             if response.stop_reason != "tool_use":
                 break
             messages.append({"role": "user", "content": results})
         _relay(root)  # the note: released at commit
-        desk = ConfiguredDeployment("desk", root / "fiduciary.toml", scratch=Path(tempfile.mkdtemp()), accepts=True)
+        desk = ConfiguredDeployment(
+            "desk", root / "fiduciary.toml", scratch=Path(tempfile.mkdtemp()), accepts=True
+        )
         held: list[dict[str, Any]] = []
         for _ in range(25):
             proxy.call("ping")
@@ -169,16 +231,32 @@ def main(argv: list[str]) -> int:
         released = []
         for ticket in held:
             for principal in report.principals[:2]:
-                draft = desk.draft({"ticket_id": ticket["ticket_id"], "principal": principal, "option": "release"})
-                signature = load_key(root / "keys" / f"{principal}.key").sign(bytes.fromhex(draft["signing_input"]))
-                desk.accept({"approval": draft["approval"], "key_id": draft["key_id"], "signature": signature.hex()})
+                draft = desk.draft(
+                    {"ticket_id": ticket["ticket_id"], "principal": principal, "option": "release"}
+                )
+                signature = load_key(root / "keys" / f"{principal}.key").sign(
+                    bytes.fromhex(draft["signing_input"])
+                )
+                desk.accept(
+                    {
+                        "approval": draft["approval"],
+                        "key_id": draft["key_id"],
+                        "signature": signature.hex(),
+                    }
+                )
             for _ in range(25):
                 proxy.call("ping")
                 view = desk.ticket(ticket["ticket_id"])
                 if view["status"] == "warranted" and view["warrant"]["execution"] == "applied":
                     break
                 time.sleep(0.2)
-            released.append({"ticket": ticket["ticket_id"], "held": [m["operation"] for m in view["held"]], "warrant": view["warrant"]})
+            released.append(
+                {
+                    "ticket": ticket["ticket_id"],
+                    "held": [m["operation"] for m in view["held"]],
+                    "warrant": view["warrant"],
+                }
+            )
         _relay(root)  # the deletion: released on its warrant
         desk.close()
     finally:
@@ -199,10 +277,13 @@ def main(argv: list[str]) -> int:
         "transcript": transcript,
     }
     (out / "live.json").write_text(json.dumps(record, indent=2, default=str) + "\n")
-    print(f"{record['turns']} turns, {usage['input_tokens']} in / {usage['output_tokens']} out, ${record['metered_usd']} metered")
+    tokens = f"{usage['input_tokens']} in / {usage['output_tokens']} out"
+    print(f"{record['turns']} turns, {tokens}, ${record['metered_usd']} metered")
     for call in calls:
-        print(f"  {call['tool']}({json.dumps(call['arguments'])}) -> {'ERROR ' if call['error'] else ''}{call['result'][:160]}")
-    print(f"  held and released: {[r['held'] for r in released]}; desk after: {sorted(record['desk_after'])}")
+        flag = "ERROR " if call["error"] else ""
+        print(f"  {call['tool']}({json.dumps(call['arguments'])}) -> {flag}{call['result'][:160]}")
+    made = [r["held"] for r in released]
+    print(f"  held and released: {made}; desk after: {sorted(record['desk_after'])}")
     return 0
 
 

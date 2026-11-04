@@ -1422,7 +1422,9 @@ def _init(args: argparse.Namespace) -> int:
         _fail("give the MCP server's command after --mcp --")
     if command and not args.mcp:
         _fail("a command is the MCP server's: pass --mcp")
-    principals = tuple(args.principal) if args.principal else ("approver-1", "approver-2", "approver-3")
+    principals = (
+        tuple(args.principal) if args.principal else ("approver-1", "approver-2", "approver-3")
+    )
     try:
         report = init(Path(args.out), command or None, name=args.name, principals=principals)
     except (ValueError, McpError) as exc:
