@@ -160,7 +160,11 @@ jobs:
       - name: Install the wheel into a bare environment
         run: |
           uv venv "${{ runner.temp }}/bare" --python 3.12
-          uv pip install --python "${{ runner.temp }}/bare/bin/python" "${{ runner.temp }}"/dist/*.whl
+          # While an upstream is pinned to a commit not yet on PyPI (removed
+          # before a release is tagged), the bare install takes that commit too.
+          mapfile -t pins < <(python3 scripts/upstream_pins.py)
+          echo "pinned: ${pins[*]:-none}"
+          uv pip install --python "${{ runner.temp }}/bare/bin/python" "${{ runner.temp }}"/dist/*.whl "${pins[@]}"
           "${{ runner.temp }}/bare/bin/fiduciary" --version
           "${{ runner.temp }}/bare/bin/python" -W error -c "import fiduciary.cli, fiduciary.postgres, fiduciary.verify"
           # A bare install runs the whole stack: signing is a base dependency.
