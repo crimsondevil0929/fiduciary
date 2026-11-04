@@ -991,6 +991,21 @@ def _bridge(args: argparse.Namespace) -> tuple[Any, Any]:
     return fid, session
 
 
+def _turn(fid: Any) -> Callable[[], list[Any]]:
+    """One turn of a bridge process, which is its deployment's writer: the
+    service's turn (intake, executions), and the triggers ``fiduciary serve``
+    runs beside it, so a call held for a warrant is ticketed (§7.1, 1.8.0)."""
+    from fiduciary.service import raise_triggers
+
+    def turn() -> list[Any]:
+        records = fid.serve_once()
+        if fid.outbox is not None:
+            records.extend(raise_triggers(fid))
+        return list(records)
+
+    return turn
+
+
 def _mcp_serve(args: argparse.Namespace) -> int:
     from fiduciary.mcp import HttpBridge, McpServer, serve_stdio
 
@@ -1000,7 +1015,7 @@ def _mcp_serve(args: argparse.Namespace) -> int:
             McpServer(session, lock=fid.lock),
             sys.stdin.buffer,
             sys.stdout.buffer,
-            service=fid.serve_once,
+            service=_turn(fid),
             lock=fid.lock,
         )
         return OK
@@ -1017,7 +1032,7 @@ def _mcp_serve(args: argparse.Namespace) -> int:
             _fail("TLS needs --tls-cert and --tls-key")
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         tls.load_cert_chain(args.tls_cert, args.tls_key)
-    bridge = HttpBridge(where[0], where[1], tls=tls, service=fid.serve_once, lock=fid.lock)
+    bridge = HttpBridge(where[0], where[1], tls=tls, service=_turn(fid), lock=fid.lock)
     token = bridge.add(session)
     host, port = bridge.address
     if args.token_file is not None:
@@ -1056,7 +1071,7 @@ def _mcp_proxy(args: argparse.Namespace) -> int:
         McpServer(session, lock=fid.lock),
         sys.stdin.buffer,
         sys.stdout.buffer,
-        service=fid.serve_once,
+        service=_turn(fid),
         lock=fid.lock,
     )
     return OK
@@ -1395,6 +1410,31 @@ def _serve_dashboard(root: Path, where: str) -> tuple[Any, str]:
     return server, server.url
 
 
+def _init(args: argparse.Namespace) -> int:
+    """``fiduciary init``: a deployment, ready to run (``fiduciary.init``)."""
+    from fiduciary.init import init
+    from fiduciary.mcp import McpError
+
+    command = list(args.command or [])
+    if command and command[0] == "--":
+        command = command[1:]
+    if args.mcp and not command:
+        _fail("give the MCP server's command after --mcp --")
+    if command and not args.mcp:
+        _fail("a command is the MCP server's: pass --mcp")
+    principals = tuple(args.principal) if args.principal else ("approver-1", "approver-2", "approver-3")
+    try:
+        report = init(Path(args.out), command or None, name=args.name, principals=principals)
+    except (ValueError, McpError) as exc:
+        _fail(str(exc))
+    for tool in report.tools:
+        _out(f"{tool['mode']:<6} {tool['name']}: {tool['why']}")
+    for tool in report.skipped:
+        _out(f"left   {tool['name']}: {tool['why']}")
+    _out(f"wrote       {report.root} (mandate {report.scope}; see README.md)")
+    return OK
+
+
 def _notify(args: argparse.Namespace) -> int:
     """``fiduciary notify``: deliver what each webhook is due, or a test notice."""
     import time
@@ -1730,6 +1770,24 @@ def _parser() -> argparse.ArgumentParser:
         "--report", metavar="PATH", help="also write the attestation report: a .html or .md file"
     )
     check.set_defaults(handler=_verify_bundle)
+
+    init = commands.add_parser(
+        "init",
+        help="write a deployment ready to run; with --mcp, one governing an MCP server's tools",
+    )
+    init.add_argument("--out", required=True, help="the directory to write (new or empty)")
+    init.add_argument("--name", help="the deployment's name (the directory's, by default)")
+    init.add_argument(
+        "--principal",
+        action="append",
+        metavar="NAME",
+        help="a principal of the charter (three, in order; approver-1..3 by default)",
+    )
+    init.add_argument(
+        "--mcp", action="store_true", help="govern an MCP server's tools: its command after --"
+    )
+    init.add_argument("command", nargs=argparse.REMAINDER, help="-- the MCP server's command")
+    init.set_defaults(handler=_init)
 
     notify = commands.add_parser(
         "notify",

@@ -577,16 +577,7 @@ def interlock_toml(root: Path, pack: Pack, back_office: Path) -> str:
             )
             for t in pack.tables
         )
-    sinks = "".join(
-        f'[[sinks]]\nname = "{s.name}"\ncost_per_call = "{s.cost_per_call}"\n'
-        f'idempotency = "{s.idempotency}"\nmax_payload_bytes = {s.max_payload_bytes}\n'
-        "operations = ["
-        + ", ".join(
-            f'{{ name = "{op.name}"{", hold = true" if op.hold else ""} }}' for op in s.operations
-        )
-        + "]\n"
-        for s in pack.sinks
-    )
+    sinks = "".join(_sink_toml(root, s) for s in pack.sinks)
     inbox = ""
     if pack.sources:
         key = root / "keys" / "inbox.key"
@@ -603,6 +594,38 @@ def interlock_toml(root: Path, pack: Pack, back_office: Path) -> str:
             )
         inbox += f'[inbox.keys]\ninbox = "{key_spec(load_key(key).public_key())}"\n'
     return head + sinks + inbox + operators_toml(root, pack.operator)
+
+
+def _sink_toml(root: Path, sink: SinkSpec) -> str:
+    """One ``[[sinks]]`` entry. A typed sink (an MCP server's, 1.8.0) also says
+    its type, how long a request may wait (a held one waits for its warrant),
+    and what an unknown outcome becomes; an operation schema it pins is written
+    beside the file, under ``schemas/``."""
+    head = f'[[sinks]]\nname = "{sink.name}"\n'
+    if sink.kind != "http":
+        head += (
+            f'type = "{sink.kind}"\n'
+            f"not_after_seconds = {int(sink.not_after.total_seconds())}\n"
+            f"max_attempts = {sink.max_attempts}\n"
+            f'unknown_outcome = "{sink.unknown_outcome}"\n'
+        )
+    operations = []
+    for op in sink.operations:
+        schema = ""
+        if sink.kind != "http" and op.schema is not None:
+            target = root / "schemas" / f"{sink.name}.{op.name}.json"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(op.schema, indent=2, sort_keys=True) + "\n")
+            schema = f", schema = {_toml(target)}"
+        operations.append(f'{{ name = "{op.name}"{", hold = true" if op.hold else ""}{schema} }}')
+    return (
+        head
+        + f'cost_per_call = "{sink.cost_per_call}"\n'
+        + f'idempotency = "{sink.idempotency}"\nmax_payload_bytes = {sink.max_payload_bytes}\n'
+        + "operations = ["
+        + ", ".join(operations)
+        + "]\n"
+    )
 
 
 def operators_toml(root: Path, operator: str) -> str:

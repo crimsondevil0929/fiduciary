@@ -1300,7 +1300,7 @@
   function fileBytes(file) { return file.arrayBuffer().then(function (ab) { return new Uint8Array(ab); }); }
 
   // -- the approvals desk ---------------------------------------------------------------------
-  var DESK = { dep: DESK_ROUTE.dep, list: null, listFor: null, tid: DESK_ROUTE.tid, ticketFor: null, ticket: null, busy: false, error: null, form: {}, draft: null, result: null, poll: 0 };
+  var DESK = { dep: DESK_ROUTE.dep, list: null, listFor: null, tid: DESK_ROUTE.tid, ticketFor: null, ticket: null, panel: "ticket", profile: null, profileFor: null, busy: false, error: null, form: {}, draft: null, result: null, poll: 0 };
 
   function recordedDeployments() {
     return RUNS.map(function (pg) {
@@ -1345,8 +1345,8 @@
     DESK.dep = found.id;
     return found;
   }
-  function selectDep(id) { DESK.dep = id; DESK.list = null; DESK.listFor = null; DESK.tid = null; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
-  function selectTicket(id) { DESK.tid = id; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
+  function selectDep(id) { DESK.panel = "ticket"; DESK.profile = null; DESK.profileFor = null; DESK.dep = id; DESK.list = null; DESK.listFor = null; DESK.tid = null; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
+  function selectTicket(id) { DESK.panel = "ticket"; DESK.tid = id; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
   function loadTickets(dep) {
     DESK.listFor = dep.id; DESK.busy = true;
     api("GET", "deployments/" + encodeURIComponent(dep.id) + "/tickets").then(function (list) {
@@ -1390,13 +1390,68 @@
     }
     var rows = list === null ? busyLine("Reading " + dep.name + "'s log…") : !list.length ? h("p", { class: "small muted", style: "padding:10px 12px" }, "No ticket was raised here.") : list.map(function (t) {
       var opt = t.options[0] || { quorum: 1, approved_by: [] };
-      return h("button", { class: "tk" + (t.ticket_id === DESK.tid ? " on" : ""), onclick: function () { selectTicket(t.ticket_id); } },
+      return h("button", { class: "tk" + (t.ticket_id === DESK.tid && DESK.panel === "ticket" ? " on" : ""), onclick: function () { selectTicket(t.ticket_id); } },
         h("span", { class: "tk-top" }, statusPill(t.status), h("b", null, t["class"]), t.measured ? rungChip(t.measured.rung) : null, h("span", { class: "spacer" }), h("span", { class: "small muted tnum" }, opt.approved_by.length + " of " + opt.quorum)),
         h("span", { class: "tk-id mono small" }, short(t.ticket_id, 8) + " · " + String(t.raised_at).replace("T", " ").slice(0, 16) + " UTC"));
     });
-    var side = h("div", { class: "desk-side" }, h("div", { class: "side-label" }, LIVE.on ? "Deployments" : "Recorded runs"), depList, h("div", { class: "side-label" }, "Tickets"), h("div", { class: "tk-list" }, rows));
-    var main = ticket ? ticketDetail(ticket, dep) : h("div", { class: "card pad" }, DESK.error ? errorLine(DESK.error) : list && list.length ? busyLine("Reading the ticket…") : h("p", { class: "small muted" }, "Select a ticket."));
+    var profileRow = h("button", { class: "tk" + (DESK.panel === "profile" ? " on" : ""), onclick: function () { DESK.panel = "profile"; render(); } },
+      h("span", { class: "tk-top" }, h("b", null, "Mandate, tools and receipts")), h("span", { class: "tk-id small muted" }, "what governs this agent"));
+    var side = h("div", { class: "desk-side" }, h("div", { class: "side-label" }, LIVE.on ? "Deployments" : "Recorded runs"), depList,
+      h("div", { class: "side-label" }, "This deployment"), h("div", { class: "tk-list" }, profileRow),
+      h("div", { class: "side-label" }, "Tickets"), h("div", { class: "tk-list" }, rows));
+    var main = DESK.panel === "profile" ? profilePanel(dep)
+      : ticket ? ticketDetail(ticket, dep) : h("div", { class: "card pad" }, DESK.error ? errorLine(DESK.error) : list && list.length ? busyLine("Reading the ticket…") : h("p", { class: "small muted" }, "No ticket was raised here. See what governs the agent: Mandate, tools and receipts."));
     return h("section", { id: "desk" }, h("div", { class: "wrap" }, head, h("div", { class: "desk" }, side, main)));
+  }
+
+  function recordedProfile(dep) {
+    var a = dep.page.attestations[dep.page.primary];
+    return {
+      recorded: true,
+      mandates: a.authority.mandates.map(function (m) {
+        return { mandate_id: m.mandate_id, version: m.version, digest: m.digest, status: "recorded", scope: m.scope, parent: m.parent,
+          budget: { envelope: m.envelope, per_call: m.per_call }, quorums: m.quorums, windows: m.windows || [], tables: m.tables,
+          tools: (m.tools || []).map(function (t) { return typeof t === "string" ? { name: t } : { name: t.name, digest: t.digest, kind: t.kind, governed: t.kind || "" }; }) };
+      }),
+      receipts: []
+    };
+  }
+  function profilePanel(dep) {
+    var prof;
+    if (LIVE.on) {
+      if (DESK.profileFor !== dep.id) {
+        DESK.profileFor = dep.id; DESK.profile = null;
+        api("GET", "deployments/" + encodeURIComponent(dep.id) + "/profile").then(function (p) { DESK.profile = p; render(); }).catch(failed(DESK));
+      }
+      prof = DESK.profile;
+      if (!prof) return h("div", { class: "card pad" }, DESK.error ? errorLine(DESK.error) : busyLine("Reading the mandate…"));
+    } else prof = recordedProfile(dep);
+    var mandates = prof.mandates.map(function (m) {
+      var tools = (m.tools || []).map(function (t) {
+        var tag = t.governed === "held · warrant" ? pill("HELD FOR A WARRANT", "warn") : t.governed === "write · released" ? pill("WRITE · RECEIPTED", "info")
+          : t.governed === "read · metered" ? pill("READ · METERED", "permit") : t.governed === "staged · measured" ? pill("STAGED · MEASURED", "good") : t.kind ? pill(String(t.kind).toUpperCase(), "permit") : null;
+        return [h("span", null, h("b", { class: "mono" }, t.name), t.description ? h("div", { class: "small muted" }, t.description) : null), tag,
+          h("span", { class: "small" }, (t.requests || []).map(function (r) { return r.sink + "." + r.operation + (r.held ? " (held)" : ""); }).join(", ") || (t.effects ? t.effects + " row effect(s)" : "—")),
+          t.price ? h("span", { class: "small tnum" }, money(t.price, 3)) : h("span", { class: "muted" }, "—"),
+          t.digest ? hash(t.digest, 10) : h("span", { class: "muted" }, "—")];
+      });
+      var q = m.quorums || {};
+      return h("div", { class: "td-sec" },
+        h("div", { class: "line" }, h("b", null, m.scope), h("span", { class: "small muted" }, "version " + m.version), m.status ? (m.status === "bound" ? pill("BOUND", "good") : statusPill(m.status)) : null, m.parent ? h("span", { class: "small muted" }, "derived") : null, h("span", { class: "spacer" }), hash(m.digest || "", 10)),
+        factList([m.budget ? ["Budget", money(m.budget.envelope) + " envelope · " + money(m.budget.per_call) + " a model call"] : null,
+          ["Quorums", ["release", "accept_repair", "amend", "reset"].filter(function (k) { return q[k]; }).map(function (k) { return k + " " + q[k]; }).join(" · ") || "—"],
+          ["Windows", (m.windows || []).map(function (w) { return String(w.name).replace(/^[0-9a-f]{8,}_/, "") + " " + w.limit + " per " + Math.round(w.span_seconds / 60) + " min"; }).join(" · ") || "none"],
+          ["Tables", m.tables && Object.keys(m.tables).length ? Object.keys(m.tables).map(function (k) { return k + " (" + m.tables[k].join(", ") + ")"; }).join(" · ") : "none: its tools write no rows"]]),
+        h("h3", { style: "margin-top:14px" }, "Tools it may call"), tools.length ? table(["Tool", "Governed", "Requests", "Price", "Binding"], tools) : h("p", { class: "small muted" }, "No tool: the agent can call nothing yet."));
+    });
+    var receipts = prof.receipts && prof.receipts.length ? table(["Receipt", "Rung", "Outcome", "Measured", "Issued"], prof.receipts.map(function (r) {
+      return [hash(r.receipt_id, 8), h("span", null, rungChip(r.rung), " " + r.measurement), r.outcome === "committed" ? pill("COMMITTED", "good") : r.outcome === "compensated" ? pill("PUT BACK", "warn") : pill(String(r.outcome || "refused").toUpperCase(), "bad"),
+        h("span", { class: "small" }, num(r.rows || 0) + " rows · " + (r.tables || []).join(", ")), h("span", { class: "small tnum" }, String(r.issued_at || "").replace("T", " ").slice(0, 19))];
+    })) : h("p", { class: "small muted" }, prof.recorded ? "The bundle carries each receipt; the console lists them from the deployment." : "No receipt yet.");
+    return h("div", { class: "card td" },
+      h("div", { class: "td-head" }, h("div", { class: "line" }, pill("MANDATE", "info"), h("b", null, dep.name), h("span", { class: "spacer" }), LIVE.on ? h("button", { class: "btn sm", onclick: function () { DESK.profileFor = null; render(); } }, "Refresh") : null),
+        h("p", { class: "small ink2" }, "What the agent may do here, signed by its principals' quorum: every tool it is bound to and how each call is governed.")),
+      mandates, h("div", { class: "td-sec" }, h("h3", null, "Latest receipts"), receipts));
   }
 
   function factList(pairs) {
