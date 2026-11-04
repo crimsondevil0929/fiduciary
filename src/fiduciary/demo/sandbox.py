@@ -293,6 +293,7 @@ def _profile(key: str) -> dict[str, Any]:
         "principals": list(pack.principals if pack is not None else PRINCIPALS),
         "tenants": list(pack.tenants if pack is not None else TENANTS),
         "partition": pack.partition if pack is not None else "tenant",
+        "nouns": dict(pack.nouns) if pack is not None else {},
         "presets": [p.to_json() for p in PRESETS[key]],
     }
 

@@ -6,38 +6,59 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.7.0] - 2026-11-02
+## [1.7.0] - unreleased
 
-The interactive control plane and trust center: live loopback endpoints beside the static
-console, an in-browser `.fidb` verifier for `fidb/1` and sealed `fidb/2` bundles, and a
-sandboxed call runner and 2-of-3 quorum warrant desk on every industry tab, with offline
-fallbacks when `dashboard.html` is opened as a static file.
+The console: a web control plane on loopback over any deployment a `fiduciary.toml`
+names, and over the demo's runs. It decides nothing, holds no principal's key, and changes
+nothing on disk by looking.
 
 ### Added
 
-- **Interactive control plane server** (`fiduciary demo --serve`, `fiduciary.demo.control`):
-  serves a demo or deployment directory (including an existing recorded run) on loopback
-  with four JSON endpoints beside static files: `GET /api/status` (domains, open and held
-  tickets, bundles, substrate, ledger and rate-window state), `POST /api/verify-bundle`
-  (offline in-process `verify_bundle` and `attest` over `fidb/1` and sealed `fidb/2`
-  archives, returning `V1`–`V12`, two-tag seal and withheld-record counts, and the nine
-  control frameworks), `POST /api/sandbox/call` (executes preset or custom tool calls on an
-  isolated per-domain sandbox over SQLite, FHIR R4, Kubernetes or Git, returning the
-  gateway decision, `EffectDiff`, checker findings, `ARC1 1.4` receipt, raised ticket and
-  updated ledger and windows), and `POST /api/warrant/vote` (signs a `FIDU1` `Approval`
-  with a principal's key, records intake, forms the 2-of-3 `Warrant` at quorum, and
-  executes it at `expected_heads`).
-- **In-browser `.fidb` verifier** (`console.js`): click any generated `before.fidb`,
-  `after.fidb` or customer-sealed `fidb/2` bundle, or drag-and-drop any `.fidb` file on the
-  overview and audit/trust-center views. Uses `/api/verify-bundle` when served by the
-  control plane, and falls back on `file://` or static hosting to client-side POSIX tar
-  parsing and SHA-256 manifest verification (`crypto.subtle` with a pure-JS fallback),
-  inspecting records, two-tag seals, `withheld.json`, `V1`–`V12` and framework controls.
-- **Interactive warrant quorum desk and call sandbox** (`console.js`): every industry tab
-  lets the reader run preset or custom tool calls (normal commit, hidden cascade or
-  read-back put-back trap, and held or repair-escalated calls) and cast principal votes to
-  form and release a 2-of-3 warrant live, falling back to an interactive replay when
-  opened statically without the local server.
+- **`fiduciary console`** (`fiduciary.control`, spec §10.8, F10-20 to F10-24): the
+  deployments in `--dir` (each `fiduciary.toml`, and one level down) or named with
+  `--deployment`, served on `--listen` (127.0.0.1:8740). `fiduciary demo --serve` serves the
+  same console over its run; `--out DIR --serve` on a directory that holds a run serves that
+  run again, read and never written.
+- **The approvals desk.** Each ticket from the deployment's log, from its signed bytes: the
+  receipt a refusal cites (rows, tables and tenants measured, the substrate, the rung of the
+  measurement ladder, stated against measured, the checker that refused it); a held
+  message's outbound payload, read from the outbox and checked against the `payload_hash`
+  the ticket signs; the options with their quorums and pinned heads; the votes the log
+  recorded and those still in the intake; the warrant and its execution.
+- **Votes signed by the principal.** The console drafts an approval and returns its signing
+  input; the browser signs it with the principal's key file (Web Crypto Ed25519), which never
+  leaves the page; the console verifies the signature under the charter's key and, with
+  `--accept-approvals`, submits it to the intake. A signed approval from `fiduciary approve
+  --out` is taken as well. The deployment's writer records it.
+- **The bundle verifier.** V1 to V12 in process, offline, against a deployment's pins or a
+  charter digest, `pinned-keys.json` and witness given; the nine framework mappings; the
+  attestation as JSON. In the browser, with Web Crypto alone, the archive, every member's
+  digest, the hash chain, every record's and the manifest's signature, and a sealed
+  bundle's seals, shown as a partial check.
+- **The sandbox** (`fiduciary.demo.sandbox`, `--sandbox`): each of the six industries built
+  in a temporary directory, with three calls to try (one that commits, one with a
+  consequence the gateway cannot see, one held for two of three approvers) or one written by
+  hand, on SQL, Git, Kubernetes (plan-bound) and FHIR (predicted). There the console holds
+  the demo's keys and is the writer, so a vote is recorded at once and a warrant executes.
+- **The page, with no console.** `dashboard.html` opened as a file or hosted statically shows
+  the recorded run in the same views, the tickets and votes each run recorded, every recorded
+  call, and the in-browser bundle checks; it signs nothing and says what needs the console.
+
+### Security
+
+- The console listens on loopback only, answers only its own `Host`, refuses cross-site
+  requests (`Sec-Fetch-Site`) except a navigation to its page, takes writes only from its own
+  origin with the `X-Fiduciary-Console` header and a JSON (or octet-stream) body, bounds
+  bodies (256 KiB; 64 MiB for a bundle), refuses chunked bodies, serves an allowlist of
+  files (never keys, configuration or databases), sends CSP, `nosniff` and `DENY` framing,
+  and answers failures without their cause.
+- SQLite stores and outboxes are read through the backup API; a database with no
+  write-ahead log beside it is opened immutable, so no `-wal` or `-shm` file appears.
+
+### Changed
+
+- F9-4 amended: the console page fetches a bundle beside it only when the reader asks, and
+  asks a console only when that console served it.
 
 ## [1.6.0] - 2026-11-01
 

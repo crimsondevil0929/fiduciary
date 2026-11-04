@@ -1307,13 +1307,15 @@
       var ev = t.events || [];
       var opts = t.options.map(function (o) {
         return { action: o.action, digest: o.digest, quorum: o.quorum, heads: [],
-          approved_by: votes.filter(function (v) { return v.decision === "approve" && v.resolution === o.digest; }).map(function (v) { return v.principal; }) };
+          approved_by: votes.filter(function (v) { return v.decision === "approve" && v.resolution === o.digest; }).map(function (v) { return v.principal; })
+            .filter(function (p, i, all) { return all.indexOf(p) === i; }) };
       });
       return {
         recorded: true, ticket_id: t.ticket_id, digest: t.digest, "class": t["class"], raised_at: t.raised_at, not_after: t.not_after, halt: t.halt, messages: t.messages, events: ev,
         status: w ? "warranted" : ev.indexOf("ticket.declined") >= 0 ? "declined" : ev.indexOf("ticket.lapsed") >= 0 ? "lapsed" : "open",
         options: opts,
-        votes: votes.map(function (v) { return { principal: v.principal, decision: v.decision, resolution: v.resolution, approval: v.digest, recorded_at: v.issued_at, signed_by: v.signed_by,
+        votes: votes.map(function (v, i) { return { principal: v.principal, decision: v.decision, resolution: v.resolution, approval: v.digest, recorded_at: v.issued_at, signed_by: v.signed_by,
+          again: votes.slice(0, i).some(function (w) { return w.principal === v.principal; }),
           option: (opts.filter(function (o) { return o.digest === v.resolution; })[0] || {}).action }; }),
         warrant: w ? { digest: w.digest, action: w.action, basis: w.basis, heads: (w.messages || []).map(function (m, i) { return m + "@" + (w.heads[i] || ""); }), formed_at: w.formed_at, not_after: w.not_after,
           execution: ev.indexOf("execution.applied") >= 0 ? "applied" : ev.indexOf("execution.refused") >= 0 ? "refused" : ev.indexOf("execution.intent") >= 0 ? "intent" : null } : null
@@ -1475,7 +1477,8 @@
   function closedNote(t) {
     var votes = (t.votes || []).map(function (v) {
       return h("div", { class: "vote" }, h("span", { style: "color:" + (v.decision === "approve" ? "var(--good-ink)" : "var(--critical-ink)") }, icon(v.decision === "approve" ? "check" : "x")),
-        h("span", null, h("b", null, v.principal), " " + (v.decision === "approve" ? "approved " + (v.option || "a narrowing") : "declined"), h("div", { class: "small muted" }, "approval ", hash(v.approval, 12), v.signed_by ? " · signed by key " + v.signed_by : "")),
+        h("span", null, h("b", null, v.principal), " " + (v.decision === "approve" ? "approved " + (v.option || "a narrowing") : "declined"), v.again ? h("span", { class: "small muted" }, " · signed again; a principal counts once") : null,
+          h("div", { class: "small muted" }, "approval ", hash(v.approval, 12), v.signed_by ? " · signed by key " + v.signed_by : "")),
         h("span", { class: "small muted tnum" }, String(v.recorded_at || "").replace("T", " ").slice(0, 19)));
     });
     return votes.length ? votes : h("p", { class: "small muted" }, "No vote was recorded.");
@@ -1803,13 +1806,14 @@
     var v = verdictOf(), b = VER.browser, kids = [];
     var att = v && v.att;
     var passed = att ? att.verdict.passed : v && v.customer ? v.customer.passed : b ? b.checks.every(function (c) { return c.status !== "fail"; }) : false;
-    var status = att ? att.verdict.status : v && v.unreadable ? "UNREADABLE" : v && v.customer ? (v.customer.passed ? "VERIFIED" : "EXIT " + v.customer.exit_code) : b ? (passed ? "BROWSER CHECKS PASS" : "BROWSER CHECKS FAIL") : "—";
+    var partial = !v && b && passed;
+    var status = att ? att.verdict.status : v && v.unreadable ? "UNREADABLE" : v && v.customer ? (v.customer.passed ? "VERIFIED" : "EXIT " + v.customer.exit_code) : b ? (passed ? "PARTLY CHECKED · NOT A VERDICT" : "FAILS IN THIS BROWSER") : "—";
     var exit = att ? att.verdict.exit_code : v && v.unreadable ? 2 : v && v.customer ? v.customer.exit_code : null;
     var src = v && v.source === "console" ? "Verified by the console, offline, V1 to V12" + (VER.server.pinned_by ? ", pinned by " + (VER.server.pinned_by === "given" ? "the digest you gave" : VER.server.pinned_by + "'s charter") : "") + "."
       : v && v.source && v.source.indexOf("recorded") === 0 ? (VER.browser ? "These bytes are the bundle this page recorded; " : "") + "its verdict was recorded by fiduciary verify-bundle when this page was built" + (VER.browser ? "." : ". Drop the file to check its bytes here.")
-        : "Only this browser's checks ran. For V1 to V12: fiduciary verify-bundle " + (VER.name || "bundle.fidb") + " --charter <digest> --keys pinned-keys.json";
-    kids.push(h("div", { class: "ver-head " + (passed ? "ok" : "no") },
-      h("div", { class: "badge" }, icon(passed ? "shield" : "alert", 18), status), exit !== null ? h("span", { class: "small muted" }, "exit " + exit) : null, h("span", { class: "spacer" }),
+        : "Only this browser's checks ran: they find a changed byte, a member out of place, a broken chain, a forged signature or a foreign seal, but not what needs the ledger's anchors or a replay of the log. The verdict is V1 to V12: fiduciary verify-bundle " + String(VER.name || "bundle.fidb").split("/").pop() + " --charter <digest> --keys pinned-keys.json" + (LIVE.on ? ", or pin a charter digest above." : ".");
+    kids.push(h("div", { class: "ver-head " + (partial ? "part" : passed ? "ok" : "no") },
+      h("div", { class: "badge" }, icon(partial ? "layers" : passed ? "shield" : "alert", 18), status), exit !== null ? h("span", { class: "small muted" }, "exit " + exit) : null, h("span", { class: "spacer" }),
       att ? h("button", { class: "btn sm", onclick: function () { download("attestation-" + String(VER.name || "bundle").split("/").pop().replace(/\.fidb$/, "") + ".json", JSON.stringify(att, null, 2) + "\n", "application/json"); } }, icon("down"), "Attestation JSON") : null));
     kids.push(h("p", { class: "small ink2" }, src));
     var bundle = att ? att.bundle : null;
@@ -1826,7 +1830,9 @@
     if (b) kids.push(h("div", { class: "td-sec" }, h("h3", null, "Checked in this browser"), b.error ? h("p", { class: "small muted" }, b.error) : h("ul", { class: "bchecks" }, b.checks.map(function (c) {
       return h("li", null, c.status === "pass" ? pill("PASS", "good") : c.status === "fail" ? pill("FAIL", "bad") : pill("NOT RUN", "permit"), h("span", null, h("b", null, c.name), " ", h("span", { class: "small muted" }, "(part of " + c.part + ")"), h("div", { class: "small ink2" }, c.detail)));
     }))));
-    kids.push(h("div", { class: "td-sec" }, h("h3", null, "V1 to V12, and the controls each supports"), checksTable(att, b)));
+    kids.push(h("div", { class: "td-sec" }, h("h3", null, "V1 to V12, and the controls each supports"),
+      v && v.customer ? h("p", { class: "small ink2" }, "The recorded verdict above is the whole of V1 to V12. Below, what this browser checked again of these bytes.") : null,
+      checksTable(att, b)));
     if (VER.server && VER.server.notes && VER.server.notes.length) kids.push(h("details", null, h("summary", null, "Verifier notes (" + VER.server.notes.length + ")"), h("ul", { class: "plain small" }, VER.server.notes.map(function (n) { return h("li", null, n); }))));
     return h("div", { class: "card pad ver-result", id: "ver-result", style: "margin-top:14px" }, kids);
   }
@@ -1877,7 +1883,7 @@
     var doms = sbDomains();
     if (!SB.key || !doms.some(function (d) { return d.key === SB.key; })) SB.key = (PACK && doms.some(function (d) { return d.key === PACK.key; })) ? PACK.key : doms[0].key;
     var dom = doms.filter(function (d) { return d.key === SB.key; })[0];
-    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Sandbox"), h("h2", null, "Try a call on each kind of system"),
+    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Sandbox"), h("h2", null, LIVE.on ? "Try a call on each kind of system" : "Every call this run recorded, on each kind of system"),
       h("p", null, LIVE.on
         ? "Each industry's deployment, built fresh in a scratch directory the console removes when it stops: the same engine, mandate, checkers and approvers as the recorded run, on SQL, Git, a Kubernetes API server or a FHIR server. A call goes through the input gateway, then the stack stages and measures it. Nothing here touches a recorded run on disk."
         : "The calls this run recorded, each with what the gateway decided and what the stack measured. The console runs new ones in a scratch deployment of each industry: fiduciary demo --out <this directory> --serve."));
@@ -1992,7 +1998,7 @@
     try { return fn(); } finally { P = keep[0]; DEMO = keep[1]; PACK = keep[2]; current = keep[3]; }
   }
   function bundlePath(name) { return (PACK && PAGES.length > 1 && P !== ROOT ? PACK.key + "/" : "") + name; }
-  function verifyLink(path) { return h("button", { class: "btn sm noprint", style: "margin-left:8px", title: "Open in the verifier", onclick: function () { showBundle(path); } }, "Verify"); }
+  function verifyLink(path) { return h("button", { class: "link noprint", title: "Open " + path + " in the verifier", onclick: function () { showBundle(path); } }, "verify"); }
 
   function consoleFooter() {
     return h("footer", null, h("div", { class: "wrap" },

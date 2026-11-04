@@ -226,7 +226,9 @@ with networking disabled. The run takes a few seconds and writes:
   [A charter, a mandate, a derived child](#a-charter-a-mandate-a-derived-child).
 
 `--out DIR` sets the directory, `--report PATH` also writes the dashboard or a Markdown
-report elsewhere, and `--serve` serves the dashboard on 127.0.0.1. Added in 1.1.0.
+report elsewhere, and `--serve` serves the dashboard on 127.0.0.1, with the console
+described in [The console](#the-console). Added in 1.1.0. `fiduciary demo --out DIR --serve`
+on a directory that already holds a run serves that run again, read and never written.
 `--domain` picks the industry (see [One engine, any industry](#one-engine-any-industry));
 with `all`, each domain pack is written to a subdirectory named for it.
 
@@ -627,6 +629,48 @@ filesystem, or a network filesystem with cross-host locking. A writer that freez
 its locks until it resumes or exits, and the node that took over its role waits, healthy,
 until then. Configure your supervisor to kill a node whose `/healthz` stops responding;
 that bounds the wait (see `docs/FIDUCIARY_SPEC.md`, F10-19).
+
+## The console
+
+`fiduciary console` serves a web console on 127.0.0.1 over the deployments in a directory:
+each `fiduciary.toml` there, and one level down (or name them with `--deployment FILE`).
+
+```
+fiduciary console --dir /srv/fiduciary --accept-approvals --open
+```
+
+It has three views:
+
+- **Approvals.** Every ticket, read from the deployment's own log. A refused plan shows what
+  was measured: the rows, tables and tenants it reached, on which system, and how strongly
+  that system can be measured (transactional, plan-bound, predicted or request-only). A held
+  request shows the payload it would send, checked against the hash the ticket signs. Then
+  the options, who has voted, and the warrant once one forms.
+- **Verify a bundle.** Drop any `.fidb`. The console runs V1 to V12 on it, offline, against
+  the charter digest and keys you pinned (or the deployment's), and maps each check to the
+  nine control frameworks.
+- **Sandbox**, with `--sandbox` or under `fiduciary demo --serve`: each demo industry built
+  fresh in a temporary directory, to try calls on SQL, Git, a Kubernetes API server and a
+  FHIR server, and to vote on the tickets they raise.
+
+The console never holds a principal's key and never writes a deployment's log. To vote, a
+principal picks their key file in the browser; the page signs the approval there and sends
+only the signature. The console checks it against the key the charter pins for that
+principal and, with `--accept-approvals`, puts it into the deployment's intake, as
+`fiduciary submit` would. `fiduciary serve` then records it, forms the warrant at quorum,
+and releases what the ticket held. Without `--accept-approvals` the console is read-only.
+`fiduciary approve` signs the same approval from the command line.
+
+It answers only on its own loopback address and refuses requests from other sites. It
+serves only its page, bundles, reports and public pins, never keys, configuration or
+databases. It reads a SQLite store from a snapshot, so looking at a deployment, or at a
+recorded demo run, changes nothing on disk.
+
+The same page works as a plain file, or hosted with no console behind it. It then shows what
+the run recorded and checks a dropped bundle in the browser: the archive and every member's
+digest, the log's hash chain, every record's Ed25519 signature, and a sealed bundle's seals.
+It labels that a partial check, not a verdict: the rest needs the verifier,
+`fiduciary verify-bundle`.
 
 ## Tests
 
