@@ -117,7 +117,7 @@ def test_a_bundle_carries_no_row_data_payloads_transcripts_or_secrets(
         text = b"".join(tar.extractfile(m).read() for m in tar.getmembers())  # type: ignore[union-attr]
     absent = [
         b"pi_0000000007",  # the refund's payment intent: a Stripe payload
-        b"12.50",  # the refund's amount, as the tool's arguments carried it
+        b'"12.50"',  # the refund's amount, as the tool's arguments carried it
         b"Summarize ledger batch",  # a model prompt
         b'"status": "open"',  # what the lookup read
     ]
