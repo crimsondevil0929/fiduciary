@@ -630,6 +630,74 @@ its locks until it resumes or exits, and the node that took over its role waits,
 until then. Configure your supervisor to kill a node whose `/healthz` stops responding;
 that bounds the wait (see `docs/FIDUCIARY_SPEC.md`, F10-19).
 
+## An MCP server's tools, governed: `fiduciary init`
+
+```
+fiduciary init --out desk --mcp -- python -m my_mcp_server --stdio
+```
+
+`init` starts the server and asks it for its tools. It governs each one by what the server
+says of it in MCP's tool annotations:
+
+- **A read-only tool** is called directly, metered, and counted against the rate bound.
+- **A write the server marks non-destructive** is made through the outbox, at most once,
+  and receipted.
+- **Any other write** is held until two of three principals sign its release. MCP treats a
+  write as destructive unless it says otherwise, so a tool that says nothing is held.
+
+A tool whose input fiduciary cannot check in full (a float, or a schema keyword it would not
+enforce) is left out, and named.
+
+The directory is a working deployment: keys, a charter its principals adopted, a mandate
+they issued, `interlock.toml` and `fiduciary.toml`. Its `README.md` gives the three commands
+that run it:
+
+- `fiduciary mcp proxy` serves the agent;
+- `interlock relay` makes the released calls on the server;
+- `fiduciary console` is where the principals vote.
+
+A held call is ticketed by the proxy's own turn, and the agent is told it is waiting.
+`scripts/init_live.py` runs a live Claude model through it.
+
+## Notices
+
+`[notify]` tells webhooks when a ticket waits for a quorum and when it is decided, with a
+link to the ticket in the console:
+
+```toml
+[notify]
+key = "keys/notify.key"              # fiduciary keygen: signs standard notices
+console = "https://console.example.internal/"
+
+[[notify.webhooks]]
+name = "approvers"
+url = "https://hooks.example/fiduciary"   # format = "standard": Ed25519-signed (v1a)
+
+[[notify.webhooks]]
+name = "on-call"
+url = "https://events.pagerduty.com/v2/enqueue"
+format = "pagerduty"                 # a ticket opens an incident; its execution resolves it
+routing_key_env = "PD_ROUTING_KEY"
+classes = ["held", "refused"]
+```
+
+Notices are delivered in log order, at least once. Each has a fixed id, so a receiver keeps
+it once. A notice carries ids, never a payload. `fiduciary serve` delivers them, as does
+`fiduciary notify --once`; `fiduciary notify --test approvers` sends one test notice.
+
+## The public verifier
+
+`.github/workflows/pages.yml` publishes the console as a static page, with the demo's
+bundles and a `SHA256SUMS` file to pin both:
+
+- the URL is <https://crimsondevil0929.github.io/fiduciary/>;
+- the site is built from each commit to `main` by `fiduciary demo --domain all`, with no
+  model calls;
+- before it is published, CI checks it: every bundle verifies as the page says, and passes
+  the page's own browser checks.
+
+Drop any `.fidb` on the page to check it in your browser.
+
 ## The console
 
 `fiduciary console` serves a web console on 127.0.0.1 over the deployments in a directory:

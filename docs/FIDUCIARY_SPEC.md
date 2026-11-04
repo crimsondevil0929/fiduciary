@@ -940,7 +940,7 @@ when `child ⊑ parent`.
 | `governance.cognitive.max_cycle_period` | `CognitivePolicy` | ≥ (longer cycles are looked for too) |
 | `governance.cognitive.min_novelty_ratio` | `CognitivePolicy` | ≥ |
 | `governance.cognitive.exempt_tools` | `CognitivePolicy` | equal: a child that judged a call its parent exempts would see it between two others, and a repeat the parent counts would break (F5-11 found it) |
-| `data.tables` | `TableAllowlist`, `NoDelete`, `bound_statements` | tables ⊆; per table, operations ⊆ |
+| `data.tables` | `TableAllowlist`, `NoDelete`, `bound_statements` | tables ⊆; per table, operations ⊆. *Amended in 1.8.0:* the map may be empty, so the mandate allows no table and every row a plan writes is refused. That is the mandate of an agent whose tools write nothing but outbound requests (an MCP server's write tools, §10.10). Before 1.8.0 an empty map was malformed. |
 | `data.tenants` | `tenant_allowlist` | ⊆; `"*"` only under `"*"` |
 | `data.declared_tenants` | `TenantIsolation(declared=…)` | true if the parent's is |
 | `data.max_rows` | `BlastRadius` | ≤ |
@@ -2039,6 +2039,8 @@ of them.
 | `fiduciary serve [--node N] [--bridge HOST:PORT] [--metrics HOST:PORT]` | Run the service under a supervisor (§10.7): the writer (binder, intake and bridge), triggers, settler, executor and metrics, alone or as a node of a cluster. `SIGHUP` opens every key again; `SIGTERM` drains and stops. |
 | `fiduciary mcp serve`, `proxy` | Run the MCP bridge: one session per process, over stdio, or Streamable HTTP with `--http HOST:PORT` (`--token-file`, `--tls-cert`, `--tls-key`). The process also judges the intake and executes the warrants formed, since it holds the quotes and proposals they name (F7-14). |
 | `fiduciary export-bundle`, `verify-bundle`, `verify` | §9, and live verification of the store. `verify-bundle --json` and `--report` write the attestation (F9-4). |
+| `fiduciary init --out DIR [--name N] [--principal NAME]... [--mcp -- COMMAND]` | Write a deployment ready to run, governing an MCP server's tools by their annotations (§10.10). *(Added in 1.8.0.)* |
+| `fiduciary notify [--once] [--test WEBHOOK]` | Deliver each `[notify]` webhook's notices from its cursor, or send one test notice (§10.9). *(Added in 1.8.0.)* |
 | `fiduciary console [--dir DIR] [--deployment FILE] [--listen HOST:PORT] [--accept-approvals] [--sandbox]` | Serve the console on loopback (§10.8): the approvals desk, votes the principal signs in the browser, the bundle verifier and, with `--sandbox`, the demo industries in scratch. `fiduciary demo --serve` serves the same console over the run, its deployments read and never written. *(Added in 1.7.0.)* |
 | `fiduciary demo [--out DIR] [--report DIR\|FILE] [--serve [HOST:PORT]] [--open] [--live]` | Stand up a deployment of its own in a new directory and play seven acts against it and against an input gateway of Cedar policies (`cedarpy` with the `cedar` extra; otherwise a built-in evaluator of the same policies, which says so): a discount whose trigger collapses an order's total, a dispute flag whose trigger reaches four tenants, fifty sub-agent sessions against one lineage's window and a child wider than its parent, a relay killed between the vendor's answer and its record, a held message released on a 2-of-3 warrant, a break-glass release outside any warrant, and both bundles verified with sockets refused and scanned for every row, payload, prompt and secret the deployment holds. Writes the console (`dashboard.html`), both bundles, the attestation and a `fiduciary.toml` the other commands open. Exit 0 when the bundle before the break-glass act verifies, the one after it exits 7, and nothing planted is found; 1 otherwise; 2 on a usage error. `--live` puts a Claude model in front of the first act, reading `BENCHMARK_API_KEY` only, metered and stopped at `--max-cost`. *(Added in 1.1.0.)* `--domain` picks the industry: `fintech` (the default, the acts above), `healthcare`, `sre`, `supply-chain` or `saas`, each a deployment of its own on the same engine with its own schema, triggers, mandate, principals and break-glass key, playing the same arc in seven acts; or `all`, fintech in the directory and each pack in a subdirectory named for it, behind one console that switches between them. Every console opens on an overview: the industries, which ran, what in the engine refused what (counted from the measured plans), the measurement classes, and the acceptance matrix interlock recorded. The exit code covers every industry run. `--live` puts the model in front of fintech's first act and each pack's second (its hidden cascade), each act stopped at `--max-cost`; the other acts replay. *(Amended in 1.2.0.)* `--domain coding-agent` stages on Git, not SQL: a bare repository with a code-generator hook, staged and committed by interlock's Git substrate (`interlock.git_substrate`, interlock 1.1.0), with the deployment's SQLite file as its control database (outbox, inbox, windows). Its acts are a fix committed as one commit at the measured head; one edit that the hook turns into 36 files; an injected workflow edit and a deleted test; a teammate's push while a change is staged, which leaves the change uncommitted and is named by reconciliation; a dependency bump that commits only with CI's signed result for its exact bytes (F8-2), and only the part that passes, on a 2-of-3 `accept_repair` warrant at the head the maintainers reviewed; and an administrator's hotfix through the deployment's own engine, outside any session, which V7 names offline. The pack runs where the installed interlock has the Git substrate and is left out where it does not. Its `interlock.toml` names `substrate = "git"`, and its `fiduciary.toml` opens the deployment as every other's does. A live act's model calls never take it past `--max-cost`: each turn may write only the output tokens that what is left of the cap buys after the turn's input tokens, which the API counts (or the request's size bounds, where it cannot count them). *(Amended in 1.3.0.)* |
 
@@ -2176,6 +2178,73 @@ demo --serve`, a scratch deployment of each demo industry (`fiduciary.control`,
 - **F10-24. The sandbox.** Each sandbox is the demo's deployment, built in a temporary
   directory the console removes when it stops. There, and only there, the console holds
   the principals' keys (the demo's own) and is the writer.
+
+*Amended in 1.8.0* (F10-23): the page's own bundle checks are one module
+(`report/verify.js`). It checks each document's path against its digest, the bundle's keys
+against pinned keys when the reader gives them, and the ledger anchor of every record in
+range. In a sealed bundle, it also checks that no withheld record opens under the bundle's
+keys. CI runs the module over every golden bundle, and it must raise no false alarm on a
+valid bundle. With the pinned keys, it must fail every bundle the verifier fails on V1, V9
+or V10. Each bundle's outcome is recorded in `tests/js/browser_vectors.json`. The desk also
+shows each deployment's mandate: its budget, quorums, windows and tables, and every tool
+binding it pins, with how a call to it is governed. It also shows the latest receipts
+(`GET /api/deployments/<id>/profile`). A notice's link opens one ticket in the desk
+(`#/desk?d=<deployment>&t=<ticket>`).
+
+## 10.9 Notices
+
+*Added in 1.8.0.* `[notify]` names webhooks to be told when a ticket waits for a quorum and
+when it is decided (`fiduciary.notify`). The `notifier` part of `fiduciary serve` delivers
+the notices, and so does `fiduciary notify`.
+
+- **F10-25. A notice is a function of one record.** A notice is made from a
+  `ticket.raised`, `warrant.formed`, `execution.applied`, `execution.refused`,
+  `execution.abandoned`, `ticket.declined` or `ticket.lapsed` record. It carries the
+  record's place and hash, the ticket's id and class, its options and their quorums, its
+  expiry, the warrant's id, and a link to the ticket in the console. It never carries a
+  payload, a row or the agent's statement.
+- **F10-26. At least once, in order, the same notice each time.** Each webhook has a cursor
+  (`[notify] state`). The cursor moves past a record only once that record's notice is
+  answered `2xx`, and a failure is retried, with backoff, before anything after it. A
+  notice's id is a hash of the record's place, the record's hash and the webhook's name.
+  So a retry is the same notice, and a receiver keeps it once: Standard Webhooks'
+  `webhook-id`, or PagerDuty's `dedup_key`, which is the ticket's. A webhook that has no
+  cursor yet starts at the log's head, so the deployment's past is not announced.
+- **F10-27. Signed, or keyed by their receiver.** A `standard` notice is canonical JSON,
+  signed under the Standard Webhooks asymmetric convention (`v1a`, Ed25519). The signature
+  is by the deployment's notification key (`[notify] key`), which is no other role's key.
+  A `slack` notice goes to a Slack incoming webhook, whose URL is the secret. A `pagerduty`
+  notice carries a routing key read from the environment. A raised ticket triggers an
+  incident, its warrant acknowledges the incident, and its execution, a decline or a lapse
+  resolves it. A webhook's URL is `https`, or `http` on loopback.
+
+## 10.10 `fiduciary init`
+
+*Added in 1.8.0.* `fiduciary init --out DIR [--mcp -- COMMAND]` writes a deployment ready to
+run (`fiduciary.init`), using the builder that stands up each demo industry.
+
+- **F10-28. Governed by what the server says of each tool.** With `--mcp`, init asks the
+  server for `tools/list`, and governs each tool by its MCP annotations:
+  - `readOnlyHint` makes a `passthrough` binding (F4-15).
+  - `destructiveHint: false` makes a `plan` binding whose one request goes to the server
+    through an `mcp` sink, at most once.
+  - Anything else makes the same binding, with its operation held (`hold = true`), so each
+    call waits for a warrant. MCP's own default for a write is destructive.
+
+  A tool whose input the binding grammar cannot hold whole is left out, and named. Such a
+  tool has a number (FIDU1 holds no floats) or a keyword the grammar would not enforce.
+- **F10-29. What it writes.** It writes keys; a charter its three principals adopt; and a
+  root mandate pinning every binding, issued by two of the principals and bound. The
+  mandate allows no table, a window an hour per write, one request a plan, and a day for a
+  held request to be released. It also writes `interlock.toml`: its database holds the
+  outbox only (`tables = []`, interlock 1.4.1), and it names the relay endpoint that runs
+  the server, with the relay's key registered. Last, it writes `fiduciary.toml` and a
+  README. The principals' keys are written under `keys/`; each belongs on its principal's
+  machine.
+- **F10-30. A bridge process is its deployment's writer.** `fiduciary mcp proxy` and
+  `fiduciary mcp serve` run the triggers in their turn, as `fiduciary serve` does: a call
+  held for a warrant is ticketed. A committed call whose request is held tells the agent
+  so, and that the request is not yet made.
 
 ---
 
@@ -2564,4 +2633,7 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-9 to F10-11: crash points | 3 | crash | Implemented. `test_crash_recovery.py` |
 | F10-12 to F10-17, F10-19: the service and the cluster | 6 | process tests: a part restarted, a key reload refused, a leader killed and frozen; the new leader waiting, healthy | Implemented. `test_service.py`, `test_cluster.py`, `test_soak.py` |
 | F10-20 to F10-24: the console | 1.7.0 | each ticket class read from a recorded run and a sandbox; a vote signed outside the console checked under the charter's key, refused when altered or by another key, queued, and recorded by the deployment's writer; a recorded run's every byte unchanged after the console, its sandbox and its votes; the boundary's refusals; every golden bundle through the console's verifier; each substrate's presets | Implemented (1.7.0), both stores. `test_interactive_console.py` |
+| F10-23 (1.8.0): the page's bundle checks | 1.8.0 | the module run by Node over all 35 golden bundles: no false alarm; every V1, V9 or V10 failure caught with pinned keys; each outcome pinned | Implemented (1.8.0). `test_browser_verifier.py`; the site's bundles, `scripts/check_site.py` |
+| F10-25 to F10-27: notices | 1.8.0 | a held ticket, its warrant and execution told in order and signed; a failure retried as the same notice; Slack and PagerDuty shapes; the configuration's refusals; the CLI against a local receiver | Implemented (1.8.0). `test_notify.py` |
+| F10-28 to F10-30: `fiduciary init` | 1.8.0 | each annotation's governance; a tool the grammar cannot hold left out; a deployment run as written: the proxy, a read, a released write, a held one ticketed, two votes, the warrant executed, the relay's calls on the server; a live model through the proxy | Implemented (1.8.0). `test_init.py`; `scripts/init_live.py` |
 | F10-18: upgrades in place | 6 | stores each 0.x release wrote, on both stores | Implemented. `test_upgrade.py` |
