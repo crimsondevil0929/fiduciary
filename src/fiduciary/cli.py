@@ -1276,6 +1276,19 @@ def _demo(args: argparse.Namespace) -> int:
     if args.out is not None:
         root = Path(args.out).resolve()
         if root.exists() and any(root.iterdir()):
+            if args.serve is not None and not args.live and (root / "demo.json").is_file():
+                # A recorded run: served as it stands, read and never written.
+                server, url = _serve_dashboard(root, args.serve)
+                if not args.quiet:
+                    _out(f"serving     {url} (the run recorded in {root}; Ctrl-C stops)")
+                if args.open:
+                    import webbrowser
+
+                    webbrowser.open(url)
+                from fiduciary.control import run
+
+                run(server)
+                return OK
             _fail(f"{root} is not empty: the demo writes a fresh deployment there")
     else:
         root = Path(tempfile.mkdtemp(prefix="fiduciary-demo-"))
@@ -1322,12 +1335,9 @@ def _demo(args: argparse.Namespace) -> int:
 
         webbrowser.open(url)
     if server is not None:
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            server.server_close()
+        from fiduciary.control import run
+
+        run(server)
     return OK if outcome.held else REFUSED
 
 
@@ -1371,24 +1381,55 @@ def _live_model(args: argparse.Namespace) -> Any:
 
 
 def _serve_dashboard(root: Path, where: str) -> tuple[Any, str]:
-    """A loopback HTTP server over the demo's directory."""
-    import functools
-    import http.server
+    """The console over a demo's directory: its recorded deployments, read and
+    never written, and a sandbox of every industry, built in scratch."""
+    from fiduciary.control import Console, serve
+    from fiduciary.demo.sandbox import Sandbox
 
-    host, _, port = (where or "127.0.0.1:8740").rpartition(":")
-    host = host or "127.0.0.1"
-    if host not in ("127.0.0.1", "localhost", "::1"):
-        _fail("--serve listens on loopback only: 127.0.0.1:<port>")
     try:
-        number = int(port)
-    except ValueError:
-        _fail("--serve is HOST:PORT")
-    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root))
-    try:
-        server = http.server.ThreadingHTTPServer((host, number), handler)
+        server = serve(Console.over(root, recorded=True, sandbox=Sandbox()), where)
+    except ValueError as exc:
+        _fail(f"--serve: {exc}")
     except OSError as exc:
         _fail(f"--serve: {exc}")
-    return server, f"http://{host}:{server.server_address[1]}/dashboard.html"
+    return server, server.url
+
+
+def _console(args: argparse.Namespace) -> int:
+    """``fiduciary console``: the approvals desk and the bundle verifier, on loopback."""
+    from fiduciary.control import Console, run, serve
+
+    root = Path(args.dir).resolve()
+    if not root.is_dir():
+        _fail(f"{root} is no directory")
+    configs = [Path(c) for c in args.config_files]
+    for path in configs:
+        if not path.is_file():
+            _fail(f"{path}: no such configuration")
+    sandbox = None
+    if args.sandbox:
+        from fiduciary.demo.sandbox import Sandbox
+
+        sandbox = Sandbox()
+    console = Console.over(root, configs, accepts=args.accept_approvals, sandbox=sandbox)
+    if not console.deployments() and sandbox is None:
+        _err(f"no fiduciary.toml in {root} or the directories under it: the desk is empty")
+    try:
+        server = serve(console, args.listen)
+    except ValueError as exc:
+        _fail(f"--listen: {exc}")
+    except OSError as exc:
+        _fail(f"--listen: {exc}")
+    for each in console.deployments():
+        mode = "takes approvals" if each.accepts else "read-only"
+        _err(f"deployment  {each.ident} ({mode})")
+    _out(f"serving     {server.url} (Ctrl-C stops)")
+    if args.open:
+        import webbrowser
+
+        webbrowser.open(server.url)
+    run(server)
+    return OK
 
 
 # --------------------------------------------------------------------------
@@ -1643,6 +1684,37 @@ def _parser() -> argparse.ArgumentParser:
     )
     check.set_defaults(handler=_verify_bundle)
 
+    console = commands.add_parser(
+        "console",
+        help="serve the approvals desk and the bundle verifier on loopback, over the "
+        "deployments a directory holds",
+    )
+    console.add_argument(
+        "--dir", default=".", help="where to find deployments (fiduciary.toml, and one level down)"
+    )
+    console.add_argument(
+        "--deployment",
+        dest="config_files",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="a deployment's fiduciary.toml (repeatable; instead of searching --dir)",
+    )
+    console.add_argument("--listen", default="127.0.0.1:8740", metavar="HOST:PORT")
+    console.add_argument(
+        "--accept-approvals",
+        action="store_true",
+        help="put approvals principals sign in the browser into each deployment's intake "
+        "(read-only otherwise); the deployment's writer records them",
+    )
+    console.add_argument(
+        "--sandbox",
+        action="store_true",
+        help="add the demo's six industries, built in scratch, to try calls and votes",
+    )
+    console.add_argument("--open", action="store_true", help="open the console in a browser")
+    console.set_defaults(handler=_console)
+
     demo = commands.add_parser(
         "demo",
         help="run the whole stack offline in seven acts, beside an input gateway, and write "
@@ -1664,7 +1736,8 @@ def _parser() -> argparse.ArgumentParser:
         nargs="?",
         const="127.0.0.1:8740",
         metavar="HOST:PORT",
-        help="serve the dashboard on loopback (127.0.0.1:8740)",
+        help="serve the dashboard, with the approvals desk, the bundle verifier and a "
+        "sandbox, on loopback (127.0.0.1:8740)",
     )
     demo.add_argument("--open", action="store_true", help="open the dashboard in a browser")
     demo.add_argument(

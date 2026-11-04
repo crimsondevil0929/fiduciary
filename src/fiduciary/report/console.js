@@ -100,7 +100,8 @@
       layers: "M8 1 1 4.5 8 8l7-3.5L8 1Zm-5.6 6.2L1 8l7 3.5L15 8l-1.4-.8L8 10 2.4 7.2Zm0 3.5L1 11.5 8 15l7-3.5-1.4-.8L8 13.5l-5.6-2.8Z",
       sun: "M8 4.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7ZM7.3 0h1.4v2.5H7.3V0Zm0 13.5h1.4V16H7.3v-2.5ZM0 7.3h2.5v1.4H0V7.3Zm13.5 0H16v1.4h-2.5V7.3Z",
       print: "M4 1h8v3H4V1ZM2 5h12a1 1 0 0 1 1 1v5h-3v4H4v-4H1V6a1 1 0 0 1 1-1Zm3 6v3h6v-3H5Z",
-      down: "M7.3 1h1.4v8.2l2.8-2.8 1 1L8 11.9 3.5 7.4l1-1 2.8 2.8V1ZM2 13h12v1.5H2V13Z"
+      down: "M7.3 1h1.4v8.2l2.8-2.8 1 1L8 11.9 3.5 7.4l1-1 2.8 2.8V1ZM2 13h12v1.5H2V13Z",
+      key: "M10.5 1a4.5 4.5 0 0 0-4.3 5.8L1 12v3h3v-1.5h1.5V12H7l1.2-1.2A4.5 4.5 0 1 0 10.5 1Zm1 2.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z"
     };
     return s("svg", { width: z, height: z, viewBox: "0 0 16 16", "aria-hidden": "true" }, s("path", { d: paths[name], fill: "currentColor" }));
   }
@@ -143,26 +144,34 @@
 
   // -- top bar -----------------------------------------------------------------------------
   function topbar() {
-    var v = A().verifier;
+    var v = hasRun() ? A().verifier : null;
     var logo = s("svg", { width: 26, height: 26, viewBox: "0 0 26 26", "aria-hidden": "true" },
       s("rect", { x: 1, y: 15, width: 24, height: 7, rx: 2, fill: "var(--s3)" }),
       s("rect", { x: 1, y: 9.5, width: 24, height: 5, rx: 2, fill: "var(--s1)" }),
       s("rect", { x: 1, y: 4, width: 24, height: 5, rx: 2, fill: "var(--ink)" }));
-    var toc = h("nav", { class: "toc" },
+    var layers = v ? [["agentgov", v.agentgov, "the budget ledger"], ["interlock", v.interlock, "the side-effect reference monitor"], ["fiduciary", v.fiduciary, "mandates, warrants and offline proofs"]]
+      : LIVE.status ? [["fiduciary", LIVE.status.version, "mandates, warrants and offline proofs"]] : [];
+    var mode = LIVE.on ? tipOn(pill("LIVE · " + location.host, "good"), "Served by the console: the desk, the verifier and the sandbox run against it")
+      : ROOT.served && LIVE.error ? tipOn(pill("CONSOLE UNREACHABLE", "bad"), LIVE.error)
+        : tipOn(pill("STATIC", "permit"), "A file with no console behind it: it shows what was recorded and checks bundles in this browser");
+    var nav = h("nav", { class: "views noprint", "aria-label": "Views" }, views().map(function (x) {
+      return h("a", { href: "#/" + x[0], "aria-current": x[0] === view ? "page" : null, onclick: function (ev) { ev.preventDefault(); go(x[0]); } }, x[1],
+        x[0] === "desk" && LIVE.on ? (function () { var n = LIVE.status.deployments.reduce(function (t, d) { return t + (d.open || 0); }, 0); return n ? h("span", { class: "count" }, String(n)) : null; })() : null);
+    }));
+    var toc = view === "run" && hasRun() ? h("nav", { class: "toc" },
       OVERVIEW ? h("a", { href: "#overview" }, "Overview") : null,
       DEMO ? h("a", { href: "#theatre" }, "Acts") : null,
       h("a", { href: "#lineage" }, "Lineage"),
       h("a", { href: "#inspector" }, "Warrants & operators"),
-      h("a", { href: "#matrix" }, "Controls"));
-    return h("header", { class: "top" }, h("div", { class: "wrap" },
-      h("div", { class: "brand" }, logo, h("span", null, "Fiduciary ", h("small", null, DEMO ? "stack demo" : "audit console"))),
-      h("div", { class: "layers" },
-        h("span", { class: "layer", title: "the budget ledger" }, "agentgov " + v.agentgov),
-        h("span", { class: "layer", title: "the side-effect reference monitor" }, "interlock " + v.interlock),
-        h("span", { class: "layer", title: "mandates, warrants and offline proofs" }, "fiduciary " + v.fiduciary)),
-      h("div", { class: "spacer" }), toc,
-      h("button", { class: "btn noprint", title: "Light or dark", onclick: function () { setTheme(dark() ? "light" : "dark"); render(); } }, icon("sun"), "Theme"),
-      h("button", { class: "btn noprint", onclick: function () { window.print(); } }, icon("print"), "PDF")));
+      h("a", { href: "#matrix" }, "Controls")) : null;
+    return h("header", { class: "top" },
+      h("div", { class: "wrap" },
+        h("div", { class: "brand" }, logo, h("span", null, "Fiduciary ", h("small", null, ROOT.console ? "console" : DEMO ? "stack demo" : "audit console"))),
+        h("div", { class: "layers" }, layers.map(function (l) { return h("span", { class: "layer", title: l[2] }, l[0] + " " + l[1]); })),
+        h("div", { class: "spacer" }), mode,
+        h("button", { class: "btn noprint", title: "Light or dark", onclick: function () { setTheme(dark() ? "light" : "dark"); render(); } }, icon("sun"), "Theme"),
+        view === "run" ? h("button", { class: "btn noprint", onclick: function () { window.print(); } }, icon("print"), "PDF") : null),
+      h("div", { class: "wrap subnav" }, nav, h("div", { class: "spacer" }), toc));
   }
 
   // -- the verdict ---------------------------------------------------------------------------
@@ -532,7 +541,7 @@
   function actAudit(x) {
     var rows = ["before", "after"].map(function (n) {
       var v = x.verdicts[n];
-      return h("tr", null, h("td", null, h("b", null, n + ".fidb")), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
+      return h("tr", null, h("td", null, h("b", null, n + ".fidb"), verifyLink(bundlePath(n + ".fidb"))), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
         h("td", { class: "num" }, String(v.findings.length)), h("td", { class: "num" }, String(v.sockets)),
         h("td", { class: "num" }, num(v.scan.members)), h("td", { class: "num" }, String(v.scan.found.rows + v.scan.found.payloads + v.scan.found.prompts + v.scan.found.secrets)), h("td", null, hash(v.sha256, 12)));
     });
@@ -815,7 +824,7 @@
   function packAudit(x) {
     var rows = ["before", "after"].map(function (n) {
       var v = x.verdicts[n];
-      return h("tr", null, h("td", null, h("b", null, n + ".fidb")), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
+      return h("tr", null, h("td", null, h("b", null, n + ".fidb"), verifyLink(bundlePath(n + ".fidb"))), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
         h("td", { class: "num" }, String(v.findings.length)), h("td", { class: "num" }, String(v.sockets)),
         h("td", { class: "num" }, num(v.scan.members)), h("td", { class: "num" }, String(v.scan.found.rows + v.scan.found.payloads + v.scan.found.prompts + v.scan.found.secrets)), h("td", null, hash(v.sha256, 12)));
     });
@@ -835,7 +844,7 @@
   function actTrust(x) {
     var n = x.customers.length - 1;
     var rows = x.customers.map(function (c) {
-      return [h("b", null, c.customer), h("span", { class: "mono small" }, c.org), c.passed ? pill("PASS", "good") : pill("EXIT " + c.exit_code, "bad"), num(c.members), c.withheld === undefined ? "—" : num(c.records) + " / " + num(c.withheld), String(c.other_records), String((c.other_names || 0) + (c.other_accounts || 0)), String(c.other_labels) + " of " + n, c.other_domains === undefined ? "—" : String(c.other_domains) + " of " + n];
+      return [h("span", null, h("b", null, c.customer), verifyLink(bundlePath(c.file))), h("span", { class: "mono small" }, c.org), c.passed ? pill("PASS", "good") : pill("EXIT " + c.exit_code, "bad"), num(c.members), c.withheld === undefined ? "—" : num(c.records) + " / " + num(c.withheld), String(c.other_records), String((c.other_names || 0) + (c.other_accounts || 0)), String(c.other_labels) + " of " + n, c.other_domains === undefined ? "—" : String(c.other_domains) + " of " + n];
     });
     var labels = x.customers.reduce(function (t, c) { return Math.max(t, c.other_labels); }, 0);
     var domains = x.customers.reduce(function (t, c) { return Math.max(t, c.other_domains || 0); }, 0);
@@ -1190,21 +1199,834 @@
       h("b", { class: "ink2" }, "Out of scope"),
       h("ul", null, a.notes.map(function (n) { return h("li", null, n); })),
       h("p", { style: "margin-top:10px" }, "Verifier: fiduciary " + a.verifier.fiduciary + ", interlock-escrow " + a.verifier.interlock + ", interlock-agentgov " + a.verifier.agentgov + ". Optional upstream features available: " + (Object.keys(up).filter(function (k) { return up[k]; }).join(", ") || "none") + (Object.keys(up).some(function (k) { return !up[k]; }) ? "; not available: " + Object.keys(up).filter(function (k) { return !up[k]; }).join(", ") : "") + ". Generated " + a.generated_at + "."),
-      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline: tamper-evident, not tamper-proof. This page makes no network requests.")));
+      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline: tamper-evident, not tamper-proof. " + (LIVE.on ? "Served by the console on loopback; the page asks only it." : "This page makes no network requests."))));
+  }
+
+  // == the control plane =====================================================================
+  // One page, two modes. Served by the console (fiduciary console, or fiduciary demo
+  // --serve), it drives the console's endpoints: the approvals desk, the verifier and the
+  // sandbox. Opened as a file or hosted with no console, it shows what the run recorded,
+  // checks a dropped bundle's bytes in this browser, and says what needs the console. It
+  // only asks the console anything when the console served it (ROOT.served).
+  var LIVE = { on: false, status: null, error: null };
+  var CHECKS = [["V1", "schema"], ["V2", "charter"], ["V3", "lineage"], ["V4", "compiled policy"], ["V5", "receipts"], ["V6", "ledger"], ["V7", "completeness"], ["V8", "warrants"], ["V9", "records"], ["V10", "anchors"], ["V11", "revocation"], ["V12", "ordering"]];
+  var RUNG_NAMES = { T: "transactional", P: "plan-bound", V: "predicted", R: "request-only" };
+  var RUNS = PAGES.filter(function (pg) { return pg.primary && pg.attestations && pg.attestations[pg.primary]; });
+  var view = initialView();
+
+  function hasRun() { return !!(ROOT.primary && ROOT.attestations && ROOT.attestations[ROOT.primary]); }
+  function views() {
+    var out = [];
+    if (hasRun()) out.push(["run", OVERVIEW ? "Recorded run" : DEMO ? "Recorded run" : "Attestation"]);
+    out.push(["desk", "Approvals"]);
+    out.push(["verify", "Verify a bundle"]);
+    if ((LIVE.on && LIVE.status.sandbox) || (!LIVE.on && DEMO)) out.push(["sandbox", "Sandbox"]);
+    return out;
+  }
+  function initialView() {
+    var hv = location.hash.slice(0, 2) === "#/" ? location.hash.slice(2) : "";
+    if (hv === "desk" || hv === "verify" || hv === "sandbox") return hv;
+    return hasRun() ? "run" : "desk";
+  }
+  function go(v) {
+    if (location.hash !== "#/" + v) location.hash = "#/" + v; else { view = v; render(); }
+  }
+  window.addEventListener("hashchange", function () {
+    var hv = location.hash.slice(0, 2) === "#/" ? location.hash.slice(2) : null;
+    if (hv && hv !== view && views().some(function (x) { return x[0] === hv; })) { view = hv; render(); window.scrollTo(0, 0); }
+    else if (!hv && view !== "run" && hasRun()) {
+      var id = location.hash.slice(1);
+      view = "run"; render();
+      var el = id ? document.getElementById(id) : null;
+      if (el) el.scrollIntoView();
+    }
+  });
+
+  function api(method, path, body, raw) {
+    var opts = { method: method, headers: { Accept: "application/json" }, credentials: "same-origin", cache: "no-store" };
+    if (method === "POST") {
+      opts.headers["X-Fiduciary-Console"] = "1";
+      opts.headers["Content-Type"] = raw ? "application/octet-stream" : "application/json";
+      opts.body = raw || JSON.stringify(body || {});
+    }
+    return fetch("api/" + path, opts).then(function (r) {
+      return r.json().catch(function () { return { error: "the console answered " + r.status }; }).then(function (d) {
+        if (!r.ok) throw new Error(d.error || "the console answered " + r.status);
+        return d;
+      });
+    });
+  }
+  function refreshStatus() {
+    return api("GET", "status").then(function (d) { LIVE.on = true; LIVE.status = d; LIVE.error = null; render(); })
+      .catch(function (e) { LIVE.error = e.message; render(); });
+  }
+  function failed(state) { return function (e) { state.busy = false; state.error = e && e.message ? e.message : String(e); render(); }; }
+  function busyLine(text) { return h("div", { class: "busy small ink2" }, h("span", { class: "spin" }), text); }
+  function errorLine(text) { return text ? h("div", { class: "outcome bad", role: "alert" }, icon("alert"), text) : null; }
+  function rungChip(r, title) { return h("span", { class: "rung", title: title || (RUNG_NAMES[r] || "") + " measurement" }, r || "?"); }
+  function statusPill(s) {
+    if (s === "open") return pill("OPEN", "warn");
+    if (s === "warranted") return pill("WARRANTED", "good");
+    if (s === "declined") return pill("DECLINED", "bad");
+    if (s === "lapsed") return pill("LAPSED", "permit");
+    return pill(String(s || "—").toUpperCase(), "permit");
+  }
+  function hexBytes(hex) { var out = new Uint8Array(hex.length / 2); for (var i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16); return out; }
+  function bytesHex(u8) { var s = ""; for (var i = 0; i < u8.length; i++) s += (u8[i] < 16 ? "0" : "") + u8[i].toString(16); return s; }
+  function utf8(text) { return new TextEncoder().encode(text); }
+  function concat(a, b) { var out = new Uint8Array(a.length + b.length); out.set(a, 0); out.set(b, a.length); return out; }
+  function b64urlHex(text) {
+    var b = atob(text.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((text.length + 3) % 4));
+    var out = ""; for (var i = 0; i < b.length; i++) out += (b.charCodeAt(i) < 16 ? "0" : "") + b.charCodeAt(i).toString(16);
+    return out;
+  }
+  function subtle() { return window.crypto && window.crypto.subtle ? window.crypto.subtle : null; }
+  function digestHex(alg, u8) { return subtle().digest(alg, u8).then(function (ab) { return bytesHex(new Uint8Array(ab)); }); }
+  function pickFile(accept, then) {
+    var input = h("input", { type: "file", accept: accept, style: "display:none", onchange: function () { if (input.files && input.files[0]) then(input.files[0]); input.remove(); } });
+    document.body.appendChild(input); input.click();
+  }
+  function fileBytes(file) { return file.arrayBuffer().then(function (ab) { return new Uint8Array(ab); }); }
+
+  // -- the approvals desk ---------------------------------------------------------------------
+  var DESK = { dep: null, list: null, listFor: null, tid: null, ticketFor: null, ticket: null, busy: false, error: null, form: {}, draft: null, result: null, poll: 0 };
+
+  function recordedDeployments() {
+    return RUNS.map(function (pg) {
+      var d = pg.demo && pg.demo.domain ? pg.demo.domain : null;
+      var a = pg.attestations[pg.primary];
+      return { id: d ? d.key : "fintech", name: d ? d.industry : "Fintech", kind: "bundle", page: pg, tickets: a.tickets.length,
+        open: recordedTickets(pg).filter(function (t) { return t.status === "open"; }).length, principals: a.authority.charter.principals };
+    });
+  }
+  function recordedTickets(pg) {
+    var a = pg.attestations[pg.primary];
+    return a.tickets.map(function (t) {
+      var votes = a.approvals.filter(function (p) { return p.subject === "ticket" && p.subject_digest === t.digest; });
+      var w = a.warrants.filter(function (x) { return x.ticket && x.ticket.digest === t.digest; })[0] || null;
+      var ev = t.events || [];
+      var opts = t.options.map(function (o) {
+        return { action: o.action, digest: o.digest, quorum: o.quorum, heads: [],
+          approved_by: votes.filter(function (v) { return v.decision === "approve" && v.resolution === o.digest; }).map(function (v) { return v.principal; })
+            .filter(function (p, i, all) { return all.indexOf(p) === i; }) };
+      });
+      return {
+        recorded: true, ticket_id: t.ticket_id, digest: t.digest, "class": t["class"], raised_at: t.raised_at, not_after: t.not_after, halt: t.halt, messages: t.messages, events: ev,
+        status: w ? "warranted" : ev.indexOf("ticket.declined") >= 0 ? "declined" : ev.indexOf("ticket.lapsed") >= 0 ? "lapsed" : "open",
+        options: opts,
+        votes: votes.map(function (v, i) { return { principal: v.principal, decision: v.decision, resolution: v.resolution, approval: v.digest, recorded_at: v.issued_at, signed_by: v.signed_by,
+          again: votes.slice(0, i).some(function (w) { return w.principal === v.principal; }),
+          option: (opts.filter(function (o) { return o.digest === v.resolution; })[0] || {}).action }; }),
+        warrant: w ? { digest: w.digest, action: w.action, basis: w.basis, heads: (w.messages || []).map(function (m, i) { return m + "@" + (w.heads[i] || ""); }), formed_at: w.formed_at, not_after: w.not_after,
+          execution: ev.indexOf("execution.applied") >= 0 ? "applied" : ev.indexOf("execution.refused") >= 0 ? "refused" : ev.indexOf("execution.intent") >= 0 ? "intent" : null } : null
+      };
+    });
+  }
+  function deskDeployments() { return LIVE.on ? LIVE.status.deployments : recordedDeployments(); }
+  function currentDep() {
+    var deps = deskDeployments();
+    if (!deps.length) return null;
+    var found = deps.filter(function (d) { return d.id === DESK.dep; })[0];
+    if (found) return found;
+    var withOpen = deps.filter(function (d) { return d.open; })[0];
+    if (!DESK.dep && PACK) found = deps.filter(function (d) { return d.id === PACK.key || d.id === "sandbox-" + PACK.key; })[0];
+    found = found || withOpen || deps[0];
+    DESK.dep = found.id;
+    return found;
+  }
+  function selectDep(id) { DESK.dep = id; DESK.list = null; DESK.listFor = null; DESK.tid = null; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
+  function selectTicket(id) { DESK.tid = id; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
+  function loadTickets(dep) {
+    DESK.listFor = dep.id; DESK.busy = true;
+    api("GET", "deployments/" + encodeURIComponent(dep.id) + "/tickets").then(function (list) {
+      DESK.busy = false; DESK.list = list;
+      if (!DESK.tid && list.length) DESK.tid = list[0].ticket_id;
+      render();
+    }).catch(failed(DESK));
+  }
+  function loadTicket(dep, tid) {
+    DESK.busy = true;
+    return api("GET", "deployments/" + encodeURIComponent(dep.id) + "/tickets/" + encodeURIComponent(tid)).then(function (t) {
+      DESK.busy = false; DESK.ticket = t; render(); return t;
+    }).catch(failed(DESK));
+  }
+
+  function deskView() {
+    var deps = deskDeployments();
+    var dep = currentDep();
+    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Approvals"), h("h2", null, "Tickets that wait for a quorum"),
+      h("p", null, LIVE.on
+        ? "Each ticket is read from its deployment's log, from its signed bytes. A vote is an approval signed by the principal's own key: in this browser, with a key file that never leaves it, or with fiduciary approve. The deployment's writer records it; at quorum a warrant forms and releases what it pins, at the heads the ticket observed."
+        : "What each run's after.fidb records: every ticket, the approvals that decided it, and the warrant they formed, as the verifier replayed them when this page was built. Signing a new vote needs the console: fiduciary demo --out <dir> --serve, or fiduciary console beside a deployment."));
+    if (!deps.length) return h("section", { id: "desk" }, h("div", { class: "wrap" }, head, h("div", { class: "card pad empty-gw" }, h("b", null, "No deployment here."), "Start the console in a directory that holds a fiduciary.toml, or name one with --deployment FILE.")));
+    var depList = h("div", { class: "dep-list", role: "list" }, deps.map(function (d) {
+      var kind = d.kind === "sandbox" ? pill("SANDBOX", "info") : d.kind === "recorded" ? pill("RECORDED", "permit") : d.kind === "bundle" ? pill("BUNDLE", "permit") : d.accepts ? pill("TAKES APPROVALS", "good") : pill("READ-ONLY", "permit");
+      return h("button", { class: "dep" + (d.id === dep.id ? " on" : ""), role: "listitem", "aria-current": d.id === dep.id ? "true" : null, onclick: function () { selectDep(d.id); } },
+        h("span", { class: "dep-name" }, d.name), d.error ? h("span", { class: "small bad-ink" }, "unreadable") : h("span", { class: "small muted tnum" }, num(d.tickets || 0)),
+        d.open ? h("span", { class: "count", title: d.open + " open" }, String(d.open)) : null, kind);
+    }));
+    var list = null, ticket = null;
+    if (LIVE.on) {
+      if (dep.error) return h("section", { id: "desk" }, h("div", { class: "wrap" }, head, h("div", { class: "desk" }, h("div", null, depList), h("div", { class: "card pad" }, errorLine(dep.name + " cannot be read: " + dep.error)))));
+      if (DESK.listFor !== dep.id) loadTickets(dep);
+      list = DESK.list;
+      if (list && DESK.tid && DESK.ticketFor !== DESK.tid) { DESK.ticketFor = DESK.tid; loadTicket(dep, DESK.tid); }
+      ticket = DESK.ticket && DESK.ticket.ticket_id === DESK.tid ? DESK.ticket : null;
+    } else {
+      list = recordedTickets(dep.page);
+      if (!DESK.tid && list.length) DESK.tid = list[0].ticket_id;
+      ticket = list.filter(function (t) { return t.ticket_id === DESK.tid; })[0] || null;
+    }
+    var rows = list === null ? busyLine("Reading " + dep.name + "'s log…") : !list.length ? h("p", { class: "small muted", style: "padding:10px 12px" }, "No ticket was raised here.") : list.map(function (t) {
+      var opt = t.options[0] || { quorum: 1, approved_by: [] };
+      return h("button", { class: "tk" + (t.ticket_id === DESK.tid ? " on" : ""), onclick: function () { selectTicket(t.ticket_id); } },
+        h("span", { class: "tk-top" }, statusPill(t.status), h("b", null, t["class"]), t.measured ? rungChip(t.measured.rung) : null, h("span", { class: "spacer" }), h("span", { class: "small muted tnum" }, opt.approved_by.length + " of " + opt.quorum)),
+        h("span", { class: "tk-id mono small" }, short(t.ticket_id, 8) + " · " + String(t.raised_at).replace("T", " ").slice(0, 16) + " UTC"));
+    });
+    var side = h("div", { class: "desk-side" }, h("div", { class: "side-label" }, LIVE.on ? "Deployments" : "Recorded runs"), depList, h("div", { class: "side-label" }, "Tickets"), h("div", { class: "tk-list" }, rows));
+    var main = ticket ? ticketDetail(ticket, dep) : h("div", { class: "card pad" }, DESK.error ? errorLine(DESK.error) : list && list.length ? busyLine("Reading the ticket…") : h("p", { class: "small muted" }, "Select a ticket."));
+    return h("section", { id: "desk" }, h("div", { class: "wrap" }, head, h("div", { class: "desk" }, side, main)));
+  }
+
+  function factList(pairs) {
+    return h("dl", { class: "facts tight" }, pairs.filter(Boolean).map(function (p) { return [h("dt", null, p[0]), h("dd", null, p[1])]; }));
+  }
+  function ticketDetail(t, dep) {
+    var sections = [];
+    sections.push(h("div", { class: "td-head" },
+      h("div", { class: "line" }, pill(String(t["class"]).toUpperCase() + " TICKET", "info"), statusPill(t.status), h("span", { class: "spacer" }),
+        t.document ? h("button", { class: "btn sm", onclick: function () { download("ticket-" + t.ticket_id.slice(0, 8) + ".json", JSON.stringify(t.document, null, 2) + "\n", "application/json"); } }, icon("down"), "Ticket JSON") : null,
+        LIVE.on ? h("button", { class: "btn sm", title: "Read the ticket again", onclick: function () { DESK.ticketFor = null; DESK.ticket = null; render(); } }, "Refresh") : null),
+      factList([["Ticket", hash(t.ticket_id)], ["Digest", hash(t.digest, 24)], t.mandate ? ["Mandate", h("span", null, hash(t.mandate.mandate_id, 8), " version " + t.mandate.version)] : null,
+        ["Raised", h("span", { class: "tnum" }, String(t.raised_at).replace("T", " ").replace("Z", " UTC"))], ["Expires", h("span", { class: "tnum" }, String(t.not_after).replace("T", " ").replace("Z", " UTC"))]])));
+    if (DESK.result && DESK.tid === t.ticket_id) sections.push(h("div", { class: "td-sec" }, voteResult(DESK.result)));
+    sections.push(h("div", { class: "td-sec" }, h("h3", null, "What it would do"), whatBlock(t)));
+    sections.push(h("div", { class: "td-sec" }, h("h3", null, "Options and quorum"), optionsBlock(t, dep)));
+    if (t.warrant) sections.push(h("div", { class: "td-sec" }, h("h3", null, "Warrant"), warrantBlock(t.warrant)));
+    sections.push(h("div", { class: "td-sec" }, h("h3", null, t.status === "open" ? "Sign a vote" : "Votes"), t.status === "open" ? signPanel(t, dep) : closedNote(t)));
+    return h("div", { class: "card td" }, sections);
+  }
+  function receiptBlock(m) {
+    var outcome = m.outcome === "committed" ? pill("COMMITTED", "good") : m.outcome === "compensated" ? pill("PUT BACK", "warn") : pill(String(m.outcome || "refused").toUpperCase(), "bad");
+    var stated = m.stated ? "The agent stated " + num(m.stated.rows) + " row(s) in " + (m.stated.tables || []).join(", ") + "; the stage measured " + num(m.rows) + " in " + m.tables.join(", ") + "." : null;
+    return h("div", { class: "receipt" },
+      h("div", { class: "line" }, h("span", { class: "rung big" }, m.rung), h("b", null, m.measurement + " on " + (m.substrate || "—")), outcome, h("span", { class: "spacer" }), h("span", { class: "small muted" }, "ARC1 receipt "), hash(m.receipt_id, 8)),
+      h("div", { class: "mini-stats" },
+        h("div", { class: "mini" }, h("b", { class: "tnum" }, num(m.rows || 0)), h("span", null, "rows measured: +" + m.inserted + " ~" + m.updated + " −" + m.deleted)),
+        h("div", { class: "mini" }, h("b", { class: "tnum" }, String(m.tables.length)), h("span", null, m.tables.join(", ") || "tables")),
+        h("div", { class: "mini" }, h("b", { class: "tnum" }, String(m.tenants.length)), h("span", null, "tenants: " + (m.tenants.join(", ") || "—")))),
+      stated ? h("p", { class: "small ink2" }, stated) : null,
+      m.gaps.length ? h("details", null, h("summary", null, "What this measurement does not cover (" + m.gaps.length + ")"), h("ul", { class: "plain small" }, m.gaps.map(function (g) { return h("li", null, g); }))) : null);
+  }
+  function whatBlock(t) {
+    var kids = [], ev = t.evidence || {};
+    if (t.measured) kids.push(receiptBlock(t.measured));
+    if (ev.blocked_by) kids.push(h("p", { class: "small" }, h("b", null, "Refused by "), ev.blocked_by.map(function (b) { return h("code", { class: "chip static" }, b); }),
+      ev.kept ? h("span", { class: "ink2" }, " · a repair keeps " + ev.kept.join(", ") + (ev.dropped && ev.dropped.length ? " and drops " + ev.dropped.map(function (d) { return d.id + " (" + d.cause + ")"; }).join(", ") : "")) : null));
+    (t.held || []).forEach(function (m) {
+      var match = m.payload_matches === true ? h("span", { class: "small good-ink" }, icon("check"), " this payload's SHA-256 is the hash the ticket signs") : m.payload_matches === false ? h("span", { class: "small bad-ink" }, icon("x"), " this payload does not hash to the ticket's payload_hash") : h("span", { class: "small muted" }, "payload not readable from the outbox here");
+      kids.push(h("div", { class: "held" },
+        h("div", { class: "line" }, pill("HELD", "warn"), h("b", { class: "mono" }, m.sink + "." + m.operation), h("span", { class: "spacer" }), h("span", { class: "small muted" }, "message "), hash(m.id, 8)),
+        m.payload_read ? h("pre", { class: "payload" }, typeof m.payload === "string" ? m.payload : JSON.stringify(m.payload, null, 2)) : null,
+        h("div", { class: "line" }, match, h("span", { class: "spacer" }), h("span", { class: "small muted" }, "pinned at delivery-log head "), hash(m.head, 10))));
+    });
+    if (ev.halt) kids.push(h("p", { class: "small" }, h("b", null, "Scope paused: "), ev.halt.scope + " · " + ev.halt.reason));
+    if (t.halt) kids.push(h("p", { class: "small" }, h("b", null, "Scope paused: "), t.halt.scope + " · " + t.halt.reason));
+    if (ev.proposed) kids.push(h("p", { class: "small" }, h("b", null, "Proposes "), "mandate version " + ev.proposed.version + " ", hash(ev.proposed.digest, 12)));
+    if (t.recorded) kids.push(h("p", { class: "small ink2" }, (t.messages ? t.messages + " held outbound message(s). " : "") + "A bundle carries no payloads, rows or arguments, only their digests: it proves who decided what. The console shows the payload and the measured rows from the deployment itself."));
+    if (t.statement) kids.push(h("div", { class: "quarantine" }, h("div", { class: "small muted" }, "The agent's statement: an unverified claim, not evidence. No rule reads it."), h("p", null, t.statement)));
+    if (t.evidence && !t.measured && !(t.held || []).length && !ev.proposed) kids.push(h("details", null, h("summary", null, "Evidence, as signed"), h("pre", null, JSON.stringify(t.evidence, null, 2))));
+    return kids.length ? kids : h("p", { class: "small muted" }, "—");
+  }
+  function pinsOf(o) {
+    if (o.heads && o.heads.length) return o.heads.map(function (x) { var p = x.split("@"); return h("div", { class: "mono small" }, short(p[0], 8) + " @ " + short(p[1], 12)); });
+    var r = o.resolution || {}, out = [];
+    Object.keys(r).forEach(function (k) { if (k !== "action" && typeof r[k] === "string") out.push(h("div", { class: "mono small" }, k + " " + (/^[0-9a-f]{64}$/.test(r[k]) ? short(r[k], 12) : r[k]))); });
+    return out.length ? out : h("span", { class: "muted" }, "—");
+  }
+  function optionsBlock(t, dep) {
+    var principals = principalsOf(t, dep);
+    var decided = {};
+    (t.votes || []).forEach(function (v) { decided[v.principal] = v; });
+    var rows = t.options.map(function (o) {
+      return [h("b", null, o.action), h("span", { class: "tnum" }, o.quorum + " of " + principals.length),
+        h("div", null, h("div", { class: "meter sm" }, principals.map(function (_, i) { return h("i", { class: i < o.approved_by.length ? "on" : "" }); })), h("span", { class: "small ink2" }, o.approved_by.join(", ") || "none yet")), pinsOf(o)];
+    });
+    var waiting = {};
+    (t.pending || []).forEach(function (x) { waiting[x.principal] = x; });
+    var people = h("div", { class: "people" }, principals.map(function (p) {
+      var v = decided[p], w = waiting[p];
+      return h("div", { class: "person" }, h("b", { class: "mono" }, p),
+        v ? (v.decision === "approve" ? pill("APPROVED · " + (v.option || "a narrowing"), "good") : pill("DECLINED", "bad"))
+          : w ? tipOn(pill("SIGNED · IN THE INTAKE", "info"), "Intake #" + w.intake + ": " + w.decision + " " + (w.option || "") + ". The deployment's writer records it on its next turn.") : pill("NOT YET", "permit"),
+        v ? h("span", { class: "small muted" }, "approval ", hash(v.approval, 8)) : w ? h("span", { class: "small muted" }, "waiting for the writer") : null);
+    }));
+    return [table(["Option", "Quorum", "Approved", "Pins"], rows), people];
+  }
+  function principalsOf(t, dep) {
+    var list = dep && dep.principals ? dep.principals : [];
+    return list.map(function (p) { return p.name || p; });
+  }
+  function warrantBlock(w) {
+    var ex = w.execution === "applied" ? pill("EXECUTED", "good") : w.execution === "refused" ? pill("EXECUTION REFUSED", "bad") : w.execution === "intent" ? pill("EXECUTING", "warn") : pill("FORMED · NOT YET EXECUTED", "warn");
+    return h("div", { class: "warrant" },
+      h("div", { class: "line" }, pill("FIDU1 WARRANT", "good"), h("b", null, w.action), ex, h("span", { class: "spacer" }), hash(w.digest, 12)),
+      factList([["Basis", (w.basis || []).length + " approvals: " + (w.basis || []).map(function (b) { return short(b, 8); }).join(", ")], w.heads && w.heads.length ? ["Bound to", h("div", null, w.heads.map(function (x) { var p = x.split("@"); return h("div", { class: "mono small" }, short(p[0], 8) + " @ " + short(p[1], 12)); }))] : null,
+        ["Formed", String(w.formed_at || "—").replace("T", " ").replace("Z", " UTC")], ["Valid until", String(w.not_after || "—").replace("T", " ").replace("Z", " UTC")]]));
+  }
+  function closedNote(t) {
+    var votes = (t.votes || []).map(function (v) {
+      return h("div", { class: "vote" }, h("span", { style: "color:" + (v.decision === "approve" ? "var(--good-ink)" : "var(--critical-ink)") }, icon(v.decision === "approve" ? "check" : "x")),
+        h("span", null, h("b", null, v.principal), " " + (v.decision === "approve" ? "approved " + (v.option || "a narrowing") : "declined"), v.again ? h("span", { class: "small muted" }, " · signed again; a principal counts once") : null,
+          h("div", { class: "small muted" }, "approval ", hash(v.approval, 12), v.signed_by ? " · signed by key " + v.signed_by : "")),
+        h("span", { class: "small muted tnum" }, String(v.recorded_at || "").replace("T", " ").slice(0, 19)));
+    });
+    return votes.length ? votes : h("p", { class: "small muted" }, "No vote was recorded.");
+  }
+
+  function signPanel(t, dep) {
+    if (!LIVE.on) return h("div", { class: "how" }, h("p", { class: "small" }, "Votes are signed by each principal's own key and recorded by the deployment's writer. This page is a static file, so it signs nothing. To vote on a live deployment:"),
+      h("pre", null, "fiduciary --config fiduciary.toml tickets show " + t.ticket_id + "\nfiduciary --config fiduciary.toml approve <ticket file> --principal <name> \\\n    --resolution " + ((t.options[0] || {}).action || "release") + " --key <your key file> --submit"),
+      h("p", { class: "small muted" }, "Or open this run in the console, which drafts the vote and signs it in the browser: fiduciary demo --out <this directory> --serve."));
+    var principals = principalsOf(t, dep);
+    var f = DESK.form;
+    var decided = {};
+    (t.votes || []).forEach(function (v) { decided[v.principal] = true; });
+    if (!f.principal || principals.indexOf(f.principal) < 0) f.principal = principals.filter(function (p) { return !decided[p]; })[0] || principals[0];
+    if (!f.option) f.option = t.options[0].digest;
+    if (!f.decision) f.decision = "approve";
+    function field(label, control) { return h("label", { class: "field" }, h("span", { class: "small muted" }, label), control); }
+    function sel(key, options) {
+      return h("select", { onchange: function (ev) { f[key] = ev.target.value; DESK.draft = null; render(); } }, options.map(function (o) { return h("option", { value: o[0], selected: f[key] === o[0] ? "selected" : null }, o[1]); }));
+    }
+    var form = h("div", { class: "sign-form" },
+      field("Principal", sel("principal", principals.map(function (p) { return [p, p + (decided[p] ? " (has voted)" : "")]; }))),
+      field("Option", sel("option", t.options.map(function (o) { return [o.digest, o.action + " · quorum " + o.quorum]; }))),
+      field("Decision", sel("decision", [["approve", "approve"], ["decline", "decline"]])));
+    var actions = [];
+    if (dep.signs) actions.push(h("button", { class: "btn primary", disabled: DESK.busy ? "disabled" : null, onclick: function () { signWithSandbox(dep, t); } }, icon("key"), "Sign as " + f.principal));
+    if (dep.accepts && !dep.signs) actions.push(h("button", { class: "btn primary", disabled: DESK.busy ? "disabled" : null, onclick: function () { pickFile("", function (file) { signInBrowser(dep, t, file); }); } }, icon("key"), "Sign with " + f.principal + "'s key file…"));
+    if (dep.accepts) actions.push(h("button", { class: "btn", disabled: DESK.busy ? "disabled" : null, onclick: function () { pickFile(".json,application/json", function (file) { submitSigned(dep, t, file); }); } }, "Submit a signed approval…"));
+    actions.push(h("button", { class: "btn", disabled: DESK.busy ? "disabled" : null, onclick: function () { draftVote(dep, t).then(function () { render(); }).catch(failed(DESK)); } }, "Show what is signed"));
+    var note = dep.signs ? "The sandbox holds the demo's keys, so the console signs for the principal you pick and is the writer: it records the vote at once, forms the warrant at quorum and executes it."
+      : dep.accepts ? "Your key file is read in this page and never sent: the console gets the signature, checks it under the key the charter pins for " + f.principal + ", and puts the approval into the deployment's intake. The deployment's writer records it."
+        : dep.kind === "recorded" ? "A recorded run: its log is evidence, and the console adds nothing to it. Try votes in the sandbox."
+          : "This deployment is read-only here. Start the console with --accept-approvals to take signed votes, or submit with fiduciary approve --submit.";
+    var d = DESK.draft;
+    return h("div", null, form, h("div", { class: "cp-toolbar" }, actions), h("p", { class: "small ink2" }, note),
+      DESK.busy ? busyLine("Signing…") : null, errorLine(DESK.error),
+      d ? h("details", { open: true }, h("summary", null, "What " + f.principal + " signs"),
+        h("p", { class: "small ink2" }, "An approval of ticket " + short(t.digest, 12) + "'s option " + d.option + ", valid one hour, under key " + d.key_id + ". The signature covers these " + d.signing_input.length / 2 + " bytes: the FIDU1 approval domain and the SHA-512 of the approval's canonical bytes."),
+        h("pre", null, JSON.stringify(d.approval, null, 2)), h("div", { class: "small muted" }, "Signing input: ", hash(d.signing_input)),
+        h("p", { class: "small muted", style: "margin-top:6px" }, "With the command line instead: ", h("code", null, d.command))) : null);
+  }
+  function draftVote(dep, t) {
+    var f = DESK.form;
+    return api("POST", "deployments/" + encodeURIComponent(dep.id) + "/approvals/draft", { ticket_id: t.ticket_id, principal: f.principal, option: f.option, decision: f.decision }).then(function (d) { DESK.draft = d; return d; });
+  }
+  function afterVote(dep, t) {
+    return function (res) {
+      DESK.busy = false; DESK.result = res; DESK.draft = null; DESK.form.principal = null; DESK.listFor = null;
+      loadTicket(dep, t.ticket_id); refreshStatus();
+      if (!dep.signs) { DESK.poll = 8; pollTicket(dep, t.ticket_id, (t.votes || []).length); }
+    };
+  }
+  function pollTicket(dep, tid, seen) {
+    if (DESK.poll-- <= 0 || DESK.tid !== tid) return;
+    setTimeout(function () {
+      loadTicket(dep, tid).then(function (x) { if (x && (x.votes.length > seen || x.status !== "open")) { DESK.poll = 0; refreshStatus(); } else pollTicket(dep, tid, seen); });
+    }, 1500);
+  }
+  function signWithSandbox(dep, t) {
+    DESK.busy = true; DESK.error = null; DESK.result = null; render();
+    draftVote(dep, t).then(function (d) { return api("POST", "deployments/" + encodeURIComponent(dep.id) + "/approvals/sign", { approval: d.approval }); })
+      .then(afterVote(dep, t)).catch(failed(DESK));
+  }
+  function signInBrowser(dep, t, file) {
+    if (!subtle()) { DESK.error = "This page has no Web Crypto (it needs a secure context: the console's loopback address is one)."; render(); return; }
+    DESK.busy = true; DESK.error = null; DESK.result = null; render();
+    var principal = DESK.form.principal;
+    Promise.all([draftVote(dep, t), file.text()]).then(function (r) {
+      var d = r[0], seed = r[1].trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(seed)) throw new Error("That file holds no Ed25519 key: fiduciary keygen writes 64 hex characters.");
+      return subtle().importKey("pkcs8", hexBytes("302e020100300506032b657004220420" + seed), { name: "Ed25519" }, true, ["sign"]).catch(function () {
+        throw new Error("This browser cannot sign with Ed25519 (Chrome 137, Safari 17 and Firefox 129 can). Sign with fiduciary approve instead: " + d.command);
+      }).then(function (key) {
+        return subtle().exportKey("jwk", key).then(function (jwk) {
+          if (jwk.x && "ed25519:" + b64urlHex(jwk.x) !== d.key) throw new Error("That key is not " + principal + "'s: the charter pins " + d.key + ". Nothing was signed.");
+          return subtle().sign({ name: "Ed25519" }, key, hexBytes(d.signing_input));
+        });
+      }).then(function (sig) {
+        return api("POST", "deployments/" + encodeURIComponent(dep.id) + "/approvals", { approval: d.approval, key_id: d.key_id, signature: bytesHex(new Uint8Array(sig)) });
+      });
+    }).then(afterVote(dep, t)).catch(failed(DESK));
+  }
+  function submitSigned(dep, t, file) {
+    DESK.busy = true; DESK.error = null; DESK.result = null; render();
+    file.text().then(function (text) {
+      var doc; try { doc = JSON.parse(text); } catch (e) { throw new Error("That file is no JSON: fiduciary approve --out writes the signed approval."); }
+      return api("POST", "deployments/" + encodeURIComponent(dep.id) + "/approvals", { approval: doc });
+    }).then(afterVote(dep, t)).catch(failed(DESK));
+  }
+  function voteResult(r) {
+    var rec = r.recorded || [];
+    var formed = rec.indexOf("warrant.formed") >= 0, applied = rec.indexOf("execution.applied") >= 0;
+    return h("div", { class: "outcome good", role: "status" }, icon(formed ? "shield" : "check"), h("span", null,
+      rec.length ? "Recorded: " + rec.join(" → ") + "." : "In the intake as #" + r.intake + ": " + (r.note || "the deployment's writer records it on its next turn") + ".",
+      applied && r.released && r.released.length ? " The warrant's plan committed: " + r.released.map(function (m) { return m.rows + " rows"; }).join(", ") + "." : "",
+      r.outbox ? " Outbox: " + Object.keys(r.outbox).map(function (m) { return short(m, 8) + " " + r.outbox[m]; }).join(", ") + "." : ""));
+  }
+
+  // -- the bundle verifier ---------------------------------------------------------------------
+  var VER = { name: null, size: 0, sha: null, browser: null, server: null, recorded: null, busy: false, error: null, fw: null, pin: { by: "auto", deployment: "", charter: "", keys: null, keysName: "" } };
+
+  function recordedBundles() {
+    var out = [];
+    RUNS.forEach(function (pg) {
+      var d = pg.demo && pg.demo.domain ? pg.demo.domain : null, dir = d && PAGES.length > 1 && pg !== ROOT ? d.key + "/" : "";
+      Object.keys(pg.attestations).forEach(function (n) { out.push({ path: dir + n + ".fidb", label: (d ? d.industry : PACK ? PACK.industry : "Fintech") + " · " + n + ".fidb", att: pg.attestations[n], page: pg }); });
+      if (pg.demo) pg.demo.acts.forEach(function (x) {
+        if (x.key === "trust-center") x.customers.forEach(function (c) { out.push({ path: dir + c.file, label: (d ? d.industry : "") + " · " + c.customer + " (sealed)", customer: c, page: pg }); });
+      });
+    });
+    return out;
+  }
+  function findRecorded(sha) {
+    var found = null;
+    recordedBundles().forEach(function (b) { if ((b.att && b.att.bundle.sha256 === sha) || (b.customer && b.customer.sha256 === sha)) found = b; });
+    return found;
+  }
+  function verifyBytes(name, u8) {
+    VER.name = name; VER.size = u8.length; VER.busy = true; VER.error = null; VER.server = null; VER.browser = null; VER.recorded = null; VER.sha = null; render();
+    var jobs = [];
+    if (subtle()) jobs.push(digestHex("SHA-256", u8).then(function (sha) { VER.sha = sha; VER.recorded = findRecorded(sha); }));
+    jobs.push(browserChecks(u8).then(function (b) { VER.browser = b; }, function (e) { VER.browser = { error: e.message || String(e), checks: [] }; }));
+    if (LIVE.on) {
+      var q = "name=" + encodeURIComponent(name);
+      if (VER.pin.by === "deployment" && VER.pin.deployment) q += "&deployment=" + encodeURIComponent(VER.pin.deployment);
+      if (VER.pin.by === "given") {
+        if (!/^[0-9a-f]{64}$/.test(VER.pin.charter.trim())) { VER.busy = false; VER.error = "The charter digest is 64 hex characters: the one the auditor pinned (charter.digest)."; render(); return; }
+        q += "&charter=" + VER.pin.charter.trim() + (VER.pin.keys ? "&keys=" + encodeURIComponent(JSON.stringify(VER.pin.keys)) : "");
+      }
+      jobs.push(api("POST", "verify?" + q, null, u8).then(function (r) { VER.server = r; }, function (e) { VER.error = e.message; }));
+    }
+    Promise.all(jobs).then(function () { VER.busy = false; render(); var el = document.getElementById("ver-result"); if (el) el.scrollIntoView({ block: "start", behavior: "smooth" }); });
+  }
+  function openBundle(b) {
+    VER.error = null;
+    if (LIVE.on || location.protocol === "http:" || location.protocol === "https:") {
+      VER.busy = true; VER.name = b.path; render();
+      fetch(b.path, { cache: "no-store" }).then(function (r) { if (!r.ok) throw new Error(b.path + " is not beside this page (" + r.status + ")"); return r.arrayBuffer(); })
+        .then(function (ab) { verifyBytes(b.path, new Uint8Array(ab)); }).catch(function (e) { VER.busy = false; VER.error = e.message; VER.recorded = b; VER.server = null; VER.browser = null; VER.sha = null; render(); });
+      return;
+    }
+    VER.name = b.path; VER.size = b.att ? b.att.bundle.bytes : b.customer.bytes; VER.sha = b.att ? b.att.bundle.sha256 : b.customer.sha256; VER.recorded = b; VER.server = null; VER.browser = null; render();
+  }
+  function showBundle(path) {
+    var b = recordedBundles().filter(function (x) { return x.path === path || x.path.split("/").pop() === path; })[0];
+    go("verify");
+    if (b) openBundle(b);
+  }
+
+  // What a browser can check of a bundle, with Web Crypto alone: the container and every
+  // member's digest (part of V1); the log's hash chain and every record's Ed25519
+  // signature, and the manifest's (part of V9); and a sealed bundle's seals (part of V10).
+  function readTar(u8) {
+    var entries = [], problems = [], off = 0, prev = null;
+    function field(hdr, at, len) { var s = ""; for (var i = at; i < at + len && hdr[i]; i++) s += String.fromCharCode(hdr[i]); return s; }
+    while (off + 512 <= u8.length) {
+      var hdr = u8.subarray(off, off + 512);
+      if (hdr.every(function (b) { return b === 0; })) break;
+      var sum = 0; for (var i = 0; i < 512; i++) sum += (i >= 148 && i < 156) ? 32 : hdr[i];
+      var name = field(hdr, 0, 100), prefix = field(hdr, 345, 155), type = hdr[156];
+      var full = prefix ? prefix + "/" + name : name, size = parseInt(field(hdr, 124, 12).trim() || "0", 8);
+      if (parseInt(field(hdr, 148, 8).trim(), 8) !== sum) problems.push(full + ": its header checksum is wrong");
+      if (type !== 48 && type !== 0) problems.push(full + " is not a regular file");
+      if (!full || full[0] === "/" || full.split("/").indexOf("..") >= 0) problems.push(full + " is not a relative path");
+      if (parseInt(field(hdr, 100, 8).trim(), 8) !== 420) problems.push(full + ": mode is not 0644");
+      if (parseInt(field(hdr, 136, 12).trim() || "0", 8) !== 0) problems.push(full + ": mtime is not 0");
+      if (prev !== null && !(prev < full)) problems.push(full + " is out of order, or there twice");
+      if (!isFinite(size) || off + 512 + size > u8.length) { problems.push(full + " runs past the end of the file"); break; }
+      entries.push({ name: full, bytes: u8.subarray(off + 512, off + 512 + size) });
+      prev = full; off += 512 + Math.ceil(size / 512) * 512;
+    }
+    return { entries: entries, problems: problems };
+  }
+  function edVerify(keySpec, msg, sigHex) {
+    var raw = hexBytes(String(keySpec).replace("ed25519:", ""));
+    return subtle().importKey("raw", raw, { name: "Ed25519" }, false, ["verify"]).then(function (k) { return subtle().verify({ name: "Ed25519" }, k, hexBytes(sigHex), msg); });
+  }
+  function keyId(keySpec) { return digestHex("SHA-256", concat(utf8("ARC1/ed25519/v1\n"), hexBytes(String(keySpec).replace("ed25519:", "")))).then(function (x) { return x.slice(0, 16); }); }
+  function signedInput(domain, text, sig) {
+    // A FIDU1 signature covers DOMAIN ‖ SHA-512(canonical bytes with sig := {alg, key_id}).
+    // The bytes are stored canonical, so the reduction is exact.
+    var whole = '"sig":{"alg":"' + sig.alg + '","key_id":"' + sig.key_id + '","signature":"' + sig.signature + '"}';
+    var at = text.indexOf(whole);
+    if (at < 0 || text.lastIndexOf(whole) !== at) return Promise.resolve(null);
+    var reduced = text.slice(0, at) + '"sig":{"alg":"' + sig.alg + '","key_id":"' + sig.key_id + '"}' + text.slice(at + whole.length);
+    return subtle().digest("SHA-512", utf8(reduced)).then(function (ab) { return concat(utf8("FIDU1/" + domain + "/v1\n"), new Uint8Array(ab)); });
+  }
+  function hmac(keyU8, msgU8) {
+    return subtle().importKey("raw", keyU8, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]).then(function (k) { return subtle().sign("HMAC", k, msgU8); }).then(function (ab) { return new Uint8Array(ab); });
+  }
+  function browserChecks(u8) {
+    if (!subtle()) return Promise.reject(new Error("This page has no Web Crypto here, so no check ran. Open it over https, from a file, or from the console."));
+    var out = { checks: [], format: null, records: 0, withheld: 0, opened: {} };
+    function check(id, name, status, detail, part) { out.checks.push({ id: id, name: name, status: status, detail: detail, part: part }); }
+    var tar = readTar(u8);
+    var by = {}; tar.entries.forEach(function (e) { by[e.name] = e.bytes; });
+    if (!tar.entries.length) { check("container", "A POSIX tar of regular files", "fail", "not a bundle: no tar member could be read", "V1"); return Promise.resolve(out); }
+    check("container", "A POSIX tar of regular files, sorted, each once", tar.problems.length ? "fail" : "pass", tar.problems.length ? tar.problems.slice(0, 3).join("; ") : tar.entries.length + " members, each a regular file at a relative path", "V1");
+    var dec = new TextDecoder("utf-8", { fatal: false });
+    var manText = by["manifest.json"] ? dec.decode(by["manifest.json"]) : null, man = null;
+    try { man = manText ? JSON.parse(manText) : null; } catch (e) { man = null; }
+    if (!man) { check("members", "Every member listed in the manifest, by SHA-256", "fail", "manifest.json is missing or no JSON", "V1"); return Promise.resolve(out); }
+    out.format = man.format; out.lineage = man.lineage; out.range = man.range;
+    var keys = null; try { keys = by["keys.json"] ? JSON.parse(dec.decode(by["keys.json"])) : null; } catch (e) { keys = null; }
+    var listed = {}; (man.members || []).forEach(function (m) { listed[m.path] = m.sha256; });
+    var names = tar.entries.map(function (e) { return e.name; }).filter(function (n) { return n !== "manifest.json"; });
+    return Promise.all(names.map(function (n) { return digestHex("SHA-256", by[n]).then(function (d) { return [n, d]; }); })).then(function (pairs) {
+      var bad = [];
+      pairs.forEach(function (p) { if (!(p[0] in listed)) bad.push(p[0] + " is not in the manifest"); else if (listed[p[0]] !== p[1]) bad.push(p[0] + " does not hash to its manifest entry"); });
+      Object.keys(listed).forEach(function (n) { if (!(n in by)) bad.push(n + " is listed but missing"); });
+      check("members", "Every member listed in the manifest, by SHA-256", bad.length ? "fail" : "pass", bad.length ? bad.slice(0, 3).join("; ") + (bad.length > 3 ? "; and " + (bad.length - 3) + " more" : "") : pairs.length + " members hash to their entries", "V1");
+      var service = keys && keys.service;
+      var edOk = true;
+      var manifestCheck = !man.sig ? Promise.resolve(check("manifest", "The manifest's signature, by the service key", "skip", "the manifest is not signed (optional); every member is checked on its own", "V9"))
+        : !service ? Promise.resolve(check("manifest", "The manifest's signature, by the service key", "fail", "keys.json names no service key", "V9"))
+          : signedInput("bundle", manText, man.sig).then(function (msg) {
+            if (!msg) return check("manifest", "The manifest's signature, by the service key", "fail", "the manifest is not in canonical form", "V9");
+            return edVerify(service, msg, man.sig.signature).then(function (ok) {
+              check("manifest", "The manifest's signature, by the service key", ok ? "pass" : "fail", ok ? "verifies under " + short(service.replace("ed25519:", ""), 16) : "does not verify", "V9");
+            });
+          }).catch(function () { edOk = false; check("manifest", "The manifest's signature, by the service key", "skip", "this browser has no Ed25519 in Web Crypto", "V9"); });
+      return manifestCheck.then(function () { return logChecks(by, dec, keys, service, out, check, edOk); });
+    }).then(function () { return out; });
+  }
+  function logChecks(by, dec, keys, service, out, check, edOk) {
+    var lines = by["log.jsonl"] ? dec.decode(by["log.jsonl"]).split("\n").filter(function (l) { return l.length; }) : [];
+    var held = null; try { held = by["withheld.json"] ? JSON.parse(dec.decode(by["withheld.json"])) : null; } catch (e) { held = { broken: true }; }
+    out.records = lines.length; out.withheld = held && held.records ? held.records.length : 0;
+    var recs = []; try { recs = lines.map(function (l) { return JSON.parse(l); }); } catch (e) { check("chain", "The log's hash chain", "fail", "log.jsonl holds a line that is no JSON", "V9"); return Promise.resolve(); }
+    return Promise.all(lines.map(function (l) { return digestHex("SHA-256", utf8(l)); })).then(function (hashes) {
+      var at = {}, problems = [];
+      recs.forEach(function (r, i) { if (at[r.seq]) problems.push("record " + r.seq + " is there twice"); at[r.seq] = { hash: hashes[i], prev: r.prev }; });
+      (held && held.records || []).forEach(function (w) { if (at[w.seq]) problems.push("record " + w.seq + " is both whole and withheld"); at[w.seq] = { hash: w.hash, prev: null }; });
+      var top = Object.keys(at).reduce(function (t, k) { return Math.max(t, Number(k)); }, 0);
+      for (var n = 1; n <= top; n++) {
+        if (!at[n]) { problems.push("record " + n + " is missing"); continue; }
+        if (at[n].prev === null) continue;
+        var want = n === 1 ? "0000000000000000000000000000000000000000000000000000000000000000" : at[n - 1] ? at[n - 1].hash : null;
+        if (want !== null && at[n].prev !== want) problems.push("record " + n + " does not name record " + (n - 1) + "'s hash");
+      }
+      check("chain", "The log's hash chain, record 1 to " + top, problems.length ? "fail" : "pass", problems.length ? problems.slice(0, 3).join("; ") : top + " records in order" + (out.withheld ? ", " + out.withheld + " of them withheld, held in place by their hashes" : ", each naming the hash of the one before"), "V9");
+      if (!service) { check("signatures", "Every record's signature, by the service key", "fail", "keys.json names no service key", "V9"); return; }
+      if (!edOk) { check("signatures", "Every record's signature, by the service key", "skip", "this browser has no Ed25519 in Web Crypto", "V9"); return; }
+      return keyId(service).then(function (kid) {
+        return Promise.all(recs.map(function (r, i) {
+          if (!r.sig || r.sig.key_id !== kid) return false;
+          return signedInput("record", lines[i], r.sig).then(function (msg) { return msg ? edVerify(service, msg, r.sig.signature) : false; });
+        })).then(function (oks) {
+          var badSeq = recs.filter(function (_, i) { return !oks[i]; }).map(function (r) { return r.seq; });
+          check("signatures", "Every record's signature, by the service key", badSeq.length ? "fail" : "pass", badSeq.length ? "records " + badSeq.slice(0, 6).join(", ") + " do not verify under the service key" : recs.length + " Ed25519 signatures verify under key " + kid, "V9");
+        });
+      });
+    }).then(function () { return sealChecks(recs, held, out, check); });
+  }
+  function sealChecks(recs, held, out, check) {
+    if (out.format !== "fidb/2") { if (held) check("seals", "Seals", "fail", "a fidb/1 bundle carries a withheld.json", "V10"); return Promise.resolve(); }
+    if (!held || held.broken || !held.keys) { check("seals", "Every whole record's seal, opened by the bundle's keys", "fail", "a fidb/2 bundle without a readable withheld.json", "V10"); return Promise.resolve(); }
+    var K = held.keys, makers = [];
+    var lineKey = utf8("fidb/2 line");
+    makers.push(Promise.resolve([hexBytes(K.all), "all"]));
+    Object.keys(K.lineages || {}).forEach(function (l) {
+      var k = hexBytes(K.lineages[l]);
+      makers.push(Promise.resolve([k, l]));
+      makers.push(hmac(k, lineKey).then(function (lk) { return [lk, l]; }));
+    });
+    Object.keys(K.lines || {}).forEach(function (l) { makers.push(Promise.resolve([hexBytes(K.lines[l]), l])); });
+    return Promise.all(makers).then(function (ks) {
+      return Promise.all(recs.map(function (r) {
+        var msg = concat(utf8("fidb/2 seal\n"), utf8(JSON.stringify([r.log, r.seq])));
+        return Promise.all(ks.map(function (k) { return hmac(k[0], msg).then(function (t) { return [bytesHex(t), k[1]]; }); })).then(function (tags) {
+          var mine = {}; tags.forEach(function (t) { mine[t[0]] = t[1]; });
+          var whose = null; (r.seal || []).forEach(function (s) { if (!whose && mine[s]) whose = mine[s]; });
+          return whose;
+        });
+      })).then(function (whose) {
+        var unopened = recs.filter(function (_, i) { return !whose[i]; }).map(function (r) { return r.seq; });
+        whose.forEach(function (w) { if (w) out.opened[w] = (out.opened[w] || 0) + 1; });
+        check("seals", "Every whole record's seal, opened by the bundle's keys", unopened.length ? "fail" : "pass", unopened.length ? "records " + unopened.slice(0, 6).join(", ") + " carry no seal these keys open" : recs.length + " whole records open under the bundle's keys; " + out.withheld + " withheld (their anchors are V10's, not checked here)", "V10");
+      });
+    });
+  }
+
+  function verifyView() {
+    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Offline verification"), h("h2", null, "Verify an audit bundle"),
+      h("p", null, LIVE.on
+        ? "Drop any .fidb, fidb/1 or sealed fidb/2. The console runs V1 to V12 on it in process, with no network, against a charter digest pinned from outside the bundle, and this browser checks the parts it can on its own: the container, every member's digest, the hash chain, every record's signature and the seals."
+        : "Drop any .fidb, fidb/1 or sealed fidb/2. This browser checks what it can on its own, with Web Crypto: the container, every member's digest, the hash chain, every record's Ed25519 signature and a sealed bundle's seals. The rest of V1 to V12 needs the verifier: fiduciary verify-bundle."));
+    var dz = h("div", { class: "dropzone", tabindex: "0", role: "button", "aria-label": "Choose or drop a .fidb bundle",
+      onclick: function () { pickFile(".fidb,application/x-tar", function (f) { fileBytes(f).then(function (u8) { verifyBytes(f.name, u8); }); }); },
+      onkeydown: function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.currentTarget.click(); } },
+      ondragover: function (ev) { ev.preventDefault(); dz.classList.add("over"); }, ondragleave: function () { dz.classList.remove("over"); },
+      ondrop: function (ev) { ev.preventDefault(); dz.classList.remove("over"); var f = ev.dataTransfer.files && ev.dataTransfer.files[0]; if (f) fileBytes(f).then(function (u8) { verifyBytes(f.name, u8); }); } },
+      icon("down", 22), h("b", null, "Drop a .fidb here, or choose one"), h("span", { class: "small muted" }, "Read in this page. " + (LIVE.on ? "Sent only to the console on this machine." : "Sent nowhere.")));
+    var list = LIVE.on ? LIVE.status.bundles.map(function (b) { return { path: b.path, label: b.path, bytes: b.bytes }; }) : recordedBundles();
+    var picks = h("div", { class: "bundle-list" }, list.length ? list.map(function (b) {
+      return h("button", { class: "bundle" + (VER.name === b.path ? " on" : ""), onclick: function () { openBundle(b); } }, h("span", { class: "mono small" }, b.label || b.path), b.att ? (b.att.verdict.passed ? pill("PASS", "good") : pill("EXIT " + b.att.verdict.exit_code, "bad")) : b.customer ? (b.customer.passed ? pill("PASS", "good") : pill("EXIT " + b.customer.exit_code, "bad")) : h("span", { class: "small muted tnum" }, num(Math.round(b.bytes / 1024)) + " KB"));
+    }) : h("p", { class: "small muted" }, "No bundle here."));
+    var pins = LIVE.on ? pinForm() : null;
+    var left = h("div", { class: "card pad ver-in" }, dz, pins);
+    var right = h("div", { class: "card pad ver-list" }, h("div", { class: "side-label" }, LIVE.on ? "Bundles beside the console" : "Bundles this run recorded"), picks);
+    return h("section", { id: "verify" }, h("div", { class: "wrap" }, head, h("div", { class: "ver-grid" }, left, right),
+      VER.busy ? h("div", { class: "card pad", style: "margin-top:14px" }, busyLine("Verifying " + (VER.name || "the bundle") + "…")) : null,
+      errorLine(VER.error), !VER.busy && (VER.server || VER.browser || VER.recorded) ? verifyResult() : null));
+  }
+  function pinForm() {
+    var p = VER.pin, deps = LIVE.status.deployments.filter(function (d) { return d.charter; });
+    function radio(val, label) { return h("label", { class: "radio" }, h("input", { type: "radio", name: "pinby", checked: p.by === val ? "checked" : null, onchange: function () { p.by = val; render(); } }), label); }
+    return h("div", { class: "pins" }, h("div", { class: "side-label" }, "Pinned against"),
+      radio("auto", "The deployment whose charter the bundle carries"),
+      radio("deployment", "A deployment's charter and keys"),
+      p.by === "deployment" ? h("select", { onchange: function (ev) { p.deployment = ev.target.value; } }, [h("option", { value: "" }, "choose…")].concat(deps.map(function (d) { return h("option", { value: d.id, selected: p.deployment === d.id ? "selected" : null }, d.name + " · " + short(d.charter.digest, 12)); }))) : null,
+      radio("given", "A charter digest I pinned, and pinned-keys.json"),
+      p.by === "given" ? h("div", { class: "field-row" }, h("input", { type: "text", placeholder: "charter digest (64 hex)", value: p.charter, oninput: function (ev) { p.charter = ev.target.value; } }),
+        h("button", { class: "btn sm", onclick: function () { pickFile(".json", function (f) { f.text().then(function (t) { try { p.keys = JSON.parse(t); p.keysName = f.name; } catch (e) { VER.error = f.name + " is no JSON"; } render(); }); }); } }, p.keysName || "pinned-keys.json…")) : null,
+      h("p", { class: "small muted" }, "A bundle is checked against keys an auditor pinned, never only its own. Without pinned keys, the verifier uses the bundle's and says so."));
+  }
+  function verdictOf() {
+    if (VER.server && VER.server.attestation) return { source: "console", att: VER.server.attestation };
+    if (VER.server && !VER.server.readable) return { source: "console", unreadable: VER.server.error };
+    if (VER.recorded && VER.recorded.att) return { source: "recorded", att: VER.recorded.att };
+    if (VER.recorded && VER.recorded.customer) return { source: "recorded-customer", customer: VER.recorded.customer, page: VER.recorded.page };
+    return null;
+  }
+  function verifyResult() {
+    var v = verdictOf(), b = VER.browser, kids = [];
+    var att = v && v.att;
+    var passed = att ? att.verdict.passed : v && v.customer ? v.customer.passed : b ? b.checks.every(function (c) { return c.status !== "fail"; }) : false;
+    var partial = !v && b && passed;
+    var status = att ? att.verdict.status : v && v.unreadable ? "UNREADABLE" : v && v.customer ? (v.customer.passed ? "VERIFIED" : "EXIT " + v.customer.exit_code) : b ? (passed ? "PARTLY CHECKED · NOT A VERDICT" : "FAILS IN THIS BROWSER") : "—";
+    var exit = att ? att.verdict.exit_code : v && v.unreadable ? 2 : v && v.customer ? v.customer.exit_code : null;
+    var src = v && v.source === "console" ? "Verified by the console, offline, V1 to V12" + (VER.server.pinned_by ? ", pinned by " + (VER.server.pinned_by === "given" ? "the digest you gave" : VER.server.pinned_by + "'s charter") : "") + "."
+      : v && v.source && v.source.indexOf("recorded") === 0 ? (VER.browser ? "These bytes are the bundle this page recorded; " : "") + "its verdict was recorded by fiduciary verify-bundle when this page was built" + (VER.browser ? "." : ". Drop the file to check its bytes here.")
+        : "Only this browser's checks ran: they find a changed byte, a member out of place, a broken chain, a forged signature or a foreign seal, but not what needs the ledger's anchors or a replay of the log. The verdict is V1 to V12: fiduciary verify-bundle " + String(VER.name || "bundle.fidb").split("/").pop() + " --charter <digest> --keys pinned-keys.json" + (LIVE.on ? ", or pin a charter digest above." : ".");
+    kids.push(h("div", { class: "ver-head " + (partial ? "part" : passed ? "ok" : "no") },
+      h("div", { class: "badge" }, icon(partial ? "layers" : passed ? "shield" : "alert", 18), status), exit !== null ? h("span", { class: "small muted" }, "exit " + exit) : null, h("span", { class: "spacer" }),
+      att ? h("button", { class: "btn sm", onclick: function () { download("attestation-" + String(VER.name || "bundle").split("/").pop().replace(/\.fidb$/, "") + ".json", JSON.stringify(att, null, 2) + "\n", "application/json"); } }, icon("down"), "Attestation JSON") : null));
+    kids.push(h("p", { class: "small ink2" }, src));
+    var bundle = att ? att.bundle : null;
+    kids.push(factList([["File", h("span", { class: "mono" }, VER.name || "—")], VER.sha ? ["SHA-256", hash(VER.sha, 24)] : null, ["Size", num(VER.size || (bundle ? bundle.bytes : 0)) + " bytes"],
+      (bundle || b) ? ["Format", (bundle ? bundle.format : b.format) || "—"] : null, bundle ? ["Lineage", hash(bundle.lineage, 12)] : b && b.lineage ? ["Lineage", hash(b.lineage, 12)] : null,
+      bundle ? ["Records", "log " + bundle.range.from + " to " + bundle.range.to + (VER.server && VER.server.notes ? "" : "")] : null,
+      v && v.unreadable ? ["Why", v.unreadable] : null]));
+    if ((b && b.format === "fidb/2") || (bundle && bundle.format === "fidb/2") || (v && v.customer)) {
+      var whole = b ? b.records : v.customer ? v.customer.records : null, withheld = b ? b.withheld : v.customer ? v.customer.withheld : null;
+      kids.push(h("div", { class: "seal" }, h("div", { class: "line" }, pill("SEALED · FIDB/2", "info"), h("b", null, num(whole) + " records whole"), h("span", { class: "muted" }, "·"), h("b", null, num(withheld) + " withheld")),
+        h("p", { class: "small ink2" }, "The bundle carries one lineage's records whole; of every other record it carries only its place and hash, which the chain and the ledger's anchors hold in place. Each whole record carries a seal of two tags that the bundle's keys open; a withheld record its keys open would be its own, and fails V10."),
+        b && Object.keys(b.opened).length ? h("p", { class: "small muted" }, "Opened here by: " + Object.keys(b.opened).map(function (k) { return (k === "all" ? "the log's key" : "lineage " + short(k, 8)) + " (" + b.opened[k] + ")"; }).join(", ") + ".") : null));
+    }
+    if (b) kids.push(h("div", { class: "td-sec" }, h("h3", null, "Checked in this browser"), b.error ? h("p", { class: "small muted" }, b.error) : h("ul", { class: "bchecks" }, b.checks.map(function (c) {
+      return h("li", null, c.status === "pass" ? pill("PASS", "good") : c.status === "fail" ? pill("FAIL", "bad") : pill("NOT RUN", "permit"), h("span", null, h("b", null, c.name), " ", h("span", { class: "small muted" }, "(part of " + c.part + ")"), h("div", { class: "small ink2" }, c.detail)));
+    }))));
+    kids.push(h("div", { class: "td-sec" }, h("h3", null, "V1 to V12, and the controls each supports"),
+      v && v.customer ? h("p", { class: "small ink2" }, "The recorded verdict above is the whole of V1 to V12. Below, what this browser checked again of these bytes.") : null,
+      checksTable(att, b)));
+    if (VER.server && VER.server.notes && VER.server.notes.length) kids.push(h("details", null, h("summary", null, "Verifier notes (" + VER.server.notes.length + ")"), h("ul", { class: "plain small" }, VER.server.notes.map(function (n) { return h("li", null, n); }))));
+    return h("div", { class: "card pad ver-result", id: "ver-result", style: "margin-top:14px" }, kids);
+  }
+  function mappingSource() {
+    return RUNS.length ? RUNS[0].attestations[RUNS[0].primary] : null;
+  }
+  function checksTable(att, b) {
+    var map = att || mappingSource();
+    var fws = map ? Object.keys(map.frameworks) : [];
+    var cols = (VER.fw || (PACK ? PACK.frameworks : ["soc2", "iso27001", "eu-ai-act"])).filter(function (k) { return fws.indexOf(k) >= 0; });
+    if (!cols.length) cols = fws.slice(0, 3);
+    var byId = {}; if (map) map.checks.forEach(function (c) { byId[c.id] = c; });
+    var partial = {}; (b && b.checks || []).forEach(function (c) { (partial[c.part] = partial[c.part] || []).push(c.status); });
+    var picker = fws.length ? h("div", { class: "fw-picker noprint" }, h("span", { class: "small muted" }, "Frameworks:"), fws.map(function (k) {
+      var on = cols.indexOf(k) >= 0;
+      return h("button", { class: "chip fw", "aria-pressed": on ? "true" : "false", onclick: function () { var next = cols.slice(); if (on) { if (next.length > 1) next.splice(next.indexOf(k), 1); } else { next.push(k); if (next.length > 4) next.shift(); } VER.fw = next; render(); } }, fwLabel(k));
+    })) : null;
+    var rows = CHECKS.map(function (c) {
+      var full = att ? byId[c[0]] : null, ref = byId[c[0]];
+      var st;
+      if (full) st = full.status === "pass" ? pill("PASS", "good") : full.status === "fail" ? pill("FAIL", "bad") : pill(String(full.status).toUpperCase(), "permit");
+      else if (partial[c[0]]) st = partial[c[0]].indexOf("fail") >= 0 ? pill("FAIL HERE", "bad") : partial[c[0]].indexOf("pass") >= 0 ? pill("PART CHECKED", "info") : pill("NOT RUN", "permit");
+      else st = pill("NOT RUN HERE", "permit");
+      var finds = full && full.findings.length ? h("ul", { class: "findings" }, full.findings.map(function (f) { return h("li", null, h("span", { class: "sev blocking" }, f.label || kindLabel(f.kind)), h("span", { class: "small" }, f.message)); })) : null;
+      return h("tr", null, h("td", { class: "check" }, c[0] + " ", h("span", { class: "muted", style: "font-weight:500" }, c[1])), h("td", null, st), h("td", null, h("span", { class: "small" }, ref ? ref.proves : ""), finds),
+        cols.map(function (k) { return h("td", null, h("div", { class: "chips" }, ((ref && ref.controls[k]) || []).map(function (id) { return tipOn(h("span", { class: "chip static" }, id), map.frameworks[k][id]); }))); }));
+    });
+    return [picker, h("div", { class: "tablewrap" }, h("table", { class: "matrix" }, h("thead", null, h("tr", null, ["Check", "Result", "What it proves"].concat(cols.map(fwLabel)).map(function (t) { return h("th", null, t); }))), h("tbody", null, rows))),
+      map && map.mappings ? h("p", { class: "small muted", style: "margin-top:8px" }, map.mappings.disclaimer) : null];
+  }
+
+  // -- the sandbox -------------------------------------------------------------------------------
+  var SB = { key: null, profiles: {}, opening: {}, busy: false, error: null, calls: {}, custom: {}, step: {} };
+
+  function sbDomains() {
+    if (LIVE.on) return LIVE.status.sandbox.domains;
+    return RUNS.filter(function (pg) { return pg.demo; }).map(function (pg) {
+      var d = pg.demo.domain;
+      return { key: d ? d.key : "fintech", industry: d ? d.industry : "Fintech", rung: rungOfPage(pg), substrate: d ? (d.nouns.substrate || (d.nouns.state === "chart" ? "FHIR R4" : "SQLite")) : "SQLite", page: pg };
+    });
+  }
+  function rungOfPage(pg) {
+    var k = pg.demo && pg.demo.domain ? pg.demo.domain.key : "fintech";
+    var row = OVERVIEW ? OVERVIEW.industries.filter(function (r) { return r.key === k; })[0] : null;
+    return row ? row["class"] : "T";
+  }
+  function sandboxView() {
+    var doms = sbDomains();
+    if (!SB.key || !doms.some(function (d) { return d.key === SB.key; })) SB.key = (PACK && doms.some(function (d) { return d.key === PACK.key; })) ? PACK.key : doms[0].key;
+    var dom = doms.filter(function (d) { return d.key === SB.key; })[0];
+    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Sandbox"), h("h2", null, LIVE.on ? "Try a call on each kind of system" : "Every call this run recorded, on each kind of system"),
+      h("p", null, LIVE.on
+        ? "Each industry's deployment, built fresh in a scratch directory the console removes when it stops: the same engine, mandate, checkers and approvers as the recorded run, on SQL, Git, a Kubernetes API server or a FHIR server. A call goes through the input gateway, then the stack stages and measures it. Nothing here touches a recorded run on disk."
+        : "The calls this run recorded, each with what the gateway decided and what the stack measured. The console runs new ones in a scratch deployment of each industry: fiduciary demo --out <this directory> --serve."));
+    var picker = h("div", { class: "seg dom-seg", role: "group", "aria-label": "Industry" }, doms.map(function (d) {
+      return h("button", { "aria-pressed": d.key === SB.key ? "true" : "false", onclick: function () { SB.key = d.key; SB.error = null; render(); } }, rungChip(d.rung, d.substrate), d.industry);
+    }));
+    var body = LIVE.on ? liveSandbox(dom) : recordedSandbox(dom);
+    return h("section", { id: "sandbox" }, h("div", { class: "wrap" }, head, picker, body));
+  }
+  function liveSandbox(dom) {
+    var prof = SB.profiles[dom.key];
+    if (!prof && !SB.opening[dom.key]) {
+      SB.opening[dom.key] = true; SB.busy = true;
+      api("POST", "sandbox/" + dom.key + "/open", {}).then(function (p) { SB.busy = false; SB.profiles[dom.key] = p; refreshStatus(); }).catch(failed(SB));
+    }
+    if (!prof) return h("div", { class: "card pad", style: "margin-top:14px" }, SB.error ? errorLine(SB.error) : busyLine("Building the " + dom.industry + " sandbox: its charter, mandate and keys, and its " + dom.substrate + "…"));
+    var calls = SB.calls[dom.key] || [];
+    var presets = h("div", { class: "presets" }, prof.presets.map(function (p) {
+      var tag = p.expect === "commits" ? pill("COMMITS", "good") : p.expect === "refused" ? pill("HIDDEN CONSEQUENCE", "warn") : pill("HELD FOR 2 OF 3", "info");
+      return h("div", { class: "preset" }, h("div", { class: "preset-text" }, h("div", { class: "line" }, tag, h("b", null, p.label)), h("span", { class: "small ink2" }, p.note), h("code", { class: "small muted" }, p.tool + " " + JSON.stringify(p.arguments))),
+        h("button", { class: "btn", disabled: SB.busy ? "disabled" : null, onclick: function () { runCall(dom, { preset: p.id }); } }, "Run"));
+    }));
+    var c = SB.custom[dom.key] = SB.custom[dom.key] || { tool: prof.presets[0].tool, args: JSON.stringify(prof.presets[0].arguments, null, 2), tenant: prof.presets[0].tenant || prof.tenants[0], hold: false };
+    var tool = prof.tools.filter(function (t) { return t.name === c.tool; })[0];
+    var composer = h("details", { class: "composer" }, h("summary", null, "Write your own call"),
+      h("div", { class: "sign-form" },
+        h("label", { class: "field" }, h("span", { class: "small muted" }, "Tool"), h("select", { onchange: function (ev) { c.tool = ev.target.value; var pr = prof.presets.filter(function (p) { return p.tool === c.tool; })[0]; c.args = JSON.stringify(pr ? pr.arguments : {}, null, 2); render(); } }, prof.tools.map(function (t) { return h("option", { value: t.name, selected: t.name === c.tool ? "selected" : null }, t.name); }))),
+        h("label", { class: "field" }, h("span", { class: "small muted" }, prof.partition), h("select", { onchange: function (ev) { c.tenant = ev.target.value; } }, prof.tenants.map(function (t) { return h("option", { value: t, selected: t === c.tenant ? "selected" : null }, t); })))),
+      tool ? h("p", { class: "small ink2" }, tool.description) : null,
+      h("textarea", { "aria-label": "Arguments, as JSON", spellcheck: "false", oninput: function (ev) { c.args = ev.target.value; } }, c.args),
+      tool ? h("details", null, h("summary", { class: "small" }, "Its input schema"), h("pre", null, JSON.stringify(tool.input, null, 2))) : null,
+      h("label", { class: "radio" }, h("input", { type: "checkbox", checked: c.hold ? "checked" : null, onchange: function (ev) { c.hold = ev.target.checked; } }), "Pause the scope after commit, so the outbound request waits for a release warrant"),
+      h("div", { class: "cp-toolbar" }, h("button", { class: "btn primary", disabled: SB.busy ? "disabled" : null, onclick: function () {
+        var parsed; try { parsed = JSON.parse(c.args || "{}"); } catch (e) { SB.error = "The arguments are no JSON: " + e.message; render(); return; }
+        runCall(dom, { tool: c.tool, arguments: parsed, tenant: c.tenant, hold: c.hold });
+      } }, "Run the call")));
+    var led = prof.ledger;
+    var ledger = led ? h("p", { class: "small muted" }, "Ledger · " + led.scope + ": " + money(led.available) + " of " + money(led.envelope) + " available" + (led.halted ? " · PAUSED" : "") + Object.keys(led.units || {}).map(function (u) { return " · " + u + " " + num(led.units[u].available) + " of " + num(led.units[u].envelope); }).join("")) : null;
+    var left = h("div", { class: "card pad sb-left" }, h("div", { class: "line" }, h("b", null, prof.industry), rungChip(prof.rung), h("span", { class: "small muted" }, prof.measurement + " on " + prof.substrate), h("span", { class: "spacer" }),
+      h("button", { class: "btn sm", disabled: SB.busy ? "disabled" : null, onclick: function () { SB.busy = true; SB.error = null; render(); api("POST", "sandbox/" + dom.key + "/reset", {}).then(function (p) { SB.busy = false; SB.profiles[dom.key] = p; SB.calls[dom.key] = []; if (DESK.dep === p.id) selectDep(p.id); refreshStatus(); }).catch(failed(SB)); } }, "Reset")),
+      presets, composer, ledger);
+    var right = h("div", { class: "sb-right" }, SB.busy ? h("div", { class: "card pad" }, busyLine("Staging and measuring…")) : null, errorLine(SB.error),
+      calls.length ? calls.slice().reverse().map(function (r, i) { return callCard(r, prof, i === 0); }) : h("div", { class: "card pad empty-gw" }, h("b", null, "No call yet."), "Run a preset: one commits, one has a consequence the gateway cannot see, one waits for two of three approvers."));
+    return h("div", { class: "sb-grid" }, left, right);
+  }
+  function runCall(dom, body) {
+    SB.busy = true; SB.error = null; render();
+    api("POST", "sandbox/" + dom.key + "/call", body).then(function (r) {
+      SB.busy = false; (SB.calls[dom.key] = SB.calls[dom.key] || []).push(r);
+      if (r.ledger && SB.profiles[dom.key]) SB.profiles[dom.key].ledger = r.ledger;
+      refreshStatus();
+    }).catch(failed(SB));
+  }
+  function measuredSummary(c, nouns, partition) {
+    var m = c.measured, kids = [];
+    if (!m) {
+      if (c.outcome === "halted") return h("div", { class: "outcome bad" }, icon("alert"), "The scope is paused: " + c.feedback);
+      if (c.gateway && c.gateway.decision !== "PERMIT") return h("div", { class: "outcome bad" }, icon("x"), "Not sent: denied by the gateway" + (c.gateway.policies && c.gateway.policies.length ? " (" + c.gateway.policies.join(", ") + ")" : ""));
+      return h("div", { class: "outcome good" }, icon("check"), c.outcome === "served" ? "Served: a read, metered on the ledger" : "Not written: " + c.outcome);
+    }
+    var rowsName = (nouns && nouns.rows) || "rows", tablesName = (nouns && nouns.tables) || "tables";
+    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " " + rowsName + ", " + m.outbound.length + " outbound request(s) queued"));
+    else if (m.compensated) kids.push(h("div", { class: "outcome good" }, icon("shield"), "WRITTEN · READ BACK · PUT BACK · the read-back differed from the prediction; nothing of it stands"));
+    else kids.push(h("div", { class: "outcome good" }, icon("shield"), "REFUSED BEFORE COMMIT · nothing written" + (c.unchanged ? " · the system is as it was" : "")));
+    var parts = Object.keys(m.tenants || {});
+    var tables = m.tables;
+    if (!tables) { tables = {}; (m.changed || []).forEach(function (r) { tables[r.table] = (tables[r.table] || 0) + 1; }); }
+    kids.push(h("div", { class: "mini-stats" },
+      h("div", { class: "mini" }, h("b", { class: "tnum" }, num(m.rows)), h("span", null, rowsName + " the plan changed")),
+      h("div", { class: "mini" }, h("b", { class: "tnum" }, String(Object.keys(tables).length)), h("span", null, tablesName + ": " + Object.keys(tables).map(function (k) { return k + " " + tables[k]; }).join(", "))),
+      h("div", { class: "mini" }, h("b", { class: "tnum" }, String(parts.length)), h("span", null, (partition || "tenant") + (parts.length === 1 ? "" : "s") + " reached"))));
+    kids.push(findingList((m.findings || []).filter(function (f) { return !m.committed || f.severity !== "advisory"; })));
+    if (m.changed && m.changed.length) kids.push(h("details", null, h("summary", null, "What the stage measured (" + (m.changed.length < m.rows ? "first " + m.changed.length + " of " + m.rows : m.rows) + ")"),
+      table(["Table", "Row", partition || "Tenant", "Change"], m.changed.slice(0, 12).map(function (r) { return [h("span", { class: "mono" }, r.table), h("span", { class: "mono small" }, String(r.id)), h("span", { class: "mono small" }, r.tenant || "—"), h("span", { class: "small" }, changesText(r.changes))]; }))));
+    kids.push(h("p", { class: "small muted" }, m.checkers + " checks evaluated · plan " + m.plan));
+    return h("div", null, kids);
+  }
+  function callCard(r, prof, latest) {
+    var g = r.gateway || {};
+    var outcome = r.outcome === "committed" ? pill("COMMITTED", "good") : r.outcome === "compensated" ? pill("PUT BACK", "warn") : r.outcome === "halted" ? pill("PAUSED", "warn") : pill(String(r.outcome || "refused").toUpperCase(), "bad");
+    var body = h("div", null,
+      h("div", { class: "args" }, JSON.stringify(r.arguments)),
+      r.ci ? h("p", { class: "small ink2" }, "CI ran for " + r.ci.package + " " + r.ci.version + ": " + r.ci.accepted + " signed result(s) accepted, " + r.ci.refused + " refused.") : null,
+      measuredSummary(r, prof.nouns, prof.partition),
+      r.receipts && r.receipts.length ? h("div", { class: "chips", style: "margin-top:8px" }, r.receipts.map(function (x) { return tipOn(h("span", { class: "chip static" }, x.rung + " · " + x.measurement + " · " + x.outcome), "ARC1 receipt " + x.receipt_id + " on " + x.substrate); })) : null,
+      r.ticket ? h("div", { class: "callout" }, icon("alert"), h("span", null, h("b", null, "A ticket was raised. "), "It waits for its quorum in the approvals desk."), h("span", { class: "spacer" }),
+        h("button", { class: "btn primary sm", onclick: function () { DESK.dep = prof.id; DESK.tid = r.ticket; DESK.list = null; DESK.listFor = null; DESK.ticket = null; DESK.form = {}; DESK.result = null; DESK.draft = null; go("desk"); } }, "Open the ticket")) : null,
+      r.feedback ? h("details", null, h("summary", null, "What the agent is told"), h("pre", { class: "small", style: "white-space:pre-wrap" }, r.feedback)) : null);
+    return h("div", { class: "card pad call-card" + (latest ? " latest" : "") }, h("div", { class: "line" }, h("span", { class: "tool" }, r.tool), decisionPill(g.decision), outcome, h("span", { class: "spacer" }), h("span", { class: "small muted" }, r.tenant || "")), body);
+  }
+  function recordedSandbox(dom) {
+    var pg = dom.page;
+    var calls = [];
+    pg.demo.acts.forEach(function (x) { (x.calls || (x.call ? [x.call] : [])).forEach(function (c) { if (c && c.tool) calls.push({ act: x, call: c }); }); });
+    var pick = SB.step[dom.key] || 0;
+    if (pick >= calls.length) pick = 0;
+    var list = h("div", { class: "card pad sb-left" }, h("div", { class: "side-label" }, "Recorded calls · " + dom.industry), h("div", { class: "tk-list" }, calls.map(function (e, i) {
+      var m = e.call.measured;
+      var tag = e.call.gateway && e.call.gateway.decision !== "PERMIT" ? pill("DENIED", "bad") : m ? (m.committed ? pill("COMMITTED", "good") : m.compensated ? pill("PUT BACK", "warn") : pill("REFUSED", "bad")) : pill(String(e.call.outcome || "—").toUpperCase(), "permit");
+      return h("button", { class: "tk" + (i === pick ? " on" : ""), onclick: function () { SB.step[dom.key] = i; render(); } }, h("span", { class: "tk-top" }, tag, h("b", { class: "mono" }, e.call.tool)), h("span", { class: "tk-id small muted" }, "Act " + e.act.n + " · " + e.act.title));
+    })));
+    var shown = calls[pick];
+    var detail = withPage(pg, function () { return shown ? h("div", { class: "card pad call-card latest" }, h("div", { class: "line" }, h("span", { class: "tool" }, shown.call.tool), decisionPill(shown.call.gateway ? shown.call.gateway.decision : null), pill("RECORDED", "permit"), h("span", { class: "spacer" }), h("span", { class: "small muted" }, "Act " + shown.act.n)),
+      h("p", { class: "small ink2" }, shown.act.lede), h("div", { class: "args" }, JSON.stringify(shown.call.arguments)), PACK ? packMeasured(shown.call) : measuredBlock(shown.call),
+      shown.call.feedback ? h("details", null, h("summary", null, "What the agent was told"), h("pre", { class: "small", style: "white-space:pre-wrap" }, shown.call.feedback)) : null) : h("div", { class: "card pad" }, "No call was recorded."); });
+    return h("div", { class: "sb-grid" }, list, h("div", { class: "sb-right" }, detail));
+  }
+
+  function withPage(pg, fn) {
+    var keep = [P, DEMO, PACK, current];
+    P = pg; DEMO = pg.demo; PACK = DEMO && DEMO.domain ? DEMO.domain : null; current = pg.primary;
+    try { return fn(); } finally { P = keep[0]; DEMO = keep[1]; PACK = keep[2]; current = keep[3]; }
+  }
+  function bundlePath(name) { return (PACK && PAGES.length > 1 && P !== ROOT ? PACK.key + "/" : "") + name; }
+  function verifyLink(path) { return h("button", { class: "link noprint", title: "Open " + path + " in the verifier", onclick: function () { showBundle(path); } }, "verify"); }
+
+  function consoleFooter() {
+    return h("footer", null, h("div", { class: "wrap" },
+      h("p", null, LIVE.on ? "Served by the console on " + location.host + ", which listens on loopback only, answers only its own origin, and holds no principal's key outside the sandbox." : "This page makes no network requests. Signing and the full V1 to V12 need the console or the command line."),
+      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline: tamper-evident, not tamper-proof.")));
   }
 
   function render() {
     var y = window.scrollY;
     app.textContent = "";
     add(app, topbar());
-    if (OVERVIEW) add(app, overview());
-    add(app, domainBar());
-    add(app, h("section", null, h("div", { class: "wrap" }, h("div", { class: "hero" }, verdictCard(), privacyCard()), kpis())));
-    if (DEMO) add(app, theatre());
-    add(app, tree());
-    add(app, inspector());
-    add(app, matrix());
-    add(app, footer());
+    if (view === "run" && hasRun()) {
+      if (OVERVIEW) add(app, overview());
+      add(app, domainBar());
+      add(app, h("section", null, h("div", { class: "wrap" }, h("div", { class: "hero" }, verdictCard(), privacyCard()), kpis())));
+      if (DEMO) add(app, theatre());
+      add(app, tree());
+      add(app, inspector());
+      add(app, matrix());
+      add(app, footer());
+    } else if (ROOT.served && !LIVE.on && !RUNS.length) {
+      add(app, h("section", null, h("div", { class: "wrap" }, h("div", { class: "card pad" }, LIVE.error ? errorLine("The console does not answer: " + LIVE.error) : busyLine("Connecting to the console…")))));
+    } else {
+      if (view === "desk") add(app, deskView());
+      else if (view === "verify") add(app, verifyView());
+      else if (view === "sandbox") add(app, sandboxView());
+      add(app, consoleFooter());
+    }
     window.scrollTo(0, y);
   }
   if (window.matchMedia) {
@@ -1212,4 +2034,5 @@
     if (mq.addEventListener) mq.addEventListener("change", function () { render(); });
   }
   render();
+  if (ROOT.served && (location.protocol === "http:" || location.protocol === "https:")) refreshStatus();
 })();

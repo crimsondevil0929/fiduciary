@@ -6,6 +6,60 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-11-04
+
+The console: a web control plane on loopback over any deployment a `fiduciary.toml`
+names, and over the demo's runs. It decides nothing, holds no principal's key, and changes
+nothing on disk by looking.
+
+### Added
+
+- **`fiduciary console`** (`fiduciary.control`, spec §10.8, F10-20 to F10-24): the
+  deployments in `--dir` (each `fiduciary.toml`, and one level down) or named with
+  `--deployment`, served on `--listen` (127.0.0.1:8740). `fiduciary demo --serve` serves the
+  same console over its run; `--out DIR --serve` on a directory that holds a run serves that
+  run again, read and never written.
+- **The approvals desk.** Each ticket from the deployment's log, from its signed bytes: the
+  receipt a refusal cites (rows, tables and tenants measured, the substrate, the rung of the
+  measurement ladder, stated against measured, the checker that refused it); a held
+  message's outbound payload, read from the outbox and checked against the `payload_hash`
+  the ticket signs; the options with their quorums and pinned heads; the votes the log
+  recorded and those still in the intake; the warrant and its execution.
+- **Votes signed by the principal.** The console drafts an approval and returns its signing
+  input; the browser signs it with the principal's key file (Web Crypto Ed25519), which never
+  leaves the page; the console verifies the signature under the charter's key and, with
+  `--accept-approvals`, submits it to the intake. A signed approval from `fiduciary approve
+  --out` is taken as well. The deployment's writer records it.
+- **The bundle verifier.** V1 to V12 in process, offline, against a deployment's pins or a
+  charter digest, `pinned-keys.json` and witness given; the nine framework mappings; the
+  attestation as JSON. In the browser, with Web Crypto alone, the archive, every member's
+  digest, the hash chain, every record's and the manifest's signature, and a sealed
+  bundle's seals, shown as a partial check.
+- **The sandbox** (`fiduciary.demo.sandbox`, `--sandbox`): each of the six industries built
+  in a temporary directory, with three calls to try (one that commits, one with a
+  consequence the gateway cannot see, one held for two of three approvers) or one written by
+  hand, on SQL, Git, Kubernetes (plan-bound) and FHIR (predicted). There the console holds
+  the demo's keys and is the writer, so a vote is recorded at once and a warrant executes.
+- **The page, with no console.** `dashboard.html` opened as a file or hosted statically shows
+  the recorded run in the same views, the tickets and votes each run recorded, every recorded
+  call, and the in-browser bundle checks; it signs nothing and says what needs the console.
+
+### Security
+
+- The console listens on loopback only, answers only its own `Host`, refuses cross-site
+  requests (`Sec-Fetch-Site`) except a navigation to its page, takes writes only from its own
+  origin with the `X-Fiduciary-Console` header and a JSON (or octet-stream) body, bounds
+  bodies (256 KiB; 64 MiB for a bundle), refuses chunked bodies, serves an allowlist of
+  files (never keys, configuration or databases), sends CSP, `nosniff` and `DENY` framing,
+  and answers failures without their cause.
+- SQLite stores and outboxes are read through the backup API; a database with no
+  write-ahead log beside it is opened immutable, so no `-wal` or `-shm` file appears.
+
+### Changed
+
+- F9-4 amended: the console page fetches a bundle beside it only when the reader asks, and
+  asks a console only when that console served it.
+
 ## [1.6.0] - 2026-11-01
 
 The fourth rung: a FHIR server, predicted and verified. Every new member is written only

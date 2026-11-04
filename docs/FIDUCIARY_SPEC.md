@@ -1794,7 +1794,10 @@ the first failing check in the order V1 to V12.
   Markdown. Neither decides anything, and neither changes the exit code: a report that
   cannot be written is a usage error (exit 1), checked before the bundle is read where the
   path's kind is wrong. The mapping supports an assessment; it is not a certification.
-  *(Added in 1.1.0.)*
+  *(Added in 1.1.0.)* *(Amended in 1.7.0:* the console also verifies a bundle dropped on it,
+  with the browser's own Web Crypto (F10-23), and, hosted over HTTP, fetches a bundle beside
+  it when the reader asks; it asks nothing else of any network, and asks a console only
+  when that console served it.)
 
   The controls come from control-framework packs, one data file each in
   `fiduciary/frameworks/`: OWASP ASI 2026, SOC 2, the EU AI Act, HIPAA (45 CFR 164),
@@ -2036,6 +2039,7 @@ of them.
 | `fiduciary serve [--node N] [--bridge HOST:PORT] [--metrics HOST:PORT]` | Run the service under a supervisor (§10.7): the writer (binder, intake and bridge), triggers, settler, executor and metrics, alone or as a node of a cluster. `SIGHUP` opens every key again; `SIGTERM` drains and stops. |
 | `fiduciary mcp serve`, `proxy` | Run the MCP bridge: one session per process, over stdio, or Streamable HTTP with `--http HOST:PORT` (`--token-file`, `--tls-cert`, `--tls-key`). The process also judges the intake and executes the warrants formed, since it holds the quotes and proposals they name (F7-14). |
 | `fiduciary export-bundle`, `verify-bundle`, `verify` | §9, and live verification of the store. `verify-bundle --json` and `--report` write the attestation (F9-4). |
+| `fiduciary console [--dir DIR] [--deployment FILE] [--listen HOST:PORT] [--accept-approvals] [--sandbox]` | Serve the console on loopback (§10.8): the approvals desk, votes the principal signs in the browser, the bundle verifier and, with `--sandbox`, the demo industries in scratch. `fiduciary demo --serve` serves the same console over the run, its deployments read and never written. *(Added in 1.7.0.)* |
 | `fiduciary demo [--out DIR] [--report DIR\|FILE] [--serve [HOST:PORT]] [--open] [--live]` | Stand up a deployment of its own in a new directory and play seven acts against it and against an input gateway of Cedar policies (`cedarpy` with the `cedar` extra; otherwise a built-in evaluator of the same policies, which says so): a discount whose trigger collapses an order's total, a dispute flag whose trigger reaches four tenants, fifty sub-agent sessions against one lineage's window and a child wider than its parent, a relay killed between the vendor's answer and its record, a held message released on a 2-of-3 warrant, a break-glass release outside any warrant, and both bundles verified with sockets refused and scanned for every row, payload, prompt and secret the deployment holds. Writes the console (`dashboard.html`), both bundles, the attestation and a `fiduciary.toml` the other commands open. Exit 0 when the bundle before the break-glass act verifies, the one after it exits 7, and nothing planted is found; 1 otherwise; 2 on a usage error. `--live` puts a Claude model in front of the first act, reading `BENCHMARK_API_KEY` only, metered and stopped at `--max-cost`. *(Added in 1.1.0.)* `--domain` picks the industry: `fintech` (the default, the acts above), `healthcare`, `sre`, `supply-chain` or `saas`, each a deployment of its own on the same engine with its own schema, triggers, mandate, principals and break-glass key, playing the same arc in seven acts; or `all`, fintech in the directory and each pack in a subdirectory named for it, behind one console that switches between them. Every console opens on an overview: the industries, which ran, what in the engine refused what (counted from the measured plans), the measurement classes, and the acceptance matrix interlock recorded. The exit code covers every industry run. `--live` puts the model in front of fintech's first act and each pack's second (its hidden cascade), each act stopped at `--max-cost`; the other acts replay. *(Amended in 1.2.0.)* `--domain coding-agent` stages on Git, not SQL: a bare repository with a code-generator hook, staged and committed by interlock's Git substrate (`interlock.git_substrate`, interlock 1.1.0), with the deployment's SQLite file as its control database (outbox, inbox, windows). Its acts are a fix committed as one commit at the measured head; one edit that the hook turns into 36 files; an injected workflow edit and a deleted test; a teammate's push while a change is staged, which leaves the change uncommitted and is named by reconciliation; a dependency bump that commits only with CI's signed result for its exact bytes (F8-2), and only the part that passes, on a 2-of-3 `accept_repair` warrant at the head the maintainers reviewed; and an administrator's hotfix through the deployment's own engine, outside any session, which V7 names offline. The pack runs where the installed interlock has the Git substrate and is left out where it does not. Its `interlock.toml` names `substrate = "git"`, and its `fiduciary.toml` opens the deployment as every other's does. A live act's model calls never take it past `--max-cost`: each turn may write only the output tokens that what is left of the cap buys after the turn's input tokens, which the API counts (or the request's size bounds, where it cannot count them). *(Amended in 1.3.0.)* |
 
 ## 10.7 The service
@@ -2127,6 +2131,51 @@ session holds the node's advisory lock for the process's life, and the roles it 
   claimed elsewhere, backed off up to `restart_max_seconds`, and answered 503, inviting a
   supervisor to restart the one healthy node; and a writer whose opening failed part-way
   held the chains it had opened until they were collected.)*
+
+## 10.8 The console
+
+*Added in 1.7.0.* `fiduciary console` serves, on loopback, a web console over the
+deployments a directory holds (each `fiduciary.toml` in it and one level down, or those
+named): an approvals desk, the bundle verifier, and, with `--sandbox` or under `fiduciary
+demo --serve`, a scratch deployment of each demo industry (`fiduciary.control`,
+`fiduciary.demo.sandbox`). The same page, written to disk, works with no console behind it.
+
+- **F10-20. The console decides nothing.** It reads each ticket from the deployment's log,
+  rendered from its signed bytes, beside what bears on it: the receipt a refusal cites
+  (what was measured, on what substrate, at which rung of the measurement ladder, how many
+  rows, tables and tenants), and a held message's outbound payload, read from the outbox
+  and shown with whether its SHA-256 is the `payload_hash` the ticket signs. It never
+  holds a principal's key and never writes a deployment's log. A vote is an approval the
+  principal signs: the console drafts it and returns its signing input (§3.4), which the
+  browser signs with the principal's key file, read in the page and never sent, or
+  `fiduciary approve` signs. The console checks the signature under the key the charter in
+  force pins for that principal and, only when started with `--accept-approvals`, puts the
+  approval into the intake, as `fiduciary submit` does. The deployment's writer records it,
+  forms the warrant and executes it at the heads it pins (§7). The approvals in the intake
+  that no record answers yet are shown as such.
+- **F10-21. Reading changes nothing.** A SQLite store is read from a copy taken with
+  SQLite's backup API; a database with no write-ahead log beside it is opened immutable, so
+  no `-wal` or `-shm` file is created either. A PostgreSQL store is read where it stands.
+  A recorded run on disk is never changed by the console, the sandbox included.
+- **F10-22. The boundary.** The console listens on loopback only; answers only requests
+  whose `Host` names its own address; refuses a request another site sends
+  (`Sec-Fetch-Site`), except a navigation to its page; takes a write only from its own
+  origin, as `application/json` (a bundle as `application/octet-stream`) with the
+  `X-Fiduciary-Console` header, which a cross-origin page cannot send without a preflight
+  the console never grants; bounds every body (256 KiB, a bundle 64 MiB) and refuses a
+  chunked one; serves only its page, bundles, reports and public pins (`pinned-keys.json`,
+  `charter.digest`, `attestation.json`), never keys, configurations or databases; and
+  answers a failure without its cause.
+- **F10-23. The verifier.** A bundle is verified in process, offline, V1 to V12 (§9.3),
+  against a charter digest pinned from outside it: a deployment's configured digest and
+  its `pinned-keys.json`, or a digest, keys and a witness given with the request; never
+  the bundle's own. The page also checks, with the browser's Web Crypto alone, what it can
+  without the verifier: the container and each member's digest (part of V1), the hash
+  chain and each record's and the manifest's Ed25519 signature (part of V9), and a sealed
+  bundle's seals (part of V10). It calls that a partial check, never a verdict.
+- **F10-24. The sandbox.** Each sandbox is the demo's deployment, built in a temporary
+  directory the console removes when it stops. There, and only there, the console holds
+  the principals' keys (the demo's own) and is the writer.
 
 ---
 
@@ -2514,4 +2563,5 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak | Implemented. `test_contention.py`, `test_cluster.py`, `test_soak.py` |
 | F10-9 to F10-11: crash points | 3 | crash | Implemented. `test_crash_recovery.py` |
 | F10-12 to F10-17, F10-19: the service and the cluster | 6 | process tests: a part restarted, a key reload refused, a leader killed and frozen; the new leader waiting, healthy | Implemented. `test_service.py`, `test_cluster.py`, `test_soak.py` |
+| F10-20 to F10-24: the console | 1.7.0 | each ticket class read from a recorded run and a sandbox; a vote signed outside the console checked under the charter's key, refused when altered or by another key, queued, and recorded by the deployment's writer; a recorded run's every byte unchanged after the console, its sandbox and its votes; the boundary's refusals; every golden bundle through the console's verifier; each substrate's presets | Implemented (1.7.0), both stores. `test_interactive_console.py` |
 | F10-18: upgrades in place | 6 | stores each 0.x release wrote, on both stores | Implemented. `test_upgrade.py` |

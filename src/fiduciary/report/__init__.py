@@ -11,6 +11,9 @@ writes one; ``fiduciary demo`` two, before and after its sixth act), and the
 demo's acts when there are any. A demo's payload also carries ``overview``
 (the industries, the measurement ladder and the acceptance matrix) and, when
 it ran more than one industry, ``domains``: a payload like this one for each.
+
+:func:`console_html` writes the same page with no attestation in it, for
+``fiduciary console``: what it shows comes from the console's own endpoints.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ from collections.abc import Mapping
 from importlib.resources import files
 from typing import Any, Final
 
-__all__ = ["html", "markdown", "payload"]
+__all__ = ["console_html", "html", "markdown", "payload"]
 
 _ASSETS: Final = files("fiduciary.report")
 
@@ -58,6 +61,26 @@ def html(data: Mapping[str, Any]) -> str:
         .replace("/*SCRIPT*/", script)
         .replace("/*DATA*/", _script_json(data))
         .replace("{{TITLE}}", f"{title}: {status.title()}")
+    )
+
+
+def console_html(title: str = "Fiduciary console", *, served: bool = False) -> str:
+    """The page ``fiduciary console`` serves over deployments with no recorded run."""
+    page = (_ASSETS / "console.html").read_text(encoding="utf-8")
+    style = (_ASSETS / "console.css").read_text(encoding="utf-8")
+    script = (_ASSETS / "console.js").read_text(encoding="utf-8")
+    data: dict[str, Any] = {
+        "attestations": {},
+        "primary": None,
+        "demo": None,
+        "console": title,
+        "served": served,
+    }
+    return (
+        page.replace("/*STYLE*/", style)
+        .replace("/*SCRIPT*/", script)
+        .replace("/*DATA*/", _script_json(data))
+        .replace("{{TITLE}}", title)
     )
 
 
