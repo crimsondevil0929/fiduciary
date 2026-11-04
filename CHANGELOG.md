@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.7.0] - unreleased
+## [1.7.0] - 2026-11-04
 
 The console: a web control plane on loopback over any deployment a `fiduciary.toml`
 names, and over the demo's runs. It decides nothing, holds no principal's key, and changes
