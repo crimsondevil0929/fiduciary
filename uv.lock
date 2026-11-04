@@ -547,7 +547,7 @@ sign = [
 [[package]]
 name = "interlock-escrow"
 version = "1.4.1"
-source = { git = "https://github.com/crimsondevil0929/interlock?rev=94547ed25c6fb48eb8fdcf10646c41aa45553ca0#94547ed25c6fb48eb8fdcf10646c41aa45553ca0" }
+source = { git = "https://github.com/crimsondevil0929/interlock?rev=c741d0219b7b054eda312d67eb106cf62f937dcd#c741d0219b7b054eda312d67eb106cf62f937dcd" }
 dependencies = [
     { name = "interlock-agentgov" },
 ]
@@ -607,8 +607,8 @@ requires-dist = [
     { name = "interlock-agentgov", extras = ["otel"], marker = "extra == 'otel'", specifier = ">=1.2.0" },
     { name = "interlock-agentgov", extras = ["sign"], specifier = ">=1.2.0" },
     { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'sign'", specifier = ">=1.2.0" },
-    { name = "interlock-escrow", git = "https://github.com/crimsondevil0929/interlock?rev=94547ed25c6fb48eb8fdcf10646c41aa45553ca0" },
-    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", git = "https://github.com/crimsondevil0929/interlock?rev=94547ed25c6fb48eb8fdcf10646c41aa45553ca0" },
+    { name = "interlock-escrow", git = "https://github.com/crimsondevil0929/interlock?rev=c741d0219b7b054eda312d67eb106cf62f937dcd" },
+    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", git = "https://github.com/crimsondevil0929/interlock?rev=c741d0219b7b054eda312d67eb106cf62f937dcd" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
 ]
 provides-extras = ["postgres", "sign", "kms-aws", "otel", "cedar", "demo"]
