@@ -1,0 +1,70 @@
+name: Pages
+
+# The console as a public, static page (https://crimsondevil0929.github.io/fiduciary/),
+# with the demo's bundles beside it and SHA256SUMS to pin both. Built from the commit by
+# `fiduciary demo --domain all` (offline, no model, no secret) on every pull request;
+# deployed from main only.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build the site
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen --python 3.12
+
+      - name: Build the site
+        run: uv run python scripts/build_site.py site
+
+      # What the page will say of each bundle it links: every bundle verifies as the run
+      # recorded (before passes, after names its break-glass act), and the page's own
+      # browser checks pass on each.
+      - name: The site's bundles verify, offline and in the browser's checks
+        run: uv run python scripts/check_site.py site
+
+      - name: The checksums cover the page and every bundle
+        working-directory: site
+        run: sha256sum -c --quiet SHA256SUMS
+
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
+        with:
+          path: site
+
+  deploy:
+    name: deploy to GitHub Pages
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

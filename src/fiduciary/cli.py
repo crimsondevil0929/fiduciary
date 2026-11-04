@@ -1395,6 +1395,53 @@ def _serve_dashboard(root: Path, where: str) -> tuple[Any, str]:
     return server, server.url
 
 
+def _notify(args: argparse.Namespace) -> int:
+    """``fiduciary notify``: deliver what each webhook is due, or a test notice."""
+    import time
+
+    from fiduciary.notify import Notice, for_store, request_for
+
+    config = _config(args)
+    if config.notify is None:
+        _fail("the configuration has no [notify]")
+    try:
+        store = _opened(config.open_store())
+        notifier = for_store(config.notify, store)
+    except (OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc))
+    if args.test is not None:
+        hook = next((h for h in config.notify.webhooks if h.name == args.test), None)
+        if hook is None:
+            _fail(f"no webhook named {args.test!r}")
+        notice = Notice(
+            "fn_test_" + str(int(time.time())),
+            "notice.test",
+            {
+                "v": "fiduciary-notice/1",
+                "id": "fn_test",
+                "event": "notice.test",
+                "deployment": config.notify.deployment,
+                "log": {"seq": 0, "hash": "0" * 64},
+            },
+        )
+        try:
+            body, headers = request_for(notice, hook, signer=notifier._signer)
+            from fiduciary.notify import _send
+
+            status = _send(hook.url, body, headers, hook.timeout)
+        except (OSError, ValueError) as exc:
+            _fail(f"{hook.name}: {exc}", REFUSED)
+        _out(f"{hook.name}: answered {status}")
+        return OK if 200 <= status < 300 else REFUSED
+    while True:
+        for name, count in notifier.turn().items():
+            if count:
+                _out(f"{name}: {count} notice(s) delivered")
+        if args.once:
+            return OK
+        time.sleep(args.every)
+
+
 def _console(args: argparse.Namespace) -> int:
     """``fiduciary console``: the approvals desk and the bundle verifier, on loopback."""
     from fiduciary.control import Console, run, serve
@@ -1683,6 +1730,15 @@ def _parser() -> argparse.ArgumentParser:
         "--report", metavar="PATH", help="also write the attestation report: a .html or .md file"
     )
     check.set_defaults(handler=_verify_bundle)
+
+    notify = commands.add_parser(
+        "notify",
+        help="tell each [notify] webhook when a ticket waits and when it is decided",
+    )
+    notify.add_argument("--once", action="store_true", help="deliver what is due, then stop")
+    notify.add_argument("--every", type=float, default=2.0, help="seconds between turns")
+    notify.add_argument("--test", metavar="WEBHOOK", help="send one test notice to a webhook")
+    notify.set_defaults(handler=_notify)
 
     console = commands.add_parser(
         "console",

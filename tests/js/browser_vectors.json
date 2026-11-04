@@ -1,0 +1,647 @@
+{
+ "bundle's own keys": {
+  "unreadable-not-a-tar": {
+   "container": "fail"
+  },
+  "v1-byte-changed": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "fail",
+   "signatures": "pass"
+  },
+  "v1-member-deleted": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "fail",
+   "signatures": "pass"
+  },
+  "v1-member-duplicated": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "fail",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v1-members-out-of-order": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "fail",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v10-own-record-withheld": {
+   "anchors": "fail",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "seals": "pass",
+   "signatures": "pass"
+  },
+  "v10-unanchored-record": {
+   "anchors": "fail",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v10-withheld-rewritten": {
+   "anchors": "fail",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "skip",
+   "members": "pass",
+   "seals": "pass",
+   "signatures": "pass"
+  },
+  "v11-commit-after-revocation": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v12-records-ahead-of-the-ledger": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v2-wrong-pinned-charter": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v3-child-broader-than-parent": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v3-mandate-one-approval-short": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v4-other-deployment": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v5-other-receipt-key": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v6-other-ledger-key": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v6-witness-never-cosigned": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v7-break-glass-release": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v7-manual-release": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v7-raw-reset": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v7-unmandated-delegation": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v7-unmandated-plan": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v8-executed-after-not-after": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v8-false-rule-predicate": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v8-head-moved": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v8-warrant-one-approval-short": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v9-log-edited-manifest-rewritten": {
+   "anchors": "pass",
+   "chain": "fail",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "skip",
+   "members": "pass",
+   "signatures": "fail"
+  },
+  "v9-manifest-signed-by-another": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "fail",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v9-other-service-key": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "fail"
+  },
+  "v9-withheld-dropped": {
+   "anchors": "pass",
+   "chain": "fail",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "skip",
+   "members": "pass",
+   "seals": "pass",
+   "signatures": "pass"
+  },
+  "valid-held-release": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "valid-lineage-at-work": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "valid-phase-4-lifecycle": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "valid-sealed-child": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "seals": "pass",
+   "signatures": "pass"
+  }
+ },
+ "pinned keys": {
+  "unreadable-not-a-tar": {
+   "container": "fail"
+  },
+  "v1-byte-changed": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "fail",
+   "pins": "fail",
+   "signatures": "pass"
+  },
+  "v1-member-deleted": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "fail",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v1-member-duplicated": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "fail",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v1-members-out-of-order": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "fail",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v10-own-record-withheld": {
+   "anchors": "fail",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "seals": "pass",
+   "signatures": "pass"
+  },
+  "v10-unanchored-record": {
+   "anchors": "fail",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v10-withheld-rewritten": {
+   "anchors": "fail",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "skip",
+   "members": "pass",
+   "pins": "pass",
+   "seals": "pass",
+   "signatures": "pass"
+  },
+  "v11-commit-after-revocation": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v12-records-ahead-of-the-ledger": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v2-wrong-pinned-charter": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v3-child-broader-than-parent": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v3-mandate-one-approval-short": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v4-other-deployment": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v5-other-receipt-key": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "fail",
+   "signatures": "pass"
+  },
+  "v6-other-ledger-key": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "fail",
+   "signatures": "pass"
+  },
+  "v6-witness-never-cosigned": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v7-break-glass-release": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v7-manual-release": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v7-raw-reset": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v7-unmandated-delegation": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v7-unmandated-plan": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v8-executed-after-not-after": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v8-false-rule-predicate": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v8-head-moved": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v8-warrant-one-approval-short": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v9-log-edited-manifest-rewritten": {
+   "anchors": "pass",
+   "chain": "fail",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "skip",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "fail"
+  },
+  "v9-manifest-signed-by-another": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "fail",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v9-other-service-key": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "fail"
+  },
+  "v9-withheld-dropped": {
+   "anchors": "pass",
+   "chain": "fail",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "skip",
+   "members": "pass",
+   "pins": "pass",
+   "seals": "pass",
+   "signatures": "pass"
+  },
+  "valid-held-release": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "valid-lineage-at-work": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "valid-phase-4-lifecycle": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "valid-sealed-child": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "seals": "pass",
+   "signatures": "pass"
+  }
+ }
+}
