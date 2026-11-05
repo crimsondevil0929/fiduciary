@@ -6,6 +6,62 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.9.0] - unreleased
+
+A new deployment pointed at the system an agent will change; each vendor's own log
+reconciled against what the relays delivered; and a console and demo redrawn and rewritten
+in plain sentences. Requires `interlock-escrow` 1.4.2 and `interlock-agentgov` 1.3.0.
+
+### Added
+
+- **`fiduciary init --substrate sqlite|postgres|git|kubernetes|terraform|fhir`**
+  (`fiduciary.starters`, spec §10.10, F10-31 to F10-33).
+  - It reads the target and writes starter tool bindings for it:
+    - SQLite and PostgreSQL: `insert_<table>` and `update_<table>` for each table it can
+      read (`--table` picks some);
+    - Git: `write_file` and `replace_in_file`;
+    - Kubernetes: `scale_deployment` and `set_image`;
+    - Terraform: `set_<variable>` for each input variable;
+    - FHIR: `set_<type>_status` for each `--type`.
+  - The starter mandate allows inserts and updates, one row or object a plan, at most 120
+    plans an hour, and no delete. On Git it refuses writes to CI, infrastructure,
+    dependency and governance files; on Kubernetes, a scale-up past three times the
+    replicas.
+  - Columns and variables FIDU1 can't hold exactly are left out and named.
+  - On PostgreSQL it writes `grants.sql` for the stage role, which must not be a
+    superuser. On Terraform it adds `interlock_stage.tf` when the configuration has no
+    stage marker, and says so.
+  - Each deployment's README lists the substrate's remaining setup.
+- **Delivery receipts and vendor logs in the demo** (`fiduciary.demo.vendor_logs`).
+  - Every deployment's relays settle what they delivered, so each request has a delivery
+    receipt (interlock's ARC1-delivery) in `receipts.jsonl`.
+  - Fintech, supply chain and SaaS keep the vendor's own log in `audit/`: Stripe's Events
+    API, the EDI partner's records and SendGrid's Event Webhook.
+  - Each break-glass scenario adds a change made in the vendor's own tools: a Dashboard
+    refund, an EDI order sent directly, an invitation sent from SendGrid.
+  - Each audit scenario runs `agentgov reconcile-actions` over the log. It matches every
+    request the deployment made and names the one it didn't. The console shows the result.
+- **Recorded runs retold** (`fiduciary.demo.narration`). Scenario titles and ledes are data.
+  `scripts/stack_dashboard.py --keep` rewrites a recorded run's wording and leaves its
+  model calls byte-identical.
+
+### Changed
+
+- **The console, redrawn** (`report/console.css`, `report/console.js`). One type scale,
+  hairline rules, tabular numerals, mono for wire data, and a dark and a light palette.
+  The scenarios show the pipeline a call goes through (stage, measure, adjudicate, commit
+  or put back), the measurement rung, the quorum's slots, and the verifier's V1 to V12 as a
+  grid. Routes, requests and checks are unchanged.
+- **Plain prose** in the console, the demo's scenarios, the Markdown report and the README.
+  The demo's scenarios are numbered, not called acts, and read as incident traces.
+- The desk shows delivery receipts as the requests they delivered (F10-20, amended).
+- A tool call that fails because the substrate is set up wrong, or can't be reached, is
+  logged at `WARNING` by `fiduciary.bridge` with the cause. The agent is told only that
+  nothing was tried.
+- Requires `interlock-escrow>=1.4.2` (feedback that says a substrate is misconfigured, not
+  unreachable) and `interlock-agentgov>=1.3.0` (the `stripe-events` and `sendgrid-events`
+  parsers).
+
 ## [1.8.0] - 2026-11-04
 
 An agent's MCP server, governed from its own tool list; the approvers told when they are

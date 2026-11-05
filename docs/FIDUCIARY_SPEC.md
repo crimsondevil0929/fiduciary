@@ -2042,7 +2042,7 @@ of them.
 | `fiduciary init --out DIR [--name N] [--principal NAME]... [--mcp -- COMMAND]` | Write a deployment ready to run, governing an MCP server's tools by their annotations (§10.10). *(Added in 1.8.0.)* |
 | `fiduciary notify [--once] [--test WEBHOOK]` | Deliver each `[notify]` webhook's notices from its cursor, or send one test notice (§10.9). *(Added in 1.8.0.)* |
 | `fiduciary console [--dir DIR] [--deployment FILE] [--listen HOST:PORT] [--accept-approvals] [--sandbox]` | Serve the console on loopback (§10.8): the approvals desk, votes the principal signs in the browser, the bundle verifier and, with `--sandbox`, the demo industries in scratch. `fiduciary demo --serve` serves the same console over the run, its deployments read and never written. *(Added in 1.7.0.)* |
-| `fiduciary demo [--out DIR] [--report DIR\|FILE] [--serve [HOST:PORT]] [--open] [--live]` | Stand up a deployment of its own in a new directory and play seven acts against it and against an input gateway of Cedar policies (`cedarpy` with the `cedar` extra; otherwise a built-in evaluator of the same policies, which says so): a discount whose trigger collapses an order's total, a dispute flag whose trigger reaches four tenants, fifty sub-agent sessions against one lineage's window and a child wider than its parent, a relay killed between the vendor's answer and its record, a held message released on a 2-of-3 warrant, a break-glass release outside any warrant, and both bundles verified with sockets refused and scanned for every row, payload, prompt and secret the deployment holds. Writes the console (`dashboard.html`), both bundles, the attestation and a `fiduciary.toml` the other commands open. Exit 0 when the bundle before the break-glass act verifies, the one after it exits 7, and nothing planted is found; 1 otherwise; 2 on a usage error. `--live` puts a Claude model in front of the first act, reading `BENCHMARK_API_KEY` only, metered and stopped at `--max-cost`. *(Added in 1.1.0.)* `--domain` picks the industry: `fintech` (the default, the acts above), `healthcare`, `sre`, `supply-chain` or `saas`, each a deployment of its own on the same engine with its own schema, triggers, mandate, principals and break-glass key, playing the same arc in seven acts; or `all`, fintech in the directory and each pack in a subdirectory named for it, behind one console that switches between them. Every console opens on an overview: the industries, which ran, what in the engine refused what (counted from the measured plans), the measurement classes, and the acceptance matrix interlock recorded. The exit code covers every industry run. `--live` puts the model in front of fintech's first act and each pack's second (its hidden cascade), each act stopped at `--max-cost`; the other acts replay. *(Amended in 1.2.0.)* `--domain coding-agent` stages on Git, not SQL: a bare repository with a code-generator hook, staged and committed by interlock's Git substrate (`interlock.git_substrate`, interlock 1.1.0), with the deployment's SQLite file as its control database (outbox, inbox, windows). Its acts are a fix committed as one commit at the measured head; one edit that the hook turns into 36 files; an injected workflow edit and a deleted test; a teammate's push while a change is staged, which leaves the change uncommitted and is named by reconciliation; a dependency bump that commits only with CI's signed result for its exact bytes (F8-2), and only the part that passes, on a 2-of-3 `accept_repair` warrant at the head the maintainers reviewed; and an administrator's hotfix through the deployment's own engine, outside any session, which V7 names offline. The pack runs where the installed interlock has the Git substrate and is left out where it does not. Its `interlock.toml` names `substrate = "git"`, and its `fiduciary.toml` opens the deployment as every other's does. A live act's model calls never take it past `--max-cost`: each turn may write only the output tokens that what is left of the cap buys after the turn's input tokens, which the API counts (or the request's size bounds, where it cannot count them). *(Amended in 1.3.0.)* |
+| `fiduciary demo [--out DIR] [--report DIR\|FILE] [--serve [HOST:PORT]] [--open] [--live]` | Stand up a deployment of its own in a new directory and play seven acts against it and against an input gateway of Cedar policies (`cedarpy` with the `cedar` extra; otherwise a built-in evaluator of the same policies, which says so): a discount whose trigger collapses an order's total, a dispute flag whose trigger reaches four tenants, fifty sub-agent sessions against one lineage's window and a child wider than its parent, a relay killed between the vendor's answer and its record, a held message released on a 2-of-3 warrant, a break-glass release outside any warrant, and both bundles verified with sockets refused and scanned for every row, payload, prompt and secret the deployment holds. Writes the console (`dashboard.html`), both bundles, the attestation and a `fiduciary.toml` the other commands open. Exit 0 when the bundle before the break-glass act verifies, the one after it exits 7, and nothing planted is found; 1 otherwise; 2 on a usage error. `--live` puts a Claude model in front of the first act, reading `BENCHMARK_API_KEY` only, metered and stopped at `--max-cost`. *(Added in 1.1.0.)* `--domain` picks the industry: `fintech` (the default, the acts above), `healthcare`, `sre`, `supply-chain` or `saas`, each a deployment of its own on the same engine with its own schema, triggers, mandate, principals and break-glass key, playing the same arc in seven acts; or `all`, fintech in the directory and each pack in a subdirectory named for it, behind one console that switches between them. Every console opens on an overview: the industries, which ran, what in the engine refused what (counted from the measured plans), the measurement classes, and the acceptance matrix interlock recorded. The exit code covers every industry run. `--live` puts the model in front of fintech's first act and each pack's second (its hidden cascade), each act stopped at `--max-cost`; the other acts replay. *(Amended in 1.2.0.)* `--domain coding-agent` stages on Git, not SQL: a bare repository with a code-generator hook, staged and committed by interlock's Git substrate (`interlock.git_substrate`, interlock 1.1.0), with the deployment's SQLite file as its control database (outbox, inbox, windows). Its acts are a fix committed as one commit at the measured head; one edit that the hook turns into 36 files; an injected workflow edit and a deleted test; a teammate's push while a change is staged, which leaves the change uncommitted and is named by reconciliation; a dependency bump that commits only with CI's signed result for its exact bytes (F8-2), and only the part that passes, on a 2-of-3 `accept_repair` warrant at the head the maintainers reviewed; and an administrator's hotfix through the deployment's own engine, outside any session, which V7 names offline. The pack runs where the installed interlock has the Git substrate and is left out where it does not. Its `interlock.toml` names `substrate = "git"`, and its `fiduciary.toml` opens the deployment as every other's does. A live act's model calls never take it past `--max-cost`: each turn may write only the output tokens that what is left of the cap buys after the turn's input tokens, which the API counts (or the request's size bounds, where it cannot count them). *(Amended in 1.3.0.)* Each deployment's relays settle what they delivered, so the outbox holds a delivery receipt (interlock's ARC1-delivery) for each request. In fintech, supply chain and SaaS, whose effects are requests only, the vendor keeps its own log (Stripe's Events API, an EDI partner's records, SendGrid's Event Webhook), written to `audit/`. The break-glass act adds a change made in the vendor's own tools, and the audit act reconciles the log against the delivery receipts with `agentgov reconcile-actions` (interlock-agentgov 1.3.0). It matches every request the deployment made and names the one it did not. `--keep` with a recorded run rewrites the scenario titles and the console from their current wording and leaves the recorded model calls as they were. *(Amended in 1.9.0.)* |
 
 ## 10.7 The service
 
@@ -2191,6 +2191,11 @@ binding it pins, with how a call to it is governed. It also shows the latest rec
 (`GET /api/deployments/<id>/profile`). A notice's link opens one ticket in the desk
 (`#/desk?d=<deployment>&t=<ticket>`).
 
+*Amended in 1.9.0* (F10-20): the desk's receipts include delivery receipts (ARC1-delivery,
+interlock's relay). Each is shown as the request it delivered: request-only (rung R), on its
+sink, with the vendor's reference and status code and the action receipt it is bound to.
+The page's appearance was redrawn; its routes, requests and checks are unchanged.
+
 ## 10.9 Notices
 
 *Added in 1.8.0.* `[notify]` names webhooks to be told when a ticket waits for a quorum and
@@ -2245,6 +2250,45 @@ run (`fiduciary.init`), using the builder that stands up each demo industry.
   `fiduciary mcp serve` run the triggers in their turn, as `fiduciary serve` does: a call
   held for a warrant is ticketed. A committed call whose request is held tells the agent
   so, and that the request is not yet made.
+
+*Added in 1.9.0.* `fiduciary init --out DIR --substrate KIND` writes the same deployment for a
+system an agent will change, with starter tool bindings for it (`fiduciary.starters`).
+`KIND` is `sqlite`, `postgres`, `git`, `kubernetes`, `terraform` or `fhir`.
+
+- **F10-31. Starter bindings, read from the system.** Init reads what it can of the target
+  and binds conservative tools to it:
+
+  | Substrate | Read from | Starter tools |
+  |---|---|---|
+  | `sqlite` | the file's schema (`PRAGMA`) | `insert_<table>`, and `update_<table>` by its primary key (a table without one by `rowid`) |
+  | `postgres` | `pg_catalog`, by the schema's oids, so a table the role may not read is still listed | the same, schema-qualified, with psycopg's named parameters; a table without a single-column primary key is left out |
+  | `git` | the repository and branch named | `write_file` and `replace_in_file` |
+  | `kubernetes` | the API server and namespaces named | `scale_deployment` and `set_image` |
+  | `terraform` | the configuration's `*.tf` files | `set_<variable>` for each input variable of type string, number or bool |
+  | `fhir` | the server and resource types named | `set_<type>_status` |
+
+  There is no delete tool: the compiler refuses a binding whose declared effect the mandate
+  does not allow (§6.2), and the starter mandate allows no delete. A column or variable
+  whose values FIDU1 cannot hold exactly (a float, binary data, JSON) is left out, and
+  named, as is a table the substrate cannot observe. The database's and Interlock's own
+  tables are never bound.
+- **F10-32. A starter mandate that allows one change at a time.** The root mandate allows
+  inserts and updates to the tables read, one row or object a plan (ten resources a plan on
+  Terraform, where one variable may reach several), and at most 120 plans an hour per
+  lineage where the substrate has a control database for the window's history. Terraform
+  has none, so it has no window. On Git it allows source, tests, docs and other files, so a
+  write to CI, infrastructure, dependency or governance files is refused. On Kubernetes a
+  plan may not raise a deployment's replicas past three times what they were. Allowing more
+  takes a new mandate version, which two of the three principals issue.
+- **F10-33. The substrate's own setup, written beside it.** The `interlock.toml` init writes
+  opens the substrate, its control database and its journal. On PostgreSQL the outbox and
+  windows live in the target database, the stage role is the DSN's user (which must not be
+  a superuser, since a superuser passes every grant), and init writes `grants.sql`, the
+  grants that make the bound tables the role's whole boundary, to be run by the tables'
+  owner before `interlock install`. On Terraform, a configuration with no
+  `interlock_stage_id` variable gets `interlock_stage.tf`, the marker Interlock reads back
+  on recovery, and init says it added it. The README init writes gives the substrate's
+  remaining setup steps.
 
 ---
 
@@ -2626,7 +2670,7 @@ SQLite and on PostgreSQL. The test kinds:
 | F8-10, F8-11: the trust boundary | 4 | in process, a session refuses to start without the setting | Implemented. `test_bridge.py` |
 | F9-1: no row data | 5, 6 | the security audit | Implemented. `test_security_audit.py`, `test_bundle_export.py` |
 | F9-2, F9-3: self-contained, offline, specified | 5 | the offline run; golden bundles; byte-identical exports | Implemented, with the limits above. `test_bundle_tamper.py`, `test_bundle_vectors.py` |
-| F9-4: reports (`--json`, `--report`) and `fiduciary demo` | after 6 | every golden bundle's exit code and findings through `--json`; the demo's seven acts, measured; the control-framework packs by digest; each domain pack's acts, measured | Implemented (1.1.0; packs and domains 1.2.0; the coding-agent pack, on Git, 1.3.0), SQLite. `test_attest.py`, `test_demo.py`, `test_packs.py`, `test_coding_agent.py` |
+| F9-4: reports (`--json`, `--report`) and `fiduciary demo` | after 6 | every golden bundle's exit code and findings through `--json`; the demo's seven acts, measured; the control-framework packs by digest; each domain pack's acts, measured; each request-only industry's vendor log reconciled against its delivery receipts; a recorded run retold with its model calls byte-identical | Implemented (1.1.0; packs and domains 1.2.0; the coding-agent pack, on Git, 1.3.0; vendor logs and retelling 1.9.0), SQLite. `test_attest.py`, `test_demo.py`, `test_packs.py`, `test_coding_agent.py`, `test_vendor_logs.py`, `test_narration.py` |
 | F9-5 to F9-7: sealed bundles and sealed logs | 1.4.0 | a lineage's own record withheld, by an exporter that signs the manifest; a key swapped, left out, or a lineage below left out; another lineage's record carried; the seal vectors | Implemented (1.4.0). `test_sealed_bundles.py`, `test_vectors.py`, `test_bundle_vectors.py`, `test_cli_bundle.py` |
 | F10-1 to F10-4: the stores | 1, 3 | the projection fold; append-only enforcement on both stores; the intake role | Implemented. `test_store.py`, `test_postgres.py`, `test_upgrade.py` |
 | F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak | Implemented. `test_contention.py`, `test_cluster.py`, `test_soak.py` |
@@ -2636,4 +2680,6 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-23 (1.8.0): the page's bundle checks | 1.8.0 | the module run by Node over all 35 golden bundles: no false alarm; every V1, V9 or V10 failure caught with pinned keys; each outcome pinned | Implemented (1.8.0). `test_browser_verifier.py`; the site's bundles, `scripts/check_site.py` |
 | F10-25 to F10-27: notices | 1.8.0 | a held ticket, its warrant and execution told in order and signed; a failure retried as the same notice; Slack and PagerDuty shapes; the configuration's refusals; the CLI against a local receiver | Implemented (1.8.0). `test_notify.py` |
 | F10-28 to F10-30: `fiduciary init` | 1.8.0 | each annotation's governance; a tool the grammar cannot hold left out; a deployment run as written: the proxy, a read, a released write, a held one ticketed, two votes, the warrant executed, the relay's calls on the server; a live model through the proxy | Implemented (1.8.0). `test_init.py`; `scripts/init_live.py` |
+| F10-31 to F10-33: `fiduciary init --substrate` | 1.9.0 | each of the six substrates written and served through `fiduciary mcp serve`: an allowed write committed, a wider one refused before anything changed; a keyless SQLite table by `rowid`; PostgreSQL's stage role, `grants.sql` and a signed install; Terraform's marker added; the missing-argument refusals | Implemented (1.9.0), SQLite; PostgreSQL where the test DSN is set; Terraform where `tofu` or `terraform` is installed. `test_init_substrates.py` |
+| F10-20 (1.9.0): delivery receipts in the desk | 1.9.0 | a sandbox's receipts include the relay's delivery receipts, shown request-only on their sink | Implemented (1.9.0). `test_interactive_console.py` |
 | F10-18: upgrades in place | 6 | stores each 0.x release wrote, on both stores | Implemented. `test_upgrade.py` |

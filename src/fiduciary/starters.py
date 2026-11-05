@@ -16,8 +16,9 @@ Substrate       Starter tools
 ==============  ==================================================================
 
 There are no delete tools. The starter mandate allows inserts and updates, one
-row or object per plan, and nothing else. A call whose measured change goes
-further is refused before anything changes, and the agent is told why: a
+row or object per plan (ten resources on Terraform), and nothing else. A call
+whose measured change goes further is refused before anything changes, and the
+agent is told why: a
 trigger that writes a second row, a Git write that lands in the repository's CI,
 infrastructure, dependency or governance files, a scale-up past triple the
 replicas, a Terraform plan that replaces or destroys a resource. Allowing more
