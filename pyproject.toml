@@ -58,12 +58,6 @@ dev = [
     "cedarpy>=4.12",
 ]
 
-[tool.uv.sources]
-# Until interlock-escrow 1.4.1 is on PyPI: the commit this release is built against
-# (interlock's feat/wave5-real-systems). Remove before tagging, and relock. The wheel's
-# metadata names the PyPI version only.
-interlock-escrow = { git = "https://github.com/crimsondevil0929/interlock", rev = "c741d0219b7b054eda312d67eb106cf62f937dcd" }
-
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra --strict-markers --strict-config"

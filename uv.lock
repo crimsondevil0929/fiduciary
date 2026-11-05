@@ -547,9 +547,13 @@ sign = [
 [[package]]
 name = "interlock-escrow"
 version = "1.4.1"
-source = { git = "https://github.com/crimsondevil0929/interlock?rev=c741d0219b7b054eda312d67eb106cf62f937dcd#c741d0219b7b054eda312d67eb106cf62f937dcd" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "interlock-agentgov" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c6/16/2b7695ecc8e3dd74b97ff7358d26955b3b2fd15e6d9b42463a81e777887c/interlock_escrow-1.4.1.tar.gz", hash = "sha256:d42774c3635c103f21df05455a34c0aab59ff53b12d6a7441381d99913a1e97c", size = 1559631, upload-time = "2026-11-05T05:29:48.275Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2f/4a/2a82fbd1eeac7467ccc81d995e194ffb9326eff18a4e62d57b9919fad814/interlock_escrow-1.4.1-py3-none-any.whl", hash = "sha256:5a1d4dbc0198896313eddd37afd7a2209d32506b4c2cf4f5182886b2591d806b", size = 625040, upload-time = "2026-11-05T05:29:46.66Z" },
 ]
 
 [package.optional-dependencies]
@@ -607,8 +611,8 @@ requires-dist = [
     { name = "interlock-agentgov", extras = ["otel"], marker = "extra == 'otel'", specifier = ">=1.2.0" },
     { name = "interlock-agentgov", extras = ["sign"], specifier = ">=1.2.0" },
     { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'sign'", specifier = ">=1.2.0" },
-    { name = "interlock-escrow", git = "https://github.com/crimsondevil0929/interlock?rev=c741d0219b7b054eda312d67eb106cf62f937dcd" },
-    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", git = "https://github.com/crimsondevil0929/interlock?rev=c741d0219b7b054eda312d67eb106cf62f937dcd" },
+    { name = "interlock-escrow", specifier = ">=1.4.1" },
+    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=1.4.1" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
 ]
 provides-extras = ["postgres", "sign", "kms-aws", "otel", "cedar", "demo"]

@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.8.0] - unreleased
+## [1.8.0] - 2026-11-04
 
 An agent's MCP server, governed from its own tool list; the approvers told when they are
 needed; and the browser's bundle checks held to every golden bundle in CI, and published.
