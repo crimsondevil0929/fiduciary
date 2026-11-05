@@ -1057,7 +1057,7 @@ def measured(result: StageResult) -> dict[str, Any]:
     verdict = result.verdict
     found["checkers_run"] = sorted(verdict.checkers_run) if verdict is not None else []
     if result.state.value == "compensated":
-        # Written, read back, and put back (1.6.0): nothing of it stands.
+        # Written, read back, and put back (1.6.0): the system is as it was.
         found["compensated"] = True
     distinct = {(d.table, d.primary_key) for d in (result.diff.deltas if result.diff else ())}
     found["tables"] = dict(sorted(Counter(table for table, _ in distinct).items()))

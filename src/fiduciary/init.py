@@ -129,7 +129,7 @@ def classify(tool: Mapping[str, Any]) -> tuple[str, str]:
         return WRITE, "a write the server marks non-destructive (destructiveHint: false)"
     if hints.get("destructiveHint") is True:
         return HELD, "the server marks it destructive (destructiveHint)"
-    return HELD, "a write that says nothing of its effects: destructive, by MCP's default"
+    return HELD, "a write with no destructiveHint, which MCP treats as destructive"
 
 
 def schema_of(schema: object, path: str = "inputSchema") -> dict[str, Any]:

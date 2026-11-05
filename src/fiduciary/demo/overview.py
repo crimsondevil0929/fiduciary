@@ -1,13 +1,13 @@
-"""The console's overview: the same engine in six industries, on SQL, Git,
-Kubernetes and a FHIR server, the measurement ladder, and the live
-acceptance matrix interlock recorded.
+"""The console's overview: the same engine in six industries (on SQL, Git,
+Kubernetes and a FHIR server), the measurement ladder, and the live acceptance
+matrix Interlock recorded.
 
-:func:`overview` reads the payloads of the domains a run played and says,
-from what each one measured, which part of the engine refused a plan, formed
-a warrant, named a break-glass act or verified offline. A domain that did not
-run says so: a pack on a slide is a promise, and only a pack that ran is
-evidence. The coding-agent pack runs only where the installed interlock has
-its Git substrate.
+:func:`overview` reads the payloads of the industries a run played and counts,
+from what each one measured, which check refused a plan, which warrants formed,
+whether a break-glass action was found and whether the bundles verified offline.
+An industry that didn't run is marked as not run, and nothing is counted for it.
+The coding-agent pack runs only where the installed Interlock has its Git
+substrate.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ INDUSTRIES: Final = (
     {
         "key": "coding-agent",
         "industry": "Coding agents",
-        "title": "A repository maintainer agent, on a Git branch",
+        "title": "A maintainer agent on a Git repository",
         "frameworks": ["soc2", "iso27001", "nist800_53"],
         "class": "T",
         "substrate": "Git",
@@ -63,37 +63,38 @@ LADDER: Final = (
     {
         "class": "T",
         "name": "Transactional",
-        "promise": "What was measured is exactly what committed, or nothing committed.",
-        "where": "SQLite and PostgreSQL; a Git branch, by compare-and-swap of its ref (shipped); "
-        "an atomic directory swap next",
+        "promise": "The change runs inside a transaction. What commits is exactly what was "
+        "measured, or nothing commits.",
+        "where": "SQLite and PostgreSQL, and a Git branch moved by compare-and-swap. An atomic "
+        "directory swap is next.",
         "shipped": True,
     },
     {
         "class": "P",
         "name": "Plan-bound",
-        "promise": "What was measured is the plan that was applied, and the apply refuses if "
-        "the system has moved.",
-        "where": "a Kubernetes API server's dry run, admission webhooks included, applied on the "
-        "resourceVersion measured; Terraform and OpenTofu saved plans, on the state's serial "
-        "(shipped)",
+        "promise": "The system's own dry run or saved plan is measured, and the apply is "
+        "refused if the system moved in between.",
+        "where": "A Kubernetes API server's dry run, admission webhooks included, applied on the "
+        "measured resourceVersion. Terraform and OpenTofu saved plans, applied on the state's "
+        "serial.",
         "shipped": True,
     },
     {
         "class": "V",
         "name": "Predicted and verified",
-        "promise": "The before image was read, the after image predicted, the write made "
-        "conditional, and the result read back and compared.",
-        "where": "a FHIR R4 server: the chart read with its versions, the write on If-Match, "
-        "the chart read back against the prediction (shipped); Salesforce, ServiceNow, Jira "
-        "and Workday next",
+        "promise": "The current state is read and the result predicted. The write is "
+        "conditional on the version read, then read back and compared with the prediction.",
+        "where": "A FHIR R4 server, with each write on If-Match. Salesforce, ServiceNow, Jira and "
+        "Workday are next.",
         "shipped": True,
     },
     {
         "class": "R",
         "name": "Request-only",
-        "promise": "The request was measured, judged and delivered exactly once; the effect "
-        "itself is the vendor's signed word.",
-        "where": "every outbound request in every pack: Stripe, FHIR, EDI, the cloud API, email",
+        "promise": "The request is measured, judged and delivered once. What it does is up to "
+        "the vendor, so the vendor's log is reconciled against the delivery receipts.",
+        "where": "Every outbound request in every industry: Stripe, a pharmacy, EDI, a cloud API, "
+        "email.",
         "shipped": True,
     },
 )
@@ -114,8 +115,8 @@ ACCEPTANCE: Final = {
     "generated": "2026-10-11",
     "interlock": "1.0.0",
     "source": "interlock, docs/CUSTOMER_ACCEPTANCE_MATRIX.md",
-    "note": "A recorded live run: one policy function builds every domain's checkers, and "
-    "only table names, column names and limits differ. This dashboard does not re-run it.",
+    "note": "A recorded live run. One policy function builds every domain's checks, and only "
+    "table names, column names and limits differ. This dashboard doesn't run it again.",
 }
 
 ENGINE: Final = (
@@ -127,10 +128,10 @@ ENGINE: Final = (
     ("table_allowlist", "TableAllowlist", "plans refused"),
     ("no_delete", "NoDelete", "plans refused"),
     ("rate_window", "RateWindow", "plans refused"),
-    ("stale_head", "Commit only at the measured head or version", "plans refused"),
-    ("read_back", "Read back, and put back", "plans undone"),
+    ("stale_head", "Commit only on the measured version", "plans refused"),
+    ("read_back", "Read back and put back", "plans undone"),
     ("warrant", "Quorum warrant", "formed"),
-    ("break-glass", "Break-glass act named offline", "named"),
+    ("break-glass", "Break-glass action found offline", "named"),
     ("offline", "Bundle verified offline", "verified"),
 )
 

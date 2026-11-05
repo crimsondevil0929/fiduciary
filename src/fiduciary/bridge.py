@@ -961,7 +961,7 @@ class Session:
         except CompensatedError as exc:
             # Admitted and written, then put back from the undo written first
             # (a class P apply that failed part way, a class V read-back that
-            # was not the prediction): nothing of the plan stands (1.6.0).
+            # was not the prediction): the system is as it was (1.6.0).
             feedback = (
                 exc.feedback
                 if isinstance(exc.feedback, AgentFeedback)

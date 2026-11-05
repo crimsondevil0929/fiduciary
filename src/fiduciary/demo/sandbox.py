@@ -92,8 +92,8 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "cascade",
                 "refused",
                 "Flag order 17 disputed",
-                "The gateway permits it. A settlement trigger holds 49 more orders across "
-                "four tenants; the stage measures that and rolls it back.",
+                "The gateway allows it. A settlement trigger puts 49 more orders across four "
+                "tenants on hold, and the stage measures that and rolls it back.",
                 "flag_dispute",
                 {"order_id": 17},
                 "acme",
@@ -102,7 +102,7 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "held",
                 "held",
                 "Refund $25.00 on order 25, refunds paused",
-                "Commits; the on-call pause holds the Stripe refund until two of three "
+                "Commits. The on-call pause then holds the Stripe refund until two of three "
                 "principals sign its release.",
                 "refund_order",
                 {"order_id": 25, "amount": "25.00", "payment_intent": "pi_0000000025"},
@@ -115,8 +115,8 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "everyday",
                 "commits",
                 "Draft acetaminophen for bed 4A",
-                "One MedicationRequest, predicted, written on the version read, read back "
-                "against the prediction; one dispense to pharmacy.",
+                "One MedicationRequest, predicted, written on the version read and read back. "
+                "One dispense request goes to the pharmacy.",
                 "draft_order",
                 dict(healthcare.ACETAMINOPHEN),
                 healthcare.CHARTS[0],
@@ -153,8 +153,8 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "everyday",
                 "commits",
                 "Scale checkout from 3 to 4 replicas",
-                "The API server's dry run measures one replica and two vCPU; applied on the "
-                "resourceVersion measured.",
+                "The API server's dry run measures one more replica and two vCPU, and the "
+                "change is applied on the measured resourceVersion.",
                 "scale_deployment",
                 {"deployment": "checkout", "replicas": 4},
                 sre.PROD,
@@ -163,7 +163,7 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "cascade",
                 "refused",
                 "Scale api to 6 replicas",
-                "A mutating webhook makes it 60 in the dry run; the vCPU and drawdown limits "
+                "A mutating webhook makes it 60 in the dry run, so the vCPU and drawdown limits "
                 "refuse the plan before anything is applied.",
                 "scale_deployment",
                 {"deployment": "api", "replicas": 6},
@@ -194,7 +194,7 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "refused",
                 "Raise A-1001's reorder point to 500",
                 "The MRP trigger explodes the bill of materials across its components and "
-                "suppliers; the plan is refused and rolled back.",
+                "suppliers, so the plan is refused and rolled back.",
                 "set_reorder_point",
                 {"reorder_point_id": supply_chain.reorder_point(0, "A-1001"), "point": 500},
                 east,
@@ -203,7 +203,7 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "held",
                 "held",
                 "Order 80 of A-1001 from supplier 7, EDI paused",
-                "Commits; treasury's pause holds the EDI order for a release warrant.",
+                "Commits. Treasury's pause then holds the EDI order until a warrant releases it.",
                 "create_po",
                 {"sku": "A-1001", "supplier_id": 7, "qty": 80, "uom": "each"},
                 east,
@@ -224,7 +224,7 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "cascade",
                 "refused",
                 "Reassign Acme's lost deals",
-                "The territory subquery reaches other customers' rows; tenant isolation "
+                "The territory subquery reaches other customers' rows, so tenant isolation "
                 "refuses the plan.",
                 "bulk_reassign",
                 {"stage": "lost", "owner": "u77@acme.example"},
@@ -234,7 +234,8 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "held",
                 "held",
                 "Invite a sales rep to Globex, email paused",
-                "Commits; trust and safety's pause holds the invitation email for release.",
+                "Commits. Trust and safety's pause then holds the invitation email until "
+                "it's released.",
                 "assign_role",
                 {"user": "sam@globex.example", "role": "sales-rep"},
                 saas.ORGS[1],
@@ -246,8 +247,8 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "everyday",
                 "commits",
                 "Fix invoice rounding",
-                "A one-line edit, staged in a worktree, committed onto main by a "
-                "compare-and-swap of the head measured.",
+                "A one-line edit, staged in a worktree and committed onto main with a "
+                "compare-and-swap from the measured head.",
                 "edit_file",
                 {"path": coding_agent.INVOICE, "old": coding_agent.BUG, "new": coding_agent.FIXED},
                 coding_agent.REPO,
@@ -256,7 +257,7 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "cascade",
                 "refused",
                 "Bump the API schema to 1.5",
-                "The code generator rewrites 35 client files; the blast-radius limit refuses "
+                "The code generator rewrites 35 client files, so the blast-radius limit refuses "
                 "the stage before main moves.",
                 "edit_file",
                 {"path": coding_agent.SCHEMA, "old": '"version": "1.4"', "new": '"version": "1.5"'},
@@ -266,8 +267,8 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 "held",
                 "held",
                 "Bump httpx to 0.28.1",
-                "CI runs and signs its result; the bump touches the protected workflow file, "
-                "so a repair ticket pinned to the head waits for two of three maintainers.",
+                "CI runs and signs its result. The bump also touches the protected workflow "
+                "file, so a repair ticket, pinned to the head, waits for two of three maintainers.",
                 "bump_dependency",
                 {"package": "httpx", "version": "0.28.1"},
                 coding_agent.REPO,

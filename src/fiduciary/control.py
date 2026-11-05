@@ -189,7 +189,28 @@ class _Receipts:
 
 def receipt_view(doc: Mapping[str, Any]) -> dict[str, Any]:
     """What a desk shows of an ARC1 receipt: what was measured, on what, how
-    strongly, and what became of it."""
+    strongly, and what became of it. A delivery receipt (ARC1-delivery, 1.9.0)
+    is shown as the request it delivered: request-only, on its sink."""
+    if isinstance(doc.get("delivery"), Mapping):
+        request = doc.get("request") or {}
+        delivery = doc["delivery"]
+        return {
+            "kind": "delivery",
+            "receipt_id": doc.get("receipt_id"),
+            "issued_at": doc.get("issued_at"),
+            "measurement": "request-only",
+            "rung": RUNGS.get("request-only", "R"),
+            "substrate": request.get("sink"),
+            "outcome": "delivered",
+            "rows": 0,
+            "tables": [],
+            "tenants": [],
+            "operation": request.get("operation"),
+            "remote_ref": delivery.get("remote_ref"),
+            "status_code": delivery.get("status_code"),
+            "action": (doc.get("action") or {}).get("receipt_id"),
+            "gaps": [],
+        }
     effect = doc.get("effect") or {}
     coverage = doc.get("coverage") or {}
     outcome = doc.get("outcome") or {}
@@ -197,6 +218,7 @@ def receipt_view(doc: Mapping[str, Any]) -> dict[str, Any]:
     measurement = str(coverage.get("measurement") or "transactional")
     summary = effect.get("summary") or {}
     return {
+        "kind": "action",
         "receipt_id": doc.get("receipt_id"),
         "issued_at": doc.get("issued_at"),
         "measurement": measurement,

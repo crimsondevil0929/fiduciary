@@ -371,7 +371,8 @@ def test_each_substrate_measures_its_presets(
     assert outcomes["commits"]["outcome"] == "committed"
     assert outcomes["refused"]["outcome"] == cascade
     assert outcomes["held"]["ticket"]
-    assert outcomes["commits"]["receipts"][-1]["rung"] == rung
+    actions = [r for r in outcomes["commits"]["receipts"] if r["kind"] == "action"]
+    assert actions[-1]["rung"] == rung
     status, view = client.get(
         f"/api/deployments/sandbox-{key}/tickets/{outcomes['held']['ticket']}"
     )
