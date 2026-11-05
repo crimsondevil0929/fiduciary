@@ -1270,8 +1270,9 @@ def _read_data(fields: Fields) -> Data:
         if not operations:
             raise MalformedError("agreement", path, "allows no operation: leave the table out")
         tables[table] = operations
-    if not tables:
-        raise MalformedError("agreement", fields.path("tables"), "allows no table")
+    # An empty map allows no table at all: every row a plan writes is refused
+    # (TableAllowlist). The mandate of an agent whose tools write nothing but
+    # outbound requests says so (amended in 1.8.0).
     raw = fields.raw("tenants")
     tenants = None if raw == "*" else fields.strings("tenants", fidu1.TEXT, "a tenant")
     drawdown = []

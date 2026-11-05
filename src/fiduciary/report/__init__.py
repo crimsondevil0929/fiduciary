@@ -53,11 +53,13 @@ def html(data: Mapping[str, Any]) -> str:
     page = (_ASSETS / "console.html").read_text(encoding="utf-8")
     style = (_ASSETS / "console.css").read_text(encoding="utf-8")
     script = (_ASSETS / "console.js").read_text(encoding="utf-8")
+    checks = (_ASSETS / "verify.js").read_text(encoding="utf-8")
     primary = data["attestations"][data["primary"]]
     status = str(primary["verdict"]["status"])
     title = "Stack demo" if data.get("demo") else "Bundle attestation"
     return (
         page.replace("/*STYLE*/", style)
+        .replace("/*VERIFY*/", checks)
         .replace("/*SCRIPT*/", script)
         .replace("/*DATA*/", _script_json(data))
         .replace("{{TITLE}}", f"{title}: {status.title()}")
@@ -69,6 +71,7 @@ def console_html(title: str = "Fiduciary console", *, served: bool = False) -> s
     page = (_ASSETS / "console.html").read_text(encoding="utf-8")
     style = (_ASSETS / "console.css").read_text(encoding="utf-8")
     script = (_ASSETS / "console.js").read_text(encoding="utf-8")
+    checks = (_ASSETS / "verify.js").read_text(encoding="utf-8")
     data: dict[str, Any] = {
         "attestations": {},
         "primary": None,
@@ -78,6 +81,7 @@ def console_html(title: str = "Fiduciary console", *, served: bool = False) -> s
     }
     return (
         page.replace("/*STYLE*/", style)
+        .replace("/*VERIFY*/", checks)
         .replace("/*SCRIPT*/", script)
         .replace("/*DATA*/", _script_json(data))
         .replace("{{TITLE}}", title)

@@ -1212,6 +1212,7 @@
   var CHECKS = [["V1", "schema"], ["V2", "charter"], ["V3", "lineage"], ["V4", "compiled policy"], ["V5", "receipts"], ["V6", "ledger"], ["V7", "completeness"], ["V8", "warrants"], ["V9", "records"], ["V10", "anchors"], ["V11", "revocation"], ["V12", "ordering"]];
   var RUNG_NAMES = { T: "transactional", P: "plan-bound", V: "predicted", R: "request-only" };
   var RUNS = PAGES.filter(function (pg) { return pg.primary && pg.attestations && pg.attestations[pg.primary]; });
+  var DESK_ROUTE = { dep: null, tid: null };
   var view = initialView();
 
   function hasRun() { return !!(ROOT.primary && ROOT.attestations && ROOT.attestations[ROOT.primary]); }
@@ -1223,17 +1224,28 @@
     if ((LIVE.on && LIVE.status.sandbox) || (!LIVE.on && DEMO)) out.push(["sandbox", "Sandbox"]);
     return out;
   }
-  function initialView() {
+  function routed() {
+    // #/desk?d=<deployment>&t=<ticket>: a notice's link to one ticket.
     var hv = location.hash.slice(0, 2) === "#/" ? location.hash.slice(2) : "";
-    if (hv === "desk" || hv === "verify" || hv === "sandbox") return hv;
+    var at = hv.indexOf("?"), name = at < 0 ? hv : hv.slice(0, at), query = {};
+    if (at >= 0) hv.slice(at + 1).split("&").forEach(function (pair) {
+      var kv = pair.split("="); if (kv[0]) query[decodeURIComponent(kv[0])] = decodeURIComponent((kv[1] || "").replace(/\+/g, " "));
+    });
+    return { name: name, query: query };
+  }
+  function initialView() {
+    var r = routed();
+    if (r.name === "desk" && r.query.d) { DESK_ROUTE.dep = r.query.d; DESK_ROUTE.tid = r.query.t || null; }
+    if (r.name === "desk" || r.name === "verify" || r.name === "sandbox") return r.name;
     return hasRun() ? "run" : "desk";
   }
   function go(v) {
     if (location.hash !== "#/" + v) location.hash = "#/" + v; else { view = v; render(); }
   }
   window.addEventListener("hashchange", function () {
-    var hv = location.hash.slice(0, 2) === "#/" ? location.hash.slice(2) : null;
-    if (hv && hv !== view && views().some(function (x) { return x[0] === hv; })) { view = hv; render(); window.scrollTo(0, 0); }
+    var r = routed(), hv = location.hash.slice(0, 2) === "#/" ? r.name : null;
+    if (hv === "desk" && r.query.d) { DESK.dep = r.query.d; DESK.tid = r.query.t || null; DESK.list = null; DESK.listFor = null; DESK.ticket = null; DESK.ticketFor = null; }
+    if (hv && (hv !== view || r.query.d) && views().some(function (x) { return x[0] === hv; })) { view = hv; render(); window.scrollTo(0, 0); }
     else if (!hv && view !== "run" && hasRun()) {
       var id = location.hash.slice(1);
       view = "run"; render();
@@ -1273,7 +1285,6 @@
   }
   function hexBytes(hex) { var out = new Uint8Array(hex.length / 2); for (var i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16); return out; }
   function bytesHex(u8) { var s = ""; for (var i = 0; i < u8.length; i++) s += (u8[i] < 16 ? "0" : "") + u8[i].toString(16); return s; }
-  function utf8(text) { return new TextEncoder().encode(text); }
   function concat(a, b) { var out = new Uint8Array(a.length + b.length); out.set(a, 0); out.set(b, a.length); return out; }
   function b64urlHex(text) {
     var b = atob(text.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((text.length + 3) % 4));
@@ -1289,7 +1300,7 @@
   function fileBytes(file) { return file.arrayBuffer().then(function (ab) { return new Uint8Array(ab); }); }
 
   // -- the approvals desk ---------------------------------------------------------------------
-  var DESK = { dep: null, list: null, listFor: null, tid: null, ticketFor: null, ticket: null, busy: false, error: null, form: {}, draft: null, result: null, poll: 0 };
+  var DESK = { dep: DESK_ROUTE.dep, list: null, listFor: null, tid: DESK_ROUTE.tid, ticketFor: null, ticket: null, panel: "ticket", profile: null, profileFor: null, busy: false, error: null, form: {}, draft: null, result: null, poll: 0 };
 
   function recordedDeployments() {
     return RUNS.map(function (pg) {
@@ -1334,8 +1345,8 @@
     DESK.dep = found.id;
     return found;
   }
-  function selectDep(id) { DESK.dep = id; DESK.list = null; DESK.listFor = null; DESK.tid = null; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
-  function selectTicket(id) { DESK.tid = id; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
+  function selectDep(id) { DESK.panel = "ticket"; DESK.profile = null; DESK.profileFor = null; DESK.dep = id; DESK.list = null; DESK.listFor = null; DESK.tid = null; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
+  function selectTicket(id) { DESK.panel = "ticket"; DESK.tid = id; DESK.ticket = null; DESK.draft = null; DESK.result = null; DESK.error = null; DESK.form = {}; render(); }
   function loadTickets(dep) {
     DESK.listFor = dep.id; DESK.busy = true;
     api("GET", "deployments/" + encodeURIComponent(dep.id) + "/tickets").then(function (list) {
@@ -1379,13 +1390,68 @@
     }
     var rows = list === null ? busyLine("Reading " + dep.name + "'s log…") : !list.length ? h("p", { class: "small muted", style: "padding:10px 12px" }, "No ticket was raised here.") : list.map(function (t) {
       var opt = t.options[0] || { quorum: 1, approved_by: [] };
-      return h("button", { class: "tk" + (t.ticket_id === DESK.tid ? " on" : ""), onclick: function () { selectTicket(t.ticket_id); } },
+      return h("button", { class: "tk" + (t.ticket_id === DESK.tid && DESK.panel === "ticket" ? " on" : ""), onclick: function () { selectTicket(t.ticket_id); } },
         h("span", { class: "tk-top" }, statusPill(t.status), h("b", null, t["class"]), t.measured ? rungChip(t.measured.rung) : null, h("span", { class: "spacer" }), h("span", { class: "small muted tnum" }, opt.approved_by.length + " of " + opt.quorum)),
         h("span", { class: "tk-id mono small" }, short(t.ticket_id, 8) + " · " + String(t.raised_at).replace("T", " ").slice(0, 16) + " UTC"));
     });
-    var side = h("div", { class: "desk-side" }, h("div", { class: "side-label" }, LIVE.on ? "Deployments" : "Recorded runs"), depList, h("div", { class: "side-label" }, "Tickets"), h("div", { class: "tk-list" }, rows));
-    var main = ticket ? ticketDetail(ticket, dep) : h("div", { class: "card pad" }, DESK.error ? errorLine(DESK.error) : list && list.length ? busyLine("Reading the ticket…") : h("p", { class: "small muted" }, "Select a ticket."));
+    var profileRow = h("button", { class: "tk" + (DESK.panel === "profile" ? " on" : ""), onclick: function () { DESK.panel = "profile"; render(); } },
+      h("span", { class: "tk-top" }, h("b", null, "Mandate, tools and receipts")), h("span", { class: "tk-id small muted" }, "what governs this agent"));
+    var side = h("div", { class: "desk-side" }, h("div", { class: "side-label" }, LIVE.on ? "Deployments" : "Recorded runs"), depList,
+      h("div", { class: "side-label" }, "This deployment"), h("div", { class: "tk-list" }, profileRow),
+      h("div", { class: "side-label" }, "Tickets"), h("div", { class: "tk-list" }, rows));
+    var main = DESK.panel === "profile" ? profilePanel(dep)
+      : ticket ? ticketDetail(ticket, dep) : h("div", { class: "card pad" }, DESK.error ? errorLine(DESK.error) : list && list.length ? busyLine("Reading the ticket…") : h("p", { class: "small muted" }, "No ticket was raised here. See what governs the agent: Mandate, tools and receipts."));
     return h("section", { id: "desk" }, h("div", { class: "wrap" }, head, h("div", { class: "desk" }, side, main)));
+  }
+
+  function recordedProfile(dep) {
+    var a = dep.page.attestations[dep.page.primary];
+    return {
+      recorded: true,
+      mandates: a.authority.mandates.map(function (m) {
+        return { mandate_id: m.mandate_id, version: m.version, digest: m.digest, status: "recorded", scope: m.scope, parent: m.parent,
+          budget: { envelope: m.envelope, per_call: m.per_call }, quorums: m.quorums, windows: m.windows || [], tables: m.tables,
+          tools: (m.tools || []).map(function (t) { return typeof t === "string" ? { name: t } : { name: t.name, digest: t.digest, kind: t.kind, governed: t.kind || "" }; }) };
+      }),
+      receipts: []
+    };
+  }
+  function profilePanel(dep) {
+    var prof;
+    if (LIVE.on) {
+      if (DESK.profileFor !== dep.id) {
+        DESK.profileFor = dep.id; DESK.profile = null;
+        api("GET", "deployments/" + encodeURIComponent(dep.id) + "/profile").then(function (p) { DESK.profile = p; render(); }).catch(failed(DESK));
+      }
+      prof = DESK.profile;
+      if (!prof) return h("div", { class: "card pad" }, DESK.error ? errorLine(DESK.error) : busyLine("Reading the mandate…"));
+    } else prof = recordedProfile(dep);
+    var mandates = prof.mandates.map(function (m) {
+      var tools = (m.tools || []).map(function (t) {
+        var tag = t.governed === "held · warrant" ? pill("HELD FOR A WARRANT", "warn") : t.governed === "write · released" ? pill("WRITE · RECEIPTED", "info")
+          : t.governed === "read · metered" ? pill("READ · METERED", "permit") : t.governed === "staged · measured" ? pill("STAGED · MEASURED", "good") : t.kind ? pill(String(t.kind).toUpperCase(), "permit") : null;
+        return [h("span", null, h("b", { class: "mono" }, t.name), t.description ? h("div", { class: "small muted" }, t.description) : null), tag,
+          h("span", { class: "small" }, (t.requests || []).map(function (r) { return r.sink + "." + r.operation + (r.held ? " (held)" : ""); }).join(", ") || (t.effects ? t.effects + " row effect(s)" : "—")),
+          t.price ? h("span", { class: "small tnum" }, money(t.price, 3)) : h("span", { class: "muted" }, "—"),
+          t.digest ? hash(t.digest, 10) : h("span", { class: "muted" }, "—")];
+      });
+      var q = m.quorums || {};
+      return h("div", { class: "td-sec" },
+        h("div", { class: "line" }, h("b", null, m.scope), h("span", { class: "small muted" }, "version " + m.version), m.status ? (m.status === "bound" ? pill("BOUND", "good") : statusPill(m.status)) : null, m.parent ? h("span", { class: "small muted" }, "derived") : null, h("span", { class: "spacer" }), hash(m.digest || "", 10)),
+        factList([m.budget ? ["Budget", money(m.budget.envelope) + " envelope · " + money(m.budget.per_call) + " a model call"] : null,
+          ["Quorums", ["release", "accept_repair", "amend", "reset"].filter(function (k) { return q[k]; }).map(function (k) { return k + " " + q[k]; }).join(" · ") || "—"],
+          ["Windows", (m.windows || []).map(function (w) { return String(w.name).replace(/^[0-9a-f]{8,}_/, "") + " " + w.limit + " per " + Math.round(w.span_seconds / 60) + " min"; }).join(" · ") || "none"],
+          ["Tables", m.tables && Object.keys(m.tables).length ? Object.keys(m.tables).map(function (k) { return k + " (" + m.tables[k].join(", ") + ")"; }).join(" · ") : "none: its tools write no rows"]]),
+        h("h3", { style: "margin-top:14px" }, "Tools it may call"), tools.length ? table(["Tool", "Governed", "Requests", "Price", "Binding"], tools) : h("p", { class: "small muted" }, "No tool: the agent can call nothing yet."));
+    });
+    var receipts = prof.receipts && prof.receipts.length ? table(["Receipt", "Rung", "Outcome", "Measured", "Issued"], prof.receipts.map(function (r) {
+      return [hash(r.receipt_id, 8), h("span", null, rungChip(r.rung), " " + r.measurement), r.outcome === "committed" ? pill("COMMITTED", "good") : r.outcome === "compensated" ? pill("PUT BACK", "warn") : pill(String(r.outcome || "refused").toUpperCase(), "bad"),
+        h("span", { class: "small" }, num(r.rows || 0) + " rows · " + (r.tables || []).join(", ")), h("span", { class: "small tnum" }, String(r.issued_at || "").replace("T", " ").slice(0, 19))];
+    })) : h("p", { class: "small muted" }, prof.recorded ? "The bundle carries each receipt; the console lists them from the deployment." : "No receipt yet.");
+    return h("div", { class: "card td" },
+      h("div", { class: "td-head" }, h("div", { class: "line" }, pill("MANDATE", "info"), h("b", null, dep.name), h("span", { class: "spacer" }), LIVE.on ? h("button", { class: "btn sm", onclick: function () { DESK.profileFor = null; render(); } }, "Refresh") : null),
+        h("p", { class: "small ink2" }, "What the agent may do here, signed by its principals' quorum: every tool it is bound to and how each call is governed.")),
+      mandates, h("div", { class: "td-sec" }, h("h3", null, "Latest receipts"), receipts));
   }
 
   function factList(pairs) {
@@ -1628,137 +1694,12 @@
     if (b) openBundle(b);
   }
 
-  // What a browser can check of a bundle, with Web Crypto alone: the container and every
-  // member's digest (part of V1); the log's hash chain and every record's Ed25519
-  // signature, and the manifest's (part of V9); and a sealed bundle's seals (part of V10).
-  function readTar(u8) {
-    var entries = [], problems = [], off = 0, prev = null;
-    function field(hdr, at, len) { var s = ""; for (var i = at; i < at + len && hdr[i]; i++) s += String.fromCharCode(hdr[i]); return s; }
-    while (off + 512 <= u8.length) {
-      var hdr = u8.subarray(off, off + 512);
-      if (hdr.every(function (b) { return b === 0; })) break;
-      var sum = 0; for (var i = 0; i < 512; i++) sum += (i >= 148 && i < 156) ? 32 : hdr[i];
-      var name = field(hdr, 0, 100), prefix = field(hdr, 345, 155), type = hdr[156];
-      var full = prefix ? prefix + "/" + name : name, size = parseInt(field(hdr, 124, 12).trim() || "0", 8);
-      if (parseInt(field(hdr, 148, 8).trim(), 8) !== sum) problems.push(full + ": its header checksum is wrong");
-      if (type !== 48 && type !== 0) problems.push(full + " is not a regular file");
-      if (!full || full[0] === "/" || full.split("/").indexOf("..") >= 0) problems.push(full + " is not a relative path");
-      if (parseInt(field(hdr, 100, 8).trim(), 8) !== 420) problems.push(full + ": mode is not 0644");
-      if (parseInt(field(hdr, 136, 12).trim() || "0", 8) !== 0) problems.push(full + ": mtime is not 0");
-      if (prev !== null && !(prev < full)) problems.push(full + " is out of order, or there twice");
-      if (!isFinite(size) || off + 512 + size > u8.length) { problems.push(full + " runs past the end of the file"); break; }
-      entries.push({ name: full, bytes: u8.subarray(off + 512, off + 512 + size) });
-      prev = full; off += 512 + Math.ceil(size / 512) * 512;
-    }
-    return { entries: entries, problems: problems };
-  }
-  function edVerify(keySpec, msg, sigHex) {
-    var raw = hexBytes(String(keySpec).replace("ed25519:", ""));
-    return subtle().importKey("raw", raw, { name: "Ed25519" }, false, ["verify"]).then(function (k) { return subtle().verify({ name: "Ed25519" }, k, hexBytes(sigHex), msg); });
-  }
-  function keyId(keySpec) { return digestHex("SHA-256", concat(utf8("ARC1/ed25519/v1\n"), hexBytes(String(keySpec).replace("ed25519:", "")))).then(function (x) { return x.slice(0, 16); }); }
-  function signedInput(domain, text, sig) {
-    // A FIDU1 signature covers DOMAIN ‖ SHA-512(canonical bytes with sig := {alg, key_id}).
-    // The bytes are stored canonical, so the reduction is exact.
-    var whole = '"sig":{"alg":"' + sig.alg + '","key_id":"' + sig.key_id + '","signature":"' + sig.signature + '"}';
-    var at = text.indexOf(whole);
-    if (at < 0 || text.lastIndexOf(whole) !== at) return Promise.resolve(null);
-    var reduced = text.slice(0, at) + '"sig":{"alg":"' + sig.alg + '","key_id":"' + sig.key_id + '"}' + text.slice(at + whole.length);
-    return subtle().digest("SHA-512", utf8(reduced)).then(function (ab) { return concat(utf8("FIDU1/" + domain + "/v1\n"), new Uint8Array(ab)); });
-  }
-  function hmac(keyU8, msgU8) {
-    return subtle().importKey("raw", keyU8, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]).then(function (k) { return subtle().sign("HMAC", k, msgU8); }).then(function (ab) { return new Uint8Array(ab); });
-  }
+  // The checks themselves are verify.js (window.FidbVerify), loaded before this script:
+  // the same code Node runs over every golden bundle in CI.
   function browserChecks(u8) {
     if (!subtle()) return Promise.reject(new Error("This page has no Web Crypto here, so no check ran. Open it over https, from a file, or from the console."));
-    var out = { checks: [], format: null, records: 0, withheld: 0, opened: {} };
-    function check(id, name, status, detail, part) { out.checks.push({ id: id, name: name, status: status, detail: detail, part: part }); }
-    var tar = readTar(u8);
-    var by = {}; tar.entries.forEach(function (e) { by[e.name] = e.bytes; });
-    if (!tar.entries.length) { check("container", "A POSIX tar of regular files", "fail", "not a bundle: no tar member could be read", "V1"); return Promise.resolve(out); }
-    check("container", "A POSIX tar of regular files, sorted, each once", tar.problems.length ? "fail" : "pass", tar.problems.length ? tar.problems.slice(0, 3).join("; ") : tar.entries.length + " members, each a regular file at a relative path", "V1");
-    var dec = new TextDecoder("utf-8", { fatal: false });
-    var manText = by["manifest.json"] ? dec.decode(by["manifest.json"]) : null, man = null;
-    try { man = manText ? JSON.parse(manText) : null; } catch (e) { man = null; }
-    if (!man) { check("members", "Every member listed in the manifest, by SHA-256", "fail", "manifest.json is missing or no JSON", "V1"); return Promise.resolve(out); }
-    out.format = man.format; out.lineage = man.lineage; out.range = man.range;
-    var keys = null; try { keys = by["keys.json"] ? JSON.parse(dec.decode(by["keys.json"])) : null; } catch (e) { keys = null; }
-    var listed = {}; (man.members || []).forEach(function (m) { listed[m.path] = m.sha256; });
-    var names = tar.entries.map(function (e) { return e.name; }).filter(function (n) { return n !== "manifest.json"; });
-    return Promise.all(names.map(function (n) { return digestHex("SHA-256", by[n]).then(function (d) { return [n, d]; }); })).then(function (pairs) {
-      var bad = [];
-      pairs.forEach(function (p) { if (!(p[0] in listed)) bad.push(p[0] + " is not in the manifest"); else if (listed[p[0]] !== p[1]) bad.push(p[0] + " does not hash to its manifest entry"); });
-      Object.keys(listed).forEach(function (n) { if (!(n in by)) bad.push(n + " is listed but missing"); });
-      check("members", "Every member listed in the manifest, by SHA-256", bad.length ? "fail" : "pass", bad.length ? bad.slice(0, 3).join("; ") + (bad.length > 3 ? "; and " + (bad.length - 3) + " more" : "") : pairs.length + " members hash to their entries", "V1");
-      var service = keys && keys.service;
-      var edOk = true;
-      var manifestCheck = !man.sig ? Promise.resolve(check("manifest", "The manifest's signature, by the service key", "skip", "the manifest is not signed (optional); every member is checked on its own", "V9"))
-        : !service ? Promise.resolve(check("manifest", "The manifest's signature, by the service key", "fail", "keys.json names no service key", "V9"))
-          : signedInput("bundle", manText, man.sig).then(function (msg) {
-            if (!msg) return check("manifest", "The manifest's signature, by the service key", "fail", "the manifest is not in canonical form", "V9");
-            return edVerify(service, msg, man.sig.signature).then(function (ok) {
-              check("manifest", "The manifest's signature, by the service key", ok ? "pass" : "fail", ok ? "verifies under " + short(service.replace("ed25519:", ""), 16) : "does not verify", "V9");
-            });
-          }).catch(function () { edOk = false; check("manifest", "The manifest's signature, by the service key", "skip", "this browser has no Ed25519 in Web Crypto", "V9"); });
-      return manifestCheck.then(function () { return logChecks(by, dec, keys, service, out, check, edOk); });
-    }).then(function () { return out; });
-  }
-  function logChecks(by, dec, keys, service, out, check, edOk) {
-    var lines = by["log.jsonl"] ? dec.decode(by["log.jsonl"]).split("\n").filter(function (l) { return l.length; }) : [];
-    var held = null; try { held = by["withheld.json"] ? JSON.parse(dec.decode(by["withheld.json"])) : null; } catch (e) { held = { broken: true }; }
-    out.records = lines.length; out.withheld = held && held.records ? held.records.length : 0;
-    var recs = []; try { recs = lines.map(function (l) { return JSON.parse(l); }); } catch (e) { check("chain", "The log's hash chain", "fail", "log.jsonl holds a line that is no JSON", "V9"); return Promise.resolve(); }
-    return Promise.all(lines.map(function (l) { return digestHex("SHA-256", utf8(l)); })).then(function (hashes) {
-      var at = {}, problems = [];
-      recs.forEach(function (r, i) { if (at[r.seq]) problems.push("record " + r.seq + " is there twice"); at[r.seq] = { hash: hashes[i], prev: r.prev }; });
-      (held && held.records || []).forEach(function (w) { if (at[w.seq]) problems.push("record " + w.seq + " is both whole and withheld"); at[w.seq] = { hash: w.hash, prev: null }; });
-      var top = Object.keys(at).reduce(function (t, k) { return Math.max(t, Number(k)); }, 0);
-      for (var n = 1; n <= top; n++) {
-        if (!at[n]) { problems.push("record " + n + " is missing"); continue; }
-        if (at[n].prev === null) continue;
-        var want = n === 1 ? "0000000000000000000000000000000000000000000000000000000000000000" : at[n - 1] ? at[n - 1].hash : null;
-        if (want !== null && at[n].prev !== want) problems.push("record " + n + " does not name record " + (n - 1) + "'s hash");
-      }
-      check("chain", "The log's hash chain, record 1 to " + top, problems.length ? "fail" : "pass", problems.length ? problems.slice(0, 3).join("; ") : top + " records in order" + (out.withheld ? ", " + out.withheld + " of them withheld, held in place by their hashes" : ", each naming the hash of the one before"), "V9");
-      if (!service) { check("signatures", "Every record's signature, by the service key", "fail", "keys.json names no service key", "V9"); return; }
-      if (!edOk) { check("signatures", "Every record's signature, by the service key", "skip", "this browser has no Ed25519 in Web Crypto", "V9"); return; }
-      return keyId(service).then(function (kid) {
-        return Promise.all(recs.map(function (r, i) {
-          if (!r.sig || r.sig.key_id !== kid) return false;
-          return signedInput("record", lines[i], r.sig).then(function (msg) { return msg ? edVerify(service, msg, r.sig.signature) : false; });
-        })).then(function (oks) {
-          var badSeq = recs.filter(function (_, i) { return !oks[i]; }).map(function (r) { return r.seq; });
-          check("signatures", "Every record's signature, by the service key", badSeq.length ? "fail" : "pass", badSeq.length ? "records " + badSeq.slice(0, 6).join(", ") + " do not verify under the service key" : recs.length + " Ed25519 signatures verify under key " + kid, "V9");
-        });
-      });
-    }).then(function () { return sealChecks(recs, held, out, check); });
-  }
-  function sealChecks(recs, held, out, check) {
-    if (out.format !== "fidb/2") { if (held) check("seals", "Seals", "fail", "a fidb/1 bundle carries a withheld.json", "V10"); return Promise.resolve(); }
-    if (!held || held.broken || !held.keys) { check("seals", "Every whole record's seal, opened by the bundle's keys", "fail", "a fidb/2 bundle without a readable withheld.json", "V10"); return Promise.resolve(); }
-    var K = held.keys, makers = [];
-    var lineKey = utf8("fidb/2 line");
-    makers.push(Promise.resolve([hexBytes(K.all), "all"]));
-    Object.keys(K.lineages || {}).forEach(function (l) {
-      var k = hexBytes(K.lineages[l]);
-      makers.push(Promise.resolve([k, l]));
-      makers.push(hmac(k, lineKey).then(function (lk) { return [lk, l]; }));
-    });
-    Object.keys(K.lines || {}).forEach(function (l) { makers.push(Promise.resolve([hexBytes(K.lines[l]), l])); });
-    return Promise.all(makers).then(function (ks) {
-      return Promise.all(recs.map(function (r) {
-        var msg = concat(utf8("fidb/2 seal\n"), utf8(JSON.stringify([r.log, r.seq])));
-        return Promise.all(ks.map(function (k) { return hmac(k[0], msg).then(function (t) { return [bytesHex(t), k[1]]; }); })).then(function (tags) {
-          var mine = {}; tags.forEach(function (t) { mine[t[0]] = t[1]; });
-          var whose = null; (r.seal || []).forEach(function (s) { if (!whose && mine[s]) whose = mine[s]; });
-          return whose;
-        });
-      })).then(function (whose) {
-        var unopened = recs.filter(function (_, i) { return !whose[i]; }).map(function (r) { return r.seq; });
-        whose.forEach(function (w) { if (w) out.opened[w] = (out.opened[w] || 0) + 1; });
-        check("seals", "Every whole record's seal, opened by the bundle's keys", unopened.length ? "fail" : "pass", unopened.length ? "records " + unopened.slice(0, 6).join(", ") + " carry no seal these keys open" : recs.length + " whole records open under the bundle's keys; " + out.withheld + " withheld (their anchors are V10's, not checked here)", "V10");
-      });
-    });
+    if (!window.FidbVerify) return Promise.reject(new Error("The page's bundle checks did not load."));
+    return window.FidbVerify.check(u8, subtle(), VER.pin.keys || undefined);
   }
 
   function verifyView() {
@@ -1776,12 +1717,21 @@
     var picks = h("div", { class: "bundle-list" }, list.length ? list.map(function (b) {
       return h("button", { class: "bundle" + (VER.name === b.path ? " on" : ""), onclick: function () { openBundle(b); } }, h("span", { class: "mono small" }, b.label || b.path), b.att ? (b.att.verdict.passed ? pill("PASS", "good") : pill("EXIT " + b.att.verdict.exit_code, "bad")) : b.customer ? (b.customer.passed ? pill("PASS", "good") : pill("EXIT " + b.customer.exit_code, "bad")) : h("span", { class: "small muted tnum" }, num(Math.round(b.bytes / 1024)) + " KB"));
     }) : h("p", { class: "small muted" }, "No bundle here."));
-    var pins = LIVE.on ? pinForm() : null;
+    var pins = LIVE.on ? pinForm() : staticPins();
     var left = h("div", { class: "card pad ver-in" }, dz, pins);
     var right = h("div", { class: "card pad ver-list" }, h("div", { class: "side-label" }, LIVE.on ? "Bundles beside the console" : "Bundles this run recorded"), picks);
     return h("section", { id: "verify" }, h("div", { class: "wrap" }, head, h("div", { class: "ver-grid" }, left, right),
       VER.busy ? h("div", { class: "card pad", style: "margin-top:14px" }, busyLine("Verifying " + (VER.name || "the bundle") + "…")) : null,
       errorLine(VER.error), !VER.busy && (VER.server || VER.browser || VER.recorded) ? verifyResult() : null));
+  }
+  function keysPicker() {
+    return h("button", { class: "btn sm", onclick: function () { pickFile(".json", function (f) { f.text().then(function (t) { try { VER.pin.keys = JSON.parse(t); VER.pin.keysName = f.name; } catch (e) { VER.error = f.name + " is no JSON"; } render(); }); }); } },
+      VER.pin.keysName ? icon("check") : null, VER.pin.keysName || "pinned-keys.json…");
+  }
+  function staticPins() {
+    return h("div", { class: "pins" }, h("div", { class: "side-label" }, "Pinned keys"),
+      h("div", { class: "field-row" }, keysPicker(), VER.pin.keys ? h("button", { class: "link", onclick: function () { VER.pin.keys = null; VER.pin.keysName = ""; render(); } }, "clear") : null),
+      h("p", { class: "small muted" }, "Without them the checks run under the keys the bundle names. With them, this browser also checks that the bundle's keys are the ones you pinned."));
   }
   function pinForm() {
     var p = VER.pin, deps = LIVE.status.deployments.filter(function (d) { return d.charter; });
@@ -1791,8 +1741,7 @@
       radio("deployment", "A deployment's charter and keys"),
       p.by === "deployment" ? h("select", { onchange: function (ev) { p.deployment = ev.target.value; } }, [h("option", { value: "" }, "choose…")].concat(deps.map(function (d) { return h("option", { value: d.id, selected: p.deployment === d.id ? "selected" : null }, d.name + " · " + short(d.charter.digest, 12)); }))) : null,
       radio("given", "A charter digest I pinned, and pinned-keys.json"),
-      p.by === "given" ? h("div", { class: "field-row" }, h("input", { type: "text", placeholder: "charter digest (64 hex)", value: p.charter, oninput: function (ev) { p.charter = ev.target.value; } }),
-        h("button", { class: "btn sm", onclick: function () { pickFile(".json", function (f) { f.text().then(function (t) { try { p.keys = JSON.parse(t); p.keysName = f.name; } catch (e) { VER.error = f.name + " is no JSON"; } render(); }); }); } }, p.keysName || "pinned-keys.json…")) : null,
+      p.by === "given" ? h("div", { class: "field-row" }, h("input", { type: "text", placeholder: "charter digest (64 hex)", value: p.charter, oninput: function (ev) { p.charter = ev.target.value; } }), keysPicker()) : null,
       h("p", { class: "small muted" }, "A bundle is checked against keys an auditor pinned, never only its own. Without pinned keys, the verifier uses the bundle's and says so."));
   }
   function verdictOf() {

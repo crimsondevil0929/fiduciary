@@ -97,6 +97,7 @@ if TYPE_CHECKING:
     from fiduciary.bridge import Fiduciary
     from fiduciary.compiler import Deployment
     from fiduciary.documents import ToolBinding
+    from fiduciary.notify import NotifyConfig
     from fiduciary.seals import Sealer
     from fiduciary.store import Store
 
@@ -130,6 +131,7 @@ _TOP: Final = frozenset(
         "metrics",
         "cluster",
         "units",
+        "notify",
     }
 )
 _UNIT: Final = re.compile(r"[a-z][a-z0-9_.-]{0,31}")
@@ -229,6 +231,8 @@ class Config:
     bridge_tls: tuple[Path, Path] | None = None
     agents: Mapping[str, AgentSettings] = field(default_factory=dict)
     units: Mapping[str, UnitLedger] = field(default_factory=dict)
+    notify: NotifyConfig | None = None
+    """``[notify]``: the webhooks told when a ticket waits and is decided."""
     """``[units.<code>]``: the ledger of each other unit mandates may budget."""
 
     def open_units(self, *, read_only: bool = False) -> dict[str, BudgetManager]:
@@ -713,7 +717,23 @@ def load_config(path: str | Path) -> Config:
         bridge_tls=bridge_tls,
         agents=_agents(bridge.get("agents", {}), where),
         units=_units(raw.get("units", {}), where, place),
+        notify=_notify(raw.get("notify"), where, base, place),
     )
+
+
+def _notify(
+    table: object, where: Path, base: Path, place: Callable[[object, str], Path]
+) -> NotifyConfig | None:
+    if table is None:
+        return None
+    if not isinstance(table, dict):
+        raise ConfigError(f"{where}: [notify] is a table")
+    from fiduciary.notify import parse
+
+    try:
+        return parse(table, base=base, place=place)
+    except ValueError as exc:
+        raise ConfigError(f"{where}: {exc}") from exc
 
 
 def _units(raw: object, where: Path, place: Callable[[str, str], Path]) -> dict[str, UnitLedger]:

@@ -164,6 +164,11 @@ class _Receipts:
         self._seen: tuple[int, int] | None = None
         self._by_id: dict[str, dict[str, Any]] = {}
 
+    def recent(self, count: int) -> list[dict[str, Any]]:
+        """The last ``count`` receipts, newest first."""
+        self.get("")
+        return list(reversed(list(self._by_id.values())))[:count]
+
     def get(self, receipt_id: str) -> dict[str, Any] | None:
         if self._path is None or not self._path.is_file():
             return None
@@ -289,6 +294,14 @@ class Deployment:
     def pins(self) -> Pins | None:
         return None
 
+    def holds(self) -> dict[tuple[str, str], bool]:
+        """Each sink operation, and whether a request to it waits for a warrant."""
+        return {}
+
+    def bindings(self) -> dict[str, Any]:
+        """The deployment's tool bindings, by digest."""
+        return {}
+
     def submit(self, approval: Approval) -> dict[str, Any]:
         """Put ``approval`` into the deployment's intake."""
         raise ControlError(403, f"{self.name} is read-only here: it takes no approvals")
@@ -344,6 +357,96 @@ class Deployment:
         except (ControlError, FiduciaryError, OSError, sqlite3.Error) as exc:
             out["error"] = str(exc)
         return out
+
+    def profile(self) -> dict[str, Any]:
+        """What governs the agent: each lineage in force, its budget, quorums
+        and windows, every tool binding it pins and how each is governed; and
+        the latest receipts."""
+        from fiduciary.documents import Mandate, ToolBinding
+
+        with self.lock:
+            store, state = self.read()
+            holds = self.holds()
+            known = self.bindings()
+            mandates = []
+            for mandate_id in sorted(state.lineages):
+                head = state.head(mandate_id)
+                if head is None:
+                    continue
+                found = store.document(head[1])
+                mandate = loads(found[1], signed=True) if found is not None else None
+                if not isinstance(mandate, Mandate):
+                    continue
+                body = mandate.body()
+                tools = []
+                for pin in (body.get("tools") or {}).get("bindings") or ():
+                    binding = known.get(str(pin.get("digest")))
+                    if binding is None:
+                        raw = store.document(str(pin.get("digest")))
+                        binding = loads(raw[1], signed=True) if raw is not None else None
+                    if not isinstance(binding, ToolBinding):
+                        tools.append(
+                            {
+                                "name": pin.get("name"),
+                                "digest": pin.get("digest"),
+                                "kind": "missing",
+                                "governed": "binding not found here",
+                            }
+                        )
+                        continue
+                    tool = binding.body()
+                    requests = [
+                        {
+                            "sink": r["sink"],
+                            "operation": r["operation"],
+                            "held": holds.get((r["sink"], r["operation"]), False),
+                        }
+                        for r in tool.get("requests") or ()
+                    ]
+                    if tool["kind"] == "passthrough":
+                        governed = "read · metered"
+                    elif any(r["held"] for r in requests):
+                        governed = "held · warrant"
+                    elif requests and not tool.get("effects"):
+                        governed = "write · released"
+                    else:
+                        governed = "staged · measured"
+                    tools.append(
+                        {
+                            "name": tool["name"],
+                            "digest": binding.digest,
+                            "kind": tool["kind"],
+                            "governed": governed,
+                            "description": tool.get("description", ""),
+                            "price": tool.get("price"),
+                            "effects": len(tool.get("effects") or ()),
+                            "requests": requests,
+                        }
+                    )
+                mandates.append(
+                    {
+                        "mandate_id": mandate_id,
+                        "version": head[0],
+                        "digest": head[1],
+                        "status": state.status(mandate_id),
+                        "scope": body["subject"]["scope"],
+                        "parent": body.get("parent"),
+                        "budget": body.get("budget"),
+                        "quorums": (body.get("roster") or {}).get("quorums"),
+                        "windows": [
+                            {
+                                "name": w["name"],
+                                "limit": w["limit"],
+                                "span_seconds": w["span_seconds"],
+                            }
+                            for w in body.get("windows") or ()
+                        ],
+                        "tables": (body.get("data") or {}).get("tables"),
+                        "tools": tools,
+                    }
+                )
+            receipts = [receipt_view(r) for r in self.receipts().recent(25)]
+        return {"deployment": self.ident, "mandates": mandates, "receipts": receipts}
 
     def tickets(self) -> list[dict[str, Any]]:
         """Every ticket, newest first, open ones before the rest."""
@@ -710,6 +813,23 @@ class ConfiguredDeployment(Deployment):
 
     def receipts(self) -> _Receipts:
         return self._receipts
+
+    def bindings(self) -> dict[str, Any]:
+        from fiduciary.config import load_tool
+
+        found: dict[str, Any] = {}
+        for target in self.config.tools:
+            with contextlib.suppress(OSError, ValueError, FiduciaryError):
+                binding = load_tool(target)
+                found[binding.digest] = binding
+        return found
+
+    def holds(self) -> dict[tuple[str, str], bool]:
+        try:
+            sinks = self.config.interlock_config().sinks
+        except (OSError, ValueError):
+            return {}
+        return {(s.name, op.name): op.hold for s in sinks for op in s.operations}
 
     def outbox(self) -> str | None:
         return self.config.executor_outbox
@@ -1202,6 +1322,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return console.deployment(parts[1]).tickets()
             if len(parts) == 4 and parts[0] == "deployments" and parts[2] == "tickets":
                 return console.deployment(parts[1]).ticket(parts[3])
+            if len(parts) == 3 and parts[0] == "deployments" and parts[2] == "profile":
+                return console.deployment(parts[1]).profile()
             raise ControlError(404, "no such endpoint")
         if parts == ["verify"]:
             ctype = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()

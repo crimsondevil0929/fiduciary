@@ -986,11 +986,18 @@ class Session:
             plan_id = str(plan.plan_id)
             with self._lock:
                 self._committed.add(plan_id)
+            sinks = self._fid.binder.deployment.sinks
+            held = sorted(
+                f"{r.sink} {r.operation}"
+                for r in binding.requests
+                if (spec := sinks.get(r.sink)) is not None
+                and any(op.name == r.operation and op.hold for op in spec.operations)
+            )
             return CallResult(
                 name,
                 "committed",
-                _committed(binding, plan_id, rendered),
-                value={"plan_id": plan_id},
+                _committed(binding, plan_id, rendered, held=held),
+                value={"plan_id": plan_id, **({"held": held} if held else {})},
             )
         try:
             repair = engine.engine.repair(plan)
@@ -1408,13 +1415,22 @@ def _whole(plan: EffectPlan, kept: set[str]) -> bool:
     )
 
 
-def _committed(binding: ToolBinding, plan_id: str, feedback: str) -> str:
+def _committed(
+    binding: ToolBinding, plan_id: str, feedback: str, *, held: Sequence[str] = ()
+) -> str:
     """What a committed call tells the agent: the plan's id, what it queued,
-    and how to ask for it to be undone when its requests can be."""
+    which of it waits for the principals' approval, and how to ask for it to be
+    undone when its requests can be."""
     lines = [f"Committed: {binding.name} ran as plan {plan_id}."]
     if binding.requests:
-        sent = ", ".join(sorted({f"{r.sink} {r.operation}" for r in binding.requests}))
-        lines.append(f"Outbound request(s) queued for delivery: {sent}.")
+        queued = sorted({f"{r.sink} {r.operation}" for r in binding.requests} - set(held))
+        if queued:
+            lines.append(f"Outbound request(s) queued for delivery: {', '.join(queued)}.")
+        if held:
+            lines.append(
+                f"Held for the principals' approval, not yet made: {', '.join(held)}. It is "
+                f"made only once a quorum of them signs its release; do not call it again."
+            )
     if any(r.compensation is not None for r in binding.requests):
         lines.append(
             "To ask the principals to undo it, call fiduciary_request with kind undo and this "

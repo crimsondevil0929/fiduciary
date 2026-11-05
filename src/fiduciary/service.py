@@ -32,6 +32,8 @@ The parts:
 - ``executor``: resolves interrupted executions (F7-13), and executes every
   formed warrant that touches only interlock and AgentGov: an outbox
   action, a reset, a rejection.
+- ``notifier`` (with ``[notify]``): each webhook told, in log order, when a
+  ticket waits for its quorum and when it is decided (:mod:`fiduciary.notify`).
 - ``metrics``: ``/metrics`` and ``/healthz``, and a sample of the log.
 
 **A cluster** (``[cluster]``, PostgreSQL only, F10-5) is several of these
@@ -117,6 +119,7 @@ SERVICE_CATALOG: Final = (
         "Records the service's parts wrote.",
         ("part",),
     ),
+    Metric("fiduciary_notices_delivered_total", COUNTER, "Notices webhooks answered 2xx."),
 )
 """Interlock's metrics (the supervisor reports each part through them), and
 fiduciary's. Every label comes from a closed set: never a lineage, a tenant or
@@ -646,6 +649,38 @@ class ExecutorService(_Part):
             close()
 
 
+class NotifierService(_Part):
+    """``notifier`` (module docstring): on the writer's node, over its store."""
+
+    phase = 1
+
+    def __init__(self, writer: _Writer, *, every: float) -> None:
+        super().__init__("notifier")
+        self._writer = writer
+        self._every = every
+        self._notifier: Any = None
+
+    def step(self) -> float:
+        fid = self._writer.current
+        notify = self._writer.config.notify
+        if fid is None or notify is None:
+            return self._every
+        if self._notifier is None:
+            from fiduciary.notify import for_store
+
+            self._notifier = for_store(notify, fid.log.store)
+        delivered = self._notifier.turn()
+        total = sum(delivered.values())
+        if total:
+            self.count("notices", total)
+            self.metrics.inc("fiduciary_notices_delivered_total", total)
+        return self._every
+
+    def reopen(self) -> None:
+        """The notification key is read again with the store, on the next turn."""
+        self._notifier = None
+
+
 class _Metrics(MetricsService):
     """``/metrics`` and ``/healthz``, and every ``every`` seconds a sample of
     the log: its lineages, tickets, warrants and intake."""
@@ -913,6 +948,8 @@ def build_service(
         settler = SettlerService(writer, every=serve.settle)
     executor = membership.follow(ExecutorService(writer, every=serve.every), EXECUTOR_ROLE)
     services += [triggers, *([settler] if settler is not None else []), executor]
+    if config.notify is not None:
+        services.append(NotifierService(writer, every=serve.triggers))
     registry = Metrics(SERVICE_CATALOG)
     running: list[InterlockSupervisor] = []
 

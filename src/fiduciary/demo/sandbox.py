@@ -371,6 +371,13 @@ class SandboxDeployment(Deployment):
     def outbox(self) -> str | None:
         return str(self.built().world.root / "back_office.db")
 
+    def bindings(self) -> dict[str, Any]:
+        return {b.digest: b for b in self.built().world.tools.values()}
+
+    def holds(self) -> dict[tuple[str, str], bool]:
+        sinks = self.built().world.deployment.sinks
+        return {(s.name, op.name): op.hold for s in sinks._sinks.values() for op in s.operations}
+
     def pins(self) -> Pins | None:
         if self._built is None:
             return None

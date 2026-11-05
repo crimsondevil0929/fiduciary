@@ -137,7 +137,8 @@ MANDATE_REFUSALS: list[tuple[Callable[[dict[str, Any]], None], str, str]] = [
     (_set("budget.models", ["b", "a"]), "set", "$.budget.models"),
     (_set("governance.cognitive.similarity_threshold", "1.5"), "range", "$.governance"),
     (_set("governance.cognitive.similarity_threshold", "0.70"), "format", "$.governance"),
-    (_set("data.tables", {}), "agreement", "$.data.tables"),
+    # Amended in 1.8.0: no table is allowed, but this mandate still guards one
+    (_set("data.tables", {}), "agreement", "$.data.drawdown"),
     (_set("data.tables", {"orders": []}), "agreement", "$.data.tables"),
     (_set("data.tables", {"orders": ["truncate"]}), "format", "$.data.tables"),
     (_set("data.tables", {"1orders": ["update"]}), "format", "$.data.tables"),

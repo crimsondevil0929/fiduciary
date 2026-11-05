@@ -6,6 +6,68 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-11-04
+
+An agent's MCP server, governed from its own tool list; the approvers told when they are
+needed; and the browser's bundle checks held to every golden bundle in CI, and published.
+Requires `interlock-escrow` 1.4.1.
+
+### Added
+
+- **`fiduciary init [--mcp -- COMMAND]`** (`fiduciary.init`, spec §10.10, F10-28 to F10-30).
+  - It asks the server for `tools/list` and governs each tool by its MCP annotations:
+    - a read-only tool becomes a metered passthrough;
+    - a non-destructive write becomes a request made through an `mcp` sink, at most once;
+    - any other write is held for a 2-of-3 warrant.
+  - A tool whose input the binding grammar cannot hold whole is left out, and named.
+  - It writes a working deployment: keys, charter, mandate, `interlock.toml` with the
+    relay that runs the server, `fiduciary.toml` and a README.
+  - `fiduciary.demo.mcp_desk` is a small MCP server to try it on.
+  - `scripts/init_live.py` runs a live model through `fiduciary mcp proxy`.
+- **Notices** (`fiduciary.notify`, `[notify]`, `fiduciary notify`, the service's
+  `notifier` part; §10.9, F10-25 to F10-27).
+  - They tell webhooks when a ticket is raised, a warrant forms, its execution is applied,
+    refused or abandoned, or a ticket is declined or lapses.
+  - Delivery is in log order and at least once. The cursor moves only past a `2xx`, and a
+    retry is the same notice.
+  - Three formats:
+    - Standard Webhooks, signed with a dedicated Ed25519 key (`v1a`);
+    - Slack blocks;
+    - PagerDuty events keyed by the ticket.
+  - Each notice links to the ticket in the console, and never carries a payload.
+- **The browser's bundle checks, gated** (`report/verify.js`, F10-23 amended).
+  - They are now one module that the page and Node both load.
+  - New checks:
+    - each document's path names its digest;
+    - the bundle's keys are the ones pinned, when given;
+    - every record in range has its ledger anchor;
+    - in a sealed bundle, no withheld record is the bundle's own.
+  - `tests/test_browser_verifier.py` runs the module over all 35 golden bundles: no false
+    alarm, no silent pass on V1, V9 or V10 with pinned keys, and each outcome pinned in
+    `tests/js/browser_vectors.json`. Node is required in CI.
+- **The public site** (`scripts/build_site.py`, `scripts/check_site.py`,
+  `.github/workflows/pages.yml`).
+  - It is the console as a static page, with the demo's bundles, their pins and
+    `SHA256SUMS`.
+  - It is built from the commit (offline, no model) and checked: each bundle verifies as
+    the page says and passes the page's own checks.
+  - It is deployed to GitHub Pages from `main`.
+- **The console's view of a deployment.** The desk now shows the mandate: its budget,
+  quorums, windows and tables, every tool it pins and how each call is governed, and the
+  latest receipts (`GET /api/deployments/<id>/profile`). A notice's link opens one
+  ticket (`#/desk?d=&t=`).
+
+### Changed
+
+- `data.tables` may be empty (F4-12 table amended): a mandate whose tools write only
+  outbound requests allows no table.
+- `fiduciary mcp proxy` and `mcp serve` run the triggers in their turn, so a call held for a
+  warrant is ticketed. A committed call whose request is held now tells the agent that the
+  request waits for the principals' approval and is not yet made.
+- `kit.interlock_toml` writes a typed sink's `type`, delivery window, attempts,
+  unknown-outcome rule and pinned operation schemas.
+
+
 ## [1.7.0] - 2026-11-04
 
 The console: a web control plane on loopback over any deployment a `fiduciary.toml`

@@ -21,6 +21,9 @@ jobs:
     timeout-minutes: 30
     env:
       UV_PYTHON: ${{ matrix.python-version }}
+      # The console's in-browser bundle checks run under Node's Web Crypto
+      # against every golden bundle (tests/test_browser_verifier.py): required.
+      FIDUCIARY_REQUIRE_NODE: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -33,6 +36,9 @@ jobs:
             os: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
