@@ -12,9 +12,10 @@ documents. Anyone with the public keys can verify them offline.
 
 ## One engine, any industry
 
-Fintech is where the demo starts, not what the engine is. The same checks, budgets,
-quorum warrants and offline proof apply to any agent action that has a consequence, a
-limit, or someone who must approve it. Only the nouns change:
+The demo starts with fintech, but nothing in the engine is specific to payments. The same
+checks, budgets, quorum warrants and offline proof apply to any agent action that has a
+consequence, a limit, or someone who has to approve it. What changes between industries is
+the vocabulary:
 
 | | Fintech | Healthcare | Cloud SRE | Supply chain | Multi-tenant SaaS | Coding agents |
 |---|---|---|---|---|---|---|
@@ -38,9 +39,9 @@ hospital's EHR, behind its FHIR R4 API, which can neither hold a transaction ope
 a write. [Interlock's FHIR substrate](https://github.com/crimsondevil0929/interlock#fhir-servers-predicted-and-verified)
 reads each order with its version and the patient's whole chart, predicts the change, and
 lets the mandate judge the prediction before anything is written. It then writes the undo
-down, writes on the version it read (`If-Match`), and reads the chart back against the
-prediction. A difference is never accepted: everything the write changed is put back, a
-record a rule created is marked `entered-in-error`, never deleted, and the receipt says
+down, writes on the version it read (`If-Match`), and reads the chart back. If the chart
+differs from the prediction, everything the write changed is put back. A record that a rule
+on the EHR created is marked `entered-in-error` rather than deleted, and the receipt says
 `compensated`. The scenarios that differ from the SQL packs:
 
 2. Discontinuing one order passes every check, because the prediction is one order stopped.
@@ -49,8 +50,8 @@ record a rule created is marked `entered-in-error`, never deleted, and the recei
 3. An order for "the patient in bed 4B", from bed 4A's session, is refused before the EHR
    sees it: the bed resolves to another chart when the order is predicted.
 4. Beside the parallel sub-agents, a fourth changes a dose while a nurse edits the same
-   order. The write names the version it read, and the EHR answers `412 Precondition
-   Failed`: nothing lands, and the nurse's note stands.
+   order. The write names the version it read, so the EHR answers `412 Precondition
+   Failed`. Nothing changes, and the nurse's note is kept.
 6. The administrator also puts an order on hold through the FHIR API with the agent's
    shared token. The EHR's `AuditEvent` log, reconciled against the receipts in scenario 7,
    names that write as the one phantom.
@@ -58,9 +59,9 @@ record a rule created is marked `entered-in-error`, never deleted, and the recei
 **Coding agents run on Git, not SQL.** Three of the other industries stage each change in a
 database transaction. The coding-agent pack stages it in a worktree of its own at the head
 of `main`, on [Interlock's Git substrate](https://github.com/crimsondevil0929/interlock#git-the-same-guarantee-on-a-branch),
-and gets the same guarantee: what was measured is exactly what committed, or nothing
-committed. The agent's edit runs first, then the repository's code generator, and then Git
-measures every file that changed. A plan that passes commits with a compare-and-swap of
+and gets the same guarantee as a transaction: what commits is exactly what was measured, or
+nothing commits. The agent's edit runs first, then the repository's code generator, and then
+Git measures every file that changed. A plan that passes commits with a compare-and-swap of
 `main` from the head it was measured on. The seven scenarios:
 
 1. A one-line fix lands as one commit.
@@ -72,15 +73,15 @@ measures every file that changed. A plan that passes commits with a compare-and-
    refused, and reconciliation names the push.
 5. A dependency bump commits only with CI's signed result for its exact bytes, on 2 of 3
    maintainers, at the head they reviewed.
-6. An administrator's hotfix lands outside any session. Git sees an ordinary commit; the
+6. An administrator's hotfix lands outside any session. Git sees an ordinary commit, and the
    offline verifier names it.
 7. Both bundles are verified offline.
 
 The pack writes the deployment's configuration as every other pack does: `interlock.toml`
 names `substrate = "git"`, the repository, its code generator and the control database, and
 `fiduciary --config <dir>/fiduciary.toml verify` and a service opened from that file stage on
-the repository. The acts themselves stage on the substrate that file configures. The pack
-needs Interlock 1.1.0.
+the repository. The scenarios themselves stage on the substrate that file configures. The
+pack needs Interlock 1.1.0.
 
 **With live models.** Interlock's [customer acceptance
 matrix](https://github.com/crimsondevil0929/interlock/blob/main/docs/CUSTOMER_ACCEPTANCE_MATRIX.md)
@@ -88,7 +89,7 @@ put live Claude models (`claude-opus-5-5` and `claude-haiku-5-5`) in front of fo
 unrelated business domains on one engine: accounts payable, cluster operations, SaaS
 administration and warehouse fulfilment. **42 of 42 live cases passed**, for $1.67 of
 model spend metered by AgentGov (recorded 2026-10-11). One function builds every
-domain's checks; only table names, column names and limits differ.
+domain's checks. Only table names, column names and limits differ.
 
 What this does not claim:
 
@@ -96,8 +97,8 @@ What this does not claim:
   the real FHIR REST protocol, versions, `If-Match`, search and an `AuditEvent` log, with one
   server rule. A real EHR's rules are its own, and a write it makes that the read-back does
   not cover (another patient's chart, a system outside it) is not caught. Class V catches a
-  rule's consequence after the write, and undoes it: for a moment, the EHR held it. The
-  pack's EHR allows client-assigned ids; one that does not cannot have a create predicted
+  rule's consequence after the write and undoes it, so for a moment the EHR did hold it. The
+  pack's EHR allows client-assigned ids. On one that doesn't, a create can't be predicted
   exactly.
 - The cloud SRE pack stages on a Kubernetes API server, plan-bound: each change is measured
   by the API server's own dry run, admission webhooks included, and applied on the version
@@ -110,12 +111,13 @@ What this does not claim:
   process with its own key, that signs each diff it reads. A real deployment points the
   sensor at its policy engine or scanner.
 - The audit exports a pack writes beside its deployment are the stand-ins' own logs: the
-  loopback API server's audit log, the loopback EHR's `AuditEvent` log, and the
-  repository's pushes as a code host would log them. Each is reconciled against the
-  receipts of writes to its own system only: a cluster's log does not see a request to a
-  cloud API. The request-only packs reach their vendors through the relay, whose deliveries an
-  action receipt does not name, so they write no export; reconciling a vendor's log needs
-  the relay's delivery receipts (ARC1 1.1), which the demo does not settle.
+  loopback API server's audit log, the loopback EHR's `AuditEvent` log, the repository's
+  pushes as a code host would log them, and, for the three industries that write through a
+  vendor, that vendor's export (Stripe's events, an EDI gateway's message log, SendGrid's
+  events). Each is reconciled only against the receipts for its own system, since a
+  cluster's log can't see a request to a cloud API. A vendor's export is matched to the
+  delivery receipts the relay's deliveries are settled into (1.9.0), by the idempotency key
+  the relay sent and the vendor's id for what it created.
 - The coding-agent pack's repository, CI and pushes are local stand-ins: a bare repository,
   a CI that signs its results as a real one would, and a teammate's push made in-process at
   the moment the agent's change is measured. Its code generator is operator code: it runs
@@ -160,8 +162,8 @@ agent ──▶ MCP / policy gateway ──▶ ┌──────────
 | [Interlock](https://github.com/crimsondevil0929/interlock) | [`interlock-escrow`](https://pypi.org/project/interlock-escrow/) | Does the change this transaction actually made, read back from the database, satisfy policy? It commits or rolls back that same transaction, and delivers outbound API calls exactly once. |
 | **Fiduciary** | [`interlock-fiduciary`](https://pypi.org/project/interlock-fiduciary/) | Who set those limits, and who approved each exception? Signed mandates, quorum-approved warrants, and an audit bundle anyone can verify offline. |
 
-Use the stack behind a gateway, not instead of one. Gateways handle prompt scanning,
-identity and agent inventory; this stack checks consequences and records the evidence.
+Run the stack behind a gateway. It doesn't replace one: gateways handle prompt scanning,
+identity and agent inventory, and this stack checks consequences and records the evidence.
 
 ## Quickstart
 
@@ -182,28 +184,30 @@ scenarios, sending the same tool calls to an input gateway (Cedar policies) and 
 stack:
 
 ```
-Act 1  Order queue: refund and loyalty discount
+Scenario 1  Refund and discount: a trigger reprices the order to 10%
   gateway: 3 of 3 calls permitted. stack: 1 committed, 1 rolled back
   order 9 total: 1000.00 -> 100.00 (90% drop, limit 30%); rolled back
-Act 2  Batch settlement cascade (cross-tenant trigger)
+Scenario 2  One dispute flag reaches 50 orders in four tenants
   gateway: PERMIT. stack: 50 rows across 4 tenants (limit 20 rows, 1 tenant); rolled back, back office unchanged
-Act 3  Sub-agent fan-out across 50 sessions
+Scenario 3  50 sub-agent sessions against one refund window
   gateway: 50 of 50 sessions permitted ($4,500.00; $100.00 per-session limit). stack: 5 committed ($450.00), 45 blocked by the $500/24h lineage window
   derive support-agent/returns (refund cap $100): derived and bound
   derive support-agent/billing (refund cap $50): derived and bound
   derive support-agent/vip (refund cap $500): refused, exceeds its parent: outbound.caps[stripe.refunds.create.amount.request].maximum.usd: is 500, above the parent's 200
-Act 4  Relay crash mid-refund (idempotent recovery)
+Scenario 4  The relay dies after Stripe answers; the refund is made once
   relay-a crashed after Stripe processed the refund; relay-b retried with the same idempotency key: 2 requests, 1 refund
   webhook: signed event accepted (200), forged event rejected (401); 6 messages delivered
-Act 5  2-of-3 principal quorum approval
-  ticket 0f908f93 (held): 4 approvals submitted, 2 principals counted, quorum 2 of 3; warrant executed; message pending -> delivered
-Act 6  Unauthorized DBA override (break-glass)
-  night-shift key released message f2114609 and reset the breaker without a warrant; message delivered
-Act 7  Offline third-party audit verification
+Scenario 5  Held refund released by 2 of 3 principals
+  ticket 25a136af (held): 4 approvals submitted, 2 principals counted, quorum 2 of 3; warrant executed; message pending -> delivered
+Scenario 6  DBA releases a held refund and resets the breaker by hand
+  night-shift key released message 4de86222 and reset the breaker without a warrant; message delivered
+  a refund made in Stripe's Dashboard, outside the relay: re_4d5c8a69be362f76de4a1747
+Scenario 7  Offline audit of both bundles, and Stripe's event log
   before.fidb: PASS, 0 findings, 0 network calls, 0 planted values found
   after.fidb: FAIL (exit 7), 2 findings, 0 network calls, 0 planted values found
     V7 ambient: ledger entry 221 (circuit_reset) on support-agent: circuit reset without an authorizing warrant
-    V7 ambient [break-glass]: operator record 3 (release) by key f66328a7c3defa1c acted on the lineage's outbox messages without an authorizing warrant
+    V7 ambient [break-glass]: operator record 3 (release) by key bd673fce2330700e acted on the lineage's outbox messages without an authorizing warrant
+  Stripe events: 8 matched to a delivery receipt, 1 phantom (refund.created re_4d5c8a69be362f76de4a1747)
 ```
 
 All figures are measured during the run: row changes from the open transaction,
@@ -227,7 +231,7 @@ with networking disabled. The run takes a few seconds and writes:
 
 `--out DIR` sets the directory, `--report PATH` also writes the dashboard or a Markdown
 report elsewhere, and `--serve` serves the dashboard on 127.0.0.1, with the console
-described in [The console](#the-console). Added in 1.1.0. `fiduciary demo --out DIR --serve`
+described in [The console](#the-console). `fiduciary demo --out DIR --serve`
 on a directory that already holds a run serves that run again, read and never written.
 `--domain` picks the industry (see [One engine, any industry](#one-engine-any-industry));
 with `all`, each domain pack is written to a subdirectory named for it.
@@ -249,10 +253,10 @@ Results from the run on 2026-10-25 (UTC), with cedarpy 4.12.2:
 | Model's reply | It confirmed the refund, reported the blocked discount, said the 30% rule looked wrong for a 10% discount, and asked for the rule to be checked before retrying. |
 
 The model's calls were valid and within policy. The problem was what the database did with
-them, which no input check can see; the agent's feedback says only that the plan lowered
-order totals by more than 30%, so from its side the limit looks wrong. Live results are
-not reproducible because model behavior varies. The default mode replays a fixed call
-sequence, and CI runs that.
+them, which no input check can see. The agent's feedback says only that the plan lowered
+order totals by more than 30%, so from its side the limit looks wrong. Live results aren't
+reproducible, because model behavior varies. The default mode replays a fixed call
+sequence, and that's what CI runs.
 
 With `--live`, the model also works each domain pack's second scenario, the hidden
 cascade, from a plain request ("discontinue that order", "scale the api from 4 to 6").
@@ -288,7 +292,7 @@ describes a Git refusal in files, path classes and the branch. On the second run
 said the repository's hooks had turned one edit into changes across 10 to 99 files, over
 the 12-file limit, and stopped.
 
-A live act's model calls never take it past `--max-cost`. Each turn may write only the
+A live scenario's model calls never take it past `--max-cost`. Each turn may write only the
 output tokens that what is left of the cap buys, after the turn's input tokens, which the
 API counts. `stack_dashboard.py --keep` keeps the packs a recorded run already holds, after
 verifying their bundles again, and plays only the rest.
@@ -577,8 +581,23 @@ cd <demo>/coding-agent && agentgov reconcile-actions receipts.jsonl audit/github
     --format github-audit-json
 ```
 
-The first names the administrator's `kubectl` with the remediator's shared token, the
-second the teammate's push around the queue: each a change no bundle could show.
+The first names the administrator's `kubectl` call with the remediator's shared token, and
+the second names the teammate's push around the queue. Neither could appear in a bundle.
+
+The three industries that write through a vendor keep the vendor's own export, matched
+against the delivery receipts the relay's deliveries are settled into:
+
+```
+cd <demo> && agentgov reconcile-actions receipts.jsonl audit/stripe-events.json \
+    --format stripe-events --actor api --substrate stripe
+cd <demo>/saas && agentgov reconcile-actions receipts.jsonl audit/sendgrid-events.json \
+    --format sendgrid-events --actor api --substrate notify
+cd <demo>/supply-chain && agentgov reconcile-actions receipts.jsonl audit/edi-messages.jsonl \
+    --format records --actor erp-integration --substrate edi
+```
+
+Each names the one request made around the relay with the vendor account: a refund from
+Stripe's Dashboard, a hand-sent invitation, a purchase order sent from the EDI portal.
 
 ## Running the service
 
@@ -659,6 +678,45 @@ that run it:
 A held call is ticketed by the proxy's own turn, and the agent is told it is waiting.
 `scripts/init_live.py` runs a live Claude model through it.
 
+### A database, a repository, a cluster, a Terraform configuration or a FHIR server
+
+`init --substrate` writes the same kind of deployment for a system the agent changes
+directly, with starter tools read from the system itself:
+
+```
+fiduciary init --out shop --substrate sqlite --database shop.db
+fiduciary init --out shop --substrate postgres --database postgresql://agent@db/app --schema shop
+fiduciary init --out repo --substrate git --repository billing.git --branch main
+fiduciary init --out ops --substrate kubernetes --server https://10.0.0.1:6443 \
+    --token-file agent.token --ca-file ca.crt --namespace staging --namespace prod-east
+fiduciary init --out infra --substrate terraform --directory infra --executable tofu
+fiduciary init --out ehr --substrate fhir --server https://ehr.example.org/fhir \
+    --token-file agent.token --type MedicationRequest
+```
+
+| Substrate | Starter tools |
+|---|---|
+| `sqlite`, `postgres` | `insert_<table>` and `update_<table>` (by primary key) for each table |
+| `git` | `write_file` and `replace_in_file` |
+| `kubernetes` | `scale_deployment` and `set_image` |
+| `terraform` | `set_<variable>` for each input variable |
+| `fhir` | `set_<type>_status` for each resource type named |
+
+The starter mandate allows inserts and updates, one row or object per plan, at most 120
+plans an hour. It allows no deletes, so there are no delete tools. A call whose measured
+change goes further is refused before anything changes: a trigger that writes a second row,
+a Git write to the repository's CI, infrastructure, dependency or governance files, a scale-up
+past triple the replicas, a Terraform plan that replaces or destroys a resource. Columns
+and variables whose values FIDU1 can't hold exactly (floats, binary data, JSON) are left out
+and listed. The deployment's `README.md` says what to do before the first call:
+
+- **SQLite:** nothing. Init adds Interlock's outbox and window tables to the database.
+- **PostgreSQL:** the connection string names the role the stage runs as, which must never be
+  a superuser. Run the `grants.sql` init wrote as the tables' owner, then
+  `interlock install --config interlock.toml --database <owner's connection string> --key keys/service.key`.
+- **Terraform:** init adds `interlock_stage.tf` (the `interlock_stage_id` variable and output
+  the stage reads back on recovery) if the configuration has none.
+
 ## Notices
 
 `[notify]` tells webhooks when a ticket waits for a quorum and when it is decided, with a
@@ -681,9 +739,10 @@ routing_key_env = "PD_ROUTING_KEY"
 classes = ["held", "refused"]
 ```
 
-Notices are delivered in log order, at least once. Each has a fixed id, so a receiver keeps
-it once. A notice carries ids, never a payload. `fiduciary serve` delivers them, as does
-`fiduciary notify --once`; `fiduciary notify --test approvers` sends one test notice.
+Notices are delivered in log order, at least once. Each has a fixed id, so a receiver can
+drop duplicates. A notice carries ids, never a payload. `fiduciary serve` delivers them, and
+so does `fiduciary notify --once`. `fiduciary notify --test approvers` sends one test
+notice.
 
 ## The public verifier
 
@@ -737,8 +796,8 @@ recorded demo run, changes nothing on disk.
 The same page works as a plain file, or hosted with no console behind it. It then shows what
 the run recorded and checks a dropped bundle in the browser: the archive and every member's
 digest, the log's hash chain, every record's Ed25519 signature, and a sealed bundle's seals.
-It labels that a partial check, not a verdict: the rest needs the verifier,
-`fiduciary verify-bundle`.
+The page labels the result a partial check rather than a verdict. The rest needs the
+verifier, `fiduciary verify-bundle`.
 
 ## Tests
 

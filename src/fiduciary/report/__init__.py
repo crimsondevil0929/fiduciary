@@ -164,7 +164,7 @@ def markdown(data: Mapping[str, Any]) -> str:
     if demo:
         out += ["## Demo scenarios", ""]
         for act in demo["acts"]:
-            out.append(f"- **Act {act['n']}: {act['title']}.** {act['lede']}")
+            out.append(f"- **Scenario {act['n']}: {act['title']}.** {act['lede']}")
         out.append("")
     for page in data.get("domains", []):
         profile = page["demo"]["domain"]
@@ -182,7 +182,7 @@ def markdown(data: Mapping[str, Any]) -> str:
         model = page["demo"].get("model")
         if model:
             out.append(
-                f"- **Live model:** {model['served']} worked act 2: {model['turns']} turn(s), "
+                f"- **Live model:** {model['served']} ran scenario 2 in {model['turns']} turn(s), "
                 f"{model['usage'].get('input_tokens', 0)} input and "
                 f"{model['usage'].get('output_tokens', 0)} output tokens, "
                 f"${model['metered']} metered"
@@ -202,7 +202,7 @@ def markdown(data: Mapping[str, Any]) -> str:
             )
         out.append("")
     out.append(
-        "_The control mapping supports an assessment; it is not a certification. The verdict, "
-        "exit code and findings come directly from `verify-bundle`._"
+        "_The control mapping supports an assessment. It isn't a certification. The verdict, "
+        "exit code and findings come straight from `verify-bundle`._"
     )
     return "\n".join(out) + "\n"
