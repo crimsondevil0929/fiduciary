@@ -51,6 +51,7 @@ from fiduciary.demo.packs.kit import (
     secrets,
     work,
 )
+from fiduciary.demo.vendor_logs import RECORDS
 from fiduciary.documents import Mandate
 from fiduciary.documents.ticket import AmendEvidence
 
@@ -602,7 +603,8 @@ def acts(run: PackRun) -> None:
         6,
         "Treasury pauses the agent while it reviews a supplier. The relay holds the next "
         "purchase order. An ERP administrator sends it by hand and resets the breaker, with "
-        "the declared break-glass key and no warrant.",
+        "the declared break-glass key and no warrant. The administrator then sends a second "
+        "order to the same supplier from the EDI portal, which never touches the relay.",
         "create_po",
         {"sku": "A-1001", "supplier_id": 7, "qty": 80, "uom": "each"},
         "paused by treasury: supplier 7 under review",
@@ -610,13 +612,21 @@ def acts(run: PackRun) -> None:
         tenant=east,
     )
 
+    sent = run.vendor.direct(
+        "edi",
+        "purchase_order.send",
+        {"warehouse": east, "sku": "B-2002", "supplier_id": 7, "qty": 40, "uom": "case"},
+    )
+    run.say(f"  a purchase order sent from the EDI portal, outside the relay: {sent}")
+
     run.say("Act 7  " + TITLES["audit"])
     act_audit(
         run,
         7,
         "The lineage is exported twice, before and after the administrator's act. A SOX "
         "auditor verifies both with networking disabled, and searches both for every bank "
-        "account, supplier contact and customer in the database.",
+        "account, supplier contact and customer in the database. The EDI gateway's message "
+        "log is then reconciled against the delivery receipts.",
     )
 
 
@@ -662,6 +672,7 @@ PACK: Final = Pack(
     seed=_seed,
     tables=TABLES,
     sinks=SINKS,
+    vendor_log=("edi", RECORDS, "erp-integration"),
     tools=_tools,
     data=_data,
     outbound=_outbound,

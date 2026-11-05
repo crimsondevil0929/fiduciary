@@ -63,6 +63,7 @@ from fiduciary.bridge import CallResult, Session, SessionHaltedError
 from fiduciary.bundle import BundleReport, Evidence, TrustedKeys, export_bundle, verify_bundle
 from fiduciary.bundle.export import spec
 from fiduciary.demo.gateway import SESSION_LIMIT_CENTS, Decision, Gateway
+from fiduciary.demo.vendor_logs import STRIPE, VendorLog, reconcile
 from fiduciary.demo.world import (
     ORDERS,
     PRICING,
@@ -714,6 +715,8 @@ class Stripe:
     def __init__(self) -> None:
         self.refunds: dict[str, dict[str, Any]] = {}
         self.requests: list[dict[str, Any]] = []
+        self.log = VendorLog(STRIPE, "stripe")
+        """Stripe's events for the account, as its Events API lists them (1.9.0)."""
 
     def refund(self, delivery: Delivery) -> dict[str, Any]:
         payload = json.loads(delivery.payload)
@@ -727,7 +730,27 @@ class Stripe:
                 "payment_intent": payload["payment_intent"],
                 "status": "succeeded",
             }
+            refund = self.refunds[key]
+            self.log.delivered(
+                "refunds.create",
+                key=key,
+                message=str(delivery.message_id),
+                ref=refund["id"],
+                payload={k: v for k, v in refund.items() if k != "id"},
+            )
         return self.refunds[key]
+
+    def dashboard_refund(self, payment_intent: str, amount: str) -> str:
+        """A refund made in Stripe's Dashboard with the account's own login: no
+        relay, no idempotency key from a plan. Returns its id."""
+        ref = "re_" + hashlib.sha256(f"dashboard {payment_intent}".encode()).hexdigest()[:24]
+        cents = int(Decimal(amount) * 100)
+        self.log.direct(
+            "refunds.create",
+            ref,
+            {"amount": cents, "currency": "usd", "payment_intent": payment_intent},
+        )
+        return ref
 
 
 class _Adapter:
@@ -758,6 +781,7 @@ def _relay(world: World, name: str, stripe: Stripe, **kw: Any) -> tuple[Relay, A
 
 
 def drain(world: World, stripe: Stripe, name: str = "relay-b") -> None:
+    """Deliver what is due, then write a delivery receipt for each delivery."""
     relay, store = _relay(world, name, stripe)
     try:
         for _ in range(200):
@@ -765,6 +789,7 @@ def drain(world: World, stripe: Stripe, name: str = "relay-b") -> None:
                 break
     finally:
         store.close()
+    world.settle("night-shift")
 
 
 def _log(world: World, message: str) -> list[dict[str, Any]]:
@@ -977,6 +1002,10 @@ def act_quorum(run: Run, stripe: Stripe) -> None:
 # --------------------------------------------------------------------------
 
 
+DASHBOARD_ORDER: Final = 33
+"""The order the night-shift administrator refunds in Stripe's Dashboard (act 6)."""
+
+
 def act_break_glass(run: Run, stripe: Stripe) -> None:
     world = run.world
     run.bundles["before"] = export(world, "night-shift-handover")
@@ -994,20 +1023,25 @@ def act_break_glass(run: Run, stripe: Stripe) -> None:
         log.close()
     world.governor.reset(SCOPE)
     drain(world, stripe)
+    dashboard = stripe.dashboard_refund(f"pi_{DASHBOARD_ORDER:010d}", "40.00")
     run.say(
         f"  night-shift key released message {message[:8]} and reset the breaker without a "
         f"warrant; message {world.outbox_states()[message]}"
     )
+    run.say(f"  a refund made in Stripe's Dashboard, outside the relay: {dashboard}")
     _act(
         run,
         6,
         "break-glass",
         "A second refund is held during a second pause. The night-shift database "
         "administrator releases it and resets the circuit breaker directly, without a "
-        "ticket or warrant. No agent call is involved, so the gateway sees nothing.",
+        "ticket or warrant. No agent call is involved, so the gateway sees nothing. The "
+        f"same administrator then refunds order {DASHBOARD_ORDER} from Stripe's Dashboard, "
+        "which never touches the relay.",
         message=message,
         operator=world.key_id("night-shift"),
         delivered=world.outbox_states()[message],
+        dashboard=dashboard,
     )
 
 
@@ -1161,15 +1195,22 @@ def act_audit(run: Run, stripe: Stripe) -> None:
         for finding in report.findings:
             run.say(f"    {finding.render()[:150]}")
     world.governor.verify_conservation()
+    reconciled = reconcile(world.root, stripe.log)
+    run.say(
+        f"  Stripe events: {reconciled['matched']} matched to a delivery receipt, "
+        f"{reconciled['phantom']} phantom ({', '.join(reconciled['phantoms']) or 'none'})"
+    )
     _act(
         run,
         7,
         "audit",
         "The lineage is exported twice, before and after the DBA override. An auditor "
         "verifies both bundles with networking disabled, using only the charter digest and "
-        "the deployment's public keys.",
+        "the deployment's public keys. Stripe's event log is then reconciled against the "
+        "delivery receipts. The Dashboard refund matches none of them.",
         verdicts=verdicts,
         conservation="verified",
+        reconciliation=reconciled,
     )
 
 

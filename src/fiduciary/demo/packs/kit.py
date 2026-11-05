@@ -60,6 +60,7 @@ from fiduciary.compiler import Deployment
 from fiduciary.demo.acts import Live, _spent, converse, no_network, scan
 from fiduciary.demo.acts import measured as fintech_measured
 from fiduciary.demo.gateway import Condition, Decision, Policy
+from fiduciary.demo.vendor_logs import VendorLog, reconcile
 from fiduciary.demo.world import DIRECTIVE, PRICING, World, _key
 from fiduciary.documents import Charter, Mandate, ToolBinding
 from fiduciary.keys import load_key
@@ -180,6 +181,11 @@ class Pack:
     sensors: Callable[[Path], tuple[Any, ...]] | None = None
     """The deployment's analyzers, given its root (1.5.0): each is shown
     every diff a stage measures, and signs what it finds."""
+    vendor_log: tuple[str, str, str] | None = None
+    """For a pack whose writes go to an outside vendor: the sink, the format
+    the vendor exports its log in, and the actor it records for the relay
+    (:mod:`fiduciary.demo.vendor_logs`, 1.9.0). The audit reconciles that log
+    against the delivery receipts."""
 
 
 # --------------------------------------------------------------------------
@@ -960,6 +966,8 @@ class Vendor:
     def __init__(self) -> None:
         self.effects: dict[str, dict[str, Any]] = {}
         self.requests: list[dict[str, Any]] = []
+        self.logs: dict[str, VendorLog] = {}
+        """The vendor's own log of each sink it keeps one for (1.9.0)."""
 
     def send(self, delivery: Delivery) -> DeliveryResult:
         key = delivery.idempotency_key
@@ -972,7 +980,27 @@ class Vendor:
                 "sink": delivery.sink,
                 "payload": json.loads(delivery.payload),
             }
-        return DeliveryResult(DELIVERED, status_code=200, remote_ref=self.effects[key]["id"])
+        effect = self.effects[key]
+        log = self.logs.get(delivery.sink)
+        if log is not None:
+            log.delivered(
+                delivery.operation,
+                key=key,
+                message=str(delivery.message_id),
+                ref=effect["id"],
+                payload=effect["payload"],
+            )
+        return DeliveryResult(DELIVERED, status_code=200, remote_ref=effect["id"])
+
+    def direct(self, sink: str, operation: str, payload: Mapping[str, Any]) -> str:
+        """A request made with the vendor account but not through the relay, as
+        someone with the credentials might send it by hand. Returns its id."""
+        ref = "ref_" + hashlib.sha256(json.dumps([sink, payload]).encode()).hexdigest()[:20]
+        self.effects[ref] = {"id": ref, "sink": sink, "payload": dict(payload)}
+        log = self.logs.get(sink)
+        if log is not None:
+            log.direct(operation, ref, payload)
+        return ref
 
 
 @dataclass
@@ -1170,6 +1198,7 @@ def _relay(world: PackWorld, name: str, vendor: Vendor) -> tuple[Relay, SqliteOu
 
 
 def drain(world: PackWorld, vendor: Vendor) -> None:
+    """Deliver what is due, then write a delivery receipt for each delivery."""
     relay, store = _relay(world, "relay-b", vendor)
     try:
         for _ in range(200):
@@ -1177,6 +1206,7 @@ def drain(world: PackWorld, vendor: Vendor) -> None:
                 break
     finally:
         store.close()
+    world.settle(world.spec.operator)
 
 
 # --------------------------------------------------------------------------
@@ -1455,6 +1485,14 @@ def act_audit(run: PackRun, n: int, lede: str, **extra: Any) -> None:
             f"calls, {sum(v['scan']['found'].values())} planted values found"
         )
     world.governor.verify_conservation()
+    if run.pack.vendor_log is not None and "reconciliation" not in extra:
+        log = run.vendor.logs[run.pack.vendor_log[0]]
+        extra["reconciliation"] = reconcile(world.root, log)
+        found = extra["reconciliation"]
+        run.say(
+            f"  {log.export}: {found['matched']} matched to a delivery receipt, "
+            f"{found['phantom']} phantom ({', '.join(found['phantoms']) or 'none'})"
+        )
     labels = scan(run.bundles["after"], {"labels": list(run.pack.tenants)})
     run.act(
         n,

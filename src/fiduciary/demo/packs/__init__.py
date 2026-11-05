@@ -26,6 +26,7 @@ from fiduciary.attest import attest
 from fiduciary.demo.acts import Live
 from fiduciary.demo.packs import coding_agent, healthcare, saas, sre, supply_chain
 from fiduciary.demo.packs.kit import Pack, PackGateway, PackRun, build, pinned
+from fiduciary.demo.vendor_logs import VendorLog
 
 __all__ = ["PACKS", "run"]
 
@@ -54,6 +55,9 @@ def run(
     world = build(root, pack)
     gateway = PackGateway(pack, pack.tenants[0], engine=engine)
     played = PackRun(world, gateway, say=say, live=live)
+    if pack.vendor_log is not None:
+        sink, fmt, actor = pack.vendor_log
+        played.vendor.logs[sink] = VendorLog(fmt, sink, actor=actor)
     try:
         played.observe()
         pack.acts(played)

@@ -59,6 +59,7 @@ from fiduciary.demo.packs.kit import (
     verdict,
     work,
 )
+from fiduciary.demo.vendor_logs import SENDGRID
 from fiduciary.documents import Mandate
 from fiduciary.sealing import salts, seal
 
@@ -577,7 +578,8 @@ def acts(run: PackRun) -> None:
         5,
         "A second invitation, in Initech's workspace, is held during a second pause. A "
         "support engineer sends it by hand and resets the breaker, with the declared "
-        "break-glass key and no warrant.",
+        "break-glass key and no warrant. The engineer then sends one more invitation "
+        "straight through SendGrid with the platform's API key, which never touches the relay.",
         "assign_role",
         {"user": "lee@initech.example", "role": "viewer"},
         "paused by trust and safety: second review",
@@ -585,6 +587,12 @@ def acts(run: PackRun) -> None:
         tenant=ORGS[2],
         mandate=workspaces[ORGS[2]],
     )
+    sent = run.vendor.direct(
+        "notify",
+        "email.send",
+        {"org": ORGS[2], "to": "ops@initech.example", "template": "invitation"},
+    )
+    run.say(f"  an invitation sent through SendGrid directly, outside the relay: {sent}")
 
     run.say("Act 6  " + TITLES["trust-center"])
     _trust_center(run)
@@ -595,7 +603,8 @@ def acts(run: PackRun) -> None:
         7,
         "The vendor's whole lineage, every customer's child included, is exported before "
         "and after the support engineer's act. An auditor verifies both with networking "
-        "disabled and searches both for every record and email address.",
+        "disabled and searches both for every record and email address. SendGrid's event "
+        "log is then reconciled against the delivery receipts.",
     )
 
 
@@ -641,6 +650,7 @@ PACK: Final = Pack(
     seed=_seed,
     tables=TABLES,
     sinks=SINKS,
+    vendor_log=("notify", SENDGRID, "api"),
     tools=_tools,
     data=_data,
     outbound=_outbound,

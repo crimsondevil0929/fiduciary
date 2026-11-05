@@ -118,6 +118,23 @@ def test_the_auditor_names_the_break_glass_act_and_finds_no_data(demo: Outcome) 
     assert [o["label"] for o in attestation["operators"] if o["ambient"]] == ["break-glass"]
 
 
+def test_stripes_event_log_is_matched_to_the_delivery_receipts(demo: Outcome) -> None:
+    """1.9.0: each refund the relay made is matched to its delivery receipt in
+    Stripe's own event log; the Dashboard refund (act 6) matches none."""
+    reconciled = _act(demo, "audit")["reconciliation"]
+    dashboard = _act(demo, "break-glass")["dashboard"]
+    assert reconciled["format"] == "stripe-events" and reconciled["actor"] == "api"
+    assert reconciled["phantoms"] == [f"refund.created {dashboard}"]
+    assert reconciled["unobserved"] == 0 and reconciled["matched"] == reconciled["receipts"] > 0
+    assert (demo.root / reconciled["export"]).is_file()
+    deliveries = [
+        line
+        for line in (demo.root / "receipts.jsonl").read_text().splitlines()
+        if '"delivery"' in line
+    ]
+    assert len(deliveries) == reconciled["receipts"]
+
+
 def test_the_demo_deployment_opens_with_the_ordinary_commands(demo: Outcome) -> None:
     config = str(demo.root / "fiduciary.toml")
     with contextlib.redirect_stdout(io.StringIO()) as printed:
