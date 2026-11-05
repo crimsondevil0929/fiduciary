@@ -46,7 +46,9 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final
 
-__all__ = ["InitReport", "classify", "discover", "init", "schema_of"]
+from fiduciary.starters import Starter, Target, starter
+
+__all__ = ["InitReport", "Target", "classify", "discover", "init", "schema_of"]
 
 SINK: Final = "upstream"
 READ: Final = "read"
@@ -90,6 +92,9 @@ class InitReport:
     tools: list[dict[str, str]] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
     principals: tuple[str, ...] = ()
+    substrate: str = "mcp"
+    notes: list[dict[str, str]] = field(default_factory=list)
+    """What init changed outside the deployment's directory (a starter's), and why."""
 
 
 def discover(command: Sequence[str], *, timeout: float = 30.0) -> list[dict[str, Any]]:
@@ -319,6 +324,53 @@ def _pack(
     )
 
 
+def _starter_pack(name: str, principals: tuple[str, str, str], st: Starter) -> Any:
+    """A :class:`~fiduciary.demo.packs.kit.Pack` for a starter (:mod:`fiduciary.starters`)."""
+    from fiduciary.demo.packs.kit import Pack
+
+    tools = st.tools
+    return Pack(
+        key=name,
+        industry=name,
+        title=f"An agent on {name}'s {st.nouns['substrate']}",
+        frameworks=("soc2", "owasp-asi-2026", "eu-ai-act"),
+        scope=f"{name}-agent",
+        funding="operations",
+        label=f"{name}: starter tools on {st.nouns['substrate']}",
+        principals=principals,
+        operator="break-glass",
+        tenants=("default",),
+        partition="tenant",
+        schema="",
+        seed=lambda conn: None,
+        tables=tuple(st.tables),
+        sinks=(),
+        tools=lambda: [copy.deepcopy(t) for t in tools],
+        data=lambda: copy.deepcopy(st.data),
+        outbound=lambda: {
+            "sinks": {},
+            "max_per_plan": 0,
+            "per_sink": {},
+            "caps": [],
+            "recipients": [],
+            "tenants": {"max_tenants": 1, "require_tenant": False, "fields": {}},
+        },
+        windows=lambda: copy.deepcopy(st.windows),
+        policies=(),
+        entities=lambda: {},
+        resource={},
+        summed={},
+        titles={},
+        acts=lambda run: None,
+        canaries=lambda run: {},
+        nouns=st.nouns,
+        system="",
+        interlock=st.interlock,
+        back_office=st.back_office,
+        outbox=st.outbox,
+    )
+
+
 def init(
     root: Path,
     command: Sequence[str] | None = None,
@@ -326,12 +378,17 @@ def init(
     name: str | None = None,
     principals: Sequence[str] = ("approver-1", "approver-2", "approver-3"),
     discovered: Sequence[Mapping[str, Any]] | None = None,
+    target: Target | None = None,
 ) -> InitReport:
     """Write the deployment into ``root`` (new or empty).
 
     :param command: The MCP server's command line, or ``None`` for no tools.
     :param discovered: The server's tools, when already listed (tests).
-    :raises ValueError: On a name, principals or a directory init cannot use.
+    :param target: A system the agent changes directly (1.9.0): a database, a
+        repository, a cluster, a Terraform configuration or a FHIR server. Its
+        starter tools come from :func:`fiduciary.starters.starter`.
+    :raises ValueError: On a name, principals or a directory init cannot use,
+        or a target it cannot read.
     """
     from fiduciary.demo.packs import kit
 
@@ -342,6 +399,34 @@ def init(
         raise ValueError("a charter here names three principals: give three distinct names")
     if root.exists() and any(root.iterdir()):
         raise ValueError(f"{root} is not empty: init writes a fresh deployment")
+    trio = (principals[0], principals[1], principals[2])
+    if target is not None:
+        if command:
+            raise ValueError("init takes --mcp or --substrate, not both")
+        st = starter(target)
+        report = InitReport(
+            root=root.resolve(),
+            scope=f"{label}-agent",
+            principals=tuple(principals),
+            substrate=target.substrate,
+            tools=list(st.report),
+            skipped=list(st.skipped),
+            notes=list(st.notes),
+        )
+        world = kit.build(root, _starter_pack(label, trio, st))
+        try:
+            if target.substrate == "postgres":
+                # init staged nothing: the outbox it made to stand the world up is not
+                # the deployment's, which is in PostgreSQL (interlock install)
+                world.close()
+                for leftover in root.glob("back_office.db*"):
+                    leftover.unlink()
+            for name, text in st.files.items():
+                (root / name).write_text(text, encoding="utf-8")
+            _write_report(root, report, None, target)
+        finally:
+            world.close()
+        return report
     listed = list(discovered) if discovered is not None else (discover(command) if command else [])
     report = InitReport(root=root.resolve(), scope=f"{label}-agent", principals=tuple(principals))
     bindings: list[dict[str, Any]] = []
@@ -364,29 +449,37 @@ def init(
         modes[tool_name] = mode
         schemas[tool_name] = binding["input"]
         report.tools.append({"name": tool_name, "mode": mode, "why": why})
-    pack = _pack(label, (principals[0], principals[1], principals[2]), bindings, modes, schemas)
+    pack = _pack(label, trio, bindings, modes, schemas)
     world = kit.build(root, pack)
     try:
         if command and any(m != READ for m in modes.values()):
             with (root / "interlock.toml").open("a", encoding="utf-8") as config:
                 config.write(_relay_toml(root, command))
-        (root / "README.md").write_text(_readme(report, command), encoding="utf-8")
-        (root / "init.json").write_text(
-            json.dumps(
-                {
-                    "scope": report.scope,
-                    "tools": report.tools,
-                    "skipped": report.skipped,
-                    "upstream": list(command or []),
-                },
-                indent=2,
-            )
-            + "\n",
-            encoding="utf-8",
-        )
+        _write_report(root, report, command, None)
     finally:
         world.close()
     return report
+
+
+def _write_report(
+    root: Path, report: InitReport, command: Sequence[str] | None, target: Target | None
+) -> None:
+    readme = _readme(report, command) if target is None else _substrate_readme(report, target)
+    (root / "README.md").write_text(readme, encoding="utf-8")
+    (root / "init.json").write_text(
+        json.dumps(
+            {
+                "scope": report.scope,
+                "substrate": report.substrate,
+                "tools": report.tools,
+                "skipped": report.skipped,
+                "upstream": list(command or []),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def _relay_toml(root: Path, command: Sequence[str]) -> str:
@@ -438,7 +531,7 @@ Written by `fiduciary init`. Every path in the configuration files is absolute.
 # the agent's MCP server: only the tools the mandate pins, governed as above
 fiduciary --config fiduciary.toml mcp proxy --mandate {report.scope} -- {upstream}
 
-# the writer: approvals recorded, warrants formed and executed, held requests ticketed
+# the writer: records approvals, forms warrants and executes them
 fiduciary --config fiduciary.toml serve
 
 # the relay: each released request made on the MCP server
@@ -454,4 +547,80 @@ fiduciary console --dir . --accept-approvals --open
 Move each to its principal, who signs with it in `fiduciary console` (the key file is read
 in the page and never sent) or with
 `fiduciary approve <ticket> --principal {p1} --key {p1}.key --submit`, and delete it here.
+"""
+
+
+_SETUP: Final = {
+    "sqlite": "Init added Interlock's outbox and window tables to the database, as "
+    "`interlock install` does. Nothing else in it changed.",
+    "postgres": "The stage connects as the role in `interlock.toml`'s connection string, which "
+    "must never be a superuser. As the tables' owner, grant it what `grants.sql` lists, then "
+    "install Interlock's schema, signed with the service key:\n\n```\n"
+    "psql <owner's connection string> -f grants.sql\n"
+    "interlock install --config interlock.toml --database <owner's connection string> "
+    "--key keys/service.key\n```",
+    "git": "The stage works in its own worktrees of the repository and moves the branch only "
+    "with a compare-and-swap. Keep the branch out of any checkout the agent runs in.",
+    "kubernetes": "The stage acts with the token in the file `interlock.toml` names. Give that "
+    "service account `edit` in the namespaces listed, and nothing cluster-wide.",
+    "terraform": "Run `init` in the configuration's directory first. The stage plans with "
+    "`-out`, measures the saved plan and applies exactly that plan.",
+    "fhir": "The server must allow client-assigned ids and conditional updates (`If-Match`). "
+    "Each write is read back and put back if it differs from the prediction.",
+}
+
+
+def _left_out(skipped: str) -> str:
+    return f"\nLeft out:\n\n{skipped}\n" if skipped else ""
+
+
+def _substrate_readme(report: InitReport, target: Target) -> str:
+    rows = (
+        "\n".join(f"| `{t['name']}` | {t['mode']} | {t['why']} |" for t in report.tools)
+        or "| (none) | | |"
+    )
+    skipped = "\n".join(f"- `{s['name']}`: {s['why']}" for s in report.skipped)
+    p1, _, _ = report.principals
+    return f"""# {report.scope}
+
+Written by `fiduciary init --substrate {target.substrate}`. Every path in the configuration
+files is absolute.
+
+## Tools
+
+| Tool | Governed as | Why |
+|---|---|---|
+{rows}
+
+- **write**: the change is staged, measured, checked against the mandate and committed, one
+  row or object per plan, at most 120 plans an hour.
+- A call whose measured change goes further than the mandate allows (a trigger's extra
+  rows, a guarded path, a replacement) is refused before anything changes, and the agent is
+  told why. Allowing more takes a new mandate version, issued by two of the three principals.
+{_left_out(skipped)}
+These are starter tools. Edit them under `tools/`, sign them again with `keys/developer.key`,
+and issue a new mandate version that pins them.
+
+## Before the first call
+
+{_SETUP[target.substrate]}
+
+## Run it
+
+```
+# the agent's tools, over MCP
+fiduciary --config fiduciary.toml mcp serve --mandate {report.scope}
+
+# the writer: approvals recorded, warrants formed and executed
+fiduciary --config fiduciary.toml serve
+
+# the approvals desk, in the browser
+fiduciary console --dir . --accept-approvals --open
+```
+
+## The principals' keys
+
+`keys/{p1}.key` and the other two principals' keys sign approvals, and adopted the charter.
+Move each to its principal, who signs with it in `fiduciary console` (the key file is read in
+the page and never sent) or with `fiduciary approve`, then delete it here.
 """

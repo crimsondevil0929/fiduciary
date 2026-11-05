@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from agentgov.reconciliation import parsers
+from agentgov.reconciliation import ActionRecord, parsers
 
 from fiduciary.demo.vendor_logs import RECORDS, SENDGRID, STRIPE, VendorLog
 
@@ -19,8 +19,10 @@ def test_each_format_reads_back_with_agentgovs_parser(fmt: str) -> None:
     log.delivered("op.send", key="k-1", message="m-1", ref="ref1", payload=payload)
     log.delivered("op.send", key="k-1", message="m-1", ref="ref1", payload=payload)  # a retry
     log.direct("op.send", "ref2", payload)
-    records = parsers("actions")[fmt].parse(log.text(), source=log.export)
-    assert len(records) == 2, "one per request; a retry with the same key is not logged again"
+    parsed = parsers("actions")[fmt].parse(log.text(), source=log.export)
+    records = [r for r in parsed if isinstance(r, ActionRecord)]
+    # one per request: a retry with the same key is not logged again
+    assert len(records) == len(parsed) == 2
     ours, theirs = records if "k-1" in records[0].refs else records[::-1]
     assert "k-1" in ours.refs and "ref1" in ours.refs
     assert "k-1" not in theirs.refs and ours.actor == theirs.actor == log.actor

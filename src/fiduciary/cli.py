@@ -1412,12 +1412,14 @@ def _serve_dashboard(root: Path, where: str) -> tuple[Any, str]:
 
 def _init(args: argparse.Namespace) -> int:
     """``fiduciary init``: a deployment, ready to run (``fiduciary.init``)."""
-    from fiduciary.init import init
+    from fiduciary.init import Target, init
     from fiduciary.mcp import McpError
 
     command = list(args.command or [])
     if command and command[0] == "--":
         command = command[1:]
+    if args.mcp and args.substrate:
+        _fail("pass --mcp or --substrate, not both")
     if args.mcp and not command:
         _fail("give the MCP server's command after --mcp --")
     if command and not args.mcp:
@@ -1425,14 +1427,35 @@ def _init(args: argparse.Namespace) -> int:
     principals = (
         tuple(args.principal) if args.principal else ("approver-1", "approver-2", "approver-3")
     )
+    target = None
+    if args.substrate:
+        target = Target(
+            args.substrate,
+            database=args.database,
+            schema=args.schema,
+            tables=tuple(args.table),
+            repository=args.repository,
+            branch=args.branch,
+            server=args.server,
+            token_file=args.token_file,
+            ca_file=args.ca_file,
+            namespaces=tuple(args.namespace),
+            directory=args.directory,
+            executable=tuple(args.executable.split()),
+            types=tuple(args.types),
+        )
     try:
-        report = init(Path(args.out), command or None, name=args.name, principals=principals)
-    except (ValueError, McpError) as exc:
+        report = init(
+            Path(args.out), command or None, name=args.name, principals=principals, target=target
+        )
+    except (ValueError, OSError, McpError) as exc:
         _fail(str(exc))
     for tool in report.tools:
-        _out(f"{tool['mode']:<6} {tool['name']}: {tool['why']}")
+        _out(f"{tool['mode']:<8} {tool['name']}: {tool['why']}")
     for tool in report.skipped:
-        _out(f"left   {tool['name']}: {tool['why']}")
+        _out(f"left out {tool['name']}: {tool['why']}")
+    for note in report.notes:
+        _out(f"wrote    {note['name']}: {note['why']}")
     _out(f"wrote       {report.root} (mandate {report.scope}; see README.md)")
     return OK
 
@@ -1775,7 +1798,8 @@ def _parser() -> argparse.ArgumentParser:
 
     init = commands.add_parser(
         "init",
-        help="write a deployment ready to run; with --mcp, one governing an MCP server's tools",
+        help="write a deployment ready to run: for an MCP server's tools (--mcp), or for a "
+        "database, repository, cluster, Terraform configuration or FHIR server (--substrate)",
     )
     init.add_argument("--out", required=True, help="the directory to write (new or empty)")
     init.add_argument("--name", help="the deployment's name (the directory's, by default)")
@@ -1787,6 +1811,39 @@ def _parser() -> argparse.ArgumentParser:
     )
     init.add_argument(
         "--mcp", action="store_true", help="govern an MCP server's tools: its command after --"
+    )
+    target = init.add_argument_group("--substrate: a system the agent changes directly (1.9.0)")
+    target.add_argument(
+        "--substrate",
+        choices=("sqlite", "postgres", "git", "kubernetes", "terraform", "fhir"),
+        help="what the stage runs on; starter tools are written for it",
+    )
+    target.add_argument("--database", help="sqlite: the file; postgres: the connection string")
+    target.add_argument("--schema", default="public", help="postgres: the schema (public)")
+    target.add_argument(
+        "--table", action="append", default=[], help="sql: only this table (repeat for each)"
+    )
+    target.add_argument("--repository", type=Path, help="git: the repository")
+    target.add_argument("--branch", default="main", help="git: the branch (main)")
+    target.add_argument("--server", help="kubernetes: the API server; fhir: the base URL")
+    target.add_argument("--token-file", type=Path, help="kubernetes, fhir: the bearer token")
+    target.add_argument("--ca-file", type=Path, help="kubernetes, fhir: the CA bundle")
+    target.add_argument(
+        "--namespace",
+        action="append",
+        default=[],
+        help="kubernetes: a namespace the agent may change (repeat for each)",
+    )
+    target.add_argument("--directory", type=Path, help="terraform: the configuration")
+    target.add_argument(
+        "--executable", default="terraform", help="terraform: terraform or tofu (terraform)"
+    )
+    target.add_argument(
+        "--type",
+        dest="types",
+        action="append",
+        default=[],
+        help="fhir: a resource type the agent may change (repeat for each)",
     )
     init.add_argument("command", nargs=argparse.REMAINDER, help="-- the MCP server's command")
     init.set_defaults(handler=_init)

@@ -47,6 +47,7 @@ process instead (:mod:`fiduciary.mcp`).
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 import threading
 import time
@@ -82,6 +83,8 @@ from interlock.exceptions import (
     PlanError,
     RecoveryError,
     RecoveryExhaustedError,
+    SubstrateConfigurationError,
+    SubstrateUnavailableError,
 )
 from interlock.extension import BudgetGuard, ExtensionGrant, ExtensionRequest
 from interlock.feedback import AgentFeedback, feedback_for_error
@@ -164,6 +167,8 @@ _BUILTIN_DESCRIPTIONS: Final = {
     "fiduciary_ticket_status": "Report the state of a ticket this session raised.",
 }
 _SOURCE: Final = re.compile(r"\$(\.[A-Za-z_][A-Za-z0-9_]{0,63}|session\.(tenant|trajectory))")
+
+logger = logging.getLogger("fiduciary.bridge")
 
 
 class SessionError(FiduciaryError):
@@ -975,6 +980,9 @@ class Session:
                 },
             )
         except InterlockError as exc:
+            if isinstance(exc, SubstrateConfigurationError | SubstrateUnavailableError):
+                # the agent is told only that nothing was tried; the operator needs why
+                logger.warning("tool %s: the substrate could not stage: %s", name, exc)
             feedback = (
                 exc.feedback
                 if isinstance(exc.feedback, AgentFeedback)

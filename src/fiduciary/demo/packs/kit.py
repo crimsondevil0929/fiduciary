@@ -181,6 +181,13 @@ class Pack:
     sensors: Callable[[Path], tuple[Any, ...]] | None = None
     """The deployment's analyzers, given its root (1.5.0): each is shown
     every diff a stage measures, and signs what it finds."""
+    back_office: Path | None = None
+    """The SQLite database the stage writes, when it is not one the deployment
+    makes of its own (``fiduciary init --substrate sqlite``, 1.9.0): no schema
+    is run in it, and only Interlock's outbox tables are added."""
+    outbox: str | None = None
+    """Where the executor's outbox is, when not in the back office (a PostgreSQL
+    connection string, for ``fiduciary init --substrate postgres``)."""
     vendor_log: tuple[str, str, str] | None = None
     """For a pack whose writes go to an outside vendor: the sink, the format
     the vendor exports its log in, and the actor it records for the relay
@@ -655,16 +662,20 @@ def fiduciary_toml(
     tools: Sequence[Path],
     units: Mapping[str, int] | None = None,
     sealed: bool = False,
+    outbox: str | Path | None = None,
 ) -> str:
     """``fiduciary.toml`` for the deployment under ``root``, as the fintech
     demo writes it: the store, the ledger, ``interlock.toml``, sessions in
     process as the demo runs them, the charter pinned by ``charter``, the
     keys, ``tools``, the ledger of each of ``units`` (code to places), and,
-    ``sealed``, the log's seal key. Every path is absolute."""
+    ``sealed``, the log's seal key. The executor's outbox is ``outbox``, the
+    back office by default. Every path is absolute."""
     root = root.resolve()
     service = root / "keys" / "service.key"
     seal = f"seal_key = {_toml(root / 'keys' / 'seal.key')}\n" if sealed else ""
-    back_office = root / "back_office.db"
+    back_office: str | Path = (
+        outbox if isinstance(outbox, str) else (outbox or root / "back_office.db")
+    )
     return (
         f"database = {_toml(root / 'fiduciary.db')}\n"
         f"ledger = {_toml(root / 'ledger.db')}\n"
@@ -710,6 +721,7 @@ def _write_config(world: PackWorld) -> None:
             tools=tools,
             units=world.deployment.units,
             sealed=True,
+            outbox=world.spec.outbox or world.spec.back_office,
         )
     )
 
@@ -790,11 +802,12 @@ def build(root: Path, pack: Pack) -> PackWorld:
     signers: dict[str, Signer] = {name: _key(root, name) for name in names}
     closers: list[Callable[[], None]] = []
 
-    back_office = root / "back_office.db"
-    with closing(sqlite3.connect(back_office)) as conn:
-        conn.executescript(pack.schema)
-        pack.seed(conn)
-        conn.commit()
+    back_office = pack.back_office or root / "back_office.db"
+    if pack.back_office is None:
+        with closing(sqlite3.connect(back_office)) as conn:
+            conn.executescript(pack.schema)
+            pack.seed(conn)
+            conn.commit()
     install_sqlite_outbox(back_office, pack.sinks, pack.sources)
     (root / "interlock.toml").write_text(interlock_toml(root, pack, back_office))
     specs = [
