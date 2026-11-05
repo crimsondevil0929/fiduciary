@@ -200,8 +200,10 @@ def test_the_overview_shows_git_beside_sql(played: Outcome) -> None:
     assert engine["table_allowlist"] == 3 and engine["no_delete"] == 1
     assert engine["fact_agreement"] == 1 and engine["blast_radius"] == 1
     assert engine["warrant"] == [{"action": "accept_repair", "approvals": 2}]
+    # The overview names each industry's substrate, Git beside SQL's.
+    assert {r["substrate"] for r in rows.values()} >= {"SQLite", "Git"}
     page = (played.root / "dashboard.html").read_text()
-    assert "on SQL, Git, Kubernetes and FHIR" in page
+    assert "What differs is the system underneath" in page
 
 
 def test_bumped_files_are_what_ci_tests() -> None:
