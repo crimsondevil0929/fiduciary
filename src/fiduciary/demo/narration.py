@@ -1,0 +1,48 @@
+"""The words a console shows around a recorded run (1.9.0).
+
+A run records what happened: each scenario's calls, what the stack measured, a
+live model's transcript, the bundles. Around those facts the console shows
+words written in the code: each scenario's title and lede, and each industry's
+title and nouns. :func:`retell` puts today's words around a recorded run, so a
+dashboard re-rendered with ``scripts/stack_dashboard.py --keep`` reads like a
+fresh one without the run being played again. Nothing else in the record
+changes: not a call, not a measured row, not a word a model saw or wrote.
+"""
+
+from __future__ import annotations
+
+import copy
+from collections.abc import Mapping
+from typing import Any
+
+__all__ = ["retell"]
+
+_DOMAIN_WORDS = ("industry", "title", "nouns")
+
+
+def _words(key: str) -> tuple[Mapping[str, str], Mapping[str, str], Mapping[str, Any] | None]:
+    if key == "fintech":
+        from fiduciary.demo import acts
+
+        return acts.TITLES, acts.LEDES, None
+    from fiduciary.demo.packs import PACKS, profile
+
+    module = __import__(PACKS[key].acts.__module__, fromlist=["TITLES", "LEDES"])
+    return module.TITLES, module.LEDES, profile(PACKS[key])
+
+
+def retell(key: str, demo: Mapping[str, Any]) -> dict[str, Any]:
+    """A copy of the ``demo`` member of a recorded console payload for industry
+    ``key``, with today's titles, ledes and industry words. A scenario the code
+    no longer has keeps the words it was recorded with."""
+    titles, ledes, profile = _words(key)
+    told = copy.deepcopy(dict(demo))
+    for act in told.get("acts") or ():
+        name = act.get("key")
+        if name in titles:
+            act["title"] = titles[name]
+        if name in ledes:
+            act["lede"] = ledes[name]
+    if profile is not None and isinstance(told.get("domain"), dict):
+        told["domain"] = {**told["domain"], **{k: profile[k] for k in _DOMAIN_WORDS}}
+    return told

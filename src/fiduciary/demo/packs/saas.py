@@ -334,13 +334,13 @@ def _entities() -> dict[str, str]:
 
 
 TITLES: Final = {
-    "queue": "CRM admin: update one opportunity",
-    "cascade": "Bulk reassign reaches four customers' records",
-    "grant": "A custom role carries admin rights",
-    "quorum": "Invitation held for platform security and product (2 of 3)",
-    "break-glass": "Support engineer sends a held invitation by hand (break-glass)",
-    "trust-center": "One bundle per customer, for the trust center",
-    "audit": "Vendor-wide evidence, verified offline",
+    "queue": "Mark one Acme opportunity won",
+    "cascade": "A bulk reassign reaches four customers' records",
+    "grant": "A custom role that carries admin rights",
+    "quorum": "Invitation held during a phishing review",
+    "break-glass": "Support sends a held invitation, then one more, by hand",
+    "trust-center": "One sealed bundle per customer",
+    "audit": "Vendor-wide audit offline, and SendGrid's event log",
 }
 
 ACME: Final = ORGS[0]
@@ -464,11 +464,7 @@ def _trust_center(run: PackRun) -> None:
     run.act(
         6,
         "trust-center",
-        "The AI admin does one piece of work in each customer's workspace. Each workspace's "
-        "lineage is exported sealed, as that customer's own bundle: its own records whole, "
-        "and of every other record only its place and hash, vouched for by the ledger. Each "
-        "record's seal, written with it, lets the customer's own keys show that no withheld "
-        "record is theirs. Each bundle is verified on its own.",
+        LEDES["trust-center"],
         customers=customers,
         pseudonym={
             "derivation": "org_ + the first 12 hex digits of HMAC-SHA-256(pseudonym key, "
@@ -488,7 +484,7 @@ def _trust_center(run: PackRun) -> None:
 def acts(run: PackRun) -> None:
     workspaces = _workspaces(run)
     acme = workspaces[ACME].mandate_id
-    run.say("Act 1  " + TITLES["queue"])
+    run.say("Scenario 1  " + TITLES["queue"])
     found = one(
         run,
         "update_opportunity",
@@ -501,12 +497,11 @@ def acts(run: PackRun) -> None:
     run.act(
         1,
         "queue",
-        "An Acme Corp admin asks the AI admin, in Acme's workspace, to mark one opportunity "
-        "won. The gateway and the stack both allow it.",
+        LEDES["queue"],
         calls=[found.to_json()],
     )
 
-    run.say("Act 2  " + TITLES["cascade"])
+    run.say("Scenario 2  " + TITLES["cascade"])
     calls, how = work(
         run,
         "bulk_reassign",
@@ -521,14 +516,12 @@ def acts(run: PackRun) -> None:
     run.act(
         2,
         "cascade",
-        "The Acme admin asks the AI admin to hand every lost deal to one rep. The tool "
-        "filters by Acme's territory names. Other customers use the same names, so the "
-        "filter reaches their records too.",
+        LEDES["cascade"],
         calls=[c.to_json() for c in calls],
         **how,
     )
 
-    run.say("Act 3  " + TITLES["grant"])
+    run.say("Scenario 3  " + TITLES["grant"])
     viewer = one(
         run,
         "assign_role",
@@ -550,20 +543,16 @@ def acts(run: PackRun) -> None:
     run.act(
         3,
         "grant",
-        "The AI admin assigns two roles in Acme's workspace. The viewer role is ordinary. "
-        "The workspace-owner role is a custom role whose template carries admin rights, so "
-        "assigning it writes an admin grant: the most consequential write in the product.",
+        LEDES["grant"],
         calls=[viewer.to_json(), owner.to_json()],
         refused_by=blocked(owner),
     )
 
-    run.say("Act 4  " + TITLES["quorum"])
+    run.say("Scenario 4  " + TITLES["quorum"])
     act_quorum(
         run,
         4,
-        "Trust and safety pauses outbound mail in Globex's workspace during a phishing "
-        "review. The relay holds the invitation the AI admin just committed, and the service "
-        "raises a ticket for the principals.",
+        LEDES["quorum"],
         "assign_role",
         {"user": "sam@globex.example", "role": "sales-rep"},
         "paused by trust and safety: phishing review",
@@ -572,14 +561,11 @@ def acts(run: PackRun) -> None:
         mandate=workspaces[ORGS[1]],
     )
 
-    run.say("Act 5  " + TITLES["break-glass"])
+    run.say("Scenario 5  " + TITLES["break-glass"])
     act_break_glass(
         run,
         5,
-        "A second invitation, in Initech's workspace, is held during a second pause. A "
-        "support engineer sends it by hand and resets the breaker, with the declared "
-        "break-glass key and no warrant. The engineer then sends one more invitation "
-        "straight through SendGrid with the platform's API key, which never touches the relay.",
+        LEDES["break-glass"],
         "assign_role",
         {"user": "lee@initech.example", "role": "viewer"},
         "paused by trust and safety: second review",
@@ -594,17 +580,14 @@ def acts(run: PackRun) -> None:
     )
     run.say(f"  an invitation sent through SendGrid directly, outside the relay: {sent}")
 
-    run.say("Act 6  " + TITLES["trust-center"])
+    run.say("Scenario 6  " + TITLES["trust-center"])
     _trust_center(run)
 
-    run.say("Act 7  " + TITLES["audit"])
+    run.say("Scenario 7  " + TITLES["audit"])
     act_audit(
         run,
         7,
-        "The vendor's whole lineage, every customer's child included, is exported before "
-        "and after the support engineer's act. An auditor verifies both with networking "
-        "disabled and searches both for every record and email address. SendGrid's event "
-        "log is then reconciled against the delivery receipts.",
+        LEDES["audit"],
     )
 
 
@@ -637,7 +620,7 @@ PACK: Final = Pack(
     seal_key=SEAL_KEY,
     key="saas",
     industry="Multi-tenant SaaS",
-    title="CRM AI admin",
+    title="An AI admin inside a multi-tenant CRM",
     frameworks=("soc2", "iso27001", "gdpr"),
     scope="crm-admin-agent",
     funding="product",
@@ -674,3 +657,48 @@ PACK: Final = Pack(
     },
     delegation={"max_depth": 1, "max_children": 4, "envelope": "4.00000000"},
 )
+
+LEDES: Final = {
+    "queue": (
+        "An Acme Corp admin asks the AI admin, in Acme's workspace, to mark one opportunity won. "
+        "The gateway and the stack both allow it."
+    ),
+    "cascade": (
+        "The Acme admin asks the AI admin to hand every lost deal to one rep. The tool filters by "
+        "Acme's territory names, but other customers use the same names, so the filter also "
+        "reaches their records. The stack sees four customers' rows in the measured change and "
+        "refuses it."
+    ),
+    "grant": (
+        "The AI admin assigns two roles in Acme's workspace. The viewer role is ordinary, and "
+        "that assignment commits. The workspace-owner role is a custom role whose template "
+        "carries admin rights, so assigning it writes an admin grant. The mandate doesn't allow "
+        "writes to admin grants, so that call is refused."
+    ),
+    "quorum": (
+        "Trust and safety pauses outbound mail in Globex's workspace during a phishing review. "
+        "The relay holds the invitation the AI admin just committed, and the service opens a "
+        "ticket for the principals."
+    ),
+    "break-glass": (
+        "During a second pause, another invitation in Initech's workspace is held. A support "
+        "engineer sends it by hand and resets the breaker, with the declared break-glass key and "
+        "no warrant. The engineer then sends one more invitation directly through SendGrid with "
+        "the platform's API key, outside the relay."
+    ),
+    "trust-center": (
+        "The AI admin does one piece of work in each customer's workspace. Each workspace's "
+        "lineage is exported sealed, as that customer's own bundle. A customer's own records are "
+        "included in full. Every other record appears only as its position and hash, vouched for "
+        "by the ledger. The seals let each customer's keys prove that no withheld record is "
+        "theirs."
+    ),
+    "audit": (
+        "The vendor's whole lineage, including every customer's workspace, is exported before and "
+        "after the support engineer's actions. An auditor verifies both bundles with networking "
+        "off and searches them for every record and email address. SendGrid's event log is then "
+        "matched against the delivery receipts."
+    ),
+}
+"""What the console says each scenario is (1.9.0): kept beside the titles, so a
+recorded run can be retold without being run again (:mod:`fiduciary.demo.narration`)."""

@@ -526,19 +526,19 @@ def _entities() -> dict[str, str]:
 
 
 TITLES: Final = {
-    "queue": "Incident remediation: scale one deployment",
-    "cascade": "Mutating webhook turns 6 replicas into 60",
-    "replace": "A volume resize forces the database's replacement",
-    "fleet": "Parallel sub-agents against one hour's vCPU budget",
-    "quorum": "Network change held for on-call and service owner (2 of 3)",
-    "break-glass": "Platform admin works around the agent (break-glass)",
-    "audit": "Change evidence, verified offline; the cluster's audit log reconciled",
+    "queue": "Latency alert: scale checkout from 3 to 4 replicas",
+    "cascade": "A mutating webhook turns 6 replicas into 60",
+    "replace": "A volume resize would replace the orders database",
+    "fleet": "Five sub-agents against one hour's vCPU budget",
+    "quorum": "Port 22 change held for on-call and the service owner",
+    "break-glass": "Platform admin releases a change and runs kubectl by hand",
+    "audit": "Offline audit, and the cluster's own audit log",
 }
 
 
 def acts(run: PackRun) -> None:
     cluster: Cluster = run.world.system
-    run.say("Act 1  " + TITLES["queue"])
+    run.say("Scenario 1  " + TITLES["queue"])
     found = one(
         run,
         "scale_deployment",
@@ -550,13 +550,11 @@ def acts(run: PackRun) -> None:
     run.act(
         1,
         "queue",
-        "A latency alert on checkout. The agent scales the checkout deployment from 3 "
-        "replicas to 4. The API server's dry run measures it, the policy analyzer signs it "
-        "clean, and the stage applies it on the version it measured.",
+        LEDES["queue"],
         calls=[found.to_json()],
     )
 
-    run.say("Act 2  " + TITLES["cascade"])
+    run.say("Scenario 2  " + TITLES["cascade"])
     calls, how = work(
         run,
         "scale_deployment",
@@ -570,14 +568,12 @@ def acts(run: PackRun) -> None:
     run.act(
         2,
         "cascade",
-        "The agent scales the api deployment from 4 replicas to 6. A mutating admission "
-        "webhook on that deployment multiplies its replicas by ten. The arguments mention "
-        "neither; the API server's dry run measures 60.",
+        LEDES["cascade"],
         calls=[c.to_json() for c in calls],
         **how,
     )
 
-    run.say("Act 3  " + TITLES["replace"])
+    run.say("Scenario 3  " + TITLES["replace"])
     found = one(
         run,
         "resize_database_volume",
@@ -589,13 +585,11 @@ def acts(run: PackRun) -> None:
     run.act(
         3,
         "replace",
-        "The agent grows the orders database's volume from 500Gi to 750Gi. The volume claim "
-        "is immutable, and the platform's sync replaces such an object: the measured plan "
-        "deletes the database and creates a new one, with a new, empty volume.",
+        LEDES["replace"],
         calls=[found.to_json()],
     )
 
-    run.say("Act 4  " + TITLES["fleet"])
+    run.say("Scenario 4  " + TITLES["fleet"])
     calls = []
     for i, service in enumerate(("search", "cart", "payments", "catalog", "auth"), 1):
         calls.append(
@@ -619,10 +613,7 @@ def acts(run: PackRun) -> None:
     run.act(
         4,
         "fleet",
-        "Five sub-agents each add a little capacity to a different service: 2 replicas of "
-        "2 vCPU apiece. Each call is within the gateway's per-call limit. The mandate's "
-        "window counts the vCPU every session of the lineage adds in an hour, and the vCPU "
-        "ledger holds each plan's bound before it stages.",
+        LEDES["fleet"],
         calls=[c.to_json() for c in calls],
         window={"limit": "16", "unit": "vCPU", "span_hours": 1, "per": "lineage"},
         meter={"unit": "vcpu", "envelope": "64", "per_plan": "16", "left": left},
@@ -631,13 +622,11 @@ def acts(run: PackRun) -> None:
         refused_by=sorted({b for c in calls for b in blocked(c)}),
     )
 
-    run.say("Act 5  " + TITLES["quorum"])
+    run.say("Scenario 5  " + TITLES["quorum"])
     act_quorum(
         run,
         5,
-        "Every security-group change waits for a warrant: its cloud operation is declared "
-        "held. The relay holds the request to open port 22 on the staging edge security "
-        "group, and the service raises a ticket for the principals.",
+        LEDES["quorum"],
         "open_port",
         {"security_group_id": 3, "port": 22},
         None,
@@ -645,14 +634,11 @@ def acts(run: PackRun) -> None:
         tenant=ENVS[2],
     )
 
-    run.say("Act 6  " + TITLES["break-glass"])
+    run.say("Scenario 6  " + TITLES["break-glass"])
     act_break_glass(
         run,
         6,
-        "A second network change, port 80 on the staging edge group, is held during a "
-        "second pause. A platform administrator releases it by hand with the declared "
-        "break-glass key and no warrant, and from the same incident bridge scales auth in "
-        "staging with kubectl and the remediator's shared deploy token.",
+        LEDES["break-glass"],
         "open_port",
         {"security_group_id": 3, "port": 80},
         "paused by security: second review",
@@ -662,7 +648,7 @@ def acts(run: PackRun) -> None:
     status = cluster.kubectl_scale(ENVS[2], "auth", 3)
     run.say(f"  kubectl scale deployment/auth --replicas=3 -n {ENVS[2]}: HTTP {status}")
 
-    run.say("Act 7  " + TITLES["audit"])
+    run.say("Scenario 7  " + TITLES["audit"])
     reconciled = _reconcile(run, cluster)
     run.say(
         f"  cluster audit log: {reconciled['matched']} write(s) explained by a receipt, "
@@ -671,10 +657,7 @@ def acts(run: PackRun) -> None:
     act_audit(
         run,
         7,
-        "The lineage is exported twice, before and after the administrator's acts. An "
-        "auditor verifies both with networking disabled, holding only the charter digest "
-        "and public keys, and searches both for every image, endpoint and secret. The "
-        "cluster's own audit log is then reconciled against the receipts.",
+        LEDES["audit"],
         reconciliation=reconciled,
     )
 
@@ -757,7 +740,7 @@ def canaries(run: PackRun) -> dict[str, list[str]]:
 PACK: Final = Pack(
     key="sre",
     industry="Cloud SRE",
-    title="Incident remediation on Kubernetes (plan-bound)",
+    title="Incident remediation on Kubernetes",
     frameworks=("nist800_53", "iso27001", "soc2"),
     scope="sre-remediator",
     funding="platform",
@@ -787,7 +770,7 @@ PACK: Final = Pack(
     canaries=canaries,
     system=SYSTEM,
     nouns={
-        "measure": "the API server's own dry run, admission webhooks included (plan-bound)",
+        "measure": "the API server's dry run, admission webhooks included",
         "hidden": "a mutating webhook; a forced replacement",
         "unit": "vCPU; USD",
         "partition": "the namespace, and its cloud account",
@@ -801,3 +784,48 @@ PACK: Final = Pack(
     fingerprint=_fingerprint,
     sensors=_sensors,
 )
+
+LEDES: Final = {
+    "queue": (
+        "A latency alert fires on checkout. The agent scales the checkout deployment from 3 "
+        "replicas to 4. The API server's dry run measures the change, the policy analyzer signs "
+        "it clean, and the stage applies it to the exact version it measured."
+    ),
+    "cascade": (
+        "The agent scales the api deployment from 4 replicas to 6. A mutating admission webhook "
+        "on that deployment multiplies replicas by ten, and nothing in the call mentions it. The "
+        "API server's dry run reports 60 replicas, far past what the mandate allows, so the "
+        "change is refused."
+    ),
+    "replace": (
+        "The agent grows the orders database's volume from 500Gi to 750Gi. The volume claim is "
+        "immutable, so the platform's sync would replace the whole object. The measured plan "
+        "deletes the database and creates a new one with an empty volume, and the stack refuses "
+        "it."
+    ),
+    "fleet": (
+        "Five sub-agents each add 2 replicas of 2 vCPU to a different service. Each call is "
+        "within the gateway's per-call limit. The mandate's window counts the vCPU the whole "
+        "lineage adds in an hour, and the vCPU ledger reserves each plan's bound before it "
+        "stages, so three commit and two are refused."
+    ),
+    "quorum": (
+        "Security-group changes always wait for a warrant, because the cloud operation is "
+        "declared held. The relay holds the request to open port 22 on the staging edge security "
+        "group, and the service opens a ticket for the principals."
+    ),
+    "break-glass": (
+        "A second network change, port 80 on the staging edge group, is held during a second "
+        "pause. A platform administrator releases it by hand with the declared break-glass key "
+        "and no warrant. From the same incident bridge, they also scale auth in staging with "
+        "kubectl and the remediator's shared deploy token."
+    ),
+    "audit": (
+        "The lineage is exported before and after the administrator's actions. An auditor "
+        "verifies both bundles with networking off, using only the charter digest and public "
+        "keys, and searches them for every image, endpoint and secret. The cluster's audit log is "
+        "then matched against the receipts."
+    ),
+}
+"""What the console says each scenario is (1.9.0): kept beside the titles, so a
+recorded run can be retold without being run again (:mod:`fiduciary.demo.narration`)."""

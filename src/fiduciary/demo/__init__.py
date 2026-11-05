@@ -131,11 +131,15 @@ def extend(
 
     ``kept`` holds packs already played into ``root``, by key: each is taken
     as it is, its subdirectory untouched, and only the others are played."""
-    played = {"fintech": {k: v for k, v in page.items() if k not in ("domains", "overview")}}
+    from fiduciary.demo.narration import retell
+
+    fintech = {k: v for k, v in page.items() if k not in ("domains", "overview")}
+    played = {"fintech": {**fintech, "demo": retell("fintech", fintech["demo"])}}
     spent = Decimal(0)
     for key in packs.PACKS:
         if kept is not None and key in kept:
-            played[key] = kept[key]
+            # kept as recorded, with today's titles and ledes
+            played[key] = {**kept[key], "demo": retell(key, kept[key]["demo"])}
             continue
         say("")
         say(f"{packs.PACKS[key].industry}: a deployment in {root / key}")

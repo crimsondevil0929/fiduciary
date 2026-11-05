@@ -321,7 +321,8 @@ def test_the_command_runs_the_demo_and_writes_reports(tmp_path: Path) -> None:
         )
     assert status == 0
     text = printed.getvalue()
-    assert "Act 7  Offline third-party audit verification" in text and "dashboard" in text
+    assert "Scenario 7  Offline audit of both bundles, and Stripe's event log" in text
+    assert "dashboard" in text
     assert (tmp_path / "r.md").read_text().startswith("# Bundle `after`: BREAK-GLASS DETECTED")
 
 
