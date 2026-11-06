@@ -10,6 +10,15 @@ produces evidence that an auditor can verify without trusting the agent or the o
 Fiduciary records who set each limit and who approved each exception, as signed
 documents. Anyone with the public keys can verify them offline.
 
+**See it running:** <https://crimsondevil0929.github.io/fiduciary/>. Six industries on one
+engine, `claude-opus-5-5`'s recorded turns replayed on this release, and 16 audit bundles
+you can verify in your browser. On your own machine, with no API key and no network:
+
+```bash
+pip install 'interlock-fiduciary[demo]'
+fiduciary demo --replay --out demo --serve --open
+```
+
 ## One engine, any industry
 
 The demo starts with fintech, but nothing in the engine is specific to payments. The same
