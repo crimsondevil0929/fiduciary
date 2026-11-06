@@ -443,3 +443,47 @@ def test_a_postgres_schema_gets_insert_and_update_tools(tmp_path: Path, serve: l
             conn.execute(f"DROP SCHEMA {schema} CASCADE")
             conn.execute(f"DROP OWNED BY {role}")
             conn.execute(f"DROP ROLE {role}")
+
+
+def test_init_says_which_triggers_the_starter_mandate_will_refuse(tmp_path: Path) -> None:
+    """A trigger that writes a table --table left out makes every plan that fires it an
+    unobserved write; one that writes another observed table makes the plan more than the
+    one row the starter allows. Both are refused, rightly, and init says so first."""
+    database = tmp_path / "shop.db"
+    _shop(database)
+    tables = {t.name: t for t in sqlite_tables(database)}
+    assert tables["orders"].triggers == (("orders_audit", "update", ("audit",)),)
+    narrow = init(
+        tmp_path / "a", target=Target("sqlite", database=str(database), tables=("orders",))
+    )
+    (left,) = narrow.cautions
+    assert left["name"] == "orders_audit" and "--table leaves out" in left["why"]
+    whole = init(tmp_path / "b", target=Target("sqlite", database=str(database)))
+    (extra,) = whole.cautions
+    assert "update_orders changes more than the one row" in extra["why"]
+    readme = (tmp_path / "b" / "README.md").read_text()
+    assert "**Trigger `orders_audit`**" in readme
+    assert json.loads((tmp_path / "b" / "init.json").read_text())["cautions"] == whole.cautions
+
+
+def test_the_writer_serves_the_agent_with_a_token_only_the_agent_holds(tmp_path: Path) -> None:
+    """The writer holds the ledger and serves the agent's tools on loopback (1.10.1):
+    the configuration names the token's SHA-256, the token file is its owner's alone."""
+    import hashlib
+    import stat
+
+    from fiduciary.config import load_config as load
+
+    database = tmp_path / "shop.db"
+    _shop(database)
+    report = init(tmp_path / "desk", target=Target("sqlite", database=str(database)))
+    token = tmp_path / "desk" / "keys" / "agent.token"
+    assert stat.S_IMODE(token.stat().st_mode) == 0o600
+    config = load(tmp_path / "desk" / "fiduciary.toml")
+    assert config.bridge_http == "127.0.0.1:8765"
+    (agent,) = config.agents.values()
+    assert agent.mandate == report.scope
+    assert agent.token_sha256 == hashlib.sha256(token.read_text().strip().encode()).hexdigest()
+    assert token.read_text().strip() not in (tmp_path / "desk" / "fiduciary.toml").read_text()
+    readme = (tmp_path / "desk" / "README.md").read_text()
+    assert "claude mcp add --transport http" in readme and "## Audit it offline" in readme

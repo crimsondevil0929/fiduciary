@@ -139,8 +139,10 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _service(args: argparse.Namespace) -> Any:
-    """The configuration's store, log and authority, the log anchored when a ledger is set."""
+def _service(args: argparse.Namespace, *, ledger: bool = True) -> Any:
+    """The configuration's store, log and authority, the log anchored when a ledger is set.
+    Without ``ledger``, for a command that records nothing (proposing a document), the
+    ledger is left closed, so it runs beside the writer that holds it (1.10.1)."""
     from fiduciary.authority import Authority
     from fiduciary.log import Log
 
@@ -149,10 +151,10 @@ def _service(args: argparse.Namespace) -> Any:
         signer = config.service()
         sealer = config.sealer()
         store = _opened(config.open_store())
-        ledger = _opened(config.open_ledger())
+        governor = _opened(config.open_ledger()) if ledger else None
     except (OSError, ValueError, FiduciaryError) as exc:
         _fail(str(exc))
-    log = Log(store, signer, ledger=ledger, sealer=sealer)
+    log = Log(store, signer, ledger=governor, sealer=sealer)
     return config, log, Authority(log, pinned=config.pinned())
 
 
@@ -306,7 +308,8 @@ def _propose(args: argparse.Namespace, kind: type[Document]) -> int:
     document = _read(args.file, signed=True)
     if not isinstance(document, kind):
         _fail(f"{args.file} is a {document.TYPE}, not a {kind.TYPE}")
-    _, _, authority = _service(args)
+    # Proposing stores the signed document and records nothing (Authority.propose).
+    _, _, authority = _service(args, ledger=False)
     try:
         digest = authority.propose(document)
     except FiduciaryError as exc:
@@ -913,6 +916,7 @@ def _tickets_list(args: argparse.Namespace) -> int:
 def _tickets_show(args: argparse.Namespace) -> int:
     target = args.target
     if Path(target).exists():
+        raw = Path(target).read_bytes()
         doc = _read(target, signed=True)
     else:
         store, state = _store_and_state(args)
@@ -921,9 +925,15 @@ def _tickets_show(args: argparse.Namespace) -> int:
         found = store.document(digest)
         if found is None:
             _fail(f"the store holds no ticket {target}", REFUSED)
-        doc = loads(found[1], signed=True)
+        raw = found[1]
+        doc = loads(raw, signed=True)
     if not isinstance(doc, Ticket):
         _fail(f"{target} is a {doc.TYPE}, not a ticket")
+    if args.out is not None:
+        # The signed bytes, as held: a principal reads and approves them on their own
+        # machine (fiduciary approve FILE), with no database credential (1.10.1).
+        Path(args.out).write_bytes(raw)
+        _err(f"wrote {args.out}")
     _out(render_ticket(doc))
     signer = doc.signature.key_id if doc.signature else "unsigned"
     _err(f"ticket {doc.digest} (signed by key {signer})")
@@ -1550,6 +1560,8 @@ def _init(args: argparse.Namespace) -> int:
         _out(f"left out {tool['name']}: {tool['why']}")
     for note in report.notes:
         _out(f"wrote    {note['name']}: {note['why']}")
+    for caution in report.cautions:
+        _out(f"caution  {caution['name']}: {caution['why']}")
     _out(f"wrote       {report.root} (mandate {report.scope}; see README.md)")
     config = Path(report.root).resolve() / "fiduciary.toml"
     if (Path(report.root) / "grants.sql").is_file():
@@ -1823,6 +1835,9 @@ def _parser() -> argparse.ArgumentParser:
         help="show a ticket, rendered from its signed bytes, with the agent's statement apart",
     )
     t_show.add_argument("target", metavar="FILE|DIGEST|TICKET_ID")
+    t_show.add_argument(
+        "--out", metavar="FILE", help="also write the ticket's signed bytes, for fiduciary approve"
+    )
     t_show.set_defaults(handler=_tickets_show)
 
     warrant = commands.add_parser("warrant", help="formed warrants").add_subparsers(

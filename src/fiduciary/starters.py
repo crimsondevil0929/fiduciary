@@ -123,6 +123,9 @@ class SqlTable:
     name: str
     key: str | None
     columns: tuple[Column, ...]
+    triggers: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
+    """Each trigger on the table: its name, the event it fires on, and the tables its
+    body writes (1.10.1)."""
 
 
 @dataclass
@@ -141,6 +144,8 @@ class Starter:
     outbox: str | None = None
     notes: list[dict[str, str]] = field(default_factory=list)
     """What init changed outside the deployment's directory, and why."""
+    cautions: list[dict[str, str]] = field(default_factory=list)
+    """What the target does that the starter mandate will refuse, found by reading it."""
     files: dict[str, str] = field(default_factory=dict)
     """Files init writes beside the configuration, by name (``grants.sql``)."""
 
@@ -203,8 +208,37 @@ def sqlite_tables(path: str | Path) -> list[SqlTable]:
                         generated=rowid or (default is not None and bool(pk)),
                     )
                 )
-            found.append(SqlTable(name, key, tuple(columns)))
+            found.append(SqlTable(name, key, tuple(columns), _sqlite_triggers(conn, name)))
     return found
+
+
+_EVENT: Final = re.compile(
+    r"\b(?:BEFORE|AFTER|INSTEAD\s+OF)\s+(INSERT|UPDATE|DELETE)\b", re.IGNORECASE
+)
+_WRITES: Final = re.compile(
+    r"\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM)"
+    r"\s+[\"`\[]?(\w+)",
+    re.IGNORECASE,
+)
+
+
+def _sqlite_triggers(
+    conn: sqlite3.Connection, table: str
+) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+    """The table's triggers: each one's name, its event, and the tables its body writes,
+    read from its SQL."""
+    found = []
+    for name, sql in conn.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? ORDER BY name",
+        (table,),
+    ):
+        text = str(sql or "")
+        event = _EVENT.search(text)
+        _, _, body = text.upper().partition("BEGIN")
+        offset = len(text) - len(body)
+        writes = sorted({m.group(1) for m in _WRITES.finditer(text[offset:])})
+        found.append((str(name), event.group(1).lower() if event else "", tuple(writes)))
+    return tuple(found)
 
 
 _PG_KINDS: Final[Mapping[str, Mapping[str, Any] | None]] = {
@@ -379,6 +413,37 @@ def _sql(target: Target, tables: Sequence[SqlTable]) -> Starter:
     unknown = sorted(set(target.tables) - {t.name for t in tables})
     if unknown:
         raise ValueError(f"no table {', '.join(unknown)} in {target.database}")
+    watched = {t.name for t in chosen}
+    cautions: list[dict[str, str]] = []
+    for table in chosen:
+        for trigger, event, writes in table.triggers:
+            outside = [w for w in writes if w not in watched]
+            if outside:
+                cautions.append(
+                    {
+                        "name": trigger,
+                        "why": f"this trigger on {table.name} writes {', '.join(outside)}, "
+                        f"which --table leaves out: a plan that fires it is refused as an "
+                        f"unobserved write. Add --table {outside[0]}, or leave --table off",
+                    }
+                )
+            elif writes and event in ("insert", "update"):
+                tool = f"{event}_{table.name.lower()}"
+                fires = (
+                    "every call, since the starter update names every column"
+                    if event == "update"
+                    else "every call"
+                )
+                cautions.append(
+                    {
+                        "name": trigger,
+                        "why": f"this trigger on {table.name} also writes "
+                        f"{', '.join(writes)} on {fires}, so {tool} changes more than the "
+                        f"one row a plan the starter mandate allows, and is refused. That is "
+                        f"the mandate measuring what the trigger does; allow more rows in a "
+                        f"new mandate version to let it through",
+                    }
+                )
     tools: list[dict[str, Any]] = []
     report: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
@@ -531,6 +596,7 @@ def _sql(target: Target, tables: Sequence[SqlTable]) -> Starter:
         back_office=database,
         outbox=target.database if target.substrate == "postgres" else None,
         files=files,
+        cautions=cautions,
     )
 
 

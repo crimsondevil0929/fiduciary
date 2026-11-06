@@ -6,6 +6,50 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-11-06
+
+The first thirty minutes, made to work as written; a one-page threat model; and honest
+package metadata. No change to what a bundle holds or how it verifies.
+
+### Added
+
+- **`docs/QUICKSTART.md`: put it in front of your agent in 30 minutes.** From `pip
+  install` to `fiduciary init`, the agent's first governed calls, a refusal the trigger
+  causes, an amendment two of three principals approve, and an offline bundle that passes.
+  `tests/test_quickstart.py` runs every marked command in it, in order, so the guide cannot
+  drift.
+- **`docs/THREAT_MODEL.md`**, on one page: what the stack protects against, what it does
+  not (a compromised host in real time, enough colluding principals, reads, a remote
+  system's own actions after a request, purposes the mandate allows), the trust boundary of
+  each measurement class (T, P, V, R), who holds each key and what its theft means, and what
+  offline verification proves.
+- **`fiduciary tickets show TICKET --out FILE`** writes the ticket's signed bytes, so a
+  principal can read and approve it on their own machine with `fiduciary approve FILE`.
+  `approve` took only a file, and no command wrote one.
+
+### Changed
+
+- **A deployment `init` writes for a substrate runs as one writer** (spec F10-34).
+  `fiduciary serve` holds the ledger and serves the agent's tools on `127.0.0.1:8765`, with
+  the bearer token `init` wrote to `keys/agent.token`; `fiduciary.toml` holds only its
+  SHA-256. The README `init` writes said to run `mcp serve` beside `fiduciary serve`, which a
+  SQLite ledger does not allow: the second process could not open it.
+- **`init` names the triggers the starter mandate will refuse.** A trigger that writes a
+  table `--table` left out, or another row past the one-row limit, is printed as a caution
+  and written into the deployment's README.
+- **The README `init` writes ends with the bundle's export and verification**, the mandate
+  and charter digest written in. An `--mcp` deployment's README no longer lists `fiduciary
+  serve` beside the proxy, which records approvals and carries out warrants itself.
+- **`fiduciary mandate propose` runs beside the writer.** Proposing stores a signed
+  document and records nothing, so it no longer opens the ledger the writer holds.
+- **The README opens with how AgentGov, Interlock and Fiduciary fit together**, the live
+  console, the quickstart and the threat model, and what a write costs, measured.
+- **The console's footer links to the quickstart, the threat model and the three
+  repositories,** and heads the verifier's notes "Notes from the verifier": since 1.10.0
+  they include the delivery receipts it checked, which "Out of scope" misnamed.
+- **The development status is "4 - Beta",** not "5 - Production/Stable": a full test suite
+  and offline verification, but no external production deployment yet.
+
 ## [1.10.0] - 2026-11-06
 
 A bundle now carries the relays' delivery receipts, so an auditor can match a vendor's or

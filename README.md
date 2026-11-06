@@ -10,9 +10,34 @@ produces evidence that an auditor can verify without trusting the agent or the o
 Fiduciary records who set each limit and who approved each exception, as signed
 documents. Anyone with the public keys can verify them offline.
 
-**See it running:** <https://crimsondevil0929.github.io/fiduciary/>. Six industries on one
-engine, `claude-opus-5-5`'s recorded turns replayed on this release, and 16 audit bundles
-you can verify in your browser. On your own machine, with no API key and no network:
+> **Start here:** [the live console](https://crimsondevil0929.github.io/fiduciary/) ·
+> [30-minute quickstart](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/QUICKSTART.md) · [threat model](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/THREAT_MODEL.md) ·
+> [how the three packages fit together](#start-here)
+
+## Start here
+
+**See the whole stack working:** <https://crimsondevil0929.github.io/fiduciary/>. Six
+industries run on one engine, a real model's recorded turns are replayed on the current
+release, and 16 audit bundles can be verified in your browser.
+
+A gateway decides whether an agent may call a tool. This stack decides whether what the call
+changed may be kept, and produces evidence for someone who trusts neither the agent nor the
+operator. It is three packages:
+
+| Package | On PyPI | What it answers |
+|---|---|---|
+| **Fiduciary** (this repository) | [`interlock-fiduciary`](https://pypi.org/project/interlock-fiduciary/) | Who may do what, and who approved each exception. Signed mandates, 2-of-3 quorum warrants, the approvals console, governed MCP tools, and audit bundles anyone can verify offline. **Start here** to put the stack in front of an agent: it installs the other two. |
+| [Interlock](https://github.com/crimsondevil0929/interlock) | [`interlock-escrow`](https://pypi.org/project/interlock-escrow/) | Does what this write actually changed satisfy policy? It stages the write, measures it, commits it once or puts it back, and delivers outbound calls exactly once. Each change is measured in one of four ways: **T** inside a transaction, **P** as the system's own plan, **V** predicted then read back, **R** the request only. |
+| [AgentGov](https://github.com/crimsondevil0929/agentgov) | [`interlock-agentgov`](https://pypi.org/project/interlock-agentgov/) | May this scope spend this amount? Spend and rate ledgers across a delegation tree, circuit breakers, ARC1 receipts, and reconciliation of a system's own log against them. |
+
+**What it costs:** a write through the stack adds about 2 ms on SQLite, 5 to 7 ms on
+Kubernetes and FHIR, and about 30 ms on PostgreSQL, most of it round trips. Reads add
+nothing. Interlock's README has the [measured table](https://github.com/crimsondevil0929/interlock#what-a-write-costs),
+and the script that reproduces it.
+
+**New here?** [Put it in front of your agent in 30 minutes](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/QUICKSTART.md), and read
+[what it does and does not protect against](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/THREAT_MODEL.md), on one page. To see it on
+your own machine first, with no API key and no network:
 
 ```bash
 pip install 'interlock-fiduciary[demo]'

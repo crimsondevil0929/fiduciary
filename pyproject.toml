@@ -1,6 +1,6 @@
 [project]
 name = "interlock-fiduciary"
-version = "1.10.0"
+version = "1.10.1"
 description = "Signed mandates, quorum warrants and offline compliance proofs over Interlock and AgentGov."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -8,7 +8,7 @@ license = "Apache-2.0"
 authors = [{ name = "Edward Gu", email = "edwardgu0929@gmail.com" }]
 keywords = ["agents", "llm", "delegation", "quorum", "audit", "zero-trust", "escrow"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

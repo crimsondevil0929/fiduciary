@@ -1261,14 +1261,26 @@
         h("details", null, h("summary", null, "Show the JSON"), h("pre", null, json)))));
   }
 
+  function docsLine() {
+    // Where a reader goes next (1.10.1): links only, so the page still requests nothing.
+    var gh = "https://github.com/crimsondevil0929/";
+    function link(href, text) { return h("a", { href: href, rel: "noopener" }, text); }
+    return h("p", { style: "margin-top:10px" }, "Put it in front of your agent: ",
+      link(gh + "fiduciary/blob/main/docs/QUICKSTART.md", "the 30-minute quickstart"), " · ",
+      link(gh + "fiduciary/blob/main/docs/THREAT_MODEL.md", "the threat model"), " · source: ",
+      link(gh + "fiduciary", "fiduciary"), ", ", link(gh + "interlock", "interlock"), ", ",
+      link(gh + "agentgov", "agentgov"), ".");
+  }
+
   function footer() {
     var a = A();
     var up = a.verifier.upstream;
     return h("footer", null, h("div", { class: "wrap" },
-      h("b", { class: "ink2" }, "Out of scope"),
+      h("b", { class: "ink2" }, "Notes from the verifier"),
       h("ul", null, a.notes.map(function (n) { return h("li", null, n); })),
       h("p", { style: "margin-top:10px" }, "Verifier: fiduciary " + a.verifier.fiduciary + ", interlock-escrow " + a.verifier.interlock + ", interlock-agentgov " + a.verifier.agentgov + ". Optional upstream features available: " + (Object.keys(up).filter(function (k) { return up[k]; }).join(", ") || "none") + (Object.keys(up).some(function (k) { return !up[k]; }) ? "; not available: " + Object.keys(up).filter(function (k) { return !up[k]; }).join(", ") : "") + ". Generated " + a.generated_at + "."),
-      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline. It makes tampering visible; it can't prevent it. " + (LIVE.on ? "Served by the console on loopback; the page asks only it." : "This page makes no network requests."))));
+      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline. It makes tampering visible; it can't prevent it. " + (LIVE.on ? "Served by the console on loopback; the page asks only it." : "This page makes no network requests.")),
+      docsLine()));
   }
 
   // == the control plane =====================================================================
@@ -2045,7 +2057,8 @@
   function consoleFooter() {
     return h("footer", null, h("div", { class: "wrap" },
       h("p", null, LIVE.on ? "Served by the console on " + location.host + ", which listens on loopback only, answers only its own origin, and holds no principal's key outside the sandbox." : "This page makes no network requests. Signing and the full V1 to V12 need the console or the command line."),
-      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline. It makes tampering visible; it can't prevent it.")));
+      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline. It makes tampering visible; it can't prevent it."),
+      docsLine()));
   }
 
   function render() {
