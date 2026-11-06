@@ -96,6 +96,9 @@ class Evidence:
     :param service: The service key; when a signer, it also signs the manifest.
     :param sealer: A sealed log's sealer: what a sealed bundle is cut by, and
         the keys it carries.
+    :param relay_keys: The relays' keys, which sign the attestation each
+        delivery receipt carries (1.10.0). A bundle that holds a delivery names
+        the keys among them that attested one, in ``keys.json``'s ``relays``.
     """
 
     ledger: BudgetManager
@@ -111,6 +114,7 @@ class Evidence:
     witnesses: Sequence[Any] = ()
     service: Signer | Verifier | None = None
     sealer: Sealer | None = None
+    relay_keys: Iterable[Verifier] = ()
 
 
 def _json(value: Any) -> bytes:
@@ -304,7 +308,8 @@ def export_bundle(
     )
 
     # -- receipts and escrow chains ---------------------------------------------------
-    members.update(_receipts(evidence, lineages, cut))
+    receipt_members, attested = _receipts(evidence, lineages, cut)
+    members.update(receipt_members)
     for lineage, (path, kept) in chains.items():
         count = sum(1 for r in kept if r.timestamp <= cut_at)
         if count:
@@ -337,7 +342,7 @@ def export_bundle(
             **({"units": dict(sorted(deployment.units.items()))} if deployment.units else {}),
         }
     )
-    members["keys.json"] = _json(_keys(evidence, held))
+    members["keys.json"] = _json(_keys(evidence, held, attested))
 
     # -- the manifest ---------------------------------------------------------------
     manifest: dict[str, Any] = {
@@ -609,28 +614,45 @@ def _cosign(
     return found
 
 
-def _receipts(evidence: Evidence, lineages: Sequence[str], cut: int) -> dict[str, bytes]:
+def _receipts(
+    evidence: Evidence, lineages: Sequence[str], cut: int
+) -> tuple[dict[str, bytes], set[str]]:
+    """The lineage's receipts as members, and the key ids of the relays that
+    attested a delivery among them.
+
+    An action receipt is the lineage's when its issuer is, and inside the
+    bundle when its ledger anchor is at or before the cut. A delivery receipt
+    goes with its action receipt. One a relay's settler issued carries no
+    ledger anchor (1.10.0): the receipt log's order stands in for the ledger's,
+    so it is inside when it precedes every receipt anchored after the cut."""
     log = evidence.receipts
     if log is None:
-        return {}
+        return {}, set()
     issuers = {f"fiduciary:{m}" for m in lineages}
     documents = log.receipts()
     chosen: list[tuple[int, str]] = []
     actions: set[str] = set()
+    later = len(documents)
     for index, document in enumerate(documents):
         anchor = document.anchors.agentgov
+        if anchor is not None and anchor.seq > cut:
+            later = min(later, index)
         if anchor is None or anchor.seq > cut:
             continue
         if isinstance(document, ActionReceipt) and document.issuer in issuers:
             chosen.append((index, document.receipt_id))
             actions.add(document.receipt_id)
+    attested: set[str] = set()
     for index, document in enumerate(documents):
         if isinstance(document, DeliveryReceipt) and document.action.receipt_id in actions:
             anchor = document.anchors.agentgov
-            if anchor is not None and anchor.seq <= cut:
+            inside = index < later if anchor is None else anchor.seq <= cut
+            if inside:
                 chosen.append((index, document.receipt_id))
+                if anchor is None:
+                    attested.add(document.attestation.key_id)
     if not chosen:
-        return {}
+        return {}, set()
     needed = max(index for index, _ in chosen) + 1
     covering = sorted(
         (c for c in log.checkpoints() if c.tree_size >= needed), key=lambda c: c.tree_size
@@ -641,13 +663,18 @@ def _receipts(evidence: Evidence, lineages: Sequence[str], cut: int) -> dict[str
         for index, receipt_id in chosen
     }
     members["receipts/transitions.json"] = _json([t.to_json() for t in log.transitions()])
-    return members
+    return members, attested
 
 
-def _keys(evidence: Evidence, held: Mapping[str, tuple[str, bytes]]) -> dict[str, Any]:
+def _keys(
+    evidence: Evidence, held: Mapping[str, tuple[str, bytes]], attested: set[str]
+) -> dict[str, Any]:
     """The public keys the bundle verifies under. Principals' keys are the
     charters' (the pinned digest vouches for them); every other key is the
-    exporter's statement, which an auditor pins with ``--keys``."""
+    exporter's statement, which an auditor pins with ``--keys``. ``relays``,
+    the relay keys that attested a delivery receipt the bundle holds, is
+    written only when there is one (1.10.0), so a bundle without a delivery
+    has the bytes it always had."""
     principals: dict[str, str] = {}
     for kind, raw in held.values():
         if kind == "charter":
@@ -657,7 +684,7 @@ def _keys(evidence: Evidence, held: Mapping[str, tuple[str, bytes]]) -> dict[str
     service_key = None
     if service is not None:
         service_key = spec(verifier_of(service) if hasattr(service, "sign") else service)  # type: ignore[arg-type]
-    return {
+    found: dict[str, Any] = {
         "principals": dict(sorted(principals.items())),
         "service": service_key,
         "ledger": spec(verifier_of(evidence.ledger_signer)),
@@ -665,3 +692,7 @@ def _keys(evidence: Evidence, held: Mapping[str, tuple[str, bytes]]) -> dict[str
         "runtime": None if evidence.runtime_key is None else spec(evidence.runtime_key),
         "operators": dict(sorted(evidence.operator_keys.items())),
     }
+    relays = sorted({spec(k) for k in evidence.relay_keys if k.key_id in attested})
+    if relays:
+        found["relays"] = relays
+    return found
