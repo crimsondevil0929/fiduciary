@@ -223,7 +223,7 @@ for who in approver-1 approver-2; do
   fiduciary --config desk/fiduciary.toml approve ticket.json --principal "$who" \
     --key "desk/keys/$who.key" --resolution amend --yes --submit
 done
-until fiduciary --config desk/fiduciary.toml tickets list --all | grep -q warranted; do sleep 1; done
+until fiduciary --config desk/fiduciary.toml tickets list --all | grep warranted >/dev/null; do sleep 1; done
 fiduciary --config desk/fiduciary.toml tickets list --all
 ```
 
@@ -242,9 +242,9 @@ new checkpoint of the ledger and of the receipt log, and each has one writer at 
 stop the writer first (Ctrl-C in its terminal). `desk/README.md` has both commands with this
 deployment's mandate and charter digest written in:
 
+<!-- quickstart: stop -->
 <!-- quickstart: run -->
 ```bash
-pkill -f "fiduciary --config desk/fiduciary.toml serve" || true; sleep 2
 MANDATE=$(python3 -c "import json; print(json.load(open('desk/mandate.json'))['mandate_id'])")
 CHARTER=$(python3 -c "from fiduciary.documents import Charter; print(Charter.loads(open('desk/charter.json','rb').read()).digest)")
 fiduciary --config desk/fiduciary.toml export-bundle --mandate "$MANDATE" \

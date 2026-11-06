@@ -19,14 +19,31 @@ from pathlib import Path
 import pytest
 
 GUIDE = Path(__file__).resolve().parents[1] / "docs" / "QUICKSTART.md"
-_BLOCK = re.compile(r"<!-- quickstart: (run(?: background)?) -->\s*\n```bash\n(.*?)```", re.S)
+_BLOCK = re.compile(
+    r"(?P<stop><!-- quickstart: stop -->\s*\n)?"
+    r"<!-- quickstart: (?P<mode>run(?: background)?) -->\s*\n```bash\n(?P<body>.*?)```",
+    re.S,
+)
+
+
+def _blocks() -> list[tuple[bool, str, str]]:
+    return [
+        (bool(m["stop"]), m["mode"], m["body"])
+        for m in _BLOCK.finditer(GUIDE.read_text(encoding="utf-8"))
+    ]
 
 
 def _script() -> str:
+    """The marked blocks as one script. ``<!-- quickstart: stop -->`` before a block is
+    where the guide tells the reader to stop the background process (Ctrl-C): the script
+    stops the one it started, by its PID."""
     lines = ["set -euo pipefail", "trap 'kill $(jobs -p) 2>/dev/null || true' EXIT"]
-    for mode, body in _BLOCK.findall(GUIDE.read_text(encoding="utf-8")):
+    for stop, mode, body in _blocks():
+        if stop:
+            lines.append('kill "$BACKGROUND"; wait "$BACKGROUND" 2>/dev/null || true')
         if mode == "run background":
-            lines.append(f"( {body.strip()} ) > background.log 2>&1 &")
+            lines.append(f"{body.strip()} > background.log 2>&1 &")
+            lines.append("BACKGROUND=$!")
             lines.append("sleep 2")
         else:
             lines.append(body)
@@ -34,9 +51,11 @@ def _script() -> str:
 
 
 def test_the_guide_marks_what_it_runs() -> None:
-    marked = _BLOCK.findall(GUIDE.read_text(encoding="utf-8"))
-    assert len(marked) >= 8 and sum(m == "run background" for m, _ in marked) == 1
-    assert not any("pip install" in body for _, body in marked), "never installs from PyPI"
+    marked = _blocks()
+    assert len(marked) >= 8 and sum(mode == "run background" for _, mode, _ in marked) == 1
+    assert sum(stop for stop, _, _ in marked) == 1, "the writer is stopped once, before export"
+    assert not any("pip install" in body for _, _, body in marked), "never installs from PyPI"
+    assert not any("pkill" in body for _, _, body in marked), "a pattern kill can match the shell"
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
