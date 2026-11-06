@@ -63,7 +63,7 @@ from fiduciary.bridge import CallResult, Session, SessionHaltedError
 from fiduciary.bundle import BundleReport, Evidence, TrustedKeys, export_bundle, verify_bundle
 from fiduciary.bundle.export import spec
 from fiduciary.demo.gateway import SESSION_LIMIT_CENTS, Decision, Gateway
-from fiduciary.demo.vendor_logs import STRIPE, VendorLog, reconcile
+from fiduciary.demo.vendor_logs import STRIPE, VendorLog, reconcile, written
 from fiduciary.demo.world import (
     ORDERS,
     PRICING,
@@ -362,7 +362,9 @@ def converse(
     does. ``step`` makes one call behind both controls; every text the model
     was given or wrote goes into ``prompts``, for the zero-data scan. With
     ``reasoning``, the model's summarized thinking is kept in the transcript
-    beside its text, its calls and what each call returned."""
+    beside its text, its calls, what each call returned and each turn's usage.
+    With a :class:`~fiduciary.demo.replay.ReplayClient` for ``live.client``,
+    the turns are a recording's, and the model's record says so."""
     governed = session.govern(live.client)
     tools = session.tool_definitions()
     messages: list[dict[str, Any]] = [{"role": "user", "content": request}]
@@ -397,8 +399,11 @@ def converse(
             halted = exc.kind
             break
         stop = str(response.stop_reason)
-        for name in ("input_tokens", "output_tokens", "cache_read_input_tokens"):
-            usage[name] += int(getattr(response.usage, name, 0) or 0)
+        spent_now = {
+            name: int(getattr(response.usage, name, 0) or 0)
+            for name in ("input_tokens", "output_tokens", "cache_read_input_tokens")
+        }
+        usage.update(spent_now)
         turn: list[dict[str, Any]] = []
         for block in response.content:
             if block.type == "text":
@@ -407,7 +412,7 @@ def converse(
             elif block.type == "thinking" and getattr(block, "thinking", ""):
                 prompts.append(block.thinking)
                 turn.append({"type": "reasoning", "text": block.thinking})
-        transcript.append({"turn": turns, "stop": stop, "blocks": turn})
+        transcript.append({"turn": turns, "stop": stop, "blocks": turn, "usage": spent_now})
         messages.append({"role": "assistant", "content": response.content})
         if response.stop_reason != "tool_use":
             break
@@ -451,8 +456,13 @@ def converse(
         "seconds": round(time.monotonic() - started, 1),
         "answer": answer,
     }
-    if reasoning:
-        model["transcript"] = transcript
+    # Every turn, its usage included, so a run is a recording ``--replay`` can play
+    # back (1.10.0); with ``reasoning``, the turns carry the model's summarized thinking.
+    model["transcript"] = transcript
+    replayed = getattr(live.client, "replayed", None)
+    if callable(replayed):
+        model["replay"] = replayed()
+        model["seconds"] = live.client.take.seconds
     return calls, model
 
 
@@ -1059,6 +1069,7 @@ def evidence(world: World) -> Evidence:
         outbox=world.outbox,
         service=world.signers["service"],
         sealer=Sealer(SEAL_KEY),
+        relay_keys=[world.signers[n].public_key() for n in ("relay-a", "relay-b")],
     )
 
 
@@ -1090,6 +1101,7 @@ def pinned(world: World) -> dict[str, Any]:
             "fiduciary": service,
             "night-shift": spec(world.signers["night-shift"].public_key()),
         },
+        "relays": sorted(spec(world.signers[n].public_key()) for n in ("relay-a", "relay-b")),
     }
 
 
@@ -1116,24 +1128,40 @@ def canaries(run: Run, stripe: Stripe) -> dict[str, list[str]]:
     """Every sensitive value the deployment holds, by kind."""
     world = run.world
     rows = [str(r[0]) for r in world.fetch("SELECT customer FROM orders")]
-    payloads = sorted(
-        {f"pi_{n:010d}" for n in range(1, ORDERS + 1)} | {r["id"] for r in stripe.refunds.values()}
-    )
+    payloads = sorted(f"pi_{n:010d}" for n in range(1, ORDERS + 1))
+    # Stripe's ids for the refunds it made: a delivery receipt names each, so an
+    # auditor can match Stripe's log to the bundle (1.10.0). Disclosed, not leaked.
+    references = sorted(r["id"] for r in stripe.refunds.values())
     keys_dir = world.root / "keys"
     secrets = [p.read_text().strip() for p in sorted(keys_dir.glob("*.key"))]
     secrets += [world.webhook_secret, Stripe.API_KEY]
     prompts = [p for p in run.prompts if len(p) >= 12] or [REQUEST]
-    return {"rows": rows, "payloads": payloads, "prompts": prompts, "secrets": secrets}
+    return {
+        "rows": rows,
+        "payloads": payloads,
+        "prompts": prompts,
+        "secrets": secrets,
+        "references": references,
+    }
 
 
 def scan(data: bytes, planted: Mapping[str, Sequence[str]]) -> dict[str, Any]:
     """Each planted value, its SHA-256 and the first 32 characters of a long
-    one, looked for in every member of the bundle."""
+    one, looked for in every member of the bundle. ``references``, the ids a
+    vendor gave what it made for a delivered request, are disclosed, not
+    planted: each delivery receipt names one, and the scan counts them apart
+    (1.10.0)."""
     from fiduciary.bundle.format import unpack
 
     members = unpack(data)
     found: dict[str, list[str]] = {}
+    disclosed: set[str] = set()
+    for value in planted.get("references", ()):
+        if any(value in body.decode("utf-8", "replace") for _, body in members):
+            disclosed.add(value)
     for kind, values in planted.items():
+        if kind == "references":
+            continue
         hits = []
         for value in values:
             needles = {value, hashlib.sha256(value.encode()).hexdigest()}
@@ -1147,9 +1175,10 @@ def scan(data: bytes, planted: Mapping[str, Sequence[str]]) -> dict[str, Any]:
     return {
         "members": len(members),
         "bytes": len(data),
-        "planted": {k: len(v) for k, v in planted.items()},
+        "planted": {k: len(v) for k, v in planted.items() if k != "references"},
         "found": {k: len(v) for k, v in found.items()},
         "hits": found,
+        "references": {"named": len(disclosed), "of": len(planted.get("references", ()))},
     }
 
 
@@ -1181,9 +1210,16 @@ def act_audit(run: Run, stripe: Stripe) -> None:
         for finding in report.findings:
             run.say(f"    {finding.render()[:150]}")
     world.governor.verify_conservation()
-    reconciled = reconcile(world.root, stripe.log)
+    reconciled = reconcile(
+        world.root,
+        run.bundles["after"],
+        written(world.root, stripe.log),
+        charter=world.charter.digest,
+        keys=pinned(world),
+    )
     run.say(
-        f"  Stripe events: {reconciled['matched']} matched to a delivery receipt, "
+        f"  Stripe events, against after.fidb: {reconciled['matched']} matched to a "
+        f"delivery receipt, "
         f"{reconciled['phantom']} phantom ({', '.join(reconciled['phantoms']) or 'none'})"
     )
     _act(

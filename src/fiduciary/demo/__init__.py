@@ -42,9 +42,21 @@ from fiduciary.demo import packs
 from fiduciary.demo.acts import Live, Run, pinned, run_acts, turn_floor
 from fiduciary.demo.gateway import Gateway
 from fiduciary.demo.overview import overview
+from fiduciary.demo.packs import _mode
+from fiduciary.demo.replay import Replay
 from fiduciary.demo.world import ORDERS, SCOPE, build, tenant_of
 
-__all__ = ["DOMAINS", "Live", "Outcome", "extend", "run"]
+__all__ = ["DOMAINS", "Live", "Outcome", "Replay", "extend", "run"]
+
+
+def _model(live: Live | Replay | None, domain: str) -> Live | None:
+    """The model for ``domain``'s scenario: ``live`` itself, or, replaying, the
+    recording's take for that industry (``None`` when it holds none)."""
+    if isinstance(live, Replay):
+        found: Live | None = live.live(domain)
+        return found
+    return live
+
 
 DOMAINS: Final = ("fintech", *packs.PACKS, "all")
 """What ``domain`` may name."""
@@ -90,18 +102,20 @@ class Outcome:
 def run(
     root: Path,
     *,
-    live: Live | None = None,
+    live: Live | Replay | None = None,
     engine: str = "auto",
     say: Callable[[str], None] = lambda _: None,
     domain: str = "fintech",
 ) -> Outcome:
-    """Run the demo into ``root``, which must be empty or absent (module docstring)."""
+    """Run the demo into ``root``, which must be empty or absent (module docstring).
+    With a :class:`Replay`, each scenario a recorded model worked is worked again by
+    its recorded turns, on this engine, at no cost (:mod:`fiduciary.demo.replay`)."""
     if domain not in DOMAINS:
         raise ValueError(f"domain is one of {', '.join(DOMAINS)}, not {domain!r}")
     if domain in packs.PACKS:
-        page = packs.run(root, domain, engine=engine, say=say, live=live)
+        page = packs.run(root, domain, engine=engine, say=say, live=_model(live, domain))
         return _write(root, page, {domain: page})
-    page = _fintech(root, live=live, engine=engine, say=say)
+    page = _fintech(root, live=_model(live, "fintech"), engine=engine, say=say)
     if domain == "fintech":
         return _write(root, page, {"fintech": page})
     return extend(root, page, engine=engine, say=say, live=live)
@@ -113,7 +127,7 @@ def extend(
     *,
     engine: str = "auto",
     say: Callable[[str], None] = lambda _: None,
-    live: Live | None = None,
+    live: Live | Replay | None = None,
     budget: Decimal | None = None,
     kept: Mapping[str, dict[str, Any]] | None = None,
 ) -> Outcome:
@@ -143,8 +157,8 @@ def extend(
             continue
         say("")
         say(f"{packs.PACKS[key].industry}: a deployment in {root / key}")
-        worked = live
-        if live is not None and budget is not None:
+        worked = _model(live, key)
+        if isinstance(live, Live) and budget is not None:
             cap = min(live.max_cost, budget - spent)
             worked = replace(live, max_cost=cap) if cap >= turn_floor(live.model) else None
             if worked is None:
@@ -201,7 +215,7 @@ def _fintech(
         demo={
             "version": __version__,
             "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "mode": "live" if live is not None else "reference",
+            "mode": _mode(demo.model),
             "model": demo.model or None,
             "gateway": {"engine": gateway.engine, "policies": gateway.policies},
             "seconds": seconds,

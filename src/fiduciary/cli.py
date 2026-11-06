@@ -1160,6 +1160,13 @@ def _export_bundle(args: argparse.Namespace) -> int:
         outbox = None
         if config.executor_outbox is not None:
             outbox = _outbox(config.executor_outbox, opened)
+        relay_keys: list[Any] = []
+        if config.interlock is not None:
+            from interlock.wiring import trusted_keyring
+
+            relays = trusted_keyring(config.interlock_config(), "relay")
+            if relays is not None:
+                relay_keys = [k for k in map(relays.verifier, relays.ids()) if k is not None]
         data = export_bundle(
             store,
             args.mandate,
@@ -1177,6 +1184,7 @@ def _export_bundle(args: argparse.Namespace) -> int:
                 outbox=outbox,
                 service=service,
                 sealer=config.sealer(),
+                relay_keys=relay_keys,
             ),
             from_seq=args.from_seq,
             to_seq=args.to_seq,
@@ -1190,6 +1198,59 @@ def _export_bundle(args: argparse.Namespace) -> int:
     target.write_bytes(data)
     _err(f"wrote {args.out}: {len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()}")
     return OK
+
+
+def _reconcile_actions(args: argparse.Namespace) -> int:
+    """A system of record's log matched against a bundle's receipts (1.10.0):
+    0 when every action in it is explained by a receipt; 1 when one is not,
+    or the bundle's receipts do not verify; 2 on a usage error."""
+    from fiduciary.bundle import BundleError, TrustedKeys
+    from fiduciary.bundle.reconcile import reconcile_bundle
+
+    if not fidu1.HASH.fullmatch(args.charter):
+        _fail("--charter is the pinned digest: 64 lowercase hex characters")
+    fields: dict[str, str] = {}
+    for item in args.field or ():
+        name, sep, column = item.partition("=")
+        if not sep:
+            _fail(f"--field is NAME=COLUMN, not {item!r}")
+        fields[name] = column
+    try:
+        data = Path(args.bundle).read_bytes()
+        keys = TrustedKeys.loads(Path(args.keys).read_bytes()) if args.keys else None
+    except (OSError, FiduciaryError) as exc:
+        _fail(str(exc))
+    try:
+        found = reconcile_bundle(
+            data,
+            args.export,
+            charter=args.charter,
+            keys=keys,
+            fmt=args.format,
+            fields=fields,
+            actors=args.actor or (),
+            substrates=args.substrate or (),
+            measurements=args.measurement or (),
+            all_receipts=args.all_receipts,
+        )
+    except BundleError as exc:
+        _out(f"FAIL  {exc}")
+        return REFUSED
+    from agentgov.reconciliation import format_action_report
+
+    verdict = found.bundle
+    _out(
+        f"bundle      {args.bundle}: {found.receipts} receipt(s), {found.deliveries} of them "
+        f"deliveries; V1, V2 and V5 pass"
+        + ("" if verdict.passed else f"; the bundle itself exits {verdict.exit_code}")
+    )
+    for finding in verdict.findings:
+        _out(f"  {finding.render()}")
+    for note in verdict.notes:
+        if "come from the bundle's own keys.json" in note:
+            _out(f"  note: {note}")
+    _out(format_action_report(found.actions, export=args.export, scope=found.scope))
+    return OK if found.actions.passed else REFUSED
 
 
 def _verify_bundle(args: argparse.Namespace) -> int:
@@ -1285,9 +1346,21 @@ def _demo(args: argparse.Namespace) -> int:
             "cryptography package interlock-fiduciary installs: reinstall it with its "
             "dependencies"
         )
-    live = None
+    live: Any = None
+    if args.live and args.replay is not None:
+        _fail("--live calls a model; --replay plays a recorded one back: choose one")
     if args.live:
         live = _live_model(args)
+    elif args.replay is not None:
+        from fiduciary.demo.replay import Replay, bundled, load
+
+        try:
+            recording = load(args.replay) if args.replay else bundled()
+        except (OSError, ValueError, KeyError) as exc:
+            _fail(f"--replay: {exc}")
+        live = Replay(recording)
+    if args.domain is None:
+        args.domain = "all" if args.replay is not None else "fintech"
     if args.out is not None:
         root = Path(args.out).resolve()
         if root.exists() and any(root.iterdir()):
@@ -1310,10 +1383,17 @@ def _demo(args: argparse.Namespace) -> int:
     say = (lambda _: None) if args.quiet else _out
     say(f"fiduciary demo: a deployment in {root}")
     say("  an input gateway (Cedar) and the stack (AgentGov, Interlock, Fiduciary), same calls")
+    from fiduciary.demo.replay import ReplayDivergedError
+
     try:
         outcome = demo.run(root, live=live, engine=args.gateway, say=say, domain=args.domain)
     except ImportError as exc:
         _fail(f"{exc}: pip install 'interlock-fiduciary[demo]' for the Cedar engine")
+    except ReplayDivergedError as exc:
+        _fail(
+            f"--replay: {exc}. The recorded turns no longer fit this engine; "
+            f"record the scenario again with --live"
+        )
     data = outcome.payload
     if args.report is not None:
         from fiduciary import report as reports
@@ -1337,9 +1417,23 @@ def _demo(args: argparse.Namespace) -> int:
     for page in data.get("domains", []):
         profile = page["demo"]["domain"]
         say(f"{profile['key']:<11} {root / profile['key']} ({profile['industry']})")
-    if data["demo"]["model"]:
-        model = data["demo"]["model"]
-        say(f"live        {model['served']}: {model['turns']} turn(s), ${model['metered']} metered")
+    for page in [data, *data.get("domains", [])]:
+        model = page["demo"]["model"]
+        if not model:
+            continue
+        where = page["demo"].get("domain", {}).get("key", "fintech")
+        replayed = model.get("replay")
+        if replayed is None:
+            say(
+                f"live        {where}: {model['served']}, {model['turns']} turn(s), "
+                f"${model['metered']} metered"
+            )
+        else:
+            say(
+                f"replayed    {where}: {model['served']} as recorded "
+                f"{replayed['recorded_at'][:10]}, {model['turns']} turn(s), "
+                f"${model['metered']} metered then, $0 now"
+            )
     url = outcome.dashboard.resolve().as_uri()
     server = None
     if args.serve is not None:
@@ -1457,6 +1551,14 @@ def _init(args: argparse.Namespace) -> int:
     for note in report.notes:
         _out(f"wrote    {note['name']}: {note['why']}")
     _out(f"wrote       {report.root} (mandate {report.scope}; see README.md)")
+    config = Path(report.root).resolve() / "fiduciary.toml"
+    if (Path(report.root) / "grants.sql").is_file():
+        _out(f"first       run {Path(report.root).resolve() / 'grants.sql'} as the schema's owner")
+    _out(f"serve       fiduciary --config {config} mcp serve --mandate {report.scope}")
+    _out(
+        f"approve     fiduciary console --dir {Path(report.root).resolve()} "
+        f"--accept-approvals --open"
+    )
     return OK
 
 
@@ -1796,6 +1898,56 @@ def _parser() -> argparse.ArgumentParser:
     )
     check.set_defaults(handler=_verify_bundle)
 
+    match = commands.add_parser(
+        "reconcile-actions",
+        help="match a system's own log (Stripe, SendGrid, EDI, Kubernetes, FHIR, GitHub) "
+        "against a bundle's receipts; exit 1 on an action no receipt explains",
+    )
+    match.add_argument("bundle", help="the lineage's .fidb bundle")
+    match.add_argument("export", help="the system of record's export")
+    match.add_argument("--charter", required=True, help="the pinned digest of charter version 1")
+    match.add_argument("--keys", help="the public keys to pin, in keys.json format")
+    from agentgov.receipts import MEASUREMENTS
+    from agentgov.reconciliation import parsers
+
+    match.add_argument(
+        "--format",
+        default="records",
+        choices=tuple(parsers("actions")),
+        help="the export's format, as agentgov reconcile-actions reads it (default: records)",
+    )
+    match.add_argument(
+        "--actor",
+        action="append",
+        help="an identity the agent acts as; other actors' actions are ignored. Repeat for each",
+    )
+    match.add_argument(
+        "--field",
+        action="append",
+        metavar="NAME=COLUMN",
+        help="for --format records: the column holding a record's id, timestamp, actor, "
+        "action, resource or refs",
+    )
+    match.add_argument(
+        "--substrate",
+        action="append",
+        metavar="SYSTEM",
+        help="a system the export records writes to; only receipts of writes to it are "
+        "expected (default: the system the format reads). Repeat for each",
+    )
+    match.add_argument(
+        "--measurement",
+        action="append",
+        choices=MEASUREMENTS,
+        help="a measurement class the export should have seen. Repeat for each",
+    )
+    match.add_argument(
+        "--all-receipts",
+        action="store_true",
+        help="expect every committed receipt in the export, whatever system it wrote to",
+    )
+    match.set_defaults(handler=_reconcile_actions)
+
     init = commands.add_parser(
         "init",
         help="write a deployment ready to run: for an MCP server's tools (--mcp), or for a "
@@ -1896,10 +2048,9 @@ def _parser() -> argparse.ArgumentParser:
     demo.add_argument("--out", help="the directory to write the deployment into (new or empty)")
     demo.add_argument(
         "--domain",
-        default="fintech",
-        choices=("fintech", "healthcare", "sre", "supply-chain", "saas", "all"),
-        help="the industry: fintech (the default), a domain pack on the same engine, or all "
-        "of them, each in its own subdirectory, behind one dashboard",
+        choices=("fintech", "healthcare", "sre", "supply-chain", "saas", "coding-agent", "all"),
+        help="the industry: fintech (the default; all with --replay), a domain pack on the "
+        "same engine, or all of them, each in its own subdirectory, behind one dashboard",
     )
     demo.add_argument(
         "--report", metavar="DIR|FILE", help="also write the dashboard (.html) or report (.md)"
@@ -1924,6 +2075,15 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="a Claude model works fintech's act 1 and each pack's act 2 (BENCHMARK_API_KEY; "
         "costs money)",
+    )
+    demo.add_argument(
+        "--replay",
+        nargs="?",
+        const="",
+        metavar="RECORDING",
+        help="replay a recorded model's turns on this engine, at no cost: a recording file, "
+        "a run --live wrote, or, with no value, the claude-opus-5-5 recording that ships "
+        "with fiduciary",
     )
     demo.add_argument("--model", default="claude-opus-5-5")
     demo.add_argument("--effort", default="medium", choices=("low", "medium", "high"))

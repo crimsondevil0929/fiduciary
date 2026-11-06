@@ -2,8 +2,10 @@
 
     python scripts/build_site.py site
 
-Runs ``fiduciary demo --domain all`` in a temporary directory (offline, no model: the
-acts replay their fixed sequences), then writes into the output directory:
+Runs ``fiduciary demo --domain all --replay`` in a temporary directory: every industry
+on the installed engine, with claude-opus-5-5's recorded turns choosing the calls in each
+signature scenario (the recording that ships with fiduciary), offline and at no cost.
+Then it writes into the output directory:
 
 - ``index.html``: the console, rendered from the run, with no console behind it. It shows
   what the run recorded and checks a bundle in the browser (``report/verify.js``).
@@ -37,7 +39,7 @@ def build(out: Path) -> list[Path]:
     out.mkdir(parents=True)
     with tempfile.TemporaryDirectory(prefix="fiduciary-site-") as scratch:
         run = Path(scratch) / "run"
-        status = cli.main(["demo", "--domain", "all", "--out", str(run), "--quiet"])
+        status = cli.main(["demo", "--domain", "all", "--replay", "--out", str(run), "--quiet"])
         if status != 0:
             raise SystemExit(f"fiduciary demo exited {status}")
         data = json.loads((run / "demo.json").read_text(encoding="utf-8"))

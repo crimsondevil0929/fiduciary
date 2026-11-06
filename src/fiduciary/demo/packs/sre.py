@@ -62,11 +62,13 @@ from fiduciary.demo.packs.kit import (
     payloads,
     plan_tool,
     prompts,
+    references,
     request,
     say_call,
     secrets,
     work,
 )
+from fiduciary.demo.vendor_logs import SystemLog
 
 ENVS: Final = ("prod-east", "prod-west", "staging", "dev")
 ACCOUNTS: Final = ("acct-prod", "acct-prod", "acct-nonprod", "acct-nonprod")
@@ -649,62 +651,21 @@ def acts(run: PackRun) -> None:
     run.say(f"  kubectl scale deployment/auth --replicas=3 -n {ENVS[2]}: HTTP {status}")
 
     run.say("Scenario 7  " + TITLES["audit"])
-    reconciled = _reconcile(run, cluster)
-    run.say(
-        f"  cluster audit log: {reconciled['matched']} write(s) explained by a receipt, "
-        f"{reconciled['phantom']} phantom ({', '.join(reconciled['phantoms']) or 'none'})"
-    )
-    act_audit(
-        run,
-        7,
-        LEDES["audit"],
-        reconciliation=reconciled,
-    )
+    act_audit(run, 7, LEDES["audit"], system=_audit_log(run, cluster))
 
 
 AUDIT_EXPORT: Final = "audit/kubernetes-audit.jsonl"
 """Where the deployment keeps the cluster's audit log, as its API server wrote it."""
 
 
-def _reconcile(run: PackRun, cluster: Cluster) -> dict[str, Any]:
-    """The cluster's audit log, written beside the deployment and reconciled
-    against the receipt log, as ``agentgov reconcile-actions`` does it."""
-    from agentgov.receipts import document_from_json
-    from agentgov.receipts.canonical import loads_strict
-    from agentgov.reconciliation import load_actions, reconcile_actions
-
-    root = run.world.root
-    export = root / AUDIT_EXPORT
+def _audit_log(run: PackRun, cluster: Cluster) -> SystemLog:
+    """The cluster's audit log, written beside the deployment as its API server
+    wrote it. It sees writes to the cluster, so it expects the receipts of
+    those, not of the requests the agent sent the cloud API (1.6.0)."""
+    export = run.world.root / AUDIT_EXPORT
     export.parent.mkdir(exist_ok=True)
     export.write_text(cluster.server.audit_log())
-    receipts = [
-        document_from_json(loads_strict(line))
-        for line in (root / "receipts.jsonl").read_bytes().splitlines()
-        if line.strip()
-    ]
-    # The cluster's log sees writes to the cluster, so it expects the receipts
-    # of those, not of the requests the agent sent the cloud API (1.6.0).
-    report = reconcile_actions(
-        receipts,
-        load_actions(str(export), fmt="k8s-audit-jsonl"),
-        actors=(AGENT,),
-        substrates=("kubernetes",),
-    )
-    return {
-        "export": AUDIT_EXPORT,
-        "format": "k8s-audit-jsonl",
-        "actor": AGENT,
-        "matched": len(report.matched),
-        "receipts": len({m.receipt_id for m in report.matched}),
-        "phantom": len(report.phantom),
-        "phantoms": [f"{r.action} {r.resource}" for r in report.phantom],
-        "unobserved": len(report.unobserved),
-        "out_of_scope": report.out_of_scope,
-        "command": (
-            f"agentgov reconcile-actions receipts.jsonl {AUDIT_EXPORT} "
-            f"--format k8s-audit-jsonl --actor {AGENT}"
-        ),
-    }
+    return SystemLog(AUDIT_EXPORT, "k8s-audit-jsonl", (AGENT,), ("kubernetes",))
 
 
 REQUEST: Final = (
@@ -732,6 +693,7 @@ def canaries(run: PackRun) -> dict[str, list[str]]:
     return {
         "rows": sorted(set(rows)),
         "payloads": payloads(run),
+        "references": references(run),
         "prompts": prompts(run),
         "secrets": [*secrets(run), cluster.token, cluster.admin],
     }

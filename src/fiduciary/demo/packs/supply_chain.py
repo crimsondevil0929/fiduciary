@@ -46,6 +46,7 @@ from fiduciary.demo.packs.kit import (
     per_session,
     plan_tool,
     prompts,
+    references,
     request,
     say_call,
     secrets,
@@ -634,6 +635,7 @@ def canaries(run: PackRun) -> dict[str, list[str]]:
     return {
         "rows": rows,
         "payloads": payloads(run),
+        "references": references(run),
         "prompts": [INJECTED, *prompts(run)],
         "secrets": secrets(run),
     }

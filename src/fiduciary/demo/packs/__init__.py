@@ -79,7 +79,7 @@ def run(
         demo={
             "version": __version__,
             "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "mode": "live" if played.model else "reference",
+            "mode": _mode(played.model),
             "model": played.model or None,
             "gateway": {"engine": gateway.engine, "policies": gateway.policies},
             "seconds": seconds,
@@ -92,6 +92,14 @@ def run(
         json.dumps(attestations["after"], indent=2, sort_keys=True) + "\n"
     )
     return page
+
+
+def _mode(model: dict[str, Any]) -> str:
+    """``live`` when a model worked scenario 2, ``replay`` when a recorded one's
+    turns did (1.10.0), else ``reference``."""
+    if not model:
+        return "reference"
+    return "replay" if model.get("replay") else "live"
 
 
 def profile(pack: Pack) -> dict[str, Any]:
