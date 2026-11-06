@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.10.0] - unreleased
+## [1.10.0] - 2026-11-06
 
 A bundle now carries the relays' delivery receipts, so an auditor can match a vendor's or
 a system's own log against the bundle alone. And the recorded claude-opus-5-5 run can be
