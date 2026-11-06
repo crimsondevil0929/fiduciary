@@ -52,6 +52,8 @@ bundle verifies to its recorded verdict, byte for byte.
 - The public site is built with `--replay`, so it shows the model's recorded turns, all
   16 bundles and the six reconciliations together.
 - `fiduciary init` ends with the commands to serve the tools and open the approvals desk.
+- The package's PyPI page links to the live console, the repository, the spec, the
+  changelog and the issue tracker. 1.9.0 and earlier linked to nothing.
 
 ### Fixed
 
