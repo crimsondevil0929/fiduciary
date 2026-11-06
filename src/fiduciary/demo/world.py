@@ -327,6 +327,45 @@ class World:
     def key_id(self, name: str) -> str:
         return str(self.signers[name].public_key().key_id)
 
+    def settle(self, operator: str) -> int:
+        """Write a delivery receipt for every delivery a relay signed for, as the
+        settler in ``fiduciary serve`` does (1.9.0).
+
+        Each receipt is an ARC1 ``DeliveryReceipt`` in ``receipts.jsonl``, bound to
+        the action receipt of the plan that committed the request. It carries the
+        idempotency key the relay sent and the vendor's id for what it created, so
+        ``agentgov reconcile-actions`` can match the vendor's own log against it.
+        ``operator`` is the break-glass key that signs the operator log beside the
+        service's. Returns how many receipts were written.
+        """
+        from interlock.settlement import Settler
+        from interlock.sqlite_outbox import SETTLER
+
+        def ring(*names: str) -> Keyring:
+            return Keyring({self.key_id(n): self.signers[n].public_key() for n in names})
+
+        store = SqliteOutboxStore(str(self.back_office), writes=SETTLER)
+        written = 0
+        try:
+            for engine in self.binder.engines().values():
+                if engine.closed or engine.engine.receipts is None:
+                    continue
+                settler = Settler(
+                    store,
+                    receipts=engine.engine.receipts,
+                    chain=engine.engine.chain,
+                    relays=ring("relay-a", "relay-b"),
+                    ledger=self.governor,
+                    operator_log=self.operator_log,
+                    operators=ring("service", operator),
+                    sinks=engine.compiled.sinks,
+                    partition=True,
+                )
+                written += settler.settle().receipts
+        finally:
+            store.close()
+        return written
+
     # -- the back office, read directly ----------------------------------------------
 
     def fetch(self, sql: str, parameters: tuple[Any, ...] = ()) -> list[tuple[Any, ...]]:

@@ -371,7 +371,15 @@ def test_each_substrate_measures_its_presets(
     assert outcomes["commits"]["outcome"] == "committed"
     assert outcomes["refused"]["outcome"] == cascade
     assert outcomes["held"]["ticket"]
-    assert outcomes["commits"]["receipts"][-1]["rung"] == rung
+    actions = [r for r in outcomes["commits"]["receipts"] if r["kind"] == "action"]
+    assert actions[-1]["rung"] == rung
+    # A delivery receipt reads as the request it delivered, on its sink, bound
+    # to the action receipt that made the request.
+    delivered = [r for r in outcomes["commits"]["receipts"] if r["kind"] == "delivery"]
+    assert delivered or key != "healthcare"
+    for r in delivered:
+        assert r["rung"] == "R" and r["measurement"] == "request-only"
+        assert r["substrate"] and r["action"] and r["rows"] == 0
     status, view = client.get(
         f"/api/deployments/sandbox-{key}/tickets/{outcomes['held']['ticket']}"
     )
@@ -625,6 +633,17 @@ def test_a_receipt_reads_as_the_desk_shows_it() -> None:
     assert view["rung"] == "V" and view["inserted"] == 1 and view["deleted"] == 0
     assert view["checkers"] == ["blast_radius"] and view["gaps"] == ["g"]
     assert receipt_view({})["rung"] == "T"
+    delivered = receipt_view(
+        {
+            "receipt_id": "d",
+            "request": {"sink": "stripe", "operation": "refund"},
+            "delivery": {"remote_ref": "re_1", "status_code": 200},
+            "action": {"receipt_id": "r"},
+        }
+    )
+    assert delivered["kind"] == "delivery" and delivered["rung"] == "R"
+    assert delivered["substrate"] == "stripe" and delivered["action"] == "r"
+    assert delivered["remote_ref"] == "re_1" and delivered["status_code"] == 200
 
 
 def _keep(served: list[Any]) -> Any:

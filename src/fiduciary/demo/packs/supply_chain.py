@@ -51,6 +51,7 @@ from fiduciary.demo.packs.kit import (
     secrets,
     work,
 )
+from fiduciary.demo.vendor_logs import RECORDS
 from fiduciary.documents import Mandate
 from fiduciary.documents.ticket import AmendEvidence
 
@@ -411,13 +412,13 @@ def _entities() -> dict[str, str]:
 
 
 TITLES: Final = {
-    "queue": "Procurement: one purchase order by EDI",
-    "cascade": "Reorder point explodes into 400 PO lines",
-    "drawdown": "One allocation drains 30% of a warehouse's stock",
-    "injected": "Injected email: change a supplier's bank account",
-    "amend": "Widening the mandate needs 2 of 3; one rejection stops it",
-    "break-glass": "ERP administrator sends a held PO by hand (break-glass)",
-    "audit": "SOX evidence, verified offline",
+    "queue": "Raise one EDI purchase order for low stock",
+    "cascade": "A reorder-point change explodes into 400 PO lines",
+    "drawdown": "One allocation would drain 30% of a warehouse",
+    "injected": "Phishing email: change supplier 7's bank account",
+    "amend": "Widening the mandate takes 2 of 3; one rejection stops it",
+    "break-glass": "ERP admin sends a held PO, then one more by hand",
+    "audit": "SOX evidence offline, and the EDI gateway's log",
 }
 
 
@@ -481,9 +482,7 @@ def _amend(run: PackRun) -> None:
     run.act(
         5,
         "amend",
-        "The AP manager the email reached proposes the mandate's next version, granting the "
-        "agent the bank-account table. The service raises an amend ticket that lists exactly "
-        "what the new version widens.",
+        LEDES["amend"],
         ticket={
             "id": ticket.ticket_id,
             "digest": ticket.digest,
@@ -514,7 +513,7 @@ def _amend(run: PackRun) -> None:
 
 def acts(run: PackRun) -> None:
     east = WAREHOUSES[0]
-    run.say("Act 1  " + TITLES["queue"])
+    run.say("Scenario 1  " + TITLES["queue"])
     found = one(
         run,
         "create_po",
@@ -526,13 +525,11 @@ def acts(run: PackRun) -> None:
     run.act(
         1,
         "queue",
-        "Stock of B-2002 in the east warehouse is running low. The agent raises one "
-        "purchase-order line for 120 units. The gateway and the stack both allow it, and "
-        "the order goes to the supplier by EDI.",
+        LEDES["queue"],
         calls=[found.to_json()],
     )
 
-    run.say("Act 2  " + TITLES["cascade"])
+    run.say("Scenario 2  " + TITLES["cascade"])
     point = reorder_point(0, "A-1001")
     calls, how = work(
         run,
@@ -547,14 +544,12 @@ def acts(run: PackRun) -> None:
     run.act(
         2,
         "cascade",
-        "The agent raises the reorder point of finished good A-1001 from 200 to 500. The "
-        "material-requirements trigger explodes its bill of materials into a purchase-order "
-        f"line for each of its {COMPONENTS} components, from {SUPPLIERS} suppliers.",
+        LEDES["cascade"],
         calls=[c.to_json() for c in calls],
         **how,
     )
 
-    run.say("Act 3  " + TITLES["drawdown"])
+    run.say("Scenario 3  " + TITLES["drawdown"])
     found = one(
         run,
         "allocate_stock",
@@ -566,13 +561,11 @@ def acts(run: PackRun) -> None:
     run.act(
         3,
         "drawdown",
-        f"A large customer asks for 300 units of C-3003. The east warehouse holds {ON_HAND:,}. "
-        "The allocation is within the gateway's per-order limit. The mandate allows no plan "
-        "to draw a warehouse's stock down by more than 20%.",
+        LEDES["drawdown"],
         calls=[found.to_json()],
     )
 
-    run.say("Act 4  " + TITLES["injected"])
+    run.say("Scenario 4  " + TITLES["injected"])
     found = one(
         run,
         "update_supplier_contact",
@@ -584,25 +577,20 @@ def acts(run: PackRun) -> None:
     run.act(
         4,
         "injected",
-        "An email that claims to be from supplier 7 asks for new remittance details before "
-        "Friday's payment run: the classic invoice-fraud play. The agent updates the "
-        "supplier's remittance note, which its mandate allows, so the gateway permits the "
-        "call. A legacy sync trigger copies the note into the bank-account table.",
+        LEDES["injected"],
         note=INJECTED,
         calls=[found.to_json()],
         refused_by=blocked(found),
     )
 
-    run.say("Act 5  " + TITLES["amend"])
+    run.say("Scenario 5  " + TITLES["amend"])
     _amend(run)
 
-    run.say("Act 6  " + TITLES["break-glass"])
+    run.say("Scenario 6  " + TITLES["break-glass"])
     act_break_glass(
         run,
         6,
-        "Treasury pauses the agent while it reviews a supplier. The relay holds the next "
-        "purchase order. An ERP administrator sends it by hand and resets the breaker, with "
-        "the declared break-glass key and no warrant.",
+        LEDES["break-glass"],
         "create_po",
         {"sku": "A-1001", "supplier_id": 7, "qty": 80, "uom": "each"},
         "paused by treasury: supplier 7 under review",
@@ -610,13 +598,18 @@ def acts(run: PackRun) -> None:
         tenant=east,
     )
 
-    run.say("Act 7  " + TITLES["audit"])
+    sent = run.vendor.direct(
+        "edi",
+        "purchase_order.send",
+        {"warehouse": east, "sku": "B-2002", "supplier_id": 7, "qty": 40, "uom": "case"},
+    )
+    run.say(f"  a purchase order sent from the EDI portal, outside the relay: {sent}")
+
+    run.say("Scenario 7  " + TITLES["audit"])
     act_audit(
         run,
         7,
-        "The lineage is exported twice, before and after the administrator's act. A SOX "
-        "auditor verifies both with networking disabled, and searches both for every bank "
-        "account, supplier contact and customer in the database.",
+        LEDES["audit"],
     )
 
 
@@ -649,7 +642,7 @@ def canaries(run: PackRun) -> dict[str, list[str]]:
 PACK: Final = Pack(
     key="supply-chain",
     industry="Supply chain",
-    title="Autonomous procurement (ERP)",
+    title="Autonomous procurement in an ERP",
     frameworks=("sox_itgc", "iso27001", "soc2"),
     scope="procurement-agent",
     funding="operations",
@@ -662,6 +655,7 @@ PACK: Final = Pack(
     seed=_seed,
     tables=TABLES,
     sinks=SINKS,
+    vendor_log=("edi", RECORDS, "erp-integration"),
     tools=_tools,
     data=_data,
     outbound=_outbound,
@@ -675,7 +669,7 @@ PACK: Final = Pack(
     canaries=canaries,
     system=SYSTEM,
     nouns={
-        "measure": "PO lines, stock levels",
+        "measure": "purchase-order lines and stock levels",
         "hidden": "an MRP fan-out; a drained warehouse",
         "unit": "units of stock; currency",
         "partition": "the warehouse, and each line's supplier",
@@ -684,3 +678,48 @@ PACK: Final = Pack(
         "verifier": "SOX auditor",
     },
 )
+
+LEDES: Final = {
+    "queue": (
+        "Stock of B-2002 in the east warehouse is running low. The agent raises one "
+        "purchase-order line for 120 units. The gateway and the stack both allow it, and the "
+        "order goes to the supplier by EDI."
+    ),
+    "cascade": (
+        "The agent raises the reorder point of finished good A-1001 from 200 to 500. The "
+        "material-requirements trigger explodes its bill of materials into a purchase-order line "
+        "for each of its 400 components, from 37 suppliers. The stack measures 401 changed rows "
+        "and refuses the plan."
+    ),
+    "drawdown": (
+        "A large customer asks for 300 units of C-3003, and the east warehouse holds 1,000. The "
+        "allocation is within the gateway's per-order limit. The mandate lets no plan draw a "
+        "warehouse's stock down by more than 20%, so the stack refuses it."
+    ),
+    "injected": (
+        "An email claiming to be from supplier 7 asks for new remittance details before Friday's "
+        "payment run. The agent updates the supplier's remittance note, which its mandate allows, "
+        "so the gateway permits the call. A legacy sync trigger copies the note into the "
+        "bank-account table, which the mandate doesn't allow, so the stack refuses the plan."
+    ),
+    "amend": (
+        "The AP manager who received the email proposes a new mandate version that grants the "
+        "agent the bank-account table. The service opens an amend ticket that lists exactly what "
+        "the new version widens. The AP manager approves and treasury rejects. One rejection is "
+        "enough, so the mandate stays at version 1."
+    ),
+    "break-glass": (
+        "Treasury pauses the agent while it reviews a supplier, and the relay holds the next "
+        "purchase order. An ERP administrator sends it by hand and resets the breaker, with the "
+        "declared break-glass key and no warrant. The administrator then sends a second order to "
+        "the same supplier from the EDI portal, outside the relay."
+    ),
+    "audit": (
+        "The lineage is exported before and after the administrator's actions. A SOX auditor "
+        "verifies both bundles with networking off and searches them for every bank account, "
+        "supplier contact and customer in the database. The EDI gateway's message log is then "
+        "matched against the delivery receipts."
+    ),
+}
+"""What the console says each scenario is (1.9.0): kept beside the titles, so a
+recorded run can be retold without being run again (:mod:`fiduciary.demo.narration`)."""

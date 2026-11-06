@@ -13,6 +13,9 @@
   var NS = "http://www.w3.org/2000/svg";
 
   // -- small helpers -----------------------------------------------------------------
+  function many(n, one, more) {
+    return n + " " + (n === 1 ? one : more || one + "s");
+  }
   function h(tag, attrs) {
     var el = document.createElement(tag);
     if (attrs) {
@@ -145,43 +148,43 @@
   // -- top bar -----------------------------------------------------------------------------
   function topbar() {
     var v = hasRun() ? A().verifier : null;
-    var logo = s("svg", { width: 26, height: 26, viewBox: "0 0 26 26", "aria-hidden": "true" },
-      s("rect", { x: 1, y: 15, width: 24, height: 7, rx: 2, fill: "var(--s3)" }),
-      s("rect", { x: 1, y: 9.5, width: 24, height: 5, rx: 2, fill: "var(--s1)" }),
-      s("rect", { x: 1, y: 4, width: 24, height: 5, rx: 2, fill: "var(--ink)" }));
-    var layers = v ? [["agentgov", v.agentgov, "the budget ledger"], ["interlock", v.interlock, "the side-effect reference monitor"], ["fiduciary", v.fiduciary, "mandates, warrants and offline proofs"]]
-      : LIVE.status ? [["fiduciary", LIVE.status.version, "mandates, warrants and offline proofs"]] : [];
-    var mode = LIVE.on ? tipOn(pill("LIVE · " + location.host, "good"), "Served by the console: the desk, the verifier and the sandbox run against it")
-      : ROOT.served && LIVE.error ? tipOn(pill("CONSOLE UNREACHABLE", "bad"), LIVE.error)
-        : tipOn(pill("STATIC", "permit"), "A file with no console behind it: it shows what was recorded and checks bundles in this browser");
+    var logo = s("svg", { width: 20, height: 20, viewBox: "0 0 20 20", "aria-hidden": "true" },
+      s("rect", { x: 0.5, y: 0.5, width: 19, height: 19, fill: "none", stroke: "currentColor" }),
+      s("rect", { x: 5.5, y: 5.5, width: 9, height: 9, fill: "var(--accent)" }),
+      s("path", { d: "M0.5 10H5.5M14.5 10H19.5", stroke: "currentColor", fill: "none" }));
+    var layers = v ? [["agentgov", v.agentgov, "the budget ledger"], ["interlock", v.interlock, "stages, measures and commits each change"], ["fiduciary", v.fiduciary, "mandates, warrants and offline proof"]]
+      : LIVE.status ? [["fiduciary", LIVE.status.version, "mandates, warrants and offline proof"]] : [];
+    var mode = LIVE.on ? tipOn(h("span", { class: "mode live" }, h("i"), h("span", null, "live · " + location.host)), "Served by the console. The desk, the verifier and the sandbox run against it.")
+      : ROOT.served && LIVE.error ? tipOn(h("span", { class: "mode down" }, h("i"), h("span", null, "console unreachable")), LIVE.error)
+        : tipOn(h("span", { class: "mode" }, h("i"), h("span", null, "static file")), "No console behind this page. It shows what was recorded and checks bundles in this browser.");
     var nav = h("nav", { class: "views noprint", "aria-label": "Views" }, views().map(function (x) {
       return h("a", { href: "#/" + x[0], "aria-current": x[0] === view ? "page" : null, onclick: function (ev) { ev.preventDefault(); go(x[0]); } }, x[1],
-        x[0] === "desk" && LIVE.on ? (function () { var n = LIVE.status.deployments.reduce(function (t, d) { return t + (d.open || 0); }, 0); return n ? h("span", { class: "count" }, String(n)) : null; })() : null);
+        x[0] === "desk" && LIVE.on ? (function () { var n = LIVE.status.deployments.reduce(function (t, d) { return t + (d.open || 0); }, 0); return n ? h("span", { class: "count", title: n + " open" }, String(n)) : null; })() : null);
     }));
     var toc = view === "run" && hasRun() ? h("nav", { class: "toc" },
       OVERVIEW ? h("a", { href: "#overview" }, "Overview") : null,
-      DEMO ? h("a", { href: "#theatre" }, "Acts") : null,
+      DEMO ? h("a", { href: "#theatre" }, "Scenarios") : null,
       h("a", { href: "#lineage" }, "Lineage"),
-      h("a", { href: "#inspector" }, "Warrants & operators"),
-      h("a", { href: "#matrix" }, "Controls")) : null;
+      h("a", { href: "#inspector" }, "Warrants"),
+      h("a", { href: "#matrix" }, "Checks")) : null;
     return h("header", { class: "top" },
       h("div", { class: "wrap" },
-        h("div", { class: "brand" }, logo, h("span", null, "Fiduciary ", h("small", null, ROOT.console ? "console" : DEMO ? "stack demo" : "audit console"))),
-        h("div", { class: "layers" }, layers.map(function (l) { return h("span", { class: "layer", title: l[2] }, l[0] + " " + l[1]); })),
+        h("div", { class: "brand" }, logo, h("span", null, "Fiduciary"), h("small", null, ROOT.console ? "console" : DEMO ? "stack demo" : "audit")),
+        h("div", { class: "layers" }, layers.map(function (l) { return h("span", { class: "layer", title: l[2] }, l[0] + " ", h("b", null, l[1])); })),
         h("div", { class: "spacer" }), mode,
-        h("button", { class: "btn noprint", title: "Light or dark", onclick: function () { setTheme(dark() ? "light" : "dark"); render(); } }, icon("sun"), "Theme"),
-        view === "run" ? h("button", { class: "btn noprint", onclick: function () { window.print(); } }, icon("print"), "PDF") : null),
+        h("button", { class: "btn icon noprint", title: "Light or dark", "aria-label": "Switch theme", onclick: function () { setTheme(dark() ? "light" : "dark"); render(); } }, icon("sun")),
+        view === "run" ? h("button", { class: "btn icon noprint", title: "Print, or save as PDF", "aria-label": "Print", onclick: function () { window.print(); } }, icon("print")) : null),
       h("div", { class: "wrap subnav" }, nav, h("div", { class: "spacer" }), toc));
   }
-
   // -- the verdict ---------------------------------------------------------------------------
   function statusLine(a) {
     var v = a.verdict;
-    if (v.passed) return "All 12 checks passed. Every action on this lineage traces to a signed mandate or warrant, and every record verifies against keys pinned outside the bundle.";
+    if (v.passed) return "All twelve checks pass. Every action on this lineage traces back to a signed mandate or warrant, and every record verifies against keys pinned outside the bundle.";
     var first = a.checks.filter(function (c) { return c.status === "fail"; });
     var n = first.reduce(function (t, c) { return t + c.findings.length; }, 0);
-    if (v.status === "BREAK-GLASS DETECTED") return n + " findings on " + first.map(function (c) { return c.id; }).join(", ") + ": actions taken without an authorizing warrant, one of them signed with a declared break-glass key. All other checks passed.";
-    return n + " findings: " + first.map(function (c) { return c.id + " " + c.name; }).join(", ") + ". Exit code " + v.exit_code + ".";
+    var ids = first.map(function (c) { return c.id; }).join(", ");
+    if (v.status === "BREAK-GLASS DETECTED") return n + " findings on " + ids + ": actions taken without a warrant, one of them signed with a declared break-glass key. Every other check passes.";
+    return n + " findings on " + first.map(function (c) { return c.id + " (" + c.name + ")"; }).join(", ") + ". Exit code " + v.exit_code + ".";
   }
   function verdictCard() {
     var a = A(), v = a.verdict, b = a.bundle;
@@ -190,21 +193,22 @@
     var seg = names.length > 1 ? h("div", { class: "seg noprint", role: "group", "aria-label": "Bundle" },
       names.map(function (n) {
         var av = P.attestations[n].verdict;
+        var what = PACK ? "the break-glass action" : "the DBA override";
         return h("button", { "aria-pressed": n === current ? "true" : "false", onclick: function () { current = n; render(); } },
-          h("i", { class: "dot", style: "background:var(" + (av.passed ? "--good" : "--critical") + ")" }),
-          PACK ? (n === "after" ? "After break-glass act" : n === "before" ? "Before break-glass act" : n)
-            : n === "after" ? "After DBA override" : n === "before" ? "Before DBA override" : n);
+          h("i", { class: "dot", style: "background:var(" + (av.passed ? "--accent" : "--refuse") + ")" }),
+          n === "after" ? "after.fidb · after " + what : n === "before" ? "before.fidb · before " + what : n + ".fidb");
       })) : null;
     var sockets = DEMO && act("audit") ? act("audit").verdicts[current] : null;
     return h("div", { class: "card verdict " + (ok ? "ok" : "bad") },
-      h("div", { class: "badge" }, icon(ok ? "shield" : "alert", 20), v.status),
+      h("div", { class: "eyebrow" }, h("span", null, "Verdict"), h("span", { class: "idx" }, current + ".fidb")),
+      h("div", { class: "badge" }, icon(ok ? "shield" : "alert", 18), v.status),
       h("p", { class: "sub" }, statusLine(a)),
       h("dl", { class: "facts" },
-        h("dt", null, "Bundle SHA-256"), h("dd", null, hash(b.sha256)),
+        h("dt", null, "SHA-256"), h("dd", null, hash(b.sha256)),
         h("dt", null, "Lineage"), h("dd", null, h("span", { class: "mono" }, b.lineage), h("span", { class: "muted" }, "  " + b.subjects.join(" · "))),
         h("dt", null, "Range"), h("dd", { class: "tnum" }, "records " + b.range.from + "–" + b.range.to + " · ledger cut " + b.ledger.cut + " · " + num(b.members) + " members · " + num(b.bytes) + " bytes"),
         h("dt", null, "Pinned"), h("dd", null, "charter ", hash(a.inputs.charter, 16), h("span", { class: "muted" }, " · keys: " + (a.inputs.pinned_keys.join(", ") || "none"))),
-        h("dt", null, "Verified"), h("dd", null, "offline, no database" + (sockets ? ", " + sockets.sockets + " network calls" : "") + " · exit " + v.exit_code + " · " + (b.signed ? "manifest signed" : "manifest unsigned"))),
+        h("dt", null, "Checked"), h("dd", null, "offline, no database" + (sockets ? ", " + sockets.sockets + " network calls" : "") + " · exit " + v.exit_code + " · " + (b.signed ? "manifest signed" : "manifest unsigned"))),
       seg);
   }
   function privacyCard() {
@@ -215,32 +219,32 @@
     if (scan) {
       var kinds = [["rows", "database rows"], ["payloads", "payloads"], ["prompts", "prompts"], ["secrets", "secrets"]];
       cells = kinds.map(function (k) {
-        return tipOn(h("div", { class: "zero" }, h("b", { class: "tnum" }, String(scan.found[k[0]])), h("span", null, k[1]), h("small", null, "of " + num(scan.planted[k[0]]) + " searched")),
+        return tipOn(h("div", { class: "zero" }, h("b", null, String(scan.found[k[0]])), h("span", null, k[1]), h("small", null, "of " + num(scan.planted[k[0]]) + " searched")),
           "Searched all " + scan.members + " members for " + scan.planted[k[0]] + " " + k[1] + " from this deployment, as written and as SHA-256: " + scan.found[k[0]] + " found.");
       });
     } else {
       cells = Object.keys(a.privacy.member_types).slice(0, 4).map(function (t) {
-        return h("div", { class: "zero" }, h("b", { class: "tnum" }, String(a.privacy.member_types[t])), h("span", null, t + " members"));
+        return h("div", { class: "zero" }, h("b", null, String(a.privacy.member_types[t])), h("span", null, t + " members"));
       });
     }
-    var types = a.bundle.member_types, total = 0, palette = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--axis)"];
+    var types = a.bundle.member_types, total = 0, palette = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)", "var(--line-2)"];
     Object.keys(types).forEach(function (k) { total += types[k]; });
     var ranked = Object.keys(types).sort(function (x, y) { return types[y] - types[x]; });
     var shown = ranked.slice(0, 4), rest = ranked.slice(4).reduce(function (t, k) { return t + types[k]; }, 0);
     var bars = shown.map(function (k, i) { return [k, types[k], palette[i]]; });
     if (rest) bars.push(["other", rest, palette[4]]);
     var composition = h("div", null,
-      h("div", { class: "small ink2", style: "margin-bottom:6px" }, "Bundle contents: " + num(total) + " members, " + num(a.bundle.bytes) + " bytes"),
-      h("div", { class: "composition" }, bars.map(function (b) { return tipOn(h("i", { style: "flex:" + b[1] + ";background:" + b[2] }), b[1] + " " + b[0] + " member(s)"); })),
+      h("div", { class: "small ink2", style: "margin-bottom:7px" }, "What's in it: " + num(total) + " members, " + num(a.bundle.bytes) + " bytes"),
+      h("div", { class: "composition" }, bars.map(function (b) { return tipOn(h("i", { style: "flex:" + b[1] + ";background:" + b[2] }), many(b[1], b[0] + " member")); })),
       h("div", { class: "legend" }, bars.map(function (b) { return h("span", null, h("i", { class: "dot", style: "background:" + b[2] }), b[0] + " " + b[1]); })));
     return h("div", { class: "card privacy" },
-      h("div", { class: "sec-head", style: "margin:0" }, h("span", { class: "kicker" }, "Data exposure"), pill("ZERO-PAYLOAD BUNDLE", "info")),
+      h("div", { class: "eyebrow", style: "margin:0" }, h("span", null, "Data in the bundle"), pill(scan ? "none found" : "digests only", "good")),
       h("div", { class: "zeros" }, cells),
       composition,
       h("p", { class: "claim" }, scan && PACK
-        ? "Every record value, payload value, injected instruction, private key and vendor secret in this deployment was searched for in the bundle, as written and as SHA-256. None was found." + (audit.labels ? " The bundle does name " + audit.labels.named + " of " + audit.labels.known + " " + audit.labels.partition + " keys, which are opaque labels: session records and receipts say which partition each action was for." : "")
+        ? "Every record value, payload, injected instruction, private key and vendor secret in this deployment was searched for in the bundle, as written and as a SHA-256 hash. None was found." + (audit.labels ? " The bundle does contain " + audit.labels.named + " of the " + audit.labels.known + " " + audit.labels.partition + " keys. They're opaque labels: session records and receipts use them to say which " + audit.labels.partition + " an action was for." : "")
         : scan
-        ? "Every customer name, payment ID, prompt, model reply, private key and vendor secret in this deployment was searched for in the bundle. None was found: the bundle holds digests, signatures and amounts."
+        ? "Every customer name, payment ID, prompt, model reply, private key and vendor secret in this deployment was searched for in the bundle. None was found. The bundle holds digests, signatures and amounts."
         : a.privacy.claim));
   }
   function kpis() {
@@ -260,12 +264,12 @@
         var b = Number(m.orders_total.before), af = Number(m.orders_total.after);
         if (b > 0 && af < b && (collapse === null || (b - af) / b > collapse)) collapse = (b - af) / b;
       });
-      tiles.push(["Rows blocked", num(rows) + " rows", "across " + Object.keys(tenants).length + " tenants; measured before commit and rolled back", "interlock"]);
-      if (collapse !== null) tiles.push(["Value drop blocked", "−" + Math.round(collapse * 100) + "%", "one order's total, from a 10% discount the gateway permitted", "interlock"]);
-      if (fl) tiles.push(["Sub-agent overspend blocked", money(fl.prevented, 0), fl.sessions + " sessions permitted by the gateway; " + fl.committed + " committed within the lineage's 24h window", "interlock · agentgov"]);
-      tiles.push(["Warrants executed", String(a.warrants.length), qu ? "2 of 3 principals; bound to the ticket digest and delivery-log heads" : "each formed by its quorum", "fiduciary"]);
+      tiles.push(["Rows refused", num(rows), "across " + Object.keys(tenants).length + " tenants, measured before commit and rolled back", "interlock"]);
+      if (collapse !== null) tiles.push(["Value drop refused", "−" + Math.round(collapse * 100) + "%", "one order's total, from a 10% discount the gateway allowed", "interlock"]);
+      if (fl) tiles.push(["Sub-agent spend refused", money(fl.prevented, 0), fl.sessions + " sessions allowed by the gateway; " + fl.committed + " committed inside the lineage's 24-hour window", "interlock · agentgov"]);
+      tiles.push(["Warrants executed", String(a.warrants.length), qu ? "2 of 3 principals, bound to the ticket digest and the delivery-log heads" : "each formed by its quorum", "fiduciary"]);
       var v6 = a.checks[5];
-      tiles.push(["Ledger", v6.status === "pass" ? "Balanced" : "Fails", "Inclusion proofs verified against the signed checkpoint" + (act("audit") ? "; conservation check passed" : ""), "agentgov"]);
+      tiles.push(["Ledger", v6.status === "pass" ? "Balanced" : "Fails", "inclusion proofs verified against the signed checkpoint" + (act("audit") ? "; conservation holds" : ""), "agentgov"]);
     } else {
       var pass = a.checks.filter(function (c) { return c.status === "pass"; }).length;
       var ambient = a.operators.filter(function (o) { return o.ambient; }).length;
@@ -276,10 +280,9 @@
       tiles.push(["Ledger entries", num(a.ledger.entries), a.receipts + " receipts · " + a.log.records + " log records", "agentgov"]);
     }
     return h("div", { class: "kpis" }, tiles.map(function (t) {
-      return h("div", { class: "card kpi" }, h("div", { class: "label" }, t[0]), h("div", { class: "value tnum" }, t[1]), h("div", { class: "note" }, t[2]), h("span", { class: "layer-tag" }, t[3]));
+      return h("div", { class: "card kpi" }, h("div", { class: "label" }, t[0]), h("div", { class: "value" }, t[1]), h("div", { class: "note" }, t[2]), h("span", { class: "layer-tag" }, t[3]));
     }));
   }
-
   // -- the theatre -------------------------------------------------------------------------
   var activeAct = 0;
   function callRow(c, opts) {
@@ -295,13 +298,13 @@
   function gatewaySide(calls, note) {
     var engine = DEMO.gateway.engine;
     return h("div", { class: "side gw" },
-      h("div", { class: "side-title" }, icon("gate"), "What the input gateway saw"),
-      h("p", { class: "small ink2", style: "margin-bottom:10px" }, note || "Decides from each call's tool, arguments and resource, before the call runs. Engine: " + engine + "."),
+      h("div", { class: "side-title" }, icon("gate"), "Gateway · Cedar"),
+      h("p", { class: "small ink2", style: "margin-bottom:12px" }, note || "Decides from each call's tool, arguments and resource, before the call runs. Engine: " + engine + "."),
       calls,
-      h("details", null, h("summary", null, "The gateway's Cedar policies"), h("pre", null, DEMO.gateway.policies)));
+      h("details", null, h("summary", null, "the gateway's Cedar policies"), h("pre", null, DEMO.gateway.policies)));
   }
   function stackSide(children) {
-    return h("div", { class: "side st" }, h("div", { class: "side-title" }, icon("layers"), "What the stack measured and enforced"), children);
+    return h("div", { class: "side st" }, h("div", { class: "side-title" }, icon("layers"), "Stack · measured and enforced"), children);
   }
   function findingList(found) {
     if (!found || !found.length) return null;
@@ -328,15 +331,15 @@
   function measuredBlock(c) {
     var m = c.measured;
     if (!m) {
-      if (c.outcome === "served") return h("div", { class: "outcome good" }, icon("check"), "Served: read-only call, metered on the ledger");
+      if (c.outcome === "served") return h("div", { class: "outcome good" }, icon("check"), "SERVED · a read, metered on the ledger");
       // Permitted, and stopped before a measure was recorded: a conflict at
       // the commit (a moved branch, a 412), or a stage that never opened.
-      if (c.gateway && c.gateway.decision === "PERMIT") return h("div", null, h("div", { class: "outcome good" }, icon("shield"), "NOT WRITTEN · " + (c.outcome === "error" ? "stopped at the commit; nothing of it landed" : c.outcome)),
+      if (c.gateway && c.gateway.decision === "PERMIT") return h("div", null, h("div", { class: "outcome good" }, icon("shield"), "NOT WRITTEN · " + (c.outcome === "error" ? "stopped at the commit, nothing landed" : c.outcome)),
         c.feedback ? h("pre", { class: "small", style: "margin-top:6px;white-space:pre-wrap" }, c.feedback) : null);
       return h("div", { class: "outcome bad" }, icon("x"), "Not sent: denied by the gateway");
     }
     var kids = [];
-    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " rows, " + m.outbound.length + " outbound request(s) queued"));
+    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " rows, " + many(m.outbound.length, "outbound request") + " queued"));
     else kids.push(h("div", { class: "outcome good" }, icon("shield"), "ROLLED BACK · nothing written" + (c.unchanged ? " · back office unchanged" : "")));
     if (!m.committed && m.orders_total.before !== m.orders_total.after) {
       kids.push(h("p", { class: "small ink2" }, "orders.total for the affected rows, measured inside the transaction"));
@@ -351,24 +354,23 @@
     return h("div", null, kids);
   }
   function verdictLine(left, right) {
-    return h("div", { class: "verdict-line" }, h("span", null, h("b", null, "Gateway: "), left), h("span", null, h("b", null, "Stack: "), right));
+    return h("div", { class: "verdict-line" }, h("span", null, h("b", null, "Gateway"), left), h("span", null, h("b", null, "Stack"), right));
   }
-
   function actQueue(x) {
     var calls = x.calls;
     var liveNote = x.mode === "live" && x.model ? h("div", { class: "callrow", style: "background:var(--stack-wash)" },
       h("div", { class: "line" }, pill("LIVE", "info"), h("b", null, x.model.served), h("span", { class: "small muted" }, x.model.turns + " turns · effort " + x.model.effort + " · " + x.model.seconds + " s")),
       h("div", { class: "small ink2", style: "margin-top:4px" }, num(x.model.usage.input_tokens || 0) + " input / " + num(x.model.usage.output_tokens || 0) + " output tokens · " + money(x.metered, 4) + " metered to the session's budget"),
-      x.model.answer ? h("details", { open: true }, h("summary", null, "Model's final reply"), h("pre", null, x.model.answer),
-        h("p", { class: "small muted", style: "margin-top:6px" }, "The agent only sees that the plan lowered orders.total by more than the 30% limit. It cannot see the repricing trigger that turned a 10% discount into a 90% drop, so the limit looks wrong from its side.")) : null) : null;
+      x.model.answer ? h("details", { open: true }, h("summary", null, "the model's final reply"), h("pre", null, x.model.answer),
+        h("p", { class: "small muted", style: "margin-top:6px" }, "The agent only learns that the plan lowered orders.total by more than the 30% limit. It can't see the repricing trigger that turned a 10% discount into a 90% drop, so from its side the limit looks wrong.")) : null) : null;
     var right = calls.map(function (c) { return h("div", { class: "callrow" }, h("div", { class: "line", style: "margin-bottom:6px" }, h("span", { class: "tool" }, c.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(c.arguments))), measuredBlock(c)); });
     var permitted = calls.filter(function (c) { return c.gateway && c.gateway.decision === "PERMIT"; }).length;
     var committed = calls.filter(function (c) { return c.outcome === "committed"; }).length;
     var refused = calls.filter(function (c) { return c.outcome === "refused"; }).length;
     return [h("div", { class: "split" },
-      gatewaySide([h("p", { class: "small", style: "margin-bottom:8px" }, h("b", null, x.mode === "live" ? "Live model run." : "Fixed call sequence (no model)."), " ", h("span", { class: "ink2" }, "Request: “" + x.request + "”")), liveNote, calls.map(function (c) { return callRow(c); })]),
+      gatewaySide([h("p", { class: "small", style: "margin-bottom:8px" }, h("b", null, x.mode === "live" ? "Live model run." : "Replayed call sequence, no model."), " ", h("span", { class: "ink2" }, "Request: “" + x.request + "”")), liveNote, calls.map(function (c) { return callRow(c); })]),
       stackSide(right)),
-      verdictLine(permitted + " of " + calls.length + " permitted", committed + " committed, " + refused + " rolled back after measuring the change")];
+      verdictLine(permitted + " of " + calls.length + " allowed", committed + " committed, " + refused + " rolled back after measuring the change")];
   }
   function tenantBar(m, rowLimit, word) {
     var names = Object.keys(m.tenants);
@@ -379,7 +381,7 @@
       var bw = (w - 2 * (names.length - 1)) * m.tenants[n] / total;
       var g = s("g", null, s("rect", { x: x, y: 18, width: Math.max(bw, 1), height: 26, rx: 4, fill: colors[i % 4] }),
         bw > 40 ? s("text", { x: x + bw / 2, y: 35, "text-anchor": "middle", fill: i === 3 ? "#0b0b0b" : "#fff", style: "fill:" + (i === 3 ? "#0b0b0b" : "#fff") + ";font-weight:650", text: n + " " + m.tenants[n] }) : null);
-      tipOn(g, n + ": " + m.tenants[n] + " row(s) changed");
+      tipOn(g, n + ": " + many(m.tenants[n], "row") + " changed");
       x += bw + 2;
       return g;
     });
@@ -395,9 +397,9 @@
   function actSettlement(x) {
     var c = x.calls[0], m = c.measured;
     return [h("div", { class: "split" },
-      gatewaySide([callRow(c), h("p", { class: "small ink2" }, "The order and the agent both belong to acme, so the policy permits the call. The arguments do not reference the settlement batch.")]),
+      gatewaySide([callRow(c), h("p", { class: "small ink2" }, "The order and the agent both belong to acme, so the policy allows the call. Nothing in the arguments mentions the settlement batch.")]),
       stackSide([measuredBlock(c), h("h4", { style: "margin:14px 0 4px;font-size:13px" }, "Rows changed in the transaction, by tenant"), tenantBar(m)])),
-      verdictLine("1 of 1 permitted", m.rows + " rows across " + Object.keys(m.tenants).length + " tenants; rolled back")];
+      verdictLine("1 of 1 allowed", m.rows + " rows across " + Object.keys(m.tenants).length + " tenants; rolled back")];
   }
   function fleetChart(x) {
     var w = 560, hgt = 190, padL = 46, padB = 26, n = x.outcomes.length;
@@ -436,8 +438,8 @@
     hit.addEventListener("mouseleave", function () { tip.classList.remove("on"); cross.setAttribute("opacity", 0); });
     svg.appendChild(hit);
     return h("div", null, h("div", { class: "legend" },
-      h("span", null, h("i", { class: "dot", style: "background:var(--gateway)" }), "permitted by the gateway (cumulative)"),
-      h("span", null, h("i", { class: "dot", style: "background:var(--stack)" }), "committed within the lineage window (all sessions)")), svg);
+      h("span", null, h("i", { class: "dot", style: "background:var(--gateway)" }), "allowed by the gateway, cumulative"),
+      h("span", null, h("i", { class: "dot", style: "background:var(--stack)" }), "committed inside the lineage's window, every session")), svg);
   }
   function actFleet(x) {
     var cells = x.outcomes.map(function (o) {
@@ -448,13 +450,13 @@
       return h("div", { class: "vote" }, h("span", null, c.derived ? h("span", { style: "color:var(--good-ink)" }, icon("check")) : h("span", { style: "color:var(--critical-ink)" }, icon("x"))),
         h("span", null, h("b", { class: "mono" }, c.scope), h("span", { class: "small ink2" }, " · refund cap $" + c.refund_cap + " · envelope " + money(c.envelope)),
           c.derived ? null : h("div", { class: "small", style: "color:var(--critical-ink)" }, "exceeds its parent: " + c.wider.join("; "))),
-        c.derived ? pill("⊑ REFINES", "good") : pill("⋢ REFUSED", "bad"));
+        c.derived ? pill("⊑ narrows", "good") : pill("⋢ refused", "bad"));
     });
     return [h("div", { class: "split" },
       gatewaySide([
         h("div", { class: "mini-stats" },
-          h("div", { class: "mini" }, h("b", { class: "tnum" }, x.permitted + " / " + x.sessions), h("span", null, "sessions permitted")),
-          h("div", { class: "mini" }, h("b", { class: "tnum" }, money(x.asked, 0)), h("span", null, "refunds permitted")),
+          h("div", { class: "mini" }, h("b", { class: "tnum" }, x.permitted + " / " + x.sessions), h("span", null, "sessions allowed")),
+          h("div", { class: "mini" }, h("b", { class: "tnum" }, money(x.asked, 0)), h("span", null, "refunds allowed")),
           h("div", { class: "mini" }, h("b", { class: "tnum" }, "$100"), h("span", null, "per-session limit"))),
         h("p", { class: "small ink2", style: "margin-bottom:8px" }, "The temporal policy counts per session, keyed by the session ID the caller supplies. Each new session starts a new count."),
         x.sample.slice(0, 2).map(function (c) { return callRow(c); })]),
@@ -462,24 +464,24 @@
         h("div", { class: "mini-stats" },
           h("div", { class: "mini" }, h("b", { class: "tnum" }, String(x.committed)), h("span", null, "committed")),
           h("div", { class: "mini" }, h("b", { class: "tnum" }, String(x.sessions - x.committed)), h("span", null, "sessions refused")),
-          h("div", { class: "mini" }, h("b", { class: "tnum" }, money(x.prevented, 0)), h("span", null, "blocked by 24h window"))),
+          h("div", { class: "mini" }, h("b", { class: "tnum" }, money(x.prevented, 0)), h("span", null, "refused by the 24-hour window"))),
         fleetChart(x),
-        h("h4", { style: "margin:12px 0 2px;font-size:13px" }, "Sessions 1–" + x.sessions + " (blue: committed)"),
+        h("h4", { style: "margin:12px 0 2px;font-size:13px" }, "Sessions 1 to " + x.sessions + " (filled: committed)"),
         h("div", { class: "waffle" }, cells),
-        h("h4", { style: "margin:14px 0 2px;font-size:13px" }, "Derived mandates: a child can only narrow its parent"),
+        h("h4", { style: "margin:14px 0 2px;font-size:13px" }, "Derived mandates can only narrow their parent"),
         kids])),
-      verdictLine(x.permitted + " of " + x.sessions + " permitted (" + money(x.asked, 0) + ")", x.committed + " committed (" + money(x.stood, 0) + "); the $500/24h window applies across all sessions")];
+      verdictLine(x.permitted + " of " + x.sessions + " allowed (" + money(x.asked, 0) + ")", x.committed + " committed (" + money(x.stood, 0) + "), inside the $500 a day window that counts every session")];
   }
   function actCrash(x) {
     var steps = [];
     x.log.forEach(function (e, i) {
       var cls = e.event === "delivered" ? "ok" : "";
       steps.push(h("li", { class: cls }, h("b", null, e.event), " · attempt " + (e.attempt || "—") + " · " + e.actor + (e.status ? " · HTTP " + e.status : "") + (e.remote_ref ? " · " : ""), e.remote_ref ? h("code", null, e.remote_ref) : null, e.attested ? h("span", null, " ", pill("SIGNED", "info")) : null, h("div", { class: "when" }, e.at)));
-      if (i === 0) steps.push(h("li", { class: "crash" }, h("b", null, "relay-a crashes"), " · Stripe has already created the refund; the relay has not recorded it", h("div", { class: "when" }, x.died)));
+      if (i === 0) steps.push(h("li", { class: "crash" }, h("b", null, "relay-a crashes"), " · Stripe has already created the refund, and the relay hasn't recorded it", h("div", { class: "when" }, x.died)));
     });
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What the input gateway saw"),
-        h("div", { class: "empty-gw" }, h("b", null, "One call, permitted in act 1."), "The gateway decides before the call runs. It has no visibility into the relay, retries, or Stripe's response.")),
+        h("div", { class: "empty-gw" }, h("b", null, "One call, allowed in scenario 1."), "The gateway decides before the call runs. It never sees the relay, the retries or Stripe's answer.")),
       stackSide([
         h("div", { class: "mini-stats" },
           h("div", { class: "mini" }, h("b", { class: "tnum" }, String(x.stripe.requests_for_message)), h("span", null, "requests received by Stripe")),
@@ -488,9 +490,9 @@
         h("h4", { style: "margin:8px 0 8px;font-size:13px" }, "Delivery log for the message"),
         h("ol", { class: "timeline" }, steps),
         h("h4", { style: "margin:6px 0 6px;font-size:13px" }, "Stripe webhook (inbox)"),
-        h("div", { class: "vote" }, h("span", { style: "color:var(--good-ink)" }, icon("check")), h("span", null, "charge.refund.updated, signed with the endpoint secret: verified, matched to relay-b's signed delivery record, recorded as " + x.webhook.facts + " fact"), pill("HTTP " + x.webhook.status, "good")),
-        h("div", { class: "vote" }, h("span", { style: "color:var(--critical-ink)" }, icon("x")), h("span", null, "same event signed with a wrong secret: rejected (" + (x.forged.body.error || "refused") + "); nothing recorded"), pill("HTTP " + x.forged.status, "bad"))])),
-      verdictLine("decided once, before the call", "delivered once after a crash; signed webhook accepted, forged webhook rejected")];
+        h("div", { class: "vote" }, h("span", { style: "color:var(--good-ink)" }, icon("check")), h("span", null, "charge.refund.updated, signed with the endpoint secret. Verified, matched to relay-b's signed delivery record, and recorded as " + x.webhook.facts + " fact"), pill("HTTP " + x.webhook.status, "good")),
+        h("div", { class: "vote" }, h("span", { style: "color:var(--critical-ink)" }, icon("x")), h("span", null, "the same event signed with the wrong secret. Rejected (" + (x.forged.body.error || "refused") + "), and nothing recorded"), pill("HTTP " + x.forged.status, "bad"))])),
+      verdictLine("decided once, before the call", "delivered once despite the crash; the signed webhook was accepted and the forged one rejected")];
   }
   function actQuorum(x) {
     var inWarrant = {}, seen = {};
@@ -499,87 +501,95 @@
       var first = v.counted && !seen[v.principal];
       if (v.counted) seen[v.principal] = true;
       var inBasis = first && inWarrant[v.principal];
-      var mark = v.counted ? (first ? ["check", "var(--good-ink)"] : ["check", "var(--muted)"]) : ["x", "var(--critical-ink)"];
+      var mark = v.counted ? (first ? ["check", "var(--accent)"] : ["check", "var(--muted)"]) : ["x", "var(--refuse)"];
       return h("div", { class: "vote" }, h("span", { style: "color:" + mark[1] }, icon(mark[0])),
-        h("span", null, h("b", null, v.principal), " ", h("span", { class: "ink2" }, v.note), h("div", { class: "small muted" }, "approval ", hash(v.approval, 12), " → " + v.recorded.join(", "))),
-        inBasis ? pill("IN THE WARRANT", "good") : first ? pill("COUNTED", "good") : v.counted ? pill("DUPLICATE", "permit") : pill("REFUSED", "bad"));
+        h("span", null, h("b", { class: "mono" }, v.principal), " ", h("span", { class: "ink2" }, v.note), h("div", { class: "small muted" }, "approval ", hash(v.approval, 12), " → " + v.recorded.join(", "))),
+        inBasis ? pill("in the warrant", "good") : first ? pill("counted", "good") : v.counted ? pill("duplicate", "permit") : pill("refused", "bad"));
     });
     var need = x.ticket.options.filter(function (o) { return o.action === "release"; })[0].quorum;
-    var meter = h("div", { class: "meter" }, [0, 1, 2].map(function (i) { return h("i", { class: i < x.warrant.basis.length ? "on" : "" }); }));
+    var principals = A().authority.charter.principals.map(function (p) { return p.name; });
     return [h("div", { class: "split" },
-      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What a gateway approval covers"),
-        h("div", { class: "empty-gw" }, h("b", null, "An approve button on a tool call."), "A gateway approval refers to the call that was shown. It is not bound to the approver's key, the exact option approved, or the system state at signing time.")),
+      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "Gateway · approval"),
+        h("div", { class: "empty-gw" }, h("b", null, "An approve button on a tool call."), "A gateway approval refers to the call that was shown. It isn't bound to the approver's key, to the exact option approved, or to the state of the system when it was signed.")),
       stackSide([
-        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("TICKET", "info"), h("b", null, x.ticket.class), h("span", { class: "small muted" }, "raised and signed by the service; recorded at ledger seq " + x.ticket.observed.ledger.sequence + ", log seq " + x.ticket.observed.log.seq)),
+        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("ticket", "info"), h("b", null, x.ticket["class"]), h("span", { class: "small muted" }, "raised and signed by the service · ledger seq " + x.ticket.observed.ledger.sequence + " · log seq " + x.ticket.observed.log.seq)),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "Options: " + x.ticket.options.map(function (o) { return o.action + " (quorum " + o.quorum + ")"; }).join(" · "))),
-        h("h4", { style: "margin:10px 0 0;font-size:13px" }, "Approvals in arrival order (quorum: " + need + " of 3)"),
-        meter, votes,
-        h("div", { class: "callrow", style: "margin-top:10px" },
-          h("div", { class: "line" }, pill("WARRANT", "good"), hash(x.warrant.digest, 16), h("span", { class: "small muted" }, "formed " + x.warrant.formed_at)),
+        slots(principals, function (p) { return inWarrant[p] ? "signed" : "none"; }, need),
+        h("h4", { style: "margin:14px 0 2px" }, "Approvals, in the order they arrived"),
+        votes,
+        h("div", { class: "callrow", style: "margin-top:12px" },
+          h("div", { class: "line" }, pill("warrant", "good"), hash(x.warrant.digest, 16), h("span", { class: "small muted" }, "formed " + x.warrant.formed_at)),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "Bound to ticket " + short(x.ticket.digest, 12) + " and resolution " + short(x.warrant.resolution, 12) + ". Executed: " + x.executed.join(" → ") + ". Message " + x.delivered + "."),
           h("div", { class: "small", style: "margin-top:4px" }, x.expected_heads
-            ? h("span", null, pill("HEAD PINNING", "good"), " Outbox refuses to sign if the delivery log moved since the ticket was raised.")
-            : h("span", null, pill("HEAD PINNING: AFTER SIGNING", "warn"), " This Interlock checks the delivery-log head after signing; Interlock 1.0.3 and later refuse before signing.")))])),
-      verdictLine("approval not bound to the action", "2 of 3 principals, verified by key, on the exact option; 1 forged and 1 duplicate approval not counted")];
+            ? h("span", null, pill("heads pinned", "good"), " The outbox refuses to sign if the delivery log moved after the ticket was raised.")
+            : h("span", null, pill("heads checked after signing", "warn"), " This Interlock checks the delivery-log head after signing. Interlock 1.0.3 and later refuse before signing.")))])),
+      verdictLine("approval not bound to the action", "2 of 3 principals, each checked by key, on the exact option. One forged and one duplicate approval didn't count.")];
   }
   function actBreakGlass(x) {
     var after = P.attestations.after || A();
     var v7 = after.checks[6];
     return [h("div", { class: "split" },
-      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What the input gateway saw"),
+      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "Gateway · Cedar"),
         h("div", { class: "empty-gw" }, h("b", null, "Nothing."), "No agent call was made. The administrator acted directly on the outbox and the ledger.")),
       stackSide([
-        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("OPERATOR ACT", "bad"), h("span", { class: "mono small" }, "key " + x.operator), pill("BREAK-GLASS KEY", "warn")),
+        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("operator action", "bad"), h("span", { class: "mono small" }, "key " + x.operator), pill("break-glass key", "warn")),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "Released message " + short(x.message, 8) + " and reset the circuit breaker directly. The relay delivered the message (" + x.delivered + "). Both actions are signed and anchored, like every operator action.")),
-        h("h4", { style: "margin:10px 0 6px;font-size:13px" }, "V7 findings in the audited bundle"),
+        x.dashboard ? h("div", { class: "callrow" }, h("div", { class: "line" }, pill("outside the relay", "warn"), h("span", { class: "small" }, "a refund made in Stripe's Dashboard: "), h("code", null, x.dashboard)),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "No bundle can contain it, because it never went through the deployment. Stripe's own event log has it, and the audit in scenario 7 finds it there.")) : null,
+        h("h4", { style: "margin:12px 0 6px" }, "V7 findings in the audited bundle"),
         v7.findings.length ? h("ul", { class: "findings" }, v7.findings.map(function (f) {
           return h("li", null, h("span", { class: "sev blocking" }, f.label || kindLabel(f.kind)), h("span", null, f.message));
         })) : h("p", { class: "small" }, "No finding."),
-        h("p", { class: "small muted", style: "margin-top:10px" }, "Detected after the fact from signed records: tamper-evident, not tamper-proof. The bundle exported before this action verifies; the one exported after it fails with exit code 7.")])),
-      verdictLine("not involved", "V7 reports both actions; the release is labeled break-glass")];
+        h("p", { class: "small muted", style: "margin-top:10px" }, "Found after the fact, from signed records. The bundle exported before this action verifies, and the one exported after it fails with exit code 7.")])),
+      verdictLine("not involved", "V7 reports both actions and labels the release break-glass")];
   }
   function actAudit(x) {
     var rows = ["before", "after"].map(function (n) {
       var v = x.verdicts[n];
-      return h("tr", null, h("td", null, h("b", null, n + ".fidb"), verifyLink(bundlePath(n + ".fidb"))), h("td", null, v.passed ? pill("PASS", "good") : pill("EXIT " + v.exit_code, "bad")),
+      return h("tr", null, h("td", null, h("b", { class: "mono" }, n + ".fidb"), verifyLink(bundlePath(n + ".fidb"))), h("td", null, v.passed ? pill("pass", "good") : pill("exit " + v.exit_code, "bad")),
         h("td", { class: "num" }, String(v.findings.length)), h("td", { class: "num" }, String(v.sockets)),
         h("td", { class: "num" }, num(v.scan.members)), h("td", { class: "num" }, String(v.scan.found.rows + v.scan.found.payloads + v.scan.found.prompts + v.scan.found.secrets)), h("td", null, hash(v.sha256, 12)));
     });
     var scan = x.verdicts.after.scan;
     return [h("div", { class: "split" },
-      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What a gateway log gives an auditor"),
-        h("div", { class: "empty-gw" }, h("b", null, "Its own decisions."), "A gateway log, even a hash-chained one, records only what the gateway decided. It cannot show what the database did, who approved an exception, or what happened outside the gateway.")),
+      h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "Gateway · its log"),
+        h("div", { class: "empty-gw" }, h("b", null, "Its own decisions."), "A gateway log, even a hash-chained one, records only what the gateway decided. It can't show what the database did, who approved an exception, or what happened outside the gateway.")),
       stackSide([
         h("div", { class: "tablewrap" }, h("table", null,
           h("thead", null, h("tr", null, ["Bundle", "Verdict", "Findings", "Network calls", "Members", "Planted values found", "SHA-256"].map(function (t) { return h("th", null, t); }))),
           h("tbody", null, rows))),
-        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for: " + scan.planted.rows + " customer names, " + scan.planted.payloads + " payment IDs, " + scan.planted.prompts + " prompt and reply texts, " + scan.planted.secrets + " private keys and secrets, each as written and as a SHA-256. Ledger conservation: " + x.conservation + ".")])),
-      verdictLine("its own decisions only", "both bundles verified offline against independently pinned keys; the DBA override is reported")];
+        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for " + many(scan.planted.rows, "customer name") + ", " + many(scan.planted.payloads, "payment ID") + ", " + many(scan.planted.prompts, "prompt or reply text", "prompt and reply texts") + " and " + many(scan.planted.secrets, "private key or secret", "private keys and secrets") + ", each as written and as a SHA-256 hash. Ledger conservation " + x.conservation + "."),
+        x.reconciliation ? actionsBlock(x.reconciliation) : null])),
+      verdictLine("its own decisions only", "both bundles verified offline against keys pinned outside them, and the DBA override is reported")];
   }
-  var SHORT = { queue: "Order queue", settlement: "Settlement cascade", fleet: "Sub-agent fan-out", crash: "Relay crash", quorum: "Principal quorum", "break-glass": "DBA override", audit: "Offline audit" };
   var ACTS = { queue: actQueue, settlement: actSettlement, fleet: actFleet, crash: actCrash, quorum: actQuorum, "break-glass": actBreakGlass, audit: actAudit };
+  function scenarioLayout(acts, draw) {
+    var rail = h("div", { class: "rail noprint", role: "tablist", "aria-label": "Scenarios" });
+    var body = h("div", { style: "min-width:0" });
+    var total = (acts.length < 10 ? "0" : "") + acts.length;
+    acts.forEach(function (x, i) {
+      var n = (x.n < 10 ? "0" : "") + x.n;
+      rail.appendChild(h("button", { class: "scn", role: "tab", "aria-selected": i === activeAct ? "true" : "false", onclick: function () {
+        activeAct = i;
+        rail.querySelectorAll(".scn").forEach(function (b, j) { b.setAttribute("aria-selected", j === i ? "true" : "false"); });
+        body.querySelectorAll(".act").forEach(function (a, j) { a.classList.toggle("on", j === i); });
+      } }, h("span", { class: "n" }, n), h("b", null, x.title)));
+      var panel;
+      try { panel = draw(x); } catch (e) { panel = h("p", { class: "pad" }, "This scenario could not be drawn: " + e.message); }
+      body.appendChild(h("div", { class: "act" + (i === activeAct ? " on" : "") },
+        h("div", { class: "act-head" }, h("div", { class: "eyebrow" }, h("span", null, "Scenario"), h("span", { class: "idx" }, n + " / " + total)), h("h3", null, x.title), h("p", null, x.lede)),
+        panel));
+    });
+    return h("div", { class: "scenarios" }, rail, body);
+  }
   function theatre() {
     if (PACK) return packTheatre();
-    var tabs = h("div", { class: "tabs", role: "tablist" });
-    var body = h("div");
-    DEMO.acts.forEach(function (x, i) {
-      var t = h("button", { class: "tab", role: "tab", "aria-selected": i === activeAct ? "true" : "false", onclick: function () {
-        activeAct = i;
-        tabs.querySelectorAll(".tab").forEach(function (b, j) { b.setAttribute("aria-selected", j === i ? "true" : "false"); });
-        body.querySelectorAll(".act").forEach(function (a, j) { a.classList.toggle("on", j === i); });
-      } }, h("span", { class: "n" }, String(x.n)), SHORT[x.key] || x.title);
-      tabs.appendChild(t);
-      var panel;
-      try { panel = ACTS[x.key](x); } catch (e) { panel = h("p", { class: "pad" }, "This act could not be drawn: " + e.message); }
-      body.appendChild(h("div", { class: "card act" + (i === activeAct ? " on" : "") }, h("div", { class: "act-head" }, h("h3", null, "Act " + x.n + ". " + x.title), h("p", null, x.lede)), panel));
-    });
-    var sub = DEMO.mode === "live" ? "Act 1 was run by " + (DEMO.model ? DEMO.model.served : "a live model") + "." : "Act 1 replays a fixed call sequence; pass --live to run it with a model.";
+    var live = DEMO.mode === "live" ? "The first scenario was run live by " + (DEMO.model ? DEMO.model.served : "a model") + "." : "The first scenario replays a fixed call sequence. Pass --live to run it with a model.";
     return h("section", { id: "theatre" }, h("div", { class: "wrap" },
-      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Demo scenarios"), h("h2", null, "Input gateway vs. consequence control"),
-        h("p", null, "The same tool calls, evaluated by an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and by the stack. " + sub + " All figures were measured during the run (" + DEMO.seconds + " s).")),
-      tabs, body));
+      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Fintech · scenarios"), h("h2", null, "The same calls, through a gateway and through the stack"),
+        h("p", null, "Each scenario sends the same tool calls to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + live + " Every figure was measured during the run, which took " + DEMO.seconds + " s.")),
+      scenarioLayout(DEMO.acts, function (x) { return ACTS[x.key](x); })));
   }
-
   // -- a domain pack's acts --------------------------------------------------------------
   function mandateOf(a) { return a.authority.mandates.filter(function (m) { return !m.parent; })[0] || a.authority.mandates[0] || {}; }
   function refusedPlans() {
@@ -601,11 +611,11 @@
     var glass = after.verdict.labels.indexOf("break-glass") >= 0;
     var v6 = a.checks[5];
     return [
-      ["Plans refused before commit", String(refused.length), num(rows) + " rows measured inside the transaction and rolled back", "interlock"],
-      ["Largest hidden consequence", num(biggest) + " rows", "what one call the gateway permitted would have changed", "interlock"],
+      ["Plans refused before commit", String(refused.length), num(rows) + " " + (PACK.nouns.rows || "rows") + " measured, then rolled back", "interlock"],
+      ["Largest hidden consequence", num(biggest), "what one call the gateway allowed would have changed", "interlock"],
       ["Warrants executed", String(a.warrants.length), "each formed by its quorum and bound to the ticket digest", "fiduciary"],
-      ["Break-glass act", glass ? "Named" : "None", glass ? "found offline in the bundle exported after it (exit 7)" : "no act outside a warrant", "fiduciary"],
-      ["Ledger", v6.status === "pass" ? "Balanced" : "Fails", "Inclusion proofs verified against the signed checkpoint; conservation check passed", "agentgov"]
+      ["Break-glass action", glass ? "Found" : "None", glass ? "named offline in the bundle exported after it (exit 7)" : "no action outside a warrant", "fiduciary"],
+      ["Ledger", v6.status === "pass" ? "Balanced" : "Fails", "inclusion proofs verified against the signed checkpoint; conservation holds", "agentgov"]
     ];
   }
   function changesText(changes) {
@@ -619,8 +629,8 @@
     var kids = [];
     var git = PACK.nouns.substrate === "Git", rowsName = PACK.nouns.rows || "rows", tablesName = PACK.nouns.tables || "tables";
     var held = PACK.nouns.state || (git ? "every branch" : "database"), fhir = PACK.nouns.state === "chart";
-    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " " + (git ? "file(s)" : rowsName) + ", " + m.outbound.length + " outbound request(s) queued"));
-    else if (m.compensated) kids.push(h("div", { class: "outcome good" }, icon("shield"), "WRITTEN · READ BACK · PUT BACK · nothing of it stands" + (c.unchanged ? " · " + held + " as it was" : "")));
+    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " " + (git ? (m.rows === 1 ? "file" : "files") : rowsName) + ", " + many(m.outbound.length, "outbound request") + " queued"));
+    else if (m.compensated) kids.push(h("div", { class: "outcome good" }, icon("shield"), "WRITTEN · READ BACK · PUT BACK" + (c.unchanged ? " · the " + held + " is as it was" : "")));
     else kids.push(h("div", { class: "outcome good" }, icon("shield"), "ROLLED BACK · nothing written" + (c.unchanged ? " · " + held + " unchanged" : "")));
     kids.push(h("div", { class: "mini-stats" },
       h("div", { class: "mini" }, h("b", { class: "tnum" }, num(m.rows)), h("span", null, rowsName + " the plan changed")),
@@ -648,16 +658,26 @@
     }));
   }
   function reconcileBlock(r, lede) {
-    return h("div", { class: "callrow" }, h("div", { class: "line" }, pill("RECONCILIATION", r.clean ? "good" : "warn"), h("span", { class: "small muted" }, r.commits + " commit(s) on main since " + short(r.since, 10) + ", " + r.stages + " from stages")),
+    return h("div", { class: "callrow" }, h("div", { class: "line" }, pill("RECONCILIATION", r.clean ? "good" : "warn"), h("span", { class: "small muted" }, many(r.commits, "commit") + " on main since " + short(r.since, 10) + ", " + r.stages + " from stages")),
       h("p", { class: "small ink2", style: "margin-top:4px" }, lede),
       r.unmediated.length ? h("ul", { class: "findings" }, r.unmediated.map(function (w) {
         return h("li", null, h("span", { class: "sev blocking" }, "unmediated " + w.what), h("span", { class: "small" }, h("code", null, short(w.commit, 10)), " by " + (w.by || "unknown") + ", " + w.at + ": no stage made it"));
       })) : h("p", { class: "small" }, "Every commit carries a stage the chain records as committed."));
   }
+  function reconciled(r) {
+    var by = r.actor ? " by " + r.actor : "";
+    var said = [r.matched
+      ? many(r.matched, "write") + by + (r.matched === 1 ? " matches " : " match ") + (r.receipts && r.receipts !== r.matched ? many(r.receipts, "receipt") : "a receipt") + "."
+      : "No write" + by + " matches a receipt."];
+    said.push(r.phantom ? (r.phantom === 1 ? "1 write has" : r.phantom + " writes have") + " no receipt." : "No write is missing a receipt.");
+    if (r.unobserved !== undefined) said.push(r.unobserved ? many(r.unobserved, "receipt") + " for this system " + (r.unobserved === 1 ? "has" : "have") + " no write in its log." : "Every receipt for this system has its write in the log.");
+    if (r.out_of_scope) said.push(many(r.out_of_scope, "receipt") + " " + (r.out_of_scope === 1 ? "is" : "are") + " for other systems and not expected in this log.");
+    return said.join(" ");
+  }
   function actionsBlock(r) {
     return h("div", { class: "callrow", style: "margin-top:10px" }, h("div", { class: "line" }, pill("SYSTEM OF RECORD", r.phantom ? "warn" : "good"), h("span", { class: "small muted" }, r.export + " · " + r.format)),
-      h("p", { class: "small ink2", style: "margin-top:4px" }, r.matched + " write(s)" + (r.actor ? " by " + r.actor : "") + " explained by a receipt" + (r.receipts ? " (" + r.receipts + " receipt(s))" : "") + "; " + r.phantom + " phantom" + (r.unobserved !== undefined ? "; " + r.unobserved + " receipt(s) of writes to this system not seen" : "") + (r.out_of_scope ? "; " + r.out_of_scope + " receipt(s) of other systems' actions, not expected here" : "") + "."),
-      r.phantoms.length ? h("ul", { class: "findings" }, r.phantoms.map(function (w) { return h("li", null, h("span", { class: "sev blocking" }, "phantom"), h("span", { class: "small" }, w + ": the system saw it, and no receipt explains it")); })) : null,
+      h("p", { class: "small ink2", style: "margin-top:4px" }, reconciled(r)),
+      r.phantoms.length ? h("ul", { class: "findings" }, r.phantoms.map(function (w) { return h("li", null, h("span", { class: "sev blocking" }, "phantom"), h("span", { class: "small" }, w + " is in the system's log, and no receipt explains it.")); })) : null,
       h("p", { class: "small muted" }, h("code", null, r.command)));
   }
   function actRace(x) {
@@ -666,13 +686,13 @@
       gatewaySide([callRow(c)]),
       stackSide([
         h("div", { class: "callrow" }, h("div", { class: "line" }, pill("STAGE", "info"), h("span", { class: "small" }, "measured at "), hash(g.measured_at, 10)),
-          h("div", { class: "small ink2", style: "margin-top:4px" }, "The plan passed every check: the commit is the last step.")),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "The plan passed every check, so only the commit is left.")),
         h("div", { class: "callrow" }, h("div", { class: "line" }, pill("PUSH", "warn"), h("span", { class: "small" }, "a teammate's commit, straight to main: "), hash(g.pushed, 10))),
         h("div", { class: "outcome good" }, icon("shield"), "COMMIT REFUSED · main stayed at " + short(g.after, 10) + (g.landed ? "" : " · the agent's change is not on it")),
-        h("p", { class: "small ink2" }, "The commit is git update-ref main <new> <measured head>: it moves main only if main is still where the stage measured it. It was not, so nothing moved. The escrow chain records why:"),
+        h("p", { class: "small ink2" }, "The commit is git update-ref main <new> <measured head>, which moves main only if it's still where the stage measured it. It wasn't, so nothing moved. The escrow chain records why."),
         chainList(x.chain),
-        reconcileBlock(x.reconcile, "Reconciliation reads main's history: every commit must carry a stage trailer the chain records as committed.")])),
-      verdictLine("1 of 1 permitted", "nothing committed onto a head the stage did not measure; the push around it is named")];
+        reconcileBlock(x.reconcile, "Reconciliation reads main's history. Every commit has to carry a stage trailer that the chain records as committed.")])),
+      verdictLine("1 of 1 allowed", "nothing committed on a head the stage didn't measure, and the push around it is named")];
   }
   function actGitWarrant(x) {
     var calls = x.calls, early = calls[0], asked = calls[1], found = calls[2], t = x.ticket;
@@ -687,7 +707,7 @@
         first && inWarrant[v.principal] ? pill("IN THE WARRANT", "good") : first ? pill("COUNTED", "good") : v.counted ? pill("DUPLICATE", "permit") : pill("REFUSED", "bad"));
     });
     var need = t.options.filter(function (o) { return o.action === "accept_repair"; })[0].quorum;
-    var hooks = x.ci.webhooks.map(function (w) { return h("li", null, h("span", { class: "sev " + (w.status < 300 ? "advisory" : "blocking") }, String(w.status)), h("span", { class: "small" }, w.path + (w.status < 300 ? ": signed by CI, attested by the inbox" : ": a forged copy, refused: no signature verifies"))); });
+    var hooks = x.ci.webhooks.map(function (w) { return h("li", null, h("span", { class: "sev " + (w.status < 300 ? "advisory" : "blocking") }, String(w.status)), h("span", { class: "small" }, w.path + (w.status < 300 ? ": signed by CI, attested by the inbox" : ": a forged copy, refused because no signature verifies"))); });
     var landed = x.committed[0];
     return [h("div", { class: "split" },
       gatewaySide(calls.map(function (c) { return callRow(c); })),
@@ -697,15 +717,15 @@
           h("ul", { class: "findings" }, hooks),
           h("p", { class: "small ink2", style: "margin-top:4px" }, x.ci.facts + " facts pending for the agent's scope, each naming a file and the blob id CI tested.")),
         h("div", { class: "callrow" }, h("div", { class: "line" }, h("span", { class: "tool" }, found.tool), h("span", { class: "small muted" }, "with CI's results")), packMeasured(found)),
-        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("TICKET", "info"), h("b", null, t["class"]), h("span", { class: "small muted" }, "refused by " + t.blocked_by.join(", ") + "; the part that passes keeps " + t.kept.join(", ") + " and drops " + t.dropped.join(", "))),
+        h("div", { class: "callrow" }, h("div", { class: "line" }, pill("TICKET", "info"), h("b", null, t["class"]), h("span", { class: "small muted" }, "refused by " + t.blocked_by.join(", ") + ". The part that passes keeps " + t.kept.join(", ") + " and drops " + t.dropped.join(", "))),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "Options: " + t.options.map(function (o) { return o.action + " (quorum " + o.quorum + ")"; }).join(" · "))),
         h("h4", { style: "margin:10px 0 0;font-size:13px" }, "Approvals in arrival order (quorum: " + need + " of 3)"),
-        h("div", { class: "meter" }, [0, 1, 2].map(function (i) { return h("i", { class: i < x.warrant.basis.length ? "on" : "" }); })), votes,
+        slots(A().authority.charter.principals.map(function (p) { return p.name; }), function (p) { return inWarrant[p] ? "signed" : "none"; }, need), votes,
         h("div", { class: "callrow", style: "margin-top:10px" },
           h("div", { class: "line" }, pill("WARRANT", "good"), hash(x.warrant.digest, 16), h("span", { class: "small muted" }, "formed " + x.warrant.formed_at)),
-          h("div", { class: "small ink2", style: "margin-top:4px" }, "Executed: " + x.executed.join(" → ") + ". The plan names the head the maintainers reviewed (" + short(x.git.pinned, 10) + "), and commits only there: main was at " + short(x.git.reviewed, 10) + ", and moved to " + short(x.git.after, 10) + "."),
-          landed ? h("div", { class: "small", style: "margin-top:4px" }, pill(landed.committed ? "COMMITTED" : "REFUSED", landed.committed ? "good" : "bad"), " " + landed.rows + " file(s): " + landed.changed.map(function (r) { return r.id; }).join(", ")) : null)])),
-      verdictLine("3 of 3 permitted", "no dependency bytes commit without CI's signed word for them; the bump commits on 2 of 3 maintainers at the reviewed head; the workflow edit never does")];
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "Executed: " + x.executed.join(" → ") + ". The plan names the head the maintainers reviewed (" + short(x.git.pinned, 10) + ") and commits only there. main was at " + short(x.git.reviewed, 10) + " and moved to " + short(x.git.after, 10) + "."),
+          landed ? h("div", { class: "small", style: "margin-top:4px" }, pill(landed.committed ? "COMMITTED" : "REFUSED", landed.committed ? "good" : "bad"), " " + many(landed.rows, "file") + ": " + landed.changed.map(function (r) { return r.id; }).join(", ")) : null)])),
+      verdictLine("3 of 3 allowed", "dependency changes commit only with CI's signed result for those bytes; the bump commits on 2 of 3 maintainers at the reviewed head, and the workflow edit never does")];
   }
   function actHotfix(x) {
     var after = P.attestations.after || A();
@@ -718,16 +738,16 @@
         h("div", { class: "callrow" }, h("div", { class: "line" }, pill("PLAN", "bad"), h("span", { class: "mono small" }, x.plan), pill(x.holder, "warn")),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "“" + x.intent + "”: measured and checked like every plan" + (m && m.committed ? ", and committed (" + m.rows + " file)." : "."))),
         gitLine(x.git),
-        reconcileBlock(x.reconcile, "To Git and to reconciliation the hotfix is an ordinary commit: it carries a stage trailer, and the chain records that stage as committed. What reconciliation names is the push of act 4."),
+        reconcileBlock(x.reconcile, "To Git and to reconciliation, the hotfix is an ordinary commit. It carries a stage trailer, and the chain records that stage as committed. Reconciliation names the push from scenario 4 instead."),
         h("h4", { style: "margin:10px 0 6px;font-size:13px" }, "V7 findings in the audited bundle"),
         v7.findings.length ? h("ul", { class: "findings" }, v7.findings.map(function (f) {
           return h("li", null, h("span", { class: "sev blocking" }, f.label || kindLabel(f.kind)), h("span", null, f.message));
         })) : h("p", { class: "small" }, "No finding."),
-        h("p", { class: "small muted", style: "margin-top:10px" }, "Named after the fact, from the escrow chain: every plan on a lineage's chain must be a session's call to a tool the mandate pins. The bundle exported before the hotfix verifies; the one exported after it fails with exit code 7.")])),
-      verdictLine("not involved", "the commit is ordinary to Git; the offline verifier names the plan no tool call explains")];
+        h("p", { class: "small muted", style: "margin-top:10px" }, "Found after the fact, from the escrow chain. Every plan on a lineage's chain has to be a session's call to a tool the mandate pins. The bundle exported before the hotfix verifies, and the one exported after it fails with exit code 7.")])),
+      verdictLine("not involved", "Git sees an ordinary commit; the offline verifier names the plan that no tool call explains")];
   }
   function noteBlock(text) {
-    return h("div", { class: "callrow note" }, h("div", { class: "line" }, pill("INSTRUCTION IN THE INPUT", "warn")), h("pre", null, text));
+    return h("div", { class: "callrow note" }, h("div", { class: "line" }, pill("instruction in the input", "warn")), h("pre", null, text));
   }
   function liveBlock(x) {
     var m = x.model, u = m.usage || {};
@@ -744,8 +764,8 @@
       h("div", { class: "line" }, pill("LIVE", "info"), h("b", null, m.served), h("span", { class: "small muted" }, m.turns + " turns · effort " + m.effort + " · " + m.seconds + " s")),
       h("div", { class: "small ink2", style: "margin-top:4px" }, num(u.input_tokens || 0) + " input / " + num(u.output_tokens || 0) + " output tokens · " + money(x.metered, 4) + " metered to the session's budget by AgentGov" + (m.halted ? " · stopped: " + m.halted : "")),
       h("p", { class: "small", style: "margin-top:6px" }, h("span", { class: "ink2" }, "Request: “" + x.request + "”")),
-      m.answer ? h("details", { open: true }, h("summary", null, "Model's final reply"), h("pre", null, m.answer)) : null,
-      turns.length ? h("details", null, h("summary", null, "Full transcript (" + turns.length + " turns)"), turns) : null);
+      m.answer ? h("details", { open: true }, h("summary", null, "the model's final reply"), h("pre", null, m.answer)) : null,
+      turns.length ? h("details", null, h("summary", null, "full transcript, " + turns.length + " turns"), turns) : null);
   }
   function packCalls(x) {
     var calls = x.calls;
@@ -757,19 +777,19 @@
           var ok = c.outcome === "committed";
           return tipOn(h("i", { style: "background:" + (ok ? "var(--stack)" : "var(--grid)") + ";" + (ok ? "" : "box-shadow:inset 0 0 0 1px var(--axis)") }), "sub-agent " + (i + 1) + ": gateway " + c.gateway.decision + ", stack " + c.outcome);
         })),
-        h("p", { class: "small ink2", style: "margin-top:6px" }, x.committed + " of " + x.sessions + " sessions committed (blue)")));
+        h("p", { class: "small ink2", style: "margin-top:6px" }, x.committed + " of " + x.sessions + " sessions committed (filled)")));
     }
     if (x.read_back) {
       var rb = x.read_back;
-      right.push(h("div", { class: "callrow" }, h("div", { class: "line" }, pill("READ-BACK", "warn"), h("span", { class: "small" }, "the chart read again after the write, and held to the prediction")),
-        h("p", { class: "small ink2", style: "margin-top:4px" }, "The prediction was one order, stopped. What the EHR held after the write was more: the rule had stopped the encounter's other orders and cancelled their doses. Every record the write changed was put back, conditional on the version read back, and the task the rule opened was marked entered-in-error, never deleted."),
+      right.push(h("div", { class: "callrow" }, h("div", { class: "line" }, pill("READ-BACK", "warn"), h("span", { class: "small" }, "the chart, read again after the write and compared with the prediction")),
+        h("p", { class: "small ink2", style: "margin-top:4px" }, "The prediction was one stopped order. After the write, the EHR held more than that: the rule had also stopped the encounter's other orders and cancelled their doses. Every record the write changed was put back, each conditional on the version read back. The task the rule opened was marked entered-in-error, not deleted."),
         table(["", "Active orders", "Doses scheduled", "Marked entered-in-error"], [["before", String(rb.before.active_orders), String(rb.before.scheduled_doses), String(rb.before.voided)], ["after", String(rb.after.active_orders), String(rb.after.scheduled_doses), String(rb.after.voided)]])));
     }
     if (x.race) {
       var rc = x.race;
       right.push(h("div", { class: "callrow" }, h("div", { class: "line" }, pill("NURSE", "warn"), h("span", { class: "small" }, rc.edited_by + " annotated order " + rc.order + " after the stage read it at version " + rc.measured_at)),
         h("div", { class: "outcome good" }, icon("shield"), (rc.status ? "WRITE REFUSED · " + rc.status + " Precondition Failed" : "WRITE REFUSED") + (rc.landed ? "" : " · the change is not on the chart")),
-        h("p", { class: "small ink2" }, "Each update carries If-Match on the version the stage read. The nurse's edit moved the order on, so the EHR refused the write, and nothing of the plan was written. The nurse's note stands.")));
+        h("p", { class: "small ink2" }, "Each update carries If-Match with the version the stage read. The nurse's edit made a newer version, so the EHR refused the write and none of the plan was written. The nurse's note is kept.")));
     }
     var permitted = calls.filter(function (c) { return c.gateway && c.gateway.decision === "PERMIT"; }).length;
     var committed = calls.filter(function (c) { return c.outcome === "committed"; }).length;
@@ -781,12 +801,12 @@
     return [h("div", { class: "split" },
       gatewaySide([x.note ? noteBlock(x.note) : null, x.mode === "live" && x.model ? liveBlock(x) : null, calls.map(function (c) { return callRow(c); })]),
       stackSide(x.git ? right.concat([gitLine(x.git)]) : right)),
-      verdictLine(permitted + " of " + calls.length + " permitted", committed + " committed, " + refused + " rolled back" + (names.length ? " by " + names.join(", ") : "") + (undone ? ", " + undone + " written, read back and put back" : ""))];
+      verdictLine(permitted + " of " + calls.length + " allowed", committed + " committed, " + refused + " rolled back" + (names.length ? " by " + names.join(", ") : "") + (undone ? ", " + undone + " written, read back and put back" : ""))];
   }
   function heldCall(x) {
     var c = x.call;
     return c ? h("div", { class: "callrow" }, h("div", { class: "line" }, pill("HELD REQUEST", "info"), h("span", { class: "tool" }, c.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(c.arguments))),
-      h("div", { class: "small ink2", style: "margin-top:4px" }, "Committed by the agent (" + c.measured.rows + " row(s)); its outbound request was held by the pause before the relay sent it.")) : null;
+      h("div", { class: "small ink2", style: "margin-top:4px" }, "Committed by the agent (" + many(c.measured.rows, "row") + "). The pause held its outbound request before the relay sent it.")) : null;
   }
   function packQuorum(x) {
     var parts = actQuorum(x), held = heldCall(x);
@@ -796,7 +816,7 @@
   function packBreakGlass(x) {
     var parts = actBreakGlass(x), held = heldCall(x);
     if (held) parts[0].lastChild.insertBefore(held, parts[0].lastChild.children[1] || null);
-    parts[1] = verdictLine("not involved", "the bundle exported after the act names it; the release is labeled break-glass");
+    parts[1] = verdictLine("not involved", "the bundle exported after the action names it and labels the release break-glass");
     return parts;
   }
   function actAmend(x) {
@@ -817,9 +837,9 @@
         h("h4", { style: "margin:10px 0 6px;font-size:13px" }, "Approvals in arrival order"),
         votes,
         h("div", { class: "callrow", style: "margin-top:10px" },
-          h("div", { class: "line" }, pill("WARRANT", "good"), h("b", null, x.warrant.action), hash(x.warrant.digest, 16), h("span", { class: "small muted" }, "on " + x.warrant.basis.length + " approval(s), formed " + x.warrant.formed_at)),
-          h("div", { class: "small ink2", style: "margin-top:4px" }, "Executed: " + x.executed.join(" → ") + ". The mandate stays at version " + x.version_after + ": the bank-account table is still outside it."))])),
-      verdictLine("no quorum on policy changes", "widening takes " + need.amend + " of 3; one rejection closes it, because stopping is never harder than starting")];
+          h("div", { class: "line" }, pill("WARRANT", "good"), h("b", null, x.warrant.action), hash(x.warrant.digest, 16), h("span", { class: "small muted" }, "on " + many(x.warrant.basis.length, "approval") + ", formed " + x.warrant.formed_at)),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "Executed: " + x.executed.join(" → ") + ". The mandate stays at version " + x.version_after + ", so the bank-account table is still outside it."))])),
+      verdictLine("no quorum on policy changes", "widening takes " + need.amend + " of 3, and a single rejection closes the ticket")];
   }
   function packAudit(x) {
     var rows = ["before", "after"].map(function (n) {
@@ -836,10 +856,10 @@
         h("div", { class: "tablewrap" }, h("table", null,
           h("thead", null, h("tr", null, ["Bundle", "Verdict", "Findings", "Network calls", "Members", "Planted values found", "SHA-256"].map(function (t) { return h("th", null, t); }))),
           h("tbody", null, rows))),
-        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for: " + scan.planted.rows + " record values from the database, " + scan.planted.payloads + " payload values the vendor received, " + scan.planted.prompts + " injected instruction(s), " + scan.planted.secrets + " private keys and secrets, each as written and as SHA-256. Ledger conservation: " + x.conservation + "."),
-        x.labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "Partition labels: the bundle names " + x.labels.named + " of the " + x.labels.known + " " + x.labels.partition + " keys, in " + x.labels.members + " members (session records and receipts say which " + x.labels.partition + " each action was for). They are opaque keys; no record behind them is in the bundle.") : null,
+        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for " + many(scan.planted.rows, "record value") + " from the database, " + many(scan.planted.payloads, "payload value") + " the vendor received, " + many(scan.planted.prompts, "injected instruction") + " and " + many(scan.planted.secrets, "private key or secret", "private keys and secrets") + ", each as written and as a SHA-256 hash. Ledger conservation " + x.conservation + "."),
+        x.labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "The bundle names " + x.labels.named + " of the " + x.labels.known + " " + x.labels.partition + " keys, in " + many(x.labels.members, "member") + ", because session records and receipts say which " + x.labels.partition + " each action was for. The keys are opaque, and no record behind them is in the bundle.") : null,
         x.reconciliation ? actionsBlock(x.reconciliation) : null])),
-      verdictLine("its own decisions only", "both bundles verified offline against independently pinned keys; the break-glass act is reported")];
+      verdictLine("its own decisions only", "both bundles verified offline against keys pinned outside them, and the break-glass change is reported")];
   }
   function actTrust(x) {
     var n = x.customers.length - 1;
@@ -858,33 +878,20 @@
         table(["Customer", "Org key", "Bundle", "Members", "Records whole / withheld", "Others' records", "Others' names or account ids", "Others' org keys", "Others' email domains"], rows),
         h("p", { class: "small ink2", style: "margin-top:10px" }, "Each bundle covers one customer's workspace mandate. It was verified with every socket refused (" + x.customers.reduce(function (t, c) { return t + c.sockets; }, 0) + " network calls) against keys pinned outside it, and searched for every opportunity name, email address, org key and email domain of the other customers, as written and as SHA-256. Files: " + x.customers.map(function (c) { return c.file; }).join(", ") + "."),
         sealed ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How a bundle leaves the others out. "), "Each bundle is sealed. It carries the customer's own records whole. Of every other record in the log it carries only the record's position and hash, and the ledger's signed anchor of that record vouches for both, so the log still checks end to end. Every record was sealed when it was written" + (sealed.seals ? " (" + sealed.seals + ")" : "") + ", and the bundle carries the customer's own keys, so its verifier proves that no withheld record is the customer's, and learns nothing about whose the others are. The vendor's mandate names no customer: it holds one hash over every customer's allowed email domains (" + sealed.entries + " entries, each salted with " + sealed.salts + "), and each workspace mandate opens only its own entry. Receipts name only the customer the action was for, and count any others a refused action reached.") : null,
-        flagged.length ? h("p", { class: "small", style: "margin-top:6px" }, flagged.map(function (c) { return c.customer; }).join(", ") + ": the bundle fails on purpose. It records the support engineer's hand-sent invitation in that customer's own workspace (scenario 5), the break-glass act the customer is entitled to see.") : null,
-        ps ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How org keys are made. "), "Each org key is " + ps.derivation + ". The vendor holds the pseudonym key, as it holds its signing keys. Without it, an org key cannot be reversed or linked to an account; with it, the vendor or an auditor it chooses recomputes the key from the account id. Every bundle was searched for the key, as written and in hex, and for each other customer's name and account id: " + (ps.key_in_bundles + x.customers.reduce(function (t, c) { return t + (c.other_names || 0) + (c.other_accounts || 0); }, 0)) + " found.") : null,
+        flagged.length ? h("p", { class: "small", style: "margin-top:6px" }, flagged.map(function (c) { return c.customer; }).join(", ") + ": this bundle fails on purpose. It records the support engineer's hand-sent invitation in that customer's own workspace (scenario 5), a break-glass action the customer is entitled to see.") : null,
+        ps ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How org keys are made. "), "Each org key is " + ps.derivation + ". The vendor holds the pseudonym key, as it holds its signing keys. Without it, an org key can't be reversed or linked to an account. With it, the vendor, or an auditor it chooses, can recompute the key from the account id. Every bundle was searched for the key, as written and in hex, and for each other customer's name and account id: " + (ps.key_in_bundles + x.customers.reduce(function (t, c) { return t + (c.other_names || 0) + (c.other_accounts || 0); }, 0)) + " found.") : null,
         labels || domains ? h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others" + (labels ? ": their org keys, in session records and receipts, because the bundle carries the deployment's whole log" : "") + (domains ? "; and each org key's email domain, in the mandate documents only: the vendor-wide mandate maps every org key to its allowed recipient domain, and every customer's mandate is derived from it" : "") + ". So these bundles are not anonymous.") : h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others: how many records the log holds that are not theirs, and when the ledger anchored them. Nothing names who those records were for.")])),
       verdictLine("not available", x.customers.length + " customer bundles, each verified on its own; " + (labels || domains ? "0 records, names or account ids of any other customer" : "0 records, names, account ids, org keys or email domains of any other customer"))];
   }
-  var PACK_SHORT = { queue: "Everyday action", cascade: "Hidden cascade", replace: "Forced replacement", drawdown: "Stock drawdown", injected: "Injected instruction", grant: "Admin rights", fleet: "Sub-agent fan-out", quorum: "2-of-3 warrant", amend: "Amend ticket", "break-glass": "Break-glass", "trust-center": "Trust center", race: "Concurrent push", warrant: "CI + 2-of-3", hotfix: "Break-glass push", audit: "Offline audit" };
   var PACK_ACTS = { quorum: packQuorum, amend: actAmend, "break-glass": packBreakGlass, audit: packAudit, "trust-center": actTrust, race: actRace, warrant: actGitWarrant, hotfix: actHotfix };
   function packTheatre() {
-    var tabs = h("div", { class: "tabs", role: "tablist" });
-    var body = h("div");
-    DEMO.acts.forEach(function (x, i) {
-      var t = h("button", { class: "tab", role: "tab", "aria-selected": i === activeAct ? "true" : "false", onclick: function () {
-        activeAct = i;
-        tabs.querySelectorAll(".tab").forEach(function (b, j) { b.setAttribute("aria-selected", j === i ? "true" : "false"); });
-        body.querySelectorAll(".act").forEach(function (a, j) { a.classList.toggle("on", j === i); });
-      } }, h("span", { class: "n" }, String(x.n)), PACK_SHORT[x.key] || x.title);
-      tabs.appendChild(t);
-      var panel;
-      try { panel = (PACK_ACTS[x.key] || packCalls)(x); } catch (e) { panel = h("p", { class: "pad" }, "This act could not be drawn: " + e.message); }
-      body.appendChild(h("div", { class: "card act" + (i === activeAct ? " on" : "") }, h("div", { class: "act-head" }, h("h3", null, "Act " + x.n + ". " + x.title), h("p", null, x.lede)), panel));
-    });
+    var where = PACK.nouns.substrate === "Git" ? "Git repository and hooks" : PACK.nouns.state === "chart" ? "EHR and its server rules" : "schema and triggers";
+    var live = DEMO.mode === "live" && DEMO.model ? "Scenario 2 was run live by " + DEMO.model.served + ". The others replay a fixed sequence with no model." : "The calls replay a fixed sequence with no model. Pass --live to have a model run scenario 2.";
     return h("section", { id: "theatre" }, h("div", { class: "wrap" },
-      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, PACK.industry + " · demo scenarios"), h("h2", null, PACK.title),
-        h("p", null, "The same engine as every other industry here, on this one's own " + (PACK.nouns.substrate === "Git" ? "Git repository, hooks" : PACK.nouns.state === "chart" ? "EHR, its server rules" : "schema, triggers") + ", mandate and approvers: " + PACK.principals.join(", ") + ". Each call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + (DEMO.mode === "live" && DEMO.model ? "Act 2 was worked by " + DEMO.model.served + ", live; the other acts replay a fixed sequence, with no model." : "The calls are a fixed sequence, with no model; pass --live to have a model work act 2.") + " All figures were measured during the run (" + DEMO.seconds + " s).")),
-      tabs, body));
+      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, PACK.industry + " · scenarios"), h("h2", null, PACK.title),
+        h("p", null, "The same engine as every other industry here, on this one's own " + where + ", mandate and approvers (" + PACK.principals.join(", ") + "). Each tool call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + live + " Every figure was measured during the run, which took " + DEMO.seconds + " s.")),
+      scenarioLayout(DEMO.acts, function (x) { return (PACK_ACTS[x.key] || packCalls)(x); })));
   }
-
   // -- the overview: the same engine, in every industry -------------------------------------
   function openPage(key) {
     for (var i = 0; i < PAGES.length; i++) {
@@ -898,77 +905,105 @@
   }
   function engineCell(row, key) {
     var e = row.engine;
-    if (!e) return h("td", { class: "muted" }, "—");
+    if (!e) return h("td", { class: "muted", style: "text-align:center" }, "—");
     var v = e[key];
-    if (key === "warrant") return h("td", null, v.length ? v.map(function (w) { return pill(w.action + " · " + w.approvals + " of 3", "good"); }) : "—");
-    if (key === "break-glass") return h("td", null, v ? pill("NAMED", "good") : "—");
-    if (key === "stale_head" && row.substrate !== "Git" && row.substrate !== "FHIR R4") return h("td", { class: "muted" }, "n/a");
-    if (key === "read_back" && row["class"] !== "V" && row["class"] !== "P") return h("td", { class: "muted" }, "n/a");
-    if (key === "offline") return h("td", null, v ? pill("VERIFIED", "good") : pill("NO", "bad"));
+    if (key === "warrant") return h("td", { style: "text-align:center" }, v.length ? v.map(function (w) { return h("div", { class: "mono small" }, w.action + " · " + w.approvals + "/3"); }) : h("span", { class: "muted" }, "—"));
+    if (key === "break-glass") return h("td", { style: "text-align:center" }, v ? pill("named", "good") : h("span", { class: "muted" }, "—"));
+    if (key === "stale_head" && row.substrate !== "Git" && row.substrate !== "FHIR R4") return h("td", { class: "muted small", style: "text-align:center" }, "n/a");
+    if (key === "read_back" && row["class"] !== "V" && row["class"] !== "P") return h("td", { class: "muted small", style: "text-align:center" }, "n/a");
+    if (key === "offline") return h("td", { style: "text-align:center" }, v ? pill("verified", "good") : pill("no", "bad"));
     return h("td", { class: "num" }, v ? h("b", null, String(v)) : h("span", { class: "muted" }, "0"));
+  }
+  function slots(names, stateOf, need) {
+    var signed = names.filter(function (p) { return stateOf(p) === "signed"; }).length;
+    var words = { signed: "signed", declined: "declined", waiting: "in the intake", none: "not signed" };
+    return h("div", { class: "quorum" },
+      h("div", { class: "quorum-line" }, h("b", { class: signed >= need ? "met" : "" }, String(signed)),
+        h("span", null, "signed · quorum " + need + " of " + names.length + (signed >= need ? " · reached" : " · " + (need - signed) + " more needed"))),
+      h("div", { class: "slots", style: "--n:" + Math.max(1, names.length) }, names.map(function (p) {
+        var st = stateOf(p);
+        return h("div", { class: "slot " + st }, h("div", { class: "who", title: p }, p), h("div", { class: "state" }, words[st] || st));
+      })));
   }
   function overview() {
     var o = OVERVIEW, ran = o.industries.filter(function (r) { return r.ran; });
     var refused = ran.reduce(function (t, r) { return t + (r.engine ? r.engine.refused_plans : 0); }, 0);
     var acc = o.acceptance;
-    var tiles = [
-      ["Industries run in this dashboard", ran.length + " of " + o.industries.length, ran.map(function (r) { return r.industry; }).join(" · "), "this run"],
-      ["Live acceptance matrix", acc.passed + " / " + acc.cases, "$" + acc.metered_usd + " metered · " + acc.model_calls + " model calls · " + acc.domains.length + " domains · " + acc.models.length + " Claude models", "interlock, recorded " + acc.generated],
-      ["Plans refused before commit", String(refused), "each one permitted by the gateway, measured, and rolled back", "this run"],
-      ["Bundles checked offline", String(ran.length * 2), ran.length + " verify; " + ran.filter(function (r) { return r.after.exit_code === 7; }).length + " name the break-glass act, as they should. No network, keys pinned outside; 0 planted records found", "this run"]
+    var substrates = ran.map(function (r) { return r.substrate; }).filter(function (x, i, all) { return x && all.indexOf(x) === i; });
+    var named = ran.filter(function (r) { return r.after.exit_code === 7; }).length;
+    var steps = [
+      ["01", "Stage", "The agent's tool call becomes a plan, staged where nothing is final yet: a SQL transaction, a Git worktree, a server-side dry run, a prediction."],
+      ["02", "Measure", "The stage records what the change actually does, triggers, hooks and admission webhooks included: every row, file, object or record."],
+      ["03", "Check", "The mandate judges the measured change: tables, tenants, row counts, value guards, rate windows and budgets.", "held for 2 of 3", "Exceptions wait for a quorum of named principals to sign a warrant."],
+      ["04", "Commit or put back", "A change that passes commits once, on the exact version that was measured. One that fails is rolled back or restored."],
+      ["05", "Prove", "Every decision is a signed record. An auditor verifies the bundle offline, against keys pinned outside it."]
     ];
-    var cards = o.industries.map(function (r) {
-      var status = r.ran ? pill("RAN · " + r.acts + " ACTS", "good") : r.planned ? pill("NEXT · NOT BUILT", "warn") : pill("NOT IN THIS RUN", "permit");
+    var pipe = h("div", { class: "pipe" }, steps.map(function (st, i) {
+      return h("div", { class: "pipe-step" + (i === 4 ? " end" : "") }, h("span", { class: "n" }, st[0]), h("b", null, st[1]), h("p", null, st[2]),
+        st[3] ? h("div", { class: "fork" }, h("em", null, "↳ " + st[3]), h("div", null, st[4])) : null);
+    }));
+    var tiles = [
+      ["Industries run", ran.length + " / " + o.industries.length, ran.map(function (r) { return r.industry; }).join(", "), "this run"],
+      ["Plans refused before commit", String(refused), "each one allowed by the gateway, then measured and rolled back", "this run"],
+      ["Bundles verified offline", String(ran.length * 2), ran.length + " pass before the break-glass action, and " + named + " name it after (exit 7). No network; keys pinned outside the bundle.", "this run"],
+      ["Acceptance matrix", acc.passed + " / " + acc.cases, "$" + acc.metered_usd + " metered over " + acc.model_calls + " model calls in " + acc.domains.length + " domains", "interlock, " + acc.generated]
+    ];
+    var readout = h("div", { class: "readout" }, tiles.map(function (t) {
+      return h("div", null, h("div", { class: "label" }, t[0]), h("div", { class: "value" }, t[1]), h("div", { class: "note" }, t[2]), h("span", { class: "layer-tag" }, t[3]));
+    }));
+    var rows = o.industries.map(function (r) {
       var n = r.nouns || {};
-      var open = r.ran && PAGES.length > 1 ? h("button", { class: "btn noprint", onclick: function () { openPage(r.key); } }, "Open") : null;
-      return h("div", { class: "card ind" + (r.ran ? "" : " off") },
-        h("div", { class: "ind-head" }, h("b", null, r.industry), h("span", { class: "rung", title: "measurement class" }, r["class"]), r.substrate ? h("span", { class: "chip static", title: "what the stage runs on" }, r.substrate) : null, h("span", { class: "spacer" }), status),
-        h("div", { class: "small ink2" }, r.title),
-        h("dl", { class: "nouns" },
-          h("dt", null, "Measures"), h("dd", null, n.measure || "—"),
-          h("dt", null, "Hidden consequence"), h("dd", null, n.hidden || "—"),
-          h("dt", null, "Unit"), h("dd", null, n.unit || "—"),
-          h("dt", null, "Partition"), h("dd", null, n.partition || "—"),
-          h("dt", null, "Approvers"), h("dd", null, n.approvers || "—"),
-          h("dt", null, "Verified by"), h("dd", null, n.verifier || "—")),
-        h("div", { class: "chips" }, (r.frameworks || []).map(function (k) { return h("span", { class: "chip static" }, fwLabel(k)); })),
-        r.model ? h("div", { class: "small", style: "margin-top:8px" }, pill("LIVE", "info"), " " + r.model.served + " · " + r.model.turns + " turns · " + money(r.model.metered, 4) + " metered") : null,
-        r.ran ? h("div", { class: "small", style: "margin-top:8px" }, "before.fidb ", r.before.passed ? pill("PASS", "good") : pill("EXIT " + r.before.exit_code, "bad"), " · after.fidb ", pill(r.after.status, r.after.exit_code === 7 ? "warn" : "bad")) : null,
-        r.note ? h("div", { class: "small muted", style: "margin-top:6px" }, "Note: " + r.note + ".") : null,
-        r.planned ? h("div", { class: "small muted", style: "margin-top:6px" }, r.planned) : null,
-        !r.ran && !r.planned ? h("div", { class: "small muted", style: "margin-top:6px" }, h("code", null, "fiduciary demo --domain " + r.key)) : null,
-        open);
+      var bundles = r.ran ? h("span", { class: "line", style: "gap:10px" }, r.before.passed ? pill("pass", "good") : pill("exit " + r.before.exit_code, "bad"), pill(String(r.after.status).toLowerCase(), r.after.exit_code === 7 ? "warn" : "bad"))
+        : r.planned ? pill("next", "warn") : pill("not in this run", "permit");
+      var model = r.model ? h("span", { class: "mono small model" }, r.model.served, h("br"), h("span", { class: "muted" }, r.model.turns + " turns · " + money(r.model.metered, 4))) : h("span", { class: "muted small" }, r.ran ? "replayed" : "—");
+      return h("tr", { class: r.ran ? "ran" : "off", onclick: r.ran && PAGES.length > 1 ? function () { openPage(r.key); } : null, title: r.ran && PAGES.length > 1 ? "Open " + r.industry : null },
+        h("td", null, h("span", { class: "ind-name" }, r.industry), h("span", { class: "ind-sub" }, r.title)),
+        h("td", { style: "white-space:nowrap" }, h("span", { class: "rung", title: (RUNG_NAMES[r["class"]] || "") + " measurement" }, r["class"]), " ", h("span", { class: "small ink2" }, r.substrate || "")),
+        h("td", { class: "small" }, n.hidden || "—"),
+        h("td", { class: "small ink2" }, n.approvers || "—"),
+        h("td", null, model),
+        h("td", null, bundles));
     });
+    var inds = h("div", { class: "card" }, h("div", { class: "tablewrap" }, h("table", { class: "inds-t" },
+      h("thead", null, h("tr", null, ["Industry", "Measured on", "Hidden consequence", "Approvers", "Model", "Bundles"].map(function (t) { return h("th", null, t); }))),
+      h("tbody", null, rows))));
     var cols = ran;
     var grid = h("div", { class: "tablewrap" }, h("table", { class: "engine" },
-      h("thead", null, h("tr", null, [h("th", null, "Part of the engine"), h("th", null, "Reads")].concat(cols.map(function (r) { return h("th", null, r.industry); })))),
+      h("thead", null, h("tr", null, [h("th", null, "Check"), h("th", null, "Counts")].concat(cols.map(function (r) { return h("th", { style: "text-align:center" }, r.industry); })))),
       h("tbody", null, o.engine.map(function (e) {
         return h("tr", null, h("td", null, h("code", null, e.label)), h("td", { class: "small muted" }, e.reads), cols.map(function (r) { return engineCell(r, e.key); }));
       }))));
-    var ladder = h("div", { class: "ladder" }, o.ladder.map(function (rung) {
+    var strength = { T: 4, P: 3, V: 2, R: 1 };
+    var ladder = h("div", { class: "rungs" }, o.ladder.map(function (rung) {
       var here = o.industries.filter(function (r) { return r["class"] === rung["class"] && (r.ran || r.planned); }).map(function (r) { return r.industry + (r.planned ? " (next)" : ""); });
-      return h("div", { class: "card rung-card" + (rung.shipped ? "" : " off") },
-        h("div", { class: "ind-head" }, h("span", { class: "rung big" }, rung["class"]), h("b", null, rung.name), h("span", { class: "spacer" }), rung.shipped ? pill("SHIPPED", "good") : pill("NOT BUILT", "permit")),
-        h("p", { class: "small" }, rung.promise),
-        h("p", { class: "small muted" }, rung.where),
-        rung["class"] === "R" ? h("p", { class: "small ink2" }, "Every pack here, for its outbound requests.") : here.length ? h("p", { class: "small ink2" }, "In this dashboard: " + here.join(", ") + ".") : null);
+      var k = strength[rung["class"]] || 0;
+      return h("div", { class: "rung-col" },
+        h("div", { class: "rl" }, h("span", { class: "letter" }, rung["class"]), h("b", null, rung.name), h("span", { class: "spacer" }), rung.shipped ? null : pill("not built", "permit")),
+        tipOn(h("div", { class: "strength" }, [1, 2, 3, 4].map(function (i) { return h("i", { class: i <= k ? "on" : "" }); })), "How much of the effect is known before anything is final: " + k + " of 4"),
+        h("p", null, rung.promise), h("p", { class: "small muted" }, rung.where),
+        h("div", { class: "here" }, rung["class"] === "R" ? "Every industry here, for its outbound requests." : here.length ? here.join(", ") : "—"));
     }));
     var matrixCard = h("div", { class: "card pad acceptance" },
-      h("div", { class: "ind-head" }, h("b", null, "Customer acceptance matrix"), h("span", { class: "spacer" }), pill(acc.passed + " / " + acc.cases + " PASS", "good")),
-      h("p", { class: "small" }, "Live Claude models (" + acc.models.join(", ") + ") in front of " + acc.domains.length + " unrelated domains on one interlock kernel: " + acc.domains.join("; ") + ". " + acc.plans.proposed + " plans proposed: " + acc.plans.committed + " committed, " + acc.plans.refused + " refused by a checker. $" + acc.metered_usd + " of model spend, metered by AgentGov."),
+      h("div", { class: "ind-head" }, h("b", null, "Customer acceptance matrix"), h("span", { class: "spacer" }), pill(acc.passed + " of " + acc.cases + " pass", "good")),
+      h("p", { class: "small" }, "Live Claude models (" + acc.models.join(", ") + ") worked " + acc.domains.length + " unrelated domains on one Interlock kernel: " + acc.domains.join("; ") + ". They proposed " + acc.plans.proposed + " plans. " + acc.plans.committed + " committed and " + acc.plans.refused + " were refused by a check. Model spend was $" + acc.metered_usd + ", metered by AgentGov."),
       h("p", { class: "small muted" }, acc.note + " Source: " + acc.source + ", generated " + acc.generated + " on interlock " + acc.interlock + "."));
-    return h("section", { id: "overview" }, h("div", { class: "wrap" },
-      h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Same engine, different nouns"), h("h2", null, "One consequence-control engine, six industries, on SQL, Git, Kubernetes and FHIR"),
-        h("p", null, "Every industry below runs the same loop: stage the agent's change, measure what it actually did, check it, hold exceptions for a quorum, commit once, and prove it offline. Only the tables, the limits and the approvers change. Three industries stage in a SQL transaction; coding agents stage in a Git worktree and commit with a compare-and-swap of the branch; cloud SRE stages plan-bound on a Kubernetes API server, measured by its own dry run and applied on the version measured; healthcare stages predicted and verified on a FHIR server, written on the version read and read back against the prediction. Fintech is where we started, not what the engine is.")),
-      h("div", { class: "kpis ov" }, tiles.map(function (t) { return h("div", { class: "card kpi" }, h("div", { class: "label" }, t[0]), h("div", { class: "value tnum" }, t[1]), h("div", { class: "note" }, t[2]), h("span", { class: "layer-tag" }, t[3])); })),
-      h("div", { class: "inds" }, cards),
-      h("h3", { class: "ov-h" }, "What refused what, in this run"),
-      h("p", { class: "small ink2" }, "Counted from the plans each industry's acts measured: how many plans each checker refused, which warrants formed, and whether the bundles verified offline. A zero means that checker refused nothing here, not that it was missing."),
-      h("div", { class: "card pad" }, grid),
-      h("h3", { class: "ov-h" }, "The measurement ladder"),
-      h("p", { class: "small ink2" }, "How strongly each kind of system can be measured. Healthcare runs on class V, cloud SRE on class P, every other industry in this dashboard on class T, and their outbound requests on class R: all four rungs, in one run."),
-      ladder,
-      matrixCard));
+    return h("section", { id: "overview", style: "padding:0" },
+      h("div", { class: "hero-ov" }, h("div", { class: "wrap" },
+        h("div", { class: "eyebrow" }, h("span", null, "Overview"), h("span", { class: "idx" }, ran.length + " industries · " + substrates.length + " kinds of system")),
+        h("h1", null, "One engine for every system an agent can change"),
+        h("p", { class: "lede" }, "Every industry below runs the same loop. The agent's change is staged, measured, checked against a signed mandate, committed once or put back, and recorded so an auditor can verify it offline. What differs is the system underneath (" + substrates.join(", ") + ") and the people who approve exceptions."),
+        pipe, readout, h("div", { style: "height:44px" }))),
+      h("div", { class: "wrap" },
+        h("h3", { class: "ov-h" }, "Industries in this run"),
+        h("p", { class: "small" }, PAGES.length > 1 ? "Select a row to open that industry's scenarios." : "Run fiduciary demo --domain all to see every industry."),
+        inds,
+        h("h3", { class: "ov-h" }, "What refused what"),
+        h("p", { class: "small" }, "Counted from the plans each industry's scenarios measured: how many plans each check refused, which warrants formed, and whether the bundles verified offline. A zero means the check refused nothing here, not that it's missing."),
+        h("div", { class: "card pad" }, grid),
+        h("h3", { class: "ov-h" }, "The measurement ladder"),
+        h("p", { class: "small" }, "How much of a change is known before it's final, by kind of system. Every rung runs in this one dashboard."),
+        ladder,
+        matrixCard));
   }
   function domainBar() {
     if (PAGES.length < 2) return null;
@@ -977,11 +1012,10 @@
         var d = page.demo && page.demo.domain;
         var v = page.attestations[page.primary].verdict;
         return h("button", { "aria-pressed": i === activePage ? "true" : "false", onclick: function () { use(i); render(); } },
-          h("i", { class: "dot", style: "background:var(" + (v.passed ? "--good" : "--critical") + ")" }), d ? d.industry : "Fintech");
+          h("i", { class: "dot", style: "background:var(" + (v.passed ? "--accent" : "--held") + ")" }), d ? d.industry : "Fintech");
       })),
-      h("span", { class: "small muted" }, PACK ? PACK.title + " · " + PACK.frameworks.map(fwLabel).join(", ") : "Support refunds and order adjustments · SOC 2, OWASP ASI 2026, EU AI Act")));
+      h("span", { class: "small muted" }, PACK ? PACK.frameworks.map(fwLabel).join(" · ") : "SOC 2 · OWASP ASI 2026 · EU AI Act")));
   }
-
   // -- the lineage tree --------------------------------------------------------------------
   function tree() {
     var a = A();
@@ -1001,7 +1035,7 @@
     var ch = a.authority.charter;
     function node(x, y, cls, title, lines, scope, envelope, tipText) {
       var g = s("g", { class: "node " + cls, transform: "translate(" + x + "," + y + ")" });
-      g.appendChild(s("rect", { class: "box", width: NW, height: NH, rx: 12, "stroke-width": cls === "root" ? 1.5 : 1 }));
+      g.appendChild(s("rect", { class: "box", width: NW, height: NH, rx: 2, "stroke-width": cls === "root" ? 1.5 : 1 }));
       g.appendChild(s("text", { class: "t", x: 12, y: 22, text: title }));
       lines.forEach(function (l, i) { g.appendChild(s("text", { x: 12, y: 40 + i * 15, class: l[1] || "", text: l[0] })); });
       var row = scope ? ledger[scope] : null;
@@ -1029,7 +1063,7 @@
       if (label) svg.appendChild(s("text", { class: "rel " + (ok ? "yes" : "no"), x: c.x + 8, y: c.top - 10, text: label }));
     }
     var cnode = node(W / 2 - NW / 2, Y0, "charter", "Charter · " + (ch.label || "v1"),
-      [[ch.principals.map(function (p) { return p.name; }).join(" · ")], ["quorums: charter " + ch.quorums.charter + ", issue " + ch.quorums.issue + ", revoke " + ch.quorums.revoke], [ch.break_glass.length + " break-glass key(s)"], [short(ch.digest, 24), "m"]], null, null,
+      [[ch.principals.map(function (p) { return p.name; }).join(" · ")], ["quorums: charter " + ch.quorums.charter + ", issue " + ch.quorums.issue + ", revoke " + ch.quorums.revoke], [many(ch.break_glass.length, "break-glass key")], [short(ch.digest, 24), "m"]], null, null,
       "The root of authority: principal keys and quorums. The auditor pins its digest independently (V2).");
     var colX = 0, step = W / cols;
     roots.forEach(function (r) {
@@ -1057,7 +1091,7 @@
     });
     return h("section", { id: "lineage" }, h("div", { class: "wrap" },
       h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Authority and budget"), h("h2", null, "Mandate lineage"),
-        h("p", null, "Each mandate in the bundle, with its ledger usage: funded, spent, held and available (hover a bar). A derived mandate can only narrow its parent; the verifier rechecks every field offline.")),
+        h("p", null, "Each mandate in the bundle with its ledger use: funded, spent, held and available (hover a bar). A derived mandate can only narrow its parent, and the verifier checks every field again offline.")),
       h("div", { class: "card pad tree-wrap" }, svg,
         h("div", { class: "legend" }, h("span", null, h("i", { class: "dot", style: "background:var(--s2)" }), "spent"), h("span", null, h("i", { class: "dot", style: "background:var(--s4)" }), "held"), h("span", null, h("i", { class: "dot", style: "background:var(--s1)" }), "available")))));
   }
@@ -1080,7 +1114,7 @@
         })),
         h("div", { style: "height:14px" }),
         table(["Warrant", "Action", "Basis", "Bound to delivery heads", "Formed", "Valid until"], a.warrants.map(function (w) {
-          return [hash(w.warrant_id, 8), w.action + (w.reset ? " + reset " + w.reset : ""), w.basis.length + " approval(s)", w.heads.map(function (x) { return short(x, 10); }).join(", ") || "—", h("span", { class: "small" }, w.formed_at), h("span", { class: "small" }, w.not_after)];
+          return [hash(w.warrant_id, 8), w.action + (w.reset ? " + reset " + w.reset : ""), many(w.basis.length, "approval"), w.heads.map(function (x) { return short(x, 10); }).join(", ") || "—", h("span", { class: "small" }, w.formed_at), h("span", { class: "small" }, w.not_after)];
         })))],
       ["Approvals & principals", h("div", null,
         table(["Principal", "Key", "Subject", "Decision", "Signed by key", "Counted"], a.approvals.map(function (p) {
@@ -1166,7 +1200,7 @@
     }));
     a.checks.forEach(function (c) {
       var ids = [].concat.apply([], cols.map(function (k) { return c.controls[k] || []; }));
-      var detail = c.findings.length ? h("details", null, h("summary", null, c.findings.length + " finding(s)"), h("ul", { class: "findings" }, c.findings.map(function (f) { return h("li", null, h("span", { class: "sev blocking" }, f.label || kindLabel(f.kind)), h("span", null, f.message + " (exit " + f.exit_code + ")")); }))) : null;
+      var detail = c.findings.length ? h("details", null, h("summary", null, many(c.findings.length, "finding")), h("ul", { class: "findings" }, c.findings.map(function (f) { return h("li", null, h("span", { class: "sev blocking" }, f.label || kindLabel(f.kind)), h("span", null, f.message + " (exit " + f.exit_code + ")")); }))) : null;
       body.appendChild(h("tr", { "data-controls": ids.join(" ") },
         h("td", { class: "check" }, c.id + " ", h("span", { class: "muted", style: "font-weight:500" }, c.name)),
         h("td", null, c.status === "pass" ? pill("PASS", "good") : pill("FAIL", "bad")),
@@ -1199,7 +1233,7 @@
       h("b", { class: "ink2" }, "Out of scope"),
       h("ul", null, a.notes.map(function (n) { return h("li", null, n); })),
       h("p", { style: "margin-top:10px" }, "Verifier: fiduciary " + a.verifier.fiduciary + ", interlock-escrow " + a.verifier.interlock + ", interlock-agentgov " + a.verifier.agentgov + ". Optional upstream features available: " + (Object.keys(up).filter(function (k) { return up[k]; }).join(", ") || "none") + (Object.keys(up).some(function (k) { return !up[k]; }) ? "; not available: " + Object.keys(up).filter(function (k) { return !up[k]; }).join(", ") : "") + ". Generated " + a.generated_at + "."),
-      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline: tamper-evident, not tamper-proof. " + (LIVE.on ? "Served by the console on loopback; the page asks only it." : "This page makes no network requests."))));
+      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline. It makes tampering visible; it can't prevent it. " + (LIVE.on ? "Served by the console on loopback; the page asks only it." : "This page makes no network requests."))));
   }
 
   // == the control plane =====================================================================
@@ -1365,10 +1399,10 @@
   function deskView() {
     var deps = deskDeployments();
     var dep = currentDep();
-    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Approvals"), h("h2", null, "Tickets that wait for a quorum"),
+    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Approvals"), h("h2", null, "Tickets waiting for a quorum"),
       h("p", null, LIVE.on
-        ? "Each ticket is read from its deployment's log, from its signed bytes. A vote is an approval signed by the principal's own key: in this browser, with a key file that never leaves it, or with fiduciary approve. The deployment's writer records it; at quorum a warrant forms and releases what it pins, at the heads the ticket observed."
-        : "What each run's after.fidb records: every ticket, the approvals that decided it, and the warrant they formed, as the verifier replayed them when this page was built. Signing a new vote needs the console: fiduciary demo --out <dir> --serve, or fiduciary console beside a deployment."));
+        ? "Each ticket is read from its deployment's log, as signed. A vote is an approval signed with the principal's own key, either here in the browser (the key file never leaves the page) or with fiduciary approve. The deployment's writer records it. At quorum, a warrant forms and releases exactly what it pins, at the heads the ticket recorded."
+        : "What each run's after.fidb records: every ticket, the approvals that decided it and the warrant they formed, as the verifier replayed them when this page was built. To sign a new vote, run the console with fiduciary demo --out <dir> --serve, or fiduciary console next to a deployment."));
     if (!deps.length) return h("section", { id: "desk" }, h("div", { class: "wrap" }, head, h("div", { class: "card pad empty-gw" }, h("b", null, "No deployment here."), "Start the console in a directory that holds a fiduciary.toml, or name one with --deployment FILE.")));
     var depList = h("div", { class: "dep-list", role: "list" }, deps.map(function (d) {
       var kind = d.kind === "sandbox" ? pill("SANDBOX", "info") : d.kind === "recorded" ? pill("RECORDED", "permit") : d.kind === "bundle" ? pill("BUNDLE", "permit") : d.accepts ? pill("TAKES APPROVALS", "good") : pill("READ-ONLY", "permit");
@@ -1431,7 +1465,7 @@
         var tag = t.governed === "held · warrant" ? pill("HELD FOR A WARRANT", "warn") : t.governed === "write · released" ? pill("WRITE · RECEIPTED", "info")
           : t.governed === "read · metered" ? pill("READ · METERED", "permit") : t.governed === "staged · measured" ? pill("STAGED · MEASURED", "good") : t.kind ? pill(String(t.kind).toUpperCase(), "permit") : null;
         return [h("span", null, h("b", { class: "mono" }, t.name), t.description ? h("div", { class: "small muted" }, t.description) : null), tag,
-          h("span", { class: "small" }, (t.requests || []).map(function (r) { return r.sink + "." + r.operation + (r.held ? " (held)" : ""); }).join(", ") || (t.effects ? t.effects + " row effect(s)" : "—")),
+          h("span", { class: "small" }, (t.requests || []).map(function (r) { return r.sink + "." + r.operation + (r.held ? " (held)" : ""); }).join(", ") || (t.effects ? many(t.effects, "row effect") : "—")),
           t.price ? h("span", { class: "small tnum" }, money(t.price, 3)) : h("span", { class: "muted" }, "—"),
           t.digest ? hash(t.digest, 10) : h("span", { class: "muted" }, "—")];
       });
@@ -1445,12 +1479,12 @@
         h("h3", { style: "margin-top:14px" }, "Tools it may call"), tools.length ? table(["Tool", "Governed", "Requests", "Price", "Binding"], tools) : h("p", { class: "small muted" }, "No tool: the agent can call nothing yet."));
     });
     var receipts = prof.receipts && prof.receipts.length ? table(["Receipt", "Rung", "Outcome", "Measured", "Issued"], prof.receipts.map(function (r) {
-      return [hash(r.receipt_id, 8), h("span", null, rungChip(r.rung), " " + r.measurement), r.outcome === "committed" ? pill("COMMITTED", "good") : r.outcome === "compensated" ? pill("PUT BACK", "warn") : pill(String(r.outcome || "refused").toUpperCase(), "bad"),
-        h("span", { class: "small" }, num(r.rows || 0) + " rows · " + (r.tables || []).join(", ")), h("span", { class: "small tnum" }, String(r.issued_at || "").replace("T", " ").slice(0, 19))];
+      return [hash(r.receipt_id, 8), h("span", null, rungChip(r.rung), " " + r.measurement), r.outcome === "committed" ? pill("COMMITTED", "good") : r.outcome === "delivered" ? pill("DELIVERED", "good") : r.outcome === "compensated" ? pill("PUT BACK", "warn") : pill(String(r.outcome || "refused").toUpperCase(), "bad"),
+        h("span", { class: "small" }, r.kind === "delivery" ? (r.substrate + "." + r.operation + (r.remote_ref ? " → " + r.remote_ref : "")) : num(r.rows || 0) + " rows · " + (r.tables || []).join(", ")), h("span", { class: "small tnum" }, String(r.issued_at || "").replace("T", " ").slice(0, 19))];
     })) : h("p", { class: "small muted" }, prof.recorded ? "The bundle carries each receipt; the console lists them from the deployment." : "No receipt yet.");
     return h("div", { class: "card td" },
       h("div", { class: "td-head" }, h("div", { class: "line" }, pill("MANDATE", "info"), h("b", null, dep.name), h("span", { class: "spacer" }), LIVE.on ? h("button", { class: "btn sm", onclick: function () { DESK.profileFor = null; render(); } }, "Refresh") : null),
-        h("p", { class: "small ink2" }, "What the agent may do here, signed by its principals' quorum: every tool it is bound to and how each call is governed.")),
+        h("p", { class: "small ink2" }, "What the agent may do here, as its principals' quorum signed it: every tool it can call and how each call is governed.")),
       mandates, h("div", { class: "td-sec" }, h("h3", null, "Latest receipts"), receipts));
   }
 
@@ -1474,7 +1508,7 @@
   }
   function receiptBlock(m) {
     var outcome = m.outcome === "committed" ? pill("COMMITTED", "good") : m.outcome === "compensated" ? pill("PUT BACK", "warn") : pill(String(m.outcome || "refused").toUpperCase(), "bad");
-    var stated = m.stated ? "The agent stated " + num(m.stated.rows) + " row(s) in " + (m.stated.tables || []).join(", ") + "; the stage measured " + num(m.rows) + " in " + m.tables.join(", ") + "." : null;
+    var stated = m.stated ? "The agent stated " + num(m.stated.rows) + (m.stated.rows === 1 ? " row in " : " rows in ") + (m.stated.tables || []).join(", ") + "; the stage measured " + num(m.rows) + " in " + m.tables.join(", ") + "." : null;
     return h("div", { class: "receipt" },
       h("div", { class: "line" }, h("span", { class: "rung big" }, m.rung), h("b", null, m.measurement + " on " + (m.substrate || "—")), outcome, h("span", { class: "spacer" }), h("span", { class: "small muted" }, "ARC1 receipt "), hash(m.receipt_id, 8)),
       h("div", { class: "mini-stats" },
@@ -1499,7 +1533,7 @@
     if (ev.halt) kids.push(h("p", { class: "small" }, h("b", null, "Scope paused: "), ev.halt.scope + " · " + ev.halt.reason));
     if (t.halt) kids.push(h("p", { class: "small" }, h("b", null, "Scope paused: "), t.halt.scope + " · " + t.halt.reason));
     if (ev.proposed) kids.push(h("p", { class: "small" }, h("b", null, "Proposes "), "mandate version " + ev.proposed.version + " ", hash(ev.proposed.digest, 12)));
-    if (t.recorded) kids.push(h("p", { class: "small ink2" }, (t.messages ? t.messages + " held outbound message(s). " : "") + "A bundle carries no payloads, rows or arguments, only their digests: it proves who decided what. The console shows the payload and the measured rows from the deployment itself."));
+    if (t.recorded) kids.push(h("p", { class: "small ink2" }, (t.messages ? many(t.messages, "held outbound message") + ". " : "") + "A bundle carries no payloads, rows or arguments, only their digests. It proves who decided what. The console reads the payload and the measured rows from the deployment itself."));
     if (t.statement) kids.push(h("div", { class: "quarantine" }, h("div", { class: "small muted" }, "The agent's statement: an unverified claim, not evidence. No rule reads it."), h("p", null, t.statement)));
     if (t.evidence && !t.measured && !(t.held || []).length && !ev.proposed) kids.push(h("details", null, h("summary", null, "Evidence, as signed"), h("pre", null, JSON.stringify(t.evidence, null, 2))));
     return kids.length ? kids : h("p", { class: "small muted" }, "—");
@@ -1514,20 +1548,27 @@
     var principals = principalsOf(t, dep);
     var decided = {};
     (t.votes || []).forEach(function (v) { decided[v.principal] = v; });
-    var rows = t.options.map(function (o) {
-      return [h("b", null, o.action), h("span", { class: "tnum" }, o.quorum + " of " + principals.length),
-        h("div", null, h("div", { class: "meter sm" }, principals.map(function (_, i) { return h("i", { class: i < o.approved_by.length ? "on" : "" }); })), h("span", { class: "small ink2" }, o.approved_by.join(", ") || "none yet")), pinsOf(o)];
-    });
     var waiting = {};
     (t.pending || []).forEach(function (x) { waiting[x.principal] = x; });
-    var people = h("div", { class: "people" }, principals.map(function (p) {
+    var main = t.options[0] || { quorum: 1, approved_by: [] };
+    var quorum = principals.length ? slots(principals, function (p) {
+      var v = decided[p];
+      if (v) return v.decision === "approve" ? "signed" : "declined";
+      return waiting[p] ? "waiting" : "none";
+    }, main.quorum) : null;
+    var rows = t.options.map(function (o) {
+      return [h("b", { class: "mono" }, o.action), h("span", { class: "mono" }, o.quorum + " of " + principals.length),
+        h("span", { class: "small ink2" }, o.approved_by.join(", ") || "none yet"), pinsOf(o)];
+    });
+    var known = principals.filter(function (p) { return decided[p] || waiting[p]; });
+    var detail = known.length ? h("div", { class: "people" }, known.map(function (p) {
       var v = decided[p], w = waiting[p];
       return h("div", { class: "person" }, h("b", { class: "mono" }, p),
-        v ? (v.decision === "approve" ? pill("APPROVED · " + (v.option || "a narrowing"), "good") : pill("DECLINED", "bad"))
-          : w ? tipOn(pill("SIGNED · IN THE INTAKE", "info"), "Intake #" + w.intake + ": " + w.decision + " " + (w.option || "") + ". The deployment's writer records it on its next turn.") : pill("NOT YET", "permit"),
-        v ? h("span", { class: "small muted" }, "approval ", hash(v.approval, 8)) : w ? h("span", { class: "small muted" }, "waiting for the writer") : null);
-    }));
-    return [table(["Option", "Quorum", "Approved", "Pins"], rows), people];
+        v ? (v.decision === "approve" ? pill("approved " + (v.option || "a narrowing"), "good") : pill("declined", "bad"))
+          : tipOn(pill("signed · in the intake", "info"), "Intake #" + w.intake + ": " + w.decision + " " + (w.option || "") + ". The deployment's writer records it on its next turn."),
+        v ? h("span", { class: "small muted" }, "approval ", hash(v.approval, 8)) : h("span", { class: "small muted" }, "waiting for the writer"));
+    })) : null;
+    return [quorum, h("div", { style: "height:10px" }), table(["Option", "Quorum", "Approved by", "Pins"], rows), detail];
   }
   function principalsOf(t, dep) {
     var list = dep && dep.principals ? dep.principals : [];
@@ -1576,7 +1617,7 @@
     actions.push(h("button", { class: "btn", disabled: DESK.busy ? "disabled" : null, onclick: function () { draftVote(dep, t).then(function () { render(); }).catch(failed(DESK)); } }, "Show what is signed"));
     var note = dep.signs ? "The sandbox holds the demo's keys, so the console signs for the principal you pick and is the writer: it records the vote at once, forms the warrant at quorum and executes it."
       : dep.accepts ? "Your key file is read in this page and never sent: the console gets the signature, checks it under the key the charter pins for " + f.principal + ", and puts the approval into the deployment's intake. The deployment's writer records it."
-        : dep.kind === "recorded" ? "A recorded run: its log is evidence, and the console adds nothing to it. Try votes in the sandbox."
+        : dep.kind === "recorded" ? "This is a recorded run. Its log is evidence, so the console doesn't add to it. Try voting in the sandbox."
           : "This deployment is read-only here. Start the console with --accept-approvals to take signed votes, or submit with fiduciary approve --submit.";
     var d = DESK.draft;
     return h("div", null, form, h("div", { class: "cp-toolbar" }, actions), h("p", { class: "small ink2" }, note),
@@ -1705,8 +1746,8 @@
   function verifyView() {
     var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Offline verification"), h("h2", null, "Verify an audit bundle"),
       h("p", null, LIVE.on
-        ? "Drop any .fidb, fidb/1 or sealed fidb/2. The console runs V1 to V12 on it in process, with no network, against a charter digest pinned from outside the bundle, and this browser checks the parts it can on its own: the container, every member's digest, the hash chain, every record's signature and the seals."
-        : "Drop any .fidb, fidb/1 or sealed fidb/2. This browser checks what it can on its own, with Web Crypto: the container, every member's digest, the hash chain, every record's Ed25519 signature and a sealed bundle's seals. The rest of V1 to V12 needs the verifier: fiduciary verify-bundle."));
+        ? "Drop any .fidb, fidb/1 or sealed fidb/2. The console runs V1 to V12 on it with no network, against a charter digest pinned outside the bundle. This browser also checks what it can on its own: the container, every member's digest, the hash chain, every record's signature and the seals."
+        : "Drop any .fidb, fidb/1 or sealed fidb/2. This browser checks what it can on its own, with Web Crypto: the container, every member's digest, the hash chain, every record's Ed25519 signature and a sealed bundle's seals. The rest of V1 to V12 needs the verifier, fiduciary verify-bundle."));
     var dz = h("div", { class: "dropzone", tabindex: "0", role: "button", "aria-label": "Choose or drop a .fidb bundle",
       onclick: function () { pickFile(".fidb,application/x-tar", function (f) { fileBytes(f).then(function (u8) { verifyBytes(f.name, u8); }); }); },
       onkeydown: function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.currentTarget.click(); } },
@@ -1760,7 +1801,7 @@
     var exit = att ? att.verdict.exit_code : v && v.unreadable ? 2 : v && v.customer ? v.customer.exit_code : null;
     var src = v && v.source === "console" ? "Verified by the console, offline, V1 to V12" + (VER.server.pinned_by ? ", pinned by " + (VER.server.pinned_by === "given" ? "the digest you gave" : VER.server.pinned_by + "'s charter") : "") + "."
       : v && v.source && v.source.indexOf("recorded") === 0 ? (VER.browser ? "These bytes are the bundle this page recorded; " : "") + "its verdict was recorded by fiduciary verify-bundle when this page was built" + (VER.browser ? "." : ". Drop the file to check its bytes here.")
-        : "Only this browser's checks ran: they find a changed byte, a member out of place, a broken chain, a forged signature or a foreign seal, but not what needs the ledger's anchors or a replay of the log. The verdict is V1 to V12: fiduciary verify-bundle " + String(VER.name || "bundle.fidb").split("/").pop() + " --charter <digest> --keys pinned-keys.json" + (LIVE.on ? ", or pin a charter digest above." : ".");
+        : "Only this browser's checks ran. They catch a changed byte, a member out of place, a broken chain, a forged signature or a foreign seal, but not what needs the ledger's anchors or a replay of the log. For the full verdict, run fiduciary verify-bundle " + String(VER.name || "bundle.fidb").split("/").pop() + " --charter <digest> --keys pinned-keys.json" + (LIVE.on ? ", or pin a charter digest above." : ".");
     kids.push(h("div", { class: "ver-head " + (partial ? "part" : passed ? "ok" : "no") },
       h("div", { class: "badge" }, icon(partial ? "layers" : passed ? "shield" : "alert", 18), status), exit !== null ? h("span", { class: "small muted" }, "exit " + exit) : null, h("span", { class: "spacer" }),
       att ? h("button", { class: "btn sm", onclick: function () { download("attestation-" + String(VER.name || "bundle").split("/").pop().replace(/\.fidb$/, "") + ".json", JSON.stringify(att, null, 2) + "\n", "application/json"); } }, icon("down"), "Attestation JSON") : null));
@@ -1770,10 +1811,14 @@
       (bundle || b) ? ["Format", (bundle ? bundle.format : b.format) || "—"] : null, bundle ? ["Lineage", hash(bundle.lineage, 12)] : b && b.lineage ? ["Lineage", hash(b.lineage, 12)] : null,
       bundle ? ["Records", "log " + bundle.range.from + " to " + bundle.range.to + (VER.server && VER.server.notes ? "" : "")] : null,
       v && v.unreadable ? ["Why", v.unreadable] : null]));
+    kids.push(checkGrid(att, b));
     if ((b && b.format === "fidb/2") || (bundle && bundle.format === "fidb/2") || (v && v.customer)) {
       var whole = b ? b.records : v.customer ? v.customer.records : null, withheld = b ? b.withheld : v.customer ? v.customer.withheld : null;
       kids.push(h("div", { class: "seal" }, h("div", { class: "line" }, pill("SEALED · FIDB/2", "info"), h("b", null, num(whole) + " records whole"), h("span", { class: "muted" }, "·"), h("b", null, num(withheld) + " withheld")),
-        h("p", { class: "small ink2" }, "The bundle carries one lineage's records whole; of every other record it carries only its place and hash, which the chain and the ledger's anchors hold in place. Each whole record carries a seal of two tags that the bundle's keys open; a withheld record its keys open would be its own, and fails V10."),
+        h("p", { class: "small ink2" }, "The bundle carries one lineage's records in full. For every other record it carries only the record's position and hash, which the chain and the ledger's anchors hold in place."),
+        h("div", { class: "seal-tags" },
+          h("div", null, h("code", null, "tag = HMAC-SHA-256(key, \"fidb/2 seal\" ‖ [log, seq])"), "Two tags per record, written with it and repeated in its ledger anchor."),
+          h("div", null, h("code", null, "opened by the bundle's keys?"), "Its own records open. A withheld record that opens would be the bundle's own, and V10 fails.")),
         b && Object.keys(b.opened).length ? h("p", { class: "small muted" }, "Opened here by: " + Object.keys(b.opened).map(function (k) { return (k === "all" ? "the log's key" : "lineage " + short(k, 8)) + " (" + b.opened[k] + ")"; }).join(", ") + ".") : null));
     }
     if (b) kids.push(h("div", { class: "td-sec" }, h("h3", null, "Checked in this browser"), b.error ? h("p", { class: "small muted" }, b.error) : h("ul", { class: "bchecks" }, b.checks.map(function (c) {
@@ -1784,6 +1829,19 @@
       checksTable(att, b)));
     if (VER.server && VER.server.notes && VER.server.notes.length) kids.push(h("details", null, h("summary", null, "Verifier notes (" + VER.server.notes.length + ")"), h("ul", { class: "plain small" }, VER.server.notes.map(function (n) { return h("li", null, n); }))));
     return h("div", { class: "card pad ver-result", id: "ver-result", style: "margin-top:14px" }, kids);
+  }
+  function checkGrid(att, b) {
+    var byId = {}; if (att) att.checks.forEach(function (c) { byId[c.id] = c; });
+    var partial = {}; (b && b.checks || []).forEach(function (c) { (partial[c.part] = partial[c.part] || []).push(c.status); });
+    var cells = CHECKS.map(function (c) {
+      var full = byId[c[0]], st = "", word = "not run here";
+      if (full) { st = full.status === "pass" ? "pass" : full.status === "fail" ? "fail" : ""; word = full.status; }
+      else if (partial[c[0]]) { var bad = partial[c[0]].indexOf("fail") >= 0; st = bad ? "fail" : "part"; word = bad ? "fails here" : "partly"; }
+      return tipOn(h("div", { class: "vcell " + st }, h("b", null, c[0]), h("span", null, c[1]), h("em", null, word)),
+        c[0] + " " + c[1] + ": " + word + (full && full.findings.length ? " · " + many(full.findings.length, "finding") : ""));
+    });
+    return h("div", null, h("div", { class: "vgrid" }, cells),
+      h("div", { class: "vgrid-note" }, att ? "V1–V12, as the verifier ran them" : "What this browser could check on its own. The full verdict needs fiduciary verify-bundle."));
   }
   function mappingSource() {
     return RUNS.length ? RUNS[0].attestations[RUNS[0].primary] : null;
@@ -1834,7 +1892,7 @@
     var dom = doms.filter(function (d) { return d.key === SB.key; })[0];
     var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Sandbox"), h("h2", null, LIVE.on ? "Try a call on each kind of system" : "Every call this run recorded, on each kind of system"),
       h("p", null, LIVE.on
-        ? "Each industry's deployment, built fresh in a scratch directory the console removes when it stops: the same engine, mandate, checkers and approvers as the recorded run, on SQL, Git, a Kubernetes API server or a FHIR server. A call goes through the input gateway, then the stack stages and measures it. Nothing here touches a recorded run on disk."
+        ? "Each industry's deployment, built fresh in a scratch directory that the console deletes when it stops. It has the same engine, mandate, checks and approvers as the recorded run, on SQL, Git, a Kubernetes API server or a FHIR server. A call goes through the input gateway, and then the stack stages and measures it. Nothing here touches a recorded run on disk."
         : "The calls this run recorded, each with what the gateway decided and what the stack measured. The console runs new ones in a scratch deployment of each industry: fiduciary demo --out <this directory> --serve."));
     var picker = h("div", { class: "seg dom-seg", role: "group", "aria-label": "Industry" }, doms.map(function (d) {
       return h("button", { "aria-pressed": d.key === SB.key ? "true" : "false", onclick: function () { SB.key = d.key; SB.error = null; render(); } }, rungChip(d.rung, d.substrate), d.industry);
@@ -1891,11 +1949,11 @@
     if (!m) {
       if (c.outcome === "halted") return h("div", { class: "outcome bad" }, icon("alert"), "The scope is paused: " + c.feedback);
       if (c.gateway && c.gateway.decision !== "PERMIT") return h("div", { class: "outcome bad" }, icon("x"), "Not sent: denied by the gateway" + (c.gateway.policies && c.gateway.policies.length ? " (" + c.gateway.policies.join(", ") + ")" : ""));
-      return h("div", { class: "outcome good" }, icon("check"), c.outcome === "served" ? "Served: a read, metered on the ledger" : "Not written: " + c.outcome);
+      return h("div", { class: "outcome good" }, icon("check"), c.outcome === "served" ? "SERVED · a read, metered on the ledger" : "NOT WRITTEN · " + c.outcome);
     }
     var rowsName = (nouns && nouns.rows) || "rows", tablesName = (nouns && nouns.tables) || "tables";
-    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " " + rowsName + ", " + m.outbound.length + " outbound request(s) queued"));
-    else if (m.compensated) kids.push(h("div", { class: "outcome good" }, icon("shield"), "WRITTEN · READ BACK · PUT BACK · the read-back differed from the prediction; nothing of it stands"));
+    if (m.committed) kids.push(h("div", { class: "outcome good" }, icon("check"), "COMMITTED · " + m.rows + " " + rowsName + ", " + many(m.outbound.length, "outbound request") + " queued"));
+    else if (m.compensated) kids.push(h("div", { class: "outcome good" }, icon("shield"), "WRITTEN · READ BACK · PUT BACK · the read-back differed from the prediction, so the write was undone"));
     else kids.push(h("div", { class: "outcome good" }, icon("shield"), "REFUSED BEFORE COMMIT · nothing written" + (c.unchanged ? " · the system is as it was" : "")));
     var parts = Object.keys(m.tenants || {});
     var tables = m.tables;
@@ -1915,7 +1973,7 @@
     var outcome = r.outcome === "committed" ? pill("COMMITTED", "good") : r.outcome === "compensated" ? pill("PUT BACK", "warn") : r.outcome === "halted" ? pill("PAUSED", "warn") : pill(String(r.outcome || "refused").toUpperCase(), "bad");
     var body = h("div", null,
       h("div", { class: "args" }, JSON.stringify(r.arguments)),
-      r.ci ? h("p", { class: "small ink2" }, "CI ran for " + r.ci.package + " " + r.ci.version + ": " + r.ci.accepted + " signed result(s) accepted, " + r.ci.refused + " refused.") : null,
+      r.ci ? h("p", { class: "small ink2" }, "CI ran for " + r.ci.package + " " + r.ci.version + ": " + many(r.ci.accepted, "signed result") + " accepted, " + r.ci.refused + " refused.") : null,
       measuredSummary(r, prof.nouns, prof.partition),
       r.receipts && r.receipts.length ? h("div", { class: "chips", style: "margin-top:8px" }, r.receipts.map(function (x) { return tipOn(h("span", { class: "chip static" }, x.rung + " · " + x.measurement + " · " + x.outcome), "ARC1 receipt " + x.receipt_id + " on " + x.substrate); })) : null,
       r.ticket ? h("div", { class: "callout" }, icon("alert"), h("span", null, h("b", null, "A ticket was raised. "), "It waits for its quorum in the approvals desk."), h("span", { class: "spacer" }),
@@ -1932,10 +1990,10 @@
     var list = h("div", { class: "card pad sb-left" }, h("div", { class: "side-label" }, "Recorded calls · " + dom.industry), h("div", { class: "tk-list" }, calls.map(function (e, i) {
       var m = e.call.measured;
       var tag = e.call.gateway && e.call.gateway.decision !== "PERMIT" ? pill("DENIED", "bad") : m ? (m.committed ? pill("COMMITTED", "good") : m.compensated ? pill("PUT BACK", "warn") : pill("REFUSED", "bad")) : pill(String(e.call.outcome || "—").toUpperCase(), "permit");
-      return h("button", { class: "tk" + (i === pick ? " on" : ""), onclick: function () { SB.step[dom.key] = i; render(); } }, h("span", { class: "tk-top" }, tag, h("b", { class: "mono" }, e.call.tool)), h("span", { class: "tk-id small muted" }, "Act " + e.act.n + " · " + e.act.title));
+      return h("button", { class: "tk" + (i === pick ? " on" : ""), onclick: function () { SB.step[dom.key] = i; render(); } }, h("span", { class: "tk-top" }, tag, h("b", { class: "mono" }, e.call.tool)), h("span", { class: "tk-id small muted" }, "Scenario " + e.act.n + " · " + e.act.title));
     })));
     var shown = calls[pick];
-    var detail = withPage(pg, function () { return shown ? h("div", { class: "card pad call-card latest" }, h("div", { class: "line" }, h("span", { class: "tool" }, shown.call.tool), decisionPill(shown.call.gateway ? shown.call.gateway.decision : null), pill("RECORDED", "permit"), h("span", { class: "spacer" }), h("span", { class: "small muted" }, "Act " + shown.act.n)),
+    var detail = withPage(pg, function () { return shown ? h("div", { class: "card pad call-card latest" }, h("div", { class: "line" }, h("span", { class: "tool" }, shown.call.tool), decisionPill(shown.call.gateway ? shown.call.gateway.decision : null), pill("RECORDED", "permit"), h("span", { class: "spacer" }), h("span", { class: "small muted" }, "Scenario " + shown.act.n)),
       h("p", { class: "small ink2" }, shown.act.lede), h("div", { class: "args" }, JSON.stringify(shown.call.arguments)), PACK ? packMeasured(shown.call) : measuredBlock(shown.call),
       shown.call.feedback ? h("details", null, h("summary", null, "What the agent was told"), h("pre", { class: "small", style: "white-space:pre-wrap" }, shown.call.feedback)) : null) : h("div", { class: "card pad" }, "No call was recorded."); });
     return h("div", { class: "sb-grid" }, list, h("div", { class: "sb-right" }, detail));
@@ -1952,7 +2010,7 @@
   function consoleFooter() {
     return h("footer", null, h("div", { class: "wrap" },
       h("p", null, LIVE.on ? "Served by the console on " + location.host + ", which listens on loopback only, answers only its own origin, and holds no principal's key outside the sandbox." : "This page makes no network requests. Signing and the full V1 to V12 need the console or the command line."),
-      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline: tamper-evident, not tamper-proof.")));
+      h("p", { style: "margin-top:6px" }, "Evidence is signed and can be replayed offline. It makes tampering visible; it can't prevent it.")));
   }
 
   function render() {

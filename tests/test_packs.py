@@ -78,7 +78,7 @@ def test_healthcare(stack: Outcome) -> None:
     m = stop["measured"]
     assert m["compensated"] and m["rows"] == 1 and m["tables"] == {"med_orders": 1}
     assert not _blocking(stop) and stop["outcome"] == "refused" and stop["unchanged"]
-    assert "put_back" in stop["feedback"] and "nothing of the plan stands" in stop["feedback"]
+    assert "put_back" in stop["feedback"] and "the chart is as it was" in stop["feedback"]
     read = cascade["read_back"]
     assert read["before"] == {"active_orders": 3, "scheduled_doses": 25, "voided": 0}
     assert read["after"] == {"active_orders": 3, "scheduled_doses": 25, "voided": 1}
@@ -101,6 +101,7 @@ def test_healthcare(stack: Outcome) -> None:
     receipts = [
         json.loads(line)
         for line in (stack.root / "healthcare" / "receipts.jsonl").read_text().splitlines()
+        if "coverage" in json.loads(line)  # action receipts; the rest are deliveries (1.9.0)
     ]
     assert {r["coverage"].get("measurement") for r in receipts} == {"predicted"}
     assert {r["outcome"]["status"] for r in receipts} == {"committed", "compensated", "refused"}
@@ -140,14 +141,16 @@ def test_sre(stack: Outcome) -> None:
     audit = _act(stack, "sre", "audit")
     reconciled = audit["reconciliation"]
     assert (reconciled["matched"], reconciled["phantom"]) == (4, 1)
-    assert (reconciled["unobserved"], reconciled["out_of_scope"]) == (0, 2), (
-        "the requests to the cloud API are not the cluster's to see"
+    assert (reconciled["unobserved"], reconciled["out_of_scope"]) == (0, 4), (
+        "the requests to the cloud API, and their two delivery receipts (1.9.0), are not "
+        "the cluster's to see"
     )
     assert reconciled["phantoms"] == ["patch deployments/staging/auth"]
     assert (stack.root / "sre" / reconciled["export"]).is_file()
     receipts = [
         json.loads(line)
         for line in (stack.root / "sre" / "receipts.jsonl").read_text().splitlines()
+        if "coverage" in json.loads(line)
     ]
     measured = {r["coverage"].get("measurement", "transactional") for r in receipts}
     assert measured == {"plan-bound", "request-only"}
@@ -172,6 +175,12 @@ def test_supply_chain(stack: Outcome) -> None:
     ]
     assert amend["warrant_before_quorum"] is False
     assert amend["warrant"]["action"] == "reject" and amend["version_after"] == 1
+    reconciled = _act(stack, "supply-chain", "audit")["reconciliation"]
+    assert (reconciled["format"], reconciled["actor"]) == ("records", "erp-integration")
+    assert (reconciled["phantom"], reconciled["unobserved"]) == (1, 0)
+    assert reconciled["phantoms"][0].startswith("purchase_order.send ref_")
+    assert reconciled["matched"] == reconciled["receipts"] == 2
+    assert (stack.root / "supply-chain" / reconciled["export"]).is_file()
 
 
 def test_saas(stack: Outcome) -> None:
@@ -194,6 +203,10 @@ def test_saas(stack: Outcome) -> None:
         # Sealed: no other customer's org key or email domain anywhere in it.
         assert customer["other_labels"] == customer["other_domains"] == 0, customer
         assert customer["domains_where"] == []
+    reconciled = _act(stack, "saas", "audit")["reconciliation"]
+    assert (reconciled["format"], reconciled["actor"]) == ("sendgrid-events", "api")
+    assert reconciled["phantoms"] == ["mail.send ops@initech.example"]
+    assert reconciled["unobserved"] == 0 and reconciled["matched"] == reconciled["receipts"]
     # Initech's own bundle names the support engineer's hand-sent invitation (act 5).
     assert [c["passed"] for c in customers] == [True, True, False, True]
     initech = customers[2]
@@ -306,7 +319,7 @@ def test_one_pack_alone_and_what_the_command_refuses(tmp_path: Path) -> None:
     out = tmp_path / "sre"
     with contextlib.redirect_stdout(io.StringIO()) as printed:
         assert cli.main(["demo", "--domain", "sre", "--gateway", "builtin", "--out", str(out)]) == 0
-    assert "Act 7  Change evidence, verified offline" in printed.getvalue()
+    assert "Scenario 7  Offline audit, and the cluster's own audit log" in printed.getvalue()
     embedded = (out / "demo.json").read_text()
     assert json.loads(embedded)["overview"]["industries"][2]["ran"]
     assert "domains" not in json.loads(embedded)

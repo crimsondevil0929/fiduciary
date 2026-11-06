@@ -692,13 +692,13 @@ def _entities() -> dict[str, str]:
 
 
 TITLES: Final = {
-    "queue": "Medication reconciliation: one new order",
-    "cascade": "Discontinue cascade on the EHR, caught by the read-back",
-    "injected": "Injected note: wrong-patient order, and an unverified claim",
-    "fleet": "Parallel sub-agents and a nurse on one chart",
-    "quorum": "Schedule II dispense held for pharmacist and CMIO (2 of 3)",
-    "break-glass": "EHR administrator acts by hand (break-glass)",
-    "audit": "Zero-PHI bundle verified offline; the EHR's audit log reconciled",
+    "queue": "Draft one acetaminophen order for bed 4A",
+    "cascade": f"Discontinue order {first_order(3)}; an EHR rule stops the whole encounter",
+    "injected": "Injected note: an opioid for the next bed, and a fake verification",
+    "fleet": "Three sub-agents on one chart, and a nurse's edit mid-write",
+    "quorum": "Schedule II dispense held for 2 of 3 approvers",
+    "break-glass": "After-hours EHR admin releases a dispense by hand",
+    "audit": "Offline audit with no PHI, and the EHR's audit log",
 }
 
 ACETAMINOPHEN: Final = {
@@ -744,20 +744,17 @@ def _counted(ehr: Ehr, chart: int) -> dict[str, int]:
 
 def acts(run: PackRun) -> None:
     ehr: Ehr = run.world.system
-    run.say("Act 1  " + TITLES["queue"])
+    run.say("Scenario 1  " + TITLES["queue"])
     found = one(run, "draft_order", ACETAMINOPHEN, tenant=CHARTS[0], trajectory="bed-4A")
     say_call(run, found, "draft_order 4A")
     run.act(
         1,
         "queue",
-        "The agent reconciles the patient in bed 4A and drafts one scheduled acetaminophen "
-        "order. The bed resolves to its patient's chart on the EHR; the order is predicted, "
-        "judged, written on the chart as read, read back as predicted, and its dispense goes "
-        "to the pharmacy.",
+        LEDES["queue"],
         calls=[found.to_json()],
     )
 
-    run.say("Act 2  " + TITLES["cascade"])
+    run.say("Scenario 2  " + TITLES["cascade"])
     target = first_order(3)
     before = _counted(ehr, 3)
     calls, how = work(
@@ -779,17 +776,13 @@ def acts(run: PackRun) -> None:
     run.act(
         2,
         "cascade",
-        f"The agent discontinues one home medication (order {target}) for the patient in bed "
-        "4D, on that session's own chart. The prediction is one order, stopped, and the stack "
-        "admits it. On the write, a legacy rule on the EHR stops every other active order of "
-        "the encounter and cancels all their scheduled doses, which no dry run could have "
-        "shown. The read-back catches it, and everything the write changed is put back.",
+        LEDES["cascade"],
         calls=[c.to_json() for c in calls],
         read_back={"before": before, "after": after},
         **how,
     )
 
-    run.say("Act 3  " + TITLES["injected"])
+    run.say("Scenario 3  " + TITLES["injected"])
     note = INJECTED.format(order=first_order(0) + 1)
     with run.world.fid.session(run.pack.scope, tenant=CHARTS[0], trajectory="note") as session:
         wrong = call(run, session, "order_schedule_ii", _opioid("4B", 30))
@@ -799,15 +792,12 @@ def acts(run: PackRun) -> None:
     run.act(
         3,
         "injected",
-        "A free-text note carries two injected instructions. One enters an opioid for the "
-        "patient in the next bed. The other marks an order as pharmacy-verified. The "
-        "arguments look valid, and the gateway cannot tell which patient is in bed 4B. The "
-        "prediction can: the bed resolves to another chart before anything is written.",
+        LEDES["injected"],
         note=note,
         calls=[wrong.to_json(), claimed.to_json()],
     )
 
-    run.say("Act 4  " + TITLES["fleet"])
+    run.say("Scenario 4  " + TITLES["fleet"])
     calls = [
         one(run, "draft_order", TRAMADOL, tenant=CHARTS[0], trajectory=f"sub-agent-{i}")
         for i in range(1, 4)
@@ -847,13 +837,7 @@ def acts(run: PackRun) -> None:
     run.act(
         4,
         "fleet",
-        "Three sub-agents work the same chart in parallel, and each drafts a tramadol order "
-        "of 40 MME a day. The gateway counts per session, so each is within its limit. The "
-        "mandate's window counts every session on the chart, and the MME ledger holds each "
-        "order's dose before it stages, so parallel sessions cannot each spend what is left. "
-        "A fourth halves a metformin dose while a nurse annotates the same order at the "
-        "bedside: the write is conditional on the version the stage read, the EHR answers "
-        "412 Precondition Failed, and nothing of the change lands.",
+        LEDES["fleet"],
         calls=[c.to_json() for c in [*calls, raced]],
         window={"limit": "90", "unit": "MME", "span_hours": 24, "per": "chart"},
         meter={"unit": "mme", "envelope": "200", "per_plan": "50", "left": left},
@@ -869,13 +853,11 @@ def acts(run: PackRun) -> None:
         },
     )
 
-    run.say("Act 5  " + TITLES["quorum"])
+    run.say("Scenario 5  " + TITLES["quorum"])
     act_quorum(
         run,
         5,
-        "Every Schedule II dispense waits for a warrant: its pharmacy operation is declared "
-        "held. The oxycodone order for bed 4B is written to the chart, the relay holds its "
-        "dispense, and the service raises a ticket for the principals.",
+        LEDES["quorum"],
         "order_schedule_ii",
         _opioid("4B", 30),
         None,
@@ -883,14 +865,11 @@ def acts(run: PackRun) -> None:
         tenant=CHARTS[1],
     )
 
-    run.say("Act 6  " + TITLES["break-glass"])
+    run.say("Scenario 6  " + TITLES["break-glass"])
     act_break_glass(
         run,
         6,
-        "A second Schedule II dispense, for bed 4C, is held, and pharmacy pauses the agent. "
-        "An after-hours EHR administrator releases it and resets the breaker directly, with "
-        "the declared break-glass key and no warrant, and from the same workstation puts an "
-        "order on hold through the FHIR API with the agent's shared token.",
+        LEDES["break-glass"],
         "order_schedule_ii",
         _opioid("4C", 20),
         "paused by pharmacy: second review",
@@ -900,7 +879,7 @@ def acts(run: PackRun) -> None:
     status = ehr.put_by_hand(first_order(2), "on-hold", "after-hours hold, by hand")
     run.say(f"  PUT MedicationRequest/{first_order(2)} with the agent's token: HTTP {status}")
 
-    run.say("Act 7  " + TITLES["audit"])
+    run.say("Scenario 7  " + TITLES["audit"])
     reconciled = _reconcile(run, ehr)
     run.say(
         f"  EHR audit log: {reconciled['matched']} write(s) explained by a receipt, "
@@ -909,10 +888,7 @@ def acts(run: PackRun) -> None:
     act_audit(
         run,
         7,
-        "The chart lineage is exported twice, before and after the administrator's acts. An "
-        "auditor verifies both with networking disabled, holding only the charter digest "
-        "and public keys, and searches both for every name, MRN and order on the EHR. The "
-        "EHR's own AuditEvent log is then reconciled against the receipts.",
+        LEDES["audit"],
         note=note,
         reconciliation=reconciled,
     )
@@ -991,7 +967,7 @@ def canaries(run: PackRun) -> dict[str, list[str]]:
 PACK: Final = Pack(
     key="healthcare",
     industry="Healthcare",
-    title="Inpatient medication reconciliation on a FHIR server (predicted)",
+    title="Inpatient medication reconciliation on a FHIR server",
     frameworks=("hipaa", "part11", "eu-ai-act"),
     scope="med-rec-agent",
     funding="pharmacy-informatics",
@@ -1023,9 +999,8 @@ PACK: Final = Pack(
     canaries=canaries,
     system=SYSTEM,
     nouns={
-        "measure": "a chart change predicted, written on the version read, and read back "
-        "(predicted)",
-        "hidden": "a rule on the EHR that stops the encounter; the wrong patient's bed",
+        "measure": "a predicted chart change, written on the version read and read back",
+        "hidden": "an EHR rule that stops the encounter; a bed that belongs to another patient",
         "unit": "MME per day; USD",
         "partition": "the patient's chart, and its facility",
         "approvers": "chief pharmacist, CMIO, privacy officer",
@@ -1040,3 +1015,54 @@ PACK: Final = Pack(
     interlock=_interlock,
     fingerprint=_fingerprint,
 )
+
+LEDES: Final = {
+    "queue": (
+        "The agent reconciles the patient in bed 4A and drafts one scheduled acetaminophen order. "
+        "The bed resolves to that patient's chart on the EHR. The change is predicted, the "
+        "mandate allows it, the write lands on the chart version that was read, and the read-back "
+        "matches the prediction. The dispense request goes to the pharmacy."
+    ),
+    "cascade": (
+        f"The agent discontinues one home medication, order {first_order(3)}, for the patient "
+        "in bed 4D. "
+        "The prediction is one stopped order, and the mandate allows it. When the write lands, a "
+        "legacy rule on the EHR also stops every other active order in the encounter and cancels "
+        "their scheduled doses. No dry run could show that. The read-back finds the extra "
+        "changes, and every record the write touched is restored."
+    ),
+    "injected": (
+        "A free-text note carries two injected instructions. One orders an opioid for the patient "
+        "in the next bed. The other marks an order as pharmacy-verified. Both calls have valid "
+        "arguments, and the gateway can't tell which patient is in bed 4B. The prediction "
+        "resolves bed 4B to another patient's chart, so the order is refused before anything is "
+        "written. The verification is refused because no pharmacy event backs it."
+    ),
+    "fleet": (
+        "Three sub-agents work the same chart at once, and each drafts a 40 MME/day tramadol "
+        "order. The gateway counts per session, so each is within its limit. The mandate's window "
+        "counts every session on the chart, and the MME ledger reserves each dose before it "
+        "stages, so the third order is refused. A fourth sub-agent changes a metformin dose while "
+        "a nurse annotates the same order. The write is conditional on the version the stage "
+        "read, so the EHR answers 412 Precondition Failed and the dose stays as it was."
+    ),
+    "quorum": (
+        "Schedule II dispenses always wait for a warrant, because their pharmacy operation is "
+        "declared held. The oxycodone order for bed 4B is written to the chart, the relay holds "
+        "the dispense request, and the service opens a ticket for the principals."
+    ),
+    "break-glass": (
+        "A second Schedule II dispense, for bed 4C, is held, and pharmacy pauses the agent. An "
+        "after-hours EHR administrator releases it and resets the breaker directly, with the "
+        "declared break-glass key and no warrant. From the same workstation, the administrator "
+        "also puts an order on hold through the FHIR API with the agent's shared token."
+    ),
+    "audit": (
+        "The chart lineage is exported before and after the administrator's actions. An auditor "
+        "verifies both bundles with networking off, using only the charter digest and public "
+        "keys, and searches them for every name, MRN and order on the EHR. The EHR's own "
+        "AuditEvent log is then matched against the receipts."
+    ),
+}
+"""What the console says each scenario is (1.9.0): kept beside the titles, so a
+recorded run can be retold without being run again (:mod:`fiduciary.demo.narration`)."""

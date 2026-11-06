@@ -63,6 +63,7 @@ from fiduciary.bridge import CallResult, Session, SessionHaltedError
 from fiduciary.bundle import BundleReport, Evidence, TrustedKeys, export_bundle, verify_bundle
 from fiduciary.bundle.export import spec
 from fiduciary.demo.gateway import SESSION_LIMIT_CENTS, Decision, Gateway
+from fiduciary.demo.vendor_logs import STRIPE, VendorLog, reconcile
 from fiduciary.demo.world import (
     ORDERS,
     PRICING,
@@ -103,13 +104,13 @@ MAX_TURNS: Final = 8
 MAX_OUTPUT: Final = 4096
 """Each live turn's ``max_tokens``: the mandate's ``max_output_tokens``."""
 TITLES: Final = {
-    "queue": "Order queue: refund and loyalty discount",
-    "settlement": "Batch settlement cascade (cross-tenant trigger)",
-    "fleet": "Sub-agent fan-out across 50 sessions",
-    "crash": "Relay crash mid-refund (idempotent recovery)",
-    "quorum": "2-of-3 principal quorum approval",
-    "break-glass": "Unauthorized DBA override (break-glass)",
-    "audit": "Offline third-party audit verification",
+    "queue": "Refund and discount: a trigger reprices the order to 10%",
+    "settlement": "One dispute flag reaches 50 orders in four tenants",
+    "fleet": "50 sub-agent sessions against one refund window",
+    "crash": "The relay dies after Stripe answers; the refund is made once",
+    "quorum": "Held refund released by 2 of 3 principals",
+    "break-glass": "DBA releases a held refund and resets the breaker by hand",
+    "audit": "Offline audit of both bundles, and Stripe's event log",
 }
 FLEET: Final = 50
 FLEET_REFUND: Final = "90.00"
@@ -501,10 +502,7 @@ def act_queue(run: Run) -> None:
         run,
         1,
         "queue",
-        "Two support requests: a $12.50 refund and a 10% loyalty discount. Both calls are "
-        "valid and within policy. A legacy trigger on the orders table treats discount_pct "
-        "as the percentage the customer pays, so a 10% discount reprices the order to 10% "
-        "of its total.",
+        LEDES["queue"],
         mode=mode,
         model=run.model or None,
         request=REQUEST,
@@ -544,9 +542,7 @@ def act_settlement(run: Run) -> None:
         run,
         2,
         "settlement",
-        "The agent marks one of its own tenant's orders as disputed. A settlement trigger "
-        "then puts every open order in the same settlement batch on hold, across all four "
-        "tenants.",
+        LEDES["settlement"],
         calls=[found.to_json()],
     )
 
@@ -629,9 +625,7 @@ def act_fleet(run: Run) -> None:
         run,
         3,
         "fleet",
-        f"{FLEET} sub-agent sessions each request a ${FLEET_REFUND} refund. The gateway's "
-        "temporal policy counts refunds per session, so each session stays under its limit. "
-        "The mandate's refund window counts every session of the lineage.",
+        LEDES["fleet"],
         sessions=FLEET,
         permitted=permitted,
         committed=committed,
@@ -714,6 +708,8 @@ class Stripe:
     def __init__(self) -> None:
         self.refunds: dict[str, dict[str, Any]] = {}
         self.requests: list[dict[str, Any]] = []
+        self.log = VendorLog(STRIPE, "stripe")
+        """Stripe's events for the account, as its Events API lists them (1.9.0)."""
 
     def refund(self, delivery: Delivery) -> dict[str, Any]:
         payload = json.loads(delivery.payload)
@@ -727,7 +723,27 @@ class Stripe:
                 "payment_intent": payload["payment_intent"],
                 "status": "succeeded",
             }
+            refund = self.refunds[key]
+            self.log.delivered(
+                "refunds.create",
+                key=key,
+                message=str(delivery.message_id),
+                ref=refund["id"],
+                payload={k: v for k, v in refund.items() if k != "id"},
+            )
         return self.refunds[key]
+
+    def dashboard_refund(self, payment_intent: str, amount: str) -> str:
+        """A refund made in Stripe's Dashboard with the account's own login: no
+        relay, no idempotency key from a plan. Returns its id."""
+        ref = "re_" + hashlib.sha256(f"dashboard {payment_intent}".encode()).hexdigest()[:24]
+        cents = int(Decimal(amount) * 100)
+        self.log.direct(
+            "refunds.create",
+            ref,
+            {"amount": cents, "currency": "usd", "payment_intent": payment_intent},
+        )
+        return ref
 
 
 class _Adapter:
@@ -758,6 +774,7 @@ def _relay(world: World, name: str, stripe: Stripe, **kw: Any) -> tuple[Relay, A
 
 
 def drain(world: World, stripe: Stripe, name: str = "relay-b") -> None:
+    """Deliver what is due, then write a delivery receipt for each delivery."""
     relay, store = _relay(world, name, stripe)
     try:
         for _ in range(200):
@@ -765,6 +782,7 @@ def drain(world: World, stripe: Stripe, name: str = "relay-b") -> None:
                 break
     finally:
         store.close()
+    world.settle("night-shift")
 
 
 def _log(world: World, message: str) -> list[dict[str, Any]]:
@@ -847,9 +865,7 @@ def act_crash(run: Run, stripe: Stripe) -> None:
         run,
         4,
         "crash",
-        "The relay delivering the refund from act 1 crashes after Stripe processes it but "
-        "before the relay records the response. A second relay picks up the message when "
-        "the first relay's lease expires.",
+        LEDES["crash"],
         message=first,
         died=died,
         log=log,
@@ -943,8 +959,7 @@ def act_quorum(run: Run, stripe: Stripe) -> None:
         run,
         5,
         "quorum",
-        "On-call pauses the agent to review refund volume. The relay holds the refund the "
-        "agent had just committed, and the service raises a ticket for the principals.",
+        LEDES["quorum"],
         message=message,
         ticket={
             "id": ticket.ticket_id,
@@ -977,6 +992,10 @@ def act_quorum(run: Run, stripe: Stripe) -> None:
 # --------------------------------------------------------------------------
 
 
+DASHBOARD_ORDER: Final = 33
+"""The order the night-shift administrator refunds in Stripe's Dashboard (act 6)."""
+
+
 def act_break_glass(run: Run, stripe: Stripe) -> None:
     world = run.world
     run.bundles["before"] = export(world, "night-shift-handover")
@@ -994,20 +1013,21 @@ def act_break_glass(run: Run, stripe: Stripe) -> None:
         log.close()
     world.governor.reset(SCOPE)
     drain(world, stripe)
+    dashboard = stripe.dashboard_refund(f"pi_{DASHBOARD_ORDER:010d}", "40.00")
     run.say(
         f"  night-shift key released message {message[:8]} and reset the breaker without a "
         f"warrant; message {world.outbox_states()[message]}"
     )
+    run.say(f"  a refund made in Stripe's Dashboard, outside the relay: {dashboard}")
     _act(
         run,
         6,
         "break-glass",
-        "A second refund is held during a second pause. The night-shift database "
-        "administrator releases it and resets the circuit breaker directly, without a "
-        "ticket or warrant. No agent call is involved, so the gateway sees nothing.",
+        LEDES["break-glass"],
         message=message,
         operator=world.key_id("night-shift"),
         delivered=world.outbox_states()[message],
+        dashboard=dashboard,
     )
 
 
@@ -1161,15 +1181,19 @@ def act_audit(run: Run, stripe: Stripe) -> None:
         for finding in report.findings:
             run.say(f"    {finding.render()[:150]}")
     world.governor.verify_conservation()
+    reconciled = reconcile(world.root, stripe.log)
+    run.say(
+        f"  Stripe events: {reconciled['matched']} matched to a delivery receipt, "
+        f"{reconciled['phantom']} phantom ({', '.join(reconciled['phantoms']) or 'none'})"
+    )
     _act(
         run,
         7,
         "audit",
-        "The lineage is exported twice, before and after the DBA override. An auditor "
-        "verifies both bundles with networking disabled, using only the charter digest and "
-        "the deployment's public keys.",
+        LEDES["audit"],
         verdicts=verdicts,
         conservation="verified",
+        reconciliation=reconciled,
     )
 
 
@@ -1191,5 +1215,55 @@ def run_acts(run: Run) -> None:
         ("audit", lambda: act_audit(run, stripe)),
     )
     for n, (key, step) in enumerate(steps, 1):
-        run.say(f"Act {n}  {TITLES[key]}")
+        run.say(f"Scenario {n}  {TITLES[key]}")
         step()
+
+
+LEDES: Final = {
+    "queue": (
+        "Two support requests arrive: refund $12.50 on one order, and give another a 10% loyalty "
+        "discount. Both calls are valid and within policy, so the gateway allows them. A legacy "
+        "trigger on the orders table reads discount_pct as the share the customer pays, so the "
+        "discount would reprice the order to 10% of its total. The stack measures that, refuses "
+        "the discount and commits the refund."
+    ),
+    "settlement": (
+        "The agent flags one of its own tenant's orders as disputed. A settlement trigger then "
+        "puts every open order in the same batch on hold, 50 orders across all four tenants. The "
+        "stack sees the other tenants' rows in the measured change and rolls the plan back."
+    ),
+    "fleet": (
+        "Fifty sub-agent sessions each ask for a $90.00 refund, $4,500 in all. The gateway counts "
+        "refunds per session, so it permits all fifty. The mandate's refund window counts the "
+        "whole lineage, so only five refunds commit, for $450. The other $4,050 is refused."
+    ),
+    "crash": (
+        "The relay delivering the first scenario's refund dies after Stripe processes it and "
+        "before it records Stripe's answer. When the lease runs out, a second relay picks the "
+        "message up and sends it again with the same idempotency key. Stripe returns the original "
+        "refund, so the customer is refunded once. A forged Stripe webhook is rejected because no "
+        "signature verifies."
+    ),
+    "quorum": (
+        "On-call pauses the agent to review refund volume. The relay holds the refund the agent "
+        "just committed, and the service opens a ticket. The CFO approves twice, but a principal "
+        "counts once. An approval in head-ops' name signed with the night-shift key doesn't count "
+        "either, because that key isn't in the charter. When head-ops approves with their own "
+        "key, two of three is reached and the refund is released."
+    ),
+    "break-glass": (
+        "During a second pause, another refund is held. The night-shift DBA releases it and "
+        "resets the circuit breaker directly, with no ticket and no warrant. No agent call is "
+        f"involved, so the gateway sees nothing. The DBA then refunds order {DASHBOARD_ORDER} from "
+        "Stripe's Dashboard, outside the relay."
+    ),
+    "audit": (
+        "The lineage is exported before and after the DBA's override. An auditor verifies both "
+        "bundles with networking off, using only the charter digest and the deployment's public "
+        "keys. The second bundle fails on the break-glass release. Stripe's event log is then "
+        "matched against the delivery receipts, and the Dashboard refund is the one event no "
+        "receipt explains."
+    ),
+}
+"""What the console says each scenario is (1.9.0): kept beside the titles, so a
+recorded run can be retold without being run again (:mod:`fiduciary.demo.narration`)."""

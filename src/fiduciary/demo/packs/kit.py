@@ -60,6 +60,7 @@ from fiduciary.compiler import Deployment
 from fiduciary.demo.acts import Live, _spent, converse, no_network, scan
 from fiduciary.demo.acts import measured as fintech_measured
 from fiduciary.demo.gateway import Condition, Decision, Policy
+from fiduciary.demo.vendor_logs import VendorLog, reconcile
 from fiduciary.demo.world import DIRECTIVE, PRICING, World, _key
 from fiduciary.documents import Charter, Mandate, ToolBinding
 from fiduciary.keys import load_key
@@ -180,6 +181,18 @@ class Pack:
     sensors: Callable[[Path], tuple[Any, ...]] | None = None
     """The deployment's analyzers, given its root (1.5.0): each is shown
     every diff a stage measures, and signs what it finds."""
+    back_office: Path | None = None
+    """The SQLite database the stage writes, when it is not one the deployment
+    makes of its own (``fiduciary init --substrate sqlite``, 1.9.0): no schema
+    is run in it, and only Interlock's outbox tables are added."""
+    outbox: str | None = None
+    """Where the executor's outbox is, when not in the back office (a PostgreSQL
+    connection string, for ``fiduciary init --substrate postgres``)."""
+    vendor_log: tuple[str, str, str] | None = None
+    """For a pack whose writes go to an outside vendor: the sink, the format
+    the vendor exports its log in, and the actor it records for the relay
+    (:mod:`fiduciary.demo.vendor_logs`, 1.9.0). The audit reconciles that log
+    against the delivery receipts."""
 
 
 # --------------------------------------------------------------------------
@@ -649,16 +662,20 @@ def fiduciary_toml(
     tools: Sequence[Path],
     units: Mapping[str, int] | None = None,
     sealed: bool = False,
+    outbox: str | Path | None = None,
 ) -> str:
     """``fiduciary.toml`` for the deployment under ``root``, as the fintech
     demo writes it: the store, the ledger, ``interlock.toml``, sessions in
     process as the demo runs them, the charter pinned by ``charter``, the
     keys, ``tools``, the ledger of each of ``units`` (code to places), and,
-    ``sealed``, the log's seal key. Every path is absolute."""
+    ``sealed``, the log's seal key. The executor's outbox is ``outbox``, the
+    back office by default. Every path is absolute."""
     root = root.resolve()
     service = root / "keys" / "service.key"
     seal = f"seal_key = {_toml(root / 'keys' / 'seal.key')}\n" if sealed else ""
-    back_office = root / "back_office.db"
+    back_office: str | Path = (
+        outbox if isinstance(outbox, str) else (outbox or root / "back_office.db")
+    )
     return (
         f"database = {_toml(root / 'fiduciary.db')}\n"
         f"ledger = {_toml(root / 'ledger.db')}\n"
@@ -704,6 +721,7 @@ def _write_config(world: PackWorld) -> None:
             tools=tools,
             units=world.deployment.units,
             sealed=True,
+            outbox=world.spec.outbox or world.spec.back_office,
         )
     )
 
@@ -784,11 +802,12 @@ def build(root: Path, pack: Pack) -> PackWorld:
     signers: dict[str, Signer] = {name: _key(root, name) for name in names}
     closers: list[Callable[[], None]] = []
 
-    back_office = root / "back_office.db"
-    with closing(sqlite3.connect(back_office)) as conn:
-        conn.executescript(pack.schema)
-        pack.seed(conn)
-        conn.commit()
+    back_office = pack.back_office or root / "back_office.db"
+    if pack.back_office is None:
+        with closing(sqlite3.connect(back_office)) as conn:
+            conn.executescript(pack.schema)
+            pack.seed(conn)
+            conn.commit()
     install_sqlite_outbox(back_office, pack.sinks, pack.sources)
     (root / "interlock.toml").write_text(interlock_toml(root, pack, back_office))
     specs = [
@@ -960,6 +979,8 @@ class Vendor:
     def __init__(self) -> None:
         self.effects: dict[str, dict[str, Any]] = {}
         self.requests: list[dict[str, Any]] = []
+        self.logs: dict[str, VendorLog] = {}
+        """The vendor's own log of each sink it keeps one for (1.9.0)."""
 
     def send(self, delivery: Delivery) -> DeliveryResult:
         key = delivery.idempotency_key
@@ -972,7 +993,27 @@ class Vendor:
                 "sink": delivery.sink,
                 "payload": json.loads(delivery.payload),
             }
-        return DeliveryResult(DELIVERED, status_code=200, remote_ref=self.effects[key]["id"])
+        effect = self.effects[key]
+        log = self.logs.get(delivery.sink)
+        if log is not None:
+            log.delivered(
+                delivery.operation,
+                key=key,
+                message=str(delivery.message_id),
+                ref=effect["id"],
+                payload=effect["payload"],
+            )
+        return DeliveryResult(DELIVERED, status_code=200, remote_ref=effect["id"])
+
+    def direct(self, sink: str, operation: str, payload: Mapping[str, Any]) -> str:
+        """A request made with the vendor account but not through the relay, as
+        someone with the credentials might send it by hand. Returns its id."""
+        ref = "ref_" + hashlib.sha256(json.dumps([sink, payload]).encode()).hexdigest()[:20]
+        self.effects[ref] = {"id": ref, "sink": sink, "payload": dict(payload)}
+        log = self.logs.get(sink)
+        if log is not None:
+            log.direct(operation, ref, payload)
+        return ref
 
 
 @dataclass
@@ -1016,7 +1057,7 @@ def measured(result: StageResult) -> dict[str, Any]:
     verdict = result.verdict
     found["checkers_run"] = sorted(verdict.checkers_run) if verdict is not None else []
     if result.state.value == "compensated":
-        # Written, read back, and put back (1.6.0): nothing of it stands.
+        # Written, read back, and put back (1.6.0): the system is as it was.
         found["compensated"] = True
     distinct = {(d.table, d.primary_key) for d in (result.diff.deltas if result.diff else ())}
     found["tables"] = dict(sorted(Counter(table for table, _ in distinct).items()))
@@ -1170,6 +1211,7 @@ def _relay(world: PackWorld, name: str, vendor: Vendor) -> tuple[Relay, SqliteOu
 
 
 def drain(world: PackWorld, vendor: Vendor) -> None:
+    """Deliver what is due, then write a delivery receipt for each delivery."""
     relay, store = _relay(world, "relay-b", vendor)
     try:
         for _ in range(200):
@@ -1177,6 +1219,7 @@ def drain(world: PackWorld, vendor: Vendor) -> None:
                 break
     finally:
         store.close()
+    world.settle(world.spec.operator)
 
 
 # --------------------------------------------------------------------------
@@ -1455,6 +1498,14 @@ def act_audit(run: PackRun, n: int, lede: str, **extra: Any) -> None:
             f"calls, {sum(v['scan']['found'].values())} planted values found"
         )
     world.governor.verify_conservation()
+    if run.pack.vendor_log is not None and "reconciliation" not in extra:
+        log = run.vendor.logs[run.pack.vendor_log[0]]
+        extra["reconciliation"] = reconcile(world.root, log)
+        found = extra["reconciliation"]
+        run.say(
+            f"  {log.export}: {found['matched']} matched to a delivery receipt, "
+            f"{found['phantom']} phantom ({', '.join(found['phantoms']) or 'none'})"
+        )
     labels = scan(run.bundles["after"], {"labels": list(run.pack.tenants)})
     run.act(
         n,
