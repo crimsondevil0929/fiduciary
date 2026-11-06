@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.9.0] - unreleased
+## [1.9.0] - 2026-11-05
 
 A new deployment pointed at the system an agent will change; each vendor's own log
 reconciled against what the relays delivered; and a console and demo redrawn and rewritten
