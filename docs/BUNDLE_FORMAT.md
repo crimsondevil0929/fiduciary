@@ -10,9 +10,10 @@ needs nothing else, apart from the formats the bundle carries from its sources:
   `RECEIPTS_SPEC.md`);
 - ILOK1 records and escrow chains (interlock's `ESCROW_SPEC.md`).
 
-`vectors/fidu1/bundles/` holds 34 golden bundles: four valid (one of them
-sealed), and the others each failing one or more checks. `index.json` records,
-for each one, what it is verified with and its verdict (§6).
+`vectors/fidu1/bundles/` holds 37 golden bundles: four valid (one of them
+sealed), and the others each failing one or more checks; three of them carry a
+relay's delivery receipts (§3.5, 1.10.0). `index.json` records, for each one,
+what it is verified with and its verdict (§6).
 
 *Amended in 1.4.0:* a **sealed** bundle (`fidb/2`, §3.4) carries one lineage's
 records whole, and of the log's other records their places and hashes only.
@@ -97,7 +98,7 @@ The fields:
 | `ledger/entries.jsonl` | `ledger` | the footprint's ledger entries, each with its inclusion proof |
 | `ledger/checkpoint.json` | `ledger` | an AgentGov checkpoint of entries `1..cut`, signed by the ledger's checkpoint key |
 | `ledger/cosignatures.json` | `ledger` | witnesses' cosignatures of that checkpoint |
-| `receipts/<receipt_id>.json` | `receipt` | an ARC1 `ReceiptBundle` for each of the lineage's action receipts, and each delivery receipt of one |
+| `receipts/<receipt_id>.json` | `receipt` | an ARC1 `ReceiptBundle` for each of the lineage's action receipts, and each delivery receipt of one (§3.5) |
 | `receipts/transitions.json` | `receipt` | the receipt log's key transitions |
 | `ilok1/runtime.jsonl` | `ilok1` | the lineage's ILOK1 runtime records (recovery, extension) |
 | `ilok1/operators.jsonl` | `ilok1` | operator intents on the lineage's warrants or messages, their outcomes, and every key registration and install record |
@@ -173,9 +174,14 @@ The rules for it:
   "ledger": "ed25519:<hex>",
   "receipts": ["ed25519:<hex>"],
   "runtime": "ed25519:<hex>",
-  "operators": {"<name>": "ed25519:<hex>"}
+  "operators": {"<name>": "ed25519:<hex>"},
+  "relays": ["ed25519:<hex>"]
 }
 ```
+
+`relays` is there only when the bundle holds a delivery receipt a relay attested
+(§3.5): the relay keys among the exporter's that signed one. A bundle without a
+delivery receipt has no `relays`, and its bytes are what they were before 1.10.0.
 
 Each key is trusted in its own way:
 
@@ -186,6 +192,33 @@ Each key is trusted in its own way:
   then uses the pinned ones. Where `keys.json` names a key that differs from a
   pinned one, V1 fails. A role the auditor did not pin is verified under
   `keys.json`'s key, and the report says so.
+- **Relay keys** are compared as a set: `keys.json` names only the relays that
+  attested one of the bundle's deliveries, and each must be pinned (else V1 fails).
+  A pinned relay key the bundle does not name is no difference.
+
+### 3.5 Delivery receipts
+
+*Added in 1.10.0.* A relay delivers each request a committed plan queued, and a
+settler writes an ARC1 delivery receipt for it into the lineage's receipt log:
+bound to the action receipt that committed the request (its id, place and leaf
+hash), signed by the receipt log's key, and carrying the relay's own attestation of
+what the remote system answered, including the id it gave what it made
+(`delivery.remote_ref`). A settler's receipt has no ledger anchor of its own.
+
+The bundle carries a delivery receipt when it carries its action receipt, and:
+
+- when the delivery is anchored in the ledger, at or before the cut, as every
+  other receipt;
+- when it is not, when it precedes, in the receipt log, every receipt anchored
+  after the cut. The receipt log's order stands in for the ledger's, so a bundle
+  cut before a delivery was settled does not hold it.
+
+Each is a `ReceiptBundle` like an action receipt's, with its own inclusion proof.
+V5 checks it with AgentGov's receipt verifier: its signature under a receipt key,
+its inclusion in its checkpoint, its binding to the action receipt the bundle holds
+(a delivery whose action receipt is not in the bundle fails V5), and its relay's
+attestation under the relay key `keys.json` names (or the auditor pinned). An
+attestation by a key neither names is not checked, and the report says so.
 
 ### 3.4 `withheld.json` (`fidb/2` only)
 

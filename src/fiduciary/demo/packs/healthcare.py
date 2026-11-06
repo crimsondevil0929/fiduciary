@@ -68,11 +68,13 @@ from fiduciary.demo.packs.kit import (
     per_session,
     plan_tool,
     prompts,
+    references,
     request,
     say_call,
     secrets,
     work,
 )
+from fiduciary.demo.vendor_logs import SystemLog
 
 CHARTS: Final = ("ch-7f3a91", "ch-2c8e04", "ch-b51d77", "ch-90ae3f")
 BEDS: Final = ("4A", "4B", "4C", "4D")
@@ -880,61 +882,20 @@ def acts(run: PackRun) -> None:
     run.say(f"  PUT MedicationRequest/{first_order(2)} with the agent's token: HTTP {status}")
 
     run.say("Scenario 7  " + TITLES["audit"])
-    reconciled = _reconcile(run, ehr)
-    run.say(
-        f"  EHR audit log: {reconciled['matched']} write(s) explained by a receipt, "
-        f"{reconciled['phantom']} phantom ({', '.join(reconciled['phantoms']) or 'none'})"
-    )
-    act_audit(
-        run,
-        7,
-        LEDES["audit"],
-        note=note,
-        reconciliation=reconciled,
-    )
+    act_audit(run, 7, LEDES["audit"], system=_audit_log(run, ehr), note=note)
 
 
 AUDIT_EXPORT: Final = "audit/fhir-auditevents.ndjson"
 """Where the deployment keeps the EHR's AuditEvent log, as its server wrote it."""
 
 
-def _reconcile(run: PackRun, ehr: Ehr) -> dict[str, Any]:
-    """The EHR's AuditEvent log, written beside the deployment and reconciled
-    against the receipt log, as ``agentgov reconcile-actions`` does it."""
-    from agentgov.receipts import document_from_json
-    from agentgov.receipts.canonical import loads_strict
-    from agentgov.reconciliation import load_actions, reconcile_actions
-
-    root = run.world.root
-    export = root / AUDIT_EXPORT
+def _audit_log(run: PackRun, ehr: Ehr) -> SystemLog:
+    """The EHR's AuditEvent log, written beside the deployment as its server
+    wrote it: the audit matches it against the after bundle's receipts."""
+    export = run.world.root / AUDIT_EXPORT
     export.parent.mkdir(exist_ok=True)
     export.write_text(ehr.server.audit_log())
-    receipts = [
-        document_from_json(loads_strict(line))
-        for line in (root / "receipts.jsonl").read_bytes().splitlines()
-        if line.strip()
-    ]
-    report = reconcile_actions(
-        receipts,
-        load_actions(str(export), fmt="fhir-auditevent"),
-        actors=(AGENT,),
-        substrates=("fhir",),
-    )
-    return {
-        "export": AUDIT_EXPORT,
-        "format": "fhir-auditevent",
-        "actor": AGENT,
-        "matched": len(report.matched),
-        "receipts": len({m.receipt_id for m in report.matched}),
-        "phantom": len(report.phantom),
-        "phantoms": [f"{r.action} {r.resource}" for r in report.phantom],
-        "unobserved": len(report.unobserved),
-        "out_of_scope": report.out_of_scope,
-        "command": (
-            f"agentgov reconcile-actions receipts.jsonl {AUDIT_EXPORT} "
-            f"--format fhir-auditevent --actor {AGENT}"
-        ),
-    }
+    return SystemLog(AUDIT_EXPORT, "fhir-auditevent", (AGENT,), ("fhir",))
 
 
 REQUEST: Final = (
@@ -959,6 +920,7 @@ def canaries(run: PackRun) -> dict[str, list[str]]:
     return {
         "rows": rows,
         "payloads": payloads(run),
+        "references": references(run),
         "prompts": [note, *prompts(run)],
         "secrets": [*secrets(run), ehr.token, ehr.nurse],
     }

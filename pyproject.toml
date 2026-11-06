@@ -1,6 +1,6 @@
 [project]
 name = "interlock-fiduciary"
-version = "1.9.0"
+version = "1.10.0"
 description = "Signed mandates, quorum warrants and offline compliance proofs over Interlock and AgentGov."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,6 +41,13 @@ otel = ["interlock-agentgov[otel]>=1.3.0"]
 cedar = ["cedarpy>=4.12"]
 # `fiduciary demo` with the Cedar engine (the demo runs without it too).
 demo = ["cedarpy>=4.12"]
+
+[project.urls]
+Homepage = "https://crimsondevil0929.github.io/fiduciary/"
+Repository = "https://github.com/crimsondevil0929/fiduciary"
+Documentation = "https://github.com/crimsondevil0929/fiduciary/blob/main/docs/FIDUCIARY_SPEC.md"
+Changelog = "https://github.com/crimsondevil0929/fiduciary/blob/main/CHANGELOG.md"
+Issues = "https://github.com/crimsondevil0929/fiduciary/issues"
 
 [build-system]
 requires = ["hatchling"]

@@ -39,6 +39,16 @@
    "members": "pass",
    "signatures": "pass"
   },
+  "v1-unpinned-relay-key": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "deliveries": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
   "v10-own-record-withheld": {
    "anchors": "fail",
    "chain": "pass",
@@ -122,6 +132,16 @@
    "members": "pass",
    "signatures": "pass"
   },
+  "v5-delivery-attestation-forged": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "deliveries": "fail",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
   "v5-other-receipt-key": {
    "anchors": "pass",
    "chain": "pass",
@@ -153,6 +173,16 @@
    "anchors": "pass",
    "chain": "pass",
    "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "signatures": "pass"
+  },
+  "v7-break-glass-with-deliveries": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "deliveries": "pass",
    "documents": "pass",
    "manifest": "pass",
    "members": "pass",
@@ -349,6 +379,17 @@
    "pins": "pass",
    "signatures": "pass"
   },
+  "v1-unpinned-relay-key": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "deliveries": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "fail",
+   "signatures": "pass"
+  },
   "v10-own-record-withheld": {
    "anchors": "fail",
    "chain": "pass",
@@ -441,6 +482,17 @@
    "pins": "pass",
    "signatures": "pass"
   },
+  "v5-delivery-attestation-forged": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "deliveries": "fail",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
   "v5-other-receipt-key": {
    "anchors": "pass",
    "chain": "pass",
@@ -475,6 +527,17 @@
    "anchors": "pass",
    "chain": "pass",
    "container": "pass",
+   "documents": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "signatures": "pass"
+  },
+  "v7-break-glass-with-deliveries": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "deliveries": "pass",
    "documents": "pass",
    "manifest": "pass",
    "members": "pass",

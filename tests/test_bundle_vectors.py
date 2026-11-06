@@ -49,4 +49,10 @@ def test_the_golden_bundles_pin_every_check_and_exit_code() -> None:
     assert {v["exit_code"] for v in INDEX} == {0, 2, 3, 4, 5, 6, 7, 8, 9}
     assert sum(v["exit_code"] == 0 for v in INDEX) >= 3
     labeled = [v for v in INDEX if any("[break-glass]" in f for f in v["findings"])]
-    assert [v["name"] for v in labeled] == ["v7-break-glass-release"]
+    # The pack's after bundle, and the two derived from it, name its break-glass release too.
+    assert [v["name"] for v in labeled] == [
+        "v1-unpinned-relay-key",
+        "v5-delivery-attestation-forged",
+        "v7-break-glass-release",
+        "v7-break-glass-with-deliveries",
+    ]

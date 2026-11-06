@@ -13,9 +13,12 @@ Multi-tenant SaaS         SendGrid (email)      ``sendgrid-events``: the Event W
 
 The relay sends an idempotency key with every request, and the settler writes a
 delivery receipt that carries the same key and the vendor's id for what it
-created. ``agentgov reconcile-actions`` matches each line of the vendor's export
-to a delivery receipt on those ids. A request someone made around the relay,
-with the same vendor account, matches no receipt and is reported as a phantom.
+created. The lineage's bundle carries those delivery receipts (1.10.0), so
+``fiduciary reconcile-actions after.fidb <export>`` matches each line of the
+vendor's export to one, with no other file from the deployment. A request
+someone made around the relay, with the same vendor account, matches no receipt
+and is reported as a phantom. :class:`SystemLog` describes any system's own log
+the same way: a cluster's audit log, an EHR's AuditEvents, a code host's pushes.
 
 The exports are written under ``audit/`` beside the deployment. They are not
 part of a bundle.
@@ -27,6 +30,7 @@ import base64
 import hashlib
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
@@ -163,40 +167,67 @@ class VendorLog:
         return f"audit/{self.fmt}.json"
 
 
-def reconcile(root: Path, log: VendorLog) -> dict[str, Any]:
-    """Write ``log``'s export beside the deployment, then reconcile it against
-    the receipt log as ``agentgov reconcile-actions`` does. Only receipts of
-    requests to ``log``'s sink are expected in it."""
-    from agentgov.receipts import document_from_json
-    from agentgov.receipts.canonical import loads_strict
-    from agentgov.reconciliation import load_actions, reconcile_actions
+@dataclass(frozen=True, slots=True)
+class SystemLog:
+    """A system's own log, written under the deployment, as an auditor would
+    receive it: where it is (relative to the deployment), its format, the
+    identities the agent acts as in it, and the systems whose writes it sees.
 
+    :param by_actor: Name a phantom by its actor (a push to a branch) rather
+        than by the resource it touched.
+    """
+
+    export: str
+    fmt: str
+    actors: tuple[str, ...] = ()
+    substrates: tuple[str, ...] = ()
+    by_actor: bool = False
+
+    def command(self) -> str:
+        """The command an auditor runs, beside the deployment's bundle."""
+        flags = "".join(f" --actor {a}" for a in self.actors)
+        flags += "".join(f" --substrate {s}" for s in self.substrates)
+        return (
+            f"fiduciary reconcile-actions after.fidb {self.export} --charter "
+            f"$(cat charter.digest) --keys pinned-keys.json --format {self.fmt}{flags}"
+        )
+
+
+def written(root: Path, log: VendorLog) -> SystemLog:
+    """``log``'s export, written beside the deployment: only requests to its
+    sink are expected in it, from the actor the vendor records for the relay."""
     export = root / log.export
     export.parent.mkdir(exist_ok=True)
     export.write_text(log.text())
-    receipts = [
-        document_from_json(loads_strict(line))
-        for line in (root / "receipts.jsonl").read_bytes().splitlines()
-        if line.strip()
-    ]
-    report = reconcile_actions(
-        receipts,
-        load_actions(str(export), fmt=log.fmt),
-        actors=(log.actor,),
-        substrates=(log.sink,),
+    return SystemLog(log.export, log.fmt, (log.actor,), (log.sink,))
+
+
+def reconcile(
+    root: Path, bundle: bytes, log: SystemLog, *, charter: str, keys: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The system's log at ``root / log.export``, matched against the receipts
+    the lineage's bundle carries, as ``fiduciary reconcile-actions`` does it
+    (1.10.0): the bundle is verified first, and holds every action receipt and
+    every delivery receipt the matching needs, so no ``receipts.jsonl`` is read."""
+    from fiduciary.bundle import TrustedKeys
+    from fiduciary.bundle.reconcile import reconcile_bundle, summary
+
+    found = reconcile_bundle(
+        bundle,
+        str(root / log.export),
+        charter=charter,
+        keys=TrustedKeys(dict(keys)),
+        fmt=log.fmt,
+        actors=log.actors,
+        substrates=log.substrates,
     )
+    kept = summary(found)
+    if log.by_actor:
+        kept["phantoms"] = [f"{r.action} by {r.actor}" for r in found.actions.phantom]
     return {
         "export": log.export,
         "format": log.fmt,
-        "actor": log.actor,
-        "matched": len(report.matched),
-        "receipts": len({m.receipt_id for m in report.matched}),
-        "phantom": len(report.phantom),
-        "phantoms": [f"{r.action} {r.resource}" for r in report.phantom],
-        "unobserved": len(report.unobserved),
-        "out_of_scope": report.out_of_scope,
-        "command": (
-            f"agentgov reconcile-actions receipts.jsonl {log.export} --format {log.fmt} "
-            f"--actor {log.actor} --substrate {log.sink}"
-        ),
+        **({"actor": log.actors[0]} if log.actors else {}),
+        **kept,
+        "command": log.command(),
     }

@@ -6,6 +6,61 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-11-06
+
+A bundle now carries the relays' delivery receipts, so an auditor can match a vendor's or
+a system's own log against the bundle alone. And the recorded claude-opus-5-5 run can be
+replayed on today's engine at no cost, so the public site shows the model's real turns
+beside everything 1.9.0 added. Same upstream releases as 1.9.0. Every earlier golden
+bundle verifies to its recorded verdict, byte for byte.
+
+### Added
+
+- **Delivery receipts in bundles** (spec F9-8, `docs/BUNDLE_FORMAT.md` §3.5).
+  - A bundle carries each delivery receipt whose action receipt it carries. A settler's
+    receipt has no ledger anchor, so the receipt log's order stands in for the ledger's:
+    one settled after the bundle's cut is the next bundle's.
+  - `keys.json` names the relay keys that attested them (`relays`), only when there is
+    one. A bundle without a delivery keeps its bytes.
+  - V5 checks each: the receipt log's signature, inclusion in its checkpoint, its
+    binding to the action receipt, and the relay's attestation. The console's
+    in-browser checks do the same with Web Crypto (`report/verify.js`, `deliveries`).
+  - Three golden bundles: a pack's after bundle with two attested deliveries, a relay
+    key the auditor did not pin (V1), and an attestation forged by the receipt log's
+    own key (V5).
+- **`fiduciary reconcile-actions <bundle> <export>`** (spec F9-9). It matches a system's
+  own log (Stripe, SendGrid, EDI records, a Kubernetes audit log, FHIR AuditEvents,
+  GitHub's audit log) against the receipts a bundle carries, with no `receipts.jsonl`.
+  The bundle is verified first, and its receipts are used only when V1, V2 and V5 pass.
+- **`fiduciary demo --replay [RECORDING]`** (`fiduciary.demo.replay`).
+  - It plays every scenario again on the installed engine. Where a recorded model worked
+    one, its recorded turns choose the calls: no model is called, and each turn is
+    metered from its recorded usage, so the ledger shows what the turns cost then.
+  - With no RECORDING, it replays the claude-opus-5-5 recording that ships with
+    fiduciary: six scenarios recorded 2026-10-25 to 2026-11-01, $0.154312 when recorded.
+  - A tool the engine no longer offers, arguments its schema no longer takes, or an
+    outcome that differs from the recording stops the replay (exit 2). Ids the engine
+    mints afresh are mapped, and a tool result worded differently is shown both ways.
+  - A live run now records each turn's usage, so it is a recording itself.
+
+### Changed
+
+- Each industry's audit reconciles its system's log against `after.fidb`, and the
+  command the console shows is `fiduciary reconcile-actions after.fidb ...`.
+- The zero-data scan counts the vendor's ids for what it made apart. Each delivery
+  receipt names one (spec F9-1, amended): it is what the vendor's log is matched on.
+- The public site is built with `--replay`, so it shows the model's recorded turns, all
+  16 bundles and the six reconciliations together.
+- `fiduciary init` ends with the commands to serve the tools and open the approvals desk.
+- The package's PyPI page links to the live console, the repository, the spec, the
+  changelog and the issue tracker. 1.9.0 and earlier linked to nothing.
+
+### Fixed
+
+- `fiduciary demo --domain coding-agent` was refused by the command line, though the
+  pack runs.
+- `report.md` still named each scenario "Act".
+
 ## [1.9.0] - 2026-11-05
 
 A new deployment pointed at the system an agent will change; each vendor's own log

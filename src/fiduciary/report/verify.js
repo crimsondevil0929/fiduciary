@@ -12,10 +12,14 @@
 //   anchors     part of V10  every record in range has a ledger anchor naming its hash; in
 //                            a fidb/2 bundle, none of a withheld record's tags opens under
 //                            the bundle's keys: a withheld record they open is its own
+//   deliveries  part of V5   (when the bundle holds any, 1.10.0) every delivery receipt is
+//                            signed by a receipt key, included in its signed checkpoint,
+//                            attested by a relay key, and bound to an action receipt the
+//                            bundle holds, by id, place and leaf hash
 //
 // Without pinned keys, the keys are the bundle's own (keys.json). The ledger's checkpoint,
 // its proofs and cosignatures (V6), replay (V3, V7, V8, V11, V12), the charter (V2), the
-// compiled policy (V4) and receipts (V5) are fiduciary verify-bundle's.
+// compiled policy (V4) and action receipts (the rest of V5) are fiduciary verify-bundle's.
 //
 // Loaded by the console page (window.FidbVerify) and by Node for its golden-vector test
 // (module.exports). check(bytes, subtle, pins) -> Promise of
@@ -86,6 +90,22 @@
       var reduced = text.slice(0, at) + '"sig":{"alg":"' + sig.alg + '","key_id":"' + sig.key_id + '"}' + text.slice(at + whole.length);
       return subtle.digest("SHA-512", utf8(reduced)).then(function (ab) { return concat(utf8("FIDU1/" + domain + "/v1\n"), new Uint8Array(ab)); });
     }
+    function canon(v) {
+      // ARC1's canonical JSON (RFC 8785 over strings, safe integers, booleans and null):
+      // keys in UTF-16 order, which is what Array.prototype.sort compares.
+      if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+      if (v && typeof v === "object") return "{" + Object.keys(v).sort().map(function (k) { return JSON.stringify(k) + ":" + canon(v[k]); }).join(",") + "}";
+      return JSON.stringify(v);
+    }
+    function arc1Input(domain, body, sig) {
+      // An ARC1 signature covers DOMAIN/v1 || canonical(body with sig := {alg, key_id}), or,
+      // when it names sv 2, DOMAIN/v2 || SHA-512 of that with sv in the header.
+      var header = { alg: sig.alg, key_id: sig.key_id };
+      if (sig.sv === 2) header.sv = 2;
+      var bytes = utf8(canon(Object.assign({}, body, { sig: header })));
+      if (sig.sv !== 2) return Promise.resolve(concat(utf8("ARC1/" + domain + "/v1\n"), bytes));
+      return subtle.digest("SHA-512", bytes).then(function (ab) { return concat(utf8("ARC1/" + domain + "/v2\n"), new Uint8Array(ab)); });
+    }
     function hmac(keyU8, msgU8) {
       return subtle.importKey("raw", keyU8, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]).then(function (k) { return subtle.sign("HMAC", k, msgU8); }).then(function (ab) { return new Uint8Array(ab); });
     }
@@ -117,7 +137,12 @@
       add("documents", "Each document's path names the SHA-256 of its bytes", "V1", docs.length ? "fail" : "pass",
         docs.length ? docs.slice(0, 3).join("; ") + " hash to another digest" : pairs.filter(function (p) { return DOCUMENTS.test(p[0]); }).length + " documents, each at its own digest");
       if (pins && typeof pins === "object") {
-        var differ = Object.keys(pins).filter(function (role) { return !keys || !same(keys[role], pins[role]); });
+        // A bundle names only the relay keys that attested one of its deliveries: each must
+        // be pinned, and a pinned relay key it does not name is no difference (1.10.0).
+        var differ = Object.keys(pins).filter(function (role) {
+          if (role === "relays") return (keys && keys.relays || []).some(function (k) { return (pins.relays || []).indexOf(k) < 0; });
+          return !keys || !same(keys[role], pins[role]);
+        });
         add("pins", "The bundle's keys are the keys pinned", "V1", differ.length ? "fail" : "pass",
           differ.length ? "keys.json differs from the pinned keys: " + differ.join(", ") : Object.keys(pins).length + " roles, each as pinned");
         if (!differ.length) service = pins.service || service;
@@ -136,7 +161,79 @@
           });
         });
       }).catch(function () { ed.ok = false; add("manifest", "The manifest's signature, by the service key", "V9", "skip", "no Ed25519 in this Web Crypto"); });
-    }).then(function () { return logChecks(); }).then(function () { return out; });
+    }).then(function () { return logChecks(); }).then(function () { return deliveryChecks(); }).then(function () { return out; });
+
+    function deliveryChecks() {
+      var bundles = {};
+      Object.keys(by).forEach(function (n) {
+        if (n.indexOf("receipts/") !== 0 || n === "receipts/transitions.json") return;
+        try { bundles[n] = JSON.parse(dec.decode(by[n])); } catch (e) { bundles[n] = null; }
+      });
+      var names = Object.keys(bundles).filter(function (n) { return bundles[n] && bundles[n].receipt && bundles[n].receipt.v === "ARC1-delivery"; });
+      out.deliveries = names.length;
+      if (!names.length) return Promise.resolve();
+      var NAME = "Every delivery receipt: signed, included, attested by its relay, bound to its action";
+      if (!ed.ok) { add("deliveries", NAME, "V5", "skip", "no Ed25519 in this Web Crypto"); return Promise.resolve(); }
+      var actions = {};
+      Object.keys(bundles).forEach(function (n) { var b = bundles[n]; if (b && b.receipt && b.receipt.v === "ARC1") actions[b.receipt.receipt_id] = b.receipt; });
+      var relaySpecs = (pins && pins.relays) || (keys && keys.relays) || [];
+      var receiptSpecs = (pins && pins.receipts) || (keys && keys.receipts) || [];
+      function byId(specs) { return Promise.all(specs.map(function (s) { return keyId(s).then(function (id) { return [id, s]; }); })).then(function (pairs) { var m = {}; pairs.forEach(function (p) { m[p[0]] = p[1]; }); return m; }); }
+      function verifySig(domain, body, sig, ring) {
+        if (!sig || !ring[sig.key_id]) return Promise.resolve(false);
+        return arc1Input(domain, body, sig).then(function (msg) { return edVerify(ring[sig.key_id], msg, sig.signature); });
+      }
+      function strip(doc) { var c = Object.assign({}, doc); delete c.sig; return c; }
+      function leafHash(doc) { return sha("SHA-256", concat(new Uint8Array([0]), utf8(canon(doc)))); }
+      function nodeHash(l, r) { return sha("SHA-256", concat(concat(new Uint8Array([1]), hexBytes(l)), hexBytes(r))); }
+      function included(leaf, proof, root) {
+        // RFC 9162 2.1.3.2: the audit path from leaf proof.leaf_index to a tree of proof.tree_size.
+        var fn = proof.leaf_index, sn = proof.tree_size - 1, path = proof.audit_path || [];
+        if (!(fn <= sn)) return Promise.resolve(false);
+        var step = Promise.resolve(leaf);
+        path.forEach(function (p) {
+          step = step.then(function (r) {
+            if (r === null || sn === 0) return null;
+            var next;
+            if ((fn & 1) || fn === sn) {
+              next = nodeHash(p, r);
+              if (!(fn & 1)) while (!(fn & 1) && fn !== 0) { fn >>= 1; sn >>= 1; }
+            } else next = nodeHash(r, p);
+            fn >>= 1; sn >>= 1;
+            return next;
+          });
+        });
+        return step.then(function (r) { return r !== null && sn === 0 && r === root; });
+      }
+      return Promise.all([byId(receiptSpecs), byId(relaySpecs)]).then(function (rings) {
+        var receiptRing = rings[0], relayRing = rings[1];
+        return Promise.all(names.map(function (n) {
+          var b = bundles[n], d = b.receipt, problems = [];
+          var signed = verifySig("delivery", strip(d), d.sig, receiptRing).then(function (ok) { if (!ok) problems.push("its signature does not verify under a receipt key"); });
+          var checkpoint = b.checkpoint && b.inclusion ? verifySig("checkpoint", strip(b.checkpoint), b.checkpoint.sig, receiptRing).then(function (ok) {
+            if (!ok) { problems.push("its checkpoint is not signed by a receipt key"); return; }
+            if (b.inclusion.tree_size !== b.checkpoint.tree_size) { problems.push("its proof is of another tree size than its checkpoint"); return; }
+            return leafHash(d).then(function (leaf) { return included(leaf, b.inclusion, b.checkpoint.root_hash); }).then(function (ok2) { if (!ok2) problems.push("it is not included in its checkpoint"); });
+          }) : Promise.resolve(problems.push("it carries no checkpoint and proof"));
+          var attestation = relaySpecs.length ? (relayRing[d.attestation && d.attestation.key_id] ? verifySig("attestation", {
+            v: "ARC1-attestation", request: d.request,
+            outcome: { attempt: d.delivery.attempt, result: "delivered", status_code: d.delivery.status_code, response_digest: d.delivery.response_digest, remote_ref: d.delivery.remote_ref }
+          }, d.attestation, relayRing).then(function (ok) { if (!ok) problems.push("its relay attestation does not verify"); }) : Promise.resolve(problems.push("its attestation is by key " + (d.attestation && d.attestation.key_id) + ", no relay key"))) : Promise.resolve();
+          var action = actions[d.action && d.action.receipt_id];
+          var bound = !action ? Promise.resolve(problems.push("the bundle holds no action receipt " + (d.action && d.action.receipt_id))) : leafHash(action).then(function (h) {
+            var at = action.anchors && action.anchors.log;
+            if (!at || at.log_id !== d.action.log_id || at.leaf_index !== d.action.leaf_index) problems.push("it binds another place in the log than its action receipt's");
+            else if (h !== d.action.leaf_hash) problems.push("its action receipt hashes to another leaf than it binds");
+          });
+          return Promise.all([signed, checkpoint, attestation, bound]).then(function () { return problems.length ? n.split("/").pop().slice(0, 8) + ": " + problems[0] : null; });
+        })).then(function (found) {
+          var bad = found.filter(Boolean);
+          add("deliveries", NAME, "V5", bad.length ? "fail" : "pass",
+            bad.length ? bad.slice(0, 3).join("; ") + (bad.length > 3 ? "; and " + (bad.length - 3) + " more" : "")
+              : names.length + " delivery receipt" + (names.length === 1 ? "" : "s") + ", each signed, in its checkpoint, bound to its action receipt" + (relaySpecs.length ? " and attested by a relay key" : "; no relay key named, so no attestation checked"));
+        });
+      }).catch(function (e) { add("deliveries", NAME, "V5", "skip", "could not run: " + (e && e.message)); });
+    }
 
     function logChecks() {
       var lines = by["log.jsonl"] ? dec.decode(by["log.jsonl"]).split("\n").filter(function (l) { return l.length; }) : [];

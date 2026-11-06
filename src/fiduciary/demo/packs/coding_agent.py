@@ -73,6 +73,7 @@ from fiduciary.demo.packs.kit import (
     secrets,
     work,
 )
+from fiduciary.demo.vendor_logs import SystemLog
 from fiduciary.documents.ticket import RefusedEvidence
 
 __all__ = ["GIT", "PACK", "bumped"]
@@ -791,33 +792,20 @@ def acts(run: PackRun) -> None:
     _hotfix(run, repository, start)
 
     run.say("Scenario 7  " + TITLES["audit"])
-    reconciled = _github_audit(run, repository, start)
-    run.say(
-        f"  the code host's audit log: {reconciled['matched']} push(es) explained by a "
-        f"receipt, {reconciled['phantom']} phantom ({', '.join(reconciled['phantoms']) or 'none'})"
-    )
-    act_audit(
-        run,
-        7,
-        LEDES["audit"],
-        reconciliation=reconciled,
-    )
+    act_audit(run, 7, LEDES["audit"], system=_github_audit(run, repository, start))
 
 
 AUDIT_EXPORT: Final = "audit/github-audit.json"
 """Where the deployment keeps the code host's audit log of pushes to main."""
 
 
-def _github_audit(run: PackRun, repository: Repository, start: str) -> dict[str, Any]:
+def _github_audit(run: PackRun, repository: Repository, start: str) -> SystemLog:
     """Every push to main since the substrate took the branch over, as the
     code host's audit log records it (``git.push``, with the commit it moved
-    the branch to), written beside the deployment and reconciled against the
-    receipt log, as ``agentgov reconcile-actions --format github-audit-json``
-    does it. A commit a stage made carries its receipt's commit id; one pushed
-    around the queue carries none a receipt explains."""
-    from agentgov.receipts import document_from_json
-    from agentgov.receipts.canonical import loads_strict
-    from agentgov.reconciliation import load_actions, reconcile_actions
+    the branch to), written beside the deployment for the audit to match
+    against the after bundle's receipts. A commit a stage made carries its
+    receipt's commit id; one pushed around the queue carries none a receipt
+    explains."""
 
     root = run.world.root
     log = _git(
@@ -842,29 +830,9 @@ def _github_audit(run: PackRun, repository: Repository, start: str) -> dict[str,
     export = root / AUDIT_EXPORT
     export.parent.mkdir(exist_ok=True)
     export.write_text(json.dumps(events, indent=1) + "\n")
-    receipts = [
-        document_from_json(loads_strict(line))
-        for line in (root / "receipts.jsonl").read_bytes().splitlines()
-        if line.strip()
-    ]
     # The code host's log sees pushes, so it expects the receipts of writes to
     # the repository, not of the requests the agent sent its CI (1.6.0).
-    report = reconcile_actions(
-        receipts, load_actions(str(export), fmt="github-audit-json"), substrates=("git",)
-    )
-    return {
-        "export": AUDIT_EXPORT,
-        "format": "github-audit-json",
-        "matched": len(report.matched),
-        "receipts": len({m.receipt_id for m in report.matched}),
-        "phantom": len(report.phantom),
-        "phantoms": [f"{r.action} by {r.actor}" for r in report.phantom],
-        "unobserved": len(report.unobserved),
-        "out_of_scope": report.out_of_scope,
-        "command": (
-            f"agentgov reconcile-actions receipts.jsonl {AUDIT_EXPORT} --format github-audit-json"
-        ),
-    }
+    return SystemLog(AUDIT_EXPORT, "github-audit-json", (), ("git",), by_actor=True)
 
 
 def _trailer(repository: Repository) -> str:

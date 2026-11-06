@@ -135,6 +135,38 @@
     "witness": null
   },
   {
+    "about": "keys.json names a relay key the auditor did not pin",
+    "charter": "c62c4ff40d3a95575ee10642595ea9e688928fbe038c41b89455954691360830",
+    "checks": [
+      "V1",
+      "V7"
+    ],
+    "exit_code": 3,
+    "file": "v1-unpinned-relay-key.fidb",
+    "findings": [
+      "V1 malformed: keys.json names relay key ed25519:28505296892f6eba5e3cce8758b481c6a758eee3b22a2734f2be0e897595a6e3, which is not pinned",
+      "V7 ambient: ledger entry 44 (circuit_reset) on procurement-agent: circuit reset without an authorizing warrant",
+      "V7 ambient [break-glass]: operator record 1 (release) by key 8b1583d79f018a21 acted on the lineage's outbox messages without an authorizing warrant"
+    ],
+    "keys": {
+      "ledger": "ed25519:23237c2b492501d15c7b59aa5fd0d6d5f0e48643c0bfb96e96119a2f103bc789",
+      "operators": {
+        "erp-admin": "ed25519:a18120dd0017ce76e0c944030826a3cff908d75caa371d11c11b0899a93c4c6c",
+        "fiduciary": "ed25519:a5d32a0b23181677245e5a03b0233c526ef352491136aaf62bf9bd783d8ad10b"
+      },
+      "receipts": [
+        "ed25519:159fbca3a37d8621a5ab44b83668ef4f7cec1b11cc062e62bd82b7b19e67b491"
+      ],
+      "relays": [],
+      "runtime": "ed25519:a5d32a0b23181677245e5a03b0233c526ef352491136aaf62bf9bd783d8ad10b",
+      "service": "ed25519:a5d32a0b23181677245e5a03b0233c526ef352491136aaf62bf9bd783d8ad10b"
+    },
+    "name": "v1-unpinned-relay-key",
+    "sha256": "a57d091c9151bb0fdb0c9e29585e4aacff5778387aa0c2e9a1e987d1d11193c8",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "the lineage's own session record withheld, the manifest signed again: its seal says it is the lineage's",
     "charter": "6907f671ea513b52351840c964946cfab0a5c1e1059415272f89b53ab565bb1e",
     "checks": [
@@ -384,6 +416,41 @@
     "witness": null
   },
   {
+    "about": "a delivery receipt re-signed by the receipt log's key, its relay attestation forged",
+    "charter": "c62c4ff40d3a95575ee10642595ea9e688928fbe038c41b89455954691360830",
+    "checks": [
+      "V5",
+      "V7"
+    ],
+    "exit_code": 4,
+    "file": "v5-delivery-attestation-forged.fidb",
+    "findings": [
+      "V5 signature: receipt bdbbcba0-84e6-4a9f-8bb5-8cb734453b36: relay attestation: the attestation's ed25519 signature does not verify under key 489c643d5ef7dd5b: it was altered after signing, or was never signed by that key",
+      "V7 ambient: ledger entry 44 (circuit_reset) on procurement-agent: circuit reset without an authorizing warrant",
+      "V7 ambient [break-glass]: operator record 1 (release) by key 8b1583d79f018a21 acted on the lineage's outbox messages without an authorizing warrant"
+    ],
+    "keys": {
+      "ledger": "ed25519:23237c2b492501d15c7b59aa5fd0d6d5f0e48643c0bfb96e96119a2f103bc789",
+      "operators": {
+        "erp-admin": "ed25519:a18120dd0017ce76e0c944030826a3cff908d75caa371d11c11b0899a93c4c6c",
+        "fiduciary": "ed25519:a5d32a0b23181677245e5a03b0233c526ef352491136aaf62bf9bd783d8ad10b"
+      },
+      "receipts": [
+        "ed25519:159fbca3a37d8621a5ab44b83668ef4f7cec1b11cc062e62bd82b7b19e67b491"
+      ],
+      "relays": [
+        "ed25519:28505296892f6eba5e3cce8758b481c6a758eee3b22a2734f2be0e897595a6e3",
+        "ed25519:e9d69706a9ac1f2a10b014856e39346415dbafe80077d8c94733ec5e7210ff29"
+      ],
+      "runtime": "ed25519:a5d32a0b23181677245e5a03b0233c526ef352491136aaf62bf9bd783d8ad10b",
+      "service": "ed25519:a5d32a0b23181677245e5a03b0233c526ef352491136aaf62bf9bd783d8ad10b"
+    },
+    "name": "v5-delivery-attestation-forged",
+    "sha256": "061214d5cda01b54a5f27e8491a6dc8c52cb5233284ef98777e9127769c9872d",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "receipts verified under a key that did not sign them",
     "charter": "a3c6bf5d0b6ed119a062c26588d83c0862bad9b46b99c5f01f33ecc53a45a839",
     "checks": [
@@ -504,6 +571,39 @@
     },
     "name": "v7-break-glass-release",
     "sha256": "f009cea816f0a7ccaed151ff8c25f7b3f3ffbfab86b20e075ae38c14388c4f71",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "the supply-chain pack's after bundle: two EDI deliveries a relay attested pass V5; the break-glass release fails V7",
+    "charter": "c62c4ff40d3a95575ee10642595ea9e688928fbe038c41b89455954691360830",
+    "checks": [
+      "V7"
+    ],
+    "exit_code": 7,
+    "file": "v7-break-glass-with-deliveries.fidb",
+    "findings": [
+      "V7 ambient: ledger entry 44 (circuit_reset) on procurement-agent: circuit reset without an authorizing warrant",
+      "V7 ambient [break-glass]: operator record 1 (release) by key 8b1583d79f018a21 acted on the lineage's outbox messages without an authorizing warrant"
+    ],
+    "keys": {
+      "ledger": "ed25519:23237c2b492501d15c7b59aa5fd0d6d5f0e48643c0bfb96e96119a2f103bc789",
+      "operators": {
+        "erp-admin": "ed25519:a18120dd0017ce76e0c944030826a3cff908d75caa371d11c11b0899a93c4c6c",
+        "fiduciary": "ed25519:a5d32a0b23181677245e5a03b0233c526ef352491136aaf62bf9bd783d8ad10b"
+      },
+      "receipts": [
+        "ed25519:159fbca3a37d8621a5ab44b83668ef4f7cec1b11cc062e62bd82b7b19e67b491"
+      ],
+      "relays": [
+        "ed25519:28505296892f6eba5e3cce8758b481c6a758eee3b22a2734f2be0e897595a6e3",
+        "ed25519:e9d69706a9ac1f2a10b014856e39346415dbafe80077d8c94733ec5e7210ff29"
+      ],
+      "runtime": "ed25519:a5d32a0b23181677245e5a03b0233c526ef352491136aaf62bf9bd783d8ad10b",
+      "service": "ed25519:a5d32a0b23181677245e5a03b0233c526ef352491136aaf62bf9bd783d8ad10b"
+    },
+    "name": "v7-break-glass-with-deliveries",
+    "sha256": "a57d091c9151bb0fdb0c9e29585e4aacff5778387aa0c2e9a1e987d1d11193c8",
     "skew_seconds": 5,
     "witness": null
   },

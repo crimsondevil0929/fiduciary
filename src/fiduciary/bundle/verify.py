@@ -426,6 +426,7 @@ class _Keys:
     receipts: Keyring
     runtime: Keyring
     operators: dict[str, str]
+    relays: Keyring
 
 
 def _trusted(bundle: _Bundle, keys: TrustedKeys | None, report: BundleReport) -> _Keys:
@@ -448,6 +449,17 @@ def _trusted(bundle: _Bundle, keys: TrustedKeys | None, report: BundleReport) ->
             report.add(
                 "V1", "malformed", "keys.json has different receipt keys from the pinned ones"
             )
+    if "relays" in pinned and "relays" in named:
+        unpinned = sorted(set(named["relays"] or ()) - set(pinned["relays"] or ()))
+        if unpinned:
+            report.add(
+                "V1", "malformed", f"keys.json names relay key {unpinned[0]}, which is not pinned"
+            )
+    elif named.get("relays"):
+        report.notes.append(
+            "the relay key(s) come from the bundle's own keys.json, not from the auditor: "
+            "pin them with --keys"
+        )
     chosen = {role: pinned.get(role, named.get(role)) for role in named.keys() | pinned.keys()}
     service = chosen.get("service")
     operators = dict(chosen.get("operators") or {})
@@ -457,6 +469,7 @@ def _trusted(bundle: _Bundle, keys: TrustedKeys | None, report: BundleReport) ->
         receipts=_keyring(chosen.get("receipts") or ()),
         runtime=_keyring([chosen.get("runtime") or ""]),
         operators=operators,
+        relays=_keyring(chosen.get("relays") or ()),
     )
 
 
@@ -773,22 +786,50 @@ class _Checks:
         actions = {
             name: b for name, b in self.b.receipts.items() if isinstance(b.receipt, ActionReceipt)
         }
+        deliveries = unattested = 0
         for name, bundle in sorted(self.b.receipts.items()):
             action = None
+            relays = None
             if isinstance(bundle.receipt, DeliveryReceipt):
+                deliveries += 1
                 action = actions.get(bundle.receipt.action.receipt_id)
+                if action is None:
+                    self.add(
+                        "V5",
+                        "evidence",
+                        f"receipt {name}: a delivery of action receipt "
+                        f"{bundle.receipt.action.receipt_id}, which the bundle does not hold",
+                    )
+                    continue
+                # A relay's attestation is checked under the relay keys pinned or
+                # named (1.10.0); one by a key neither names is noted, not failed.
+                if bundle.receipt.attestation.key_id in self.k.relays:
+                    relays = list(self.k.relays)
+                else:
+                    unattested += 1
             report = verify_receipt(
                 bundle,
                 issuer_key=self.k.receipts,
                 log_key=self.k.receipts,
                 transitions=self.b.transitions or None,
                 action=action,
+                relay_keys=relays,
             )
             if not report.passed:
                 failure = report.first_failure
                 text = f"{failure.name}: {failure.detail}" if failure is not None else "fails"
                 kind = "signature" if "signature" in text else "evidence"
                 self.add("V5", kind, f"receipt {name}: {text}")
+        if unattested:
+            self.r.notes.append(
+                f"{unattested} delivery receipt(s) carry a relay attestation by a key "
+                f"keys.json does not name: their attestations were not checked"
+            )
+        if deliveries:
+            self.r.notes.append(
+                f"{deliveries} delivery receipt(s): each signed by the receipt log and bound "
+                f"to the action receipt that committed its request"
+            )
         # What a receipt's effect is worth: one measured short of a transaction
         # says so, and the report names how many (ARC1 1.3 coverage.measurement).
         classes: dict[str, int] = {}

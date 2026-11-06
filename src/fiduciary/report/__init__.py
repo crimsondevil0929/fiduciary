@@ -181,15 +181,21 @@ def markdown(data: Mapping[str, Any]) -> str:
         ]
         model = page["demo"].get("model")
         if model:
+            replayed = model.get("replay")
+            how = (
+                f"recorded {replayed['recorded_at'][:10]} and replayed on this engine at no cost"
+                if replayed
+                else "live"
+            )
             out.append(
-                f"- **Live model:** {model['served']} ran scenario 2 in {model['turns']} turn(s), "
-                f"{model['usage'].get('input_tokens', 0)} input and "
+                f"- **Model:** {model['served']} ran scenario 2 ({how}) in {model['turns']} "
+                f"turn(s), {model['usage'].get('input_tokens', 0)} input and "
                 f"{model['usage'].get('output_tokens', 0)} output tokens, "
                 f"${model['metered']} metered"
             )
         out.append("")
         for act in page["demo"]["acts"]:
-            out.append(f"- **Act {act['n']}: {act['title']}.** {act['lede']}")
+            out.append(f"- **Scenario {act['n']}: {act['title']}.** {act['lede']}")
         out.append("")
     mappings = data["attestations"][primary].get("mappings")
     if mappings:

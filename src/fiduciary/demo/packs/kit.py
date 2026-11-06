@@ -60,7 +60,7 @@ from fiduciary.compiler import Deployment
 from fiduciary.demo.acts import Live, _spent, converse, no_network, scan
 from fiduciary.demo.acts import measured as fintech_measured
 from fiduciary.demo.gateway import Condition, Decision, Policy
-from fiduciary.demo.vendor_logs import VendorLog, reconcile
+from fiduciary.demo.vendor_logs import SystemLog, VendorLog, reconcile, written
 from fiduciary.demo.world import DIRECTIVE, PRICING, World, _key
 from fiduciary.documents import Charter, Mandate, ToolBinding
 from fiduciary.keys import load_key
@@ -1376,6 +1376,7 @@ def evidence(world: PackWorld) -> Evidence:
         outbox=world.outbox,
         service=world.signers["service"],
         sealer=Sealer(seal_key(pack)),
+        relay_keys=[world.signers[n].public_key() for n in ("relay-a", "relay-b")],
     )
 
 
@@ -1412,6 +1413,7 @@ def pinned(world: PackWorld) -> dict[str, Any]:
             "fiduciary": service,
             world.spec.operator: key_spec(world.signers[world.spec.operator].public_key()),
         },
+        "relays": sorted(key_spec(world.signers[n].public_key()) for n in ("relay-a", "relay-b")),
     }
 
 
@@ -1482,9 +1484,12 @@ def verdict(
     }
 
 
-def act_audit(run: PackRun, n: int, lede: str, **extra: Any) -> None:
+def act_audit(
+    run: PackRun, n: int, lede: str, *, system: SystemLog | None = None, **extra: Any
+) -> None:
     """Both bundles, verified with sockets refused, and scanned for every
-    row, payload and secret the deployment holds."""
+    row, payload and secret the deployment holds; then ``system``'s own log
+    (or the pack's vendor's) matched against the after bundle's receipts."""
     world = run.world
     run.bundles["after"] = export(world, "morning-shift")
     planted = run.pack.canaries(run)
@@ -1498,13 +1503,22 @@ def act_audit(run: PackRun, n: int, lede: str, **extra: Any) -> None:
             f"calls, {sum(v['scan']['found'].values())} planted values found"
         )
     world.governor.verify_conservation()
-    if run.pack.vendor_log is not None and "reconciliation" not in extra:
-        log = run.vendor.logs[run.pack.vendor_log[0]]
-        extra["reconciliation"] = reconcile(world.root, log)
-        found = extra["reconciliation"]
+    if system is None and run.pack.vendor_log is not None:
+        system = written(world.root, run.vendor.logs[run.pack.vendor_log[0]])
+    if system is not None:
+        # The system's own log, matched against the after bundle's receipts: an
+        # auditor needs the bundle and the log, nothing else (1.10.0).
+        found = reconcile(
+            world.root,
+            run.bundles["after"],
+            system,
+            charter=world.charter.digest,
+            keys=pinned(world),
+        )
+        extra["reconciliation"] = found
         run.say(
-            f"  {log.export}: {found['matched']} matched to a delivery receipt, "
-            f"{found['phantom']} phantom ({', '.join(found['phantoms']) or 'none'})"
+            f"  {system.export}, against after.fidb: {found['matched']} matched to a "
+            f"receipt, {found['phantom']} phantom ({', '.join(found['phantoms']) or 'none'})"
         )
     labels = scan(run.bundles["after"], {"labels": list(run.pack.tenants)})
     run.act(
@@ -1538,6 +1552,12 @@ def prompts(run: PackRun) -> list[str]:
     return [p for p in run.prompts if len(p) >= 12]
 
 
+def references(run: PackRun) -> list[str]:
+    """The ids the stand-in vendor gave what it made: a delivery receipt names
+    each, so the scan counts them as disclosed, not leaked (1.10.0)."""
+    return sorted({str(item["id"]) for item in run.vendor.effects.values()})
+
+
 def payloads(run: PackRun) -> list[str]:
     """Every value the stand-in vendor received or answered with, as text:
     what an agent's arguments put in a payload, not the constants a signed
@@ -1546,7 +1566,6 @@ def payloads(run: PackRun) -> list[str]:
     labels = set(run.pack.tenants)
     found: set[str] = set()
     for item in run.vendor.effects.values():
-        found.add(item["id"])
         for value in item["payload"].values():
             text = str(value)
             if len(text) >= 6 and text not in bound and text not in labels:

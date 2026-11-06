@@ -2,7 +2,8 @@
 
 Run from the repository root: ``python scripts/make_bundles.py``. It runs the
 bundle tests' scenarios on SQLite (``tests/test_bundle.py``,
-``tests/test_bundle_checks.py``, ``tests/test_sealed_bundles.py``), keeps the
+``tests/test_bundle_checks.py``, ``tests/test_sealed_bundles.py``,
+``tests/test_bundle_deliveries.py``), keeps the
 bundle each one verified, and derives the tampered ones from a valid bundle.
 ``--add NAME ...`` records only those scenarios, and the bundles derived from
 them, and keeps every other bundle as it was recorded. ``index.json`` records, for
@@ -144,6 +145,19 @@ SCENARIOS = {
         "test_a_sealed_bundle_carries_its_lineage_whole_and_withholds_the_rest",
         "fidb/2: one child's lineage whole, its sibling's and its parent's sessions withheld",
     ),
+    "v7-break-glass-with-deliveries": (
+        "test_a_bundle_carries_its_delivery_receipts",
+        "the supply-chain pack's after bundle: two EDI deliveries a relay attested pass V5; "
+        "the break-glass release fails V7",
+    ),
+    "v1-unpinned-relay-key": (
+        "test_a_relay_key_the_auditor_did_not_pin_is_named",
+        "keys.json names a relay key the auditor did not pin",
+    ),
+    "v5-delivery-attestation-forged": (
+        "test_a_forged_attestation_is_named",
+        "a delivery receipt re-signed by the receipt log's key, its relay attestation forged",
+    ),
 }
 
 
@@ -162,6 +176,7 @@ def _record(captured: Path, names: set[str]) -> dict[str, Any]:
             "tests/test_bundle.py",
             "tests/test_bundle_checks.py",
             "tests/test_sealed_bundles.py",
+            "tests/test_bundle_deliveries.py",
             "-k",
             " or ".join(tests),
         ],
@@ -174,6 +189,8 @@ def _record(captured: Path, names: set[str]) -> dict[str, Any]:
 
 def _captured(captured: Path, test: str) -> dict[str, Any]:
     stem = test if "[" in test else f"{test}[sqlite]"
+    if not (captured / f"{stem}.fidb").exists():
+        stem = test  # a test that runs on one store only
     data = (captured / f"{stem}.fidb").read_bytes()
     found: dict[str, Any] = json.loads((captured / f"{stem}.json").read_text())
     return {"data": data, **found}

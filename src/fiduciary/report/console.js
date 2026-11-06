@@ -358,17 +358,18 @@
   }
   function actQueue(x) {
     var calls = x.calls;
+    var turnsOf = x.model ? transcriptOf(x.model) : [];
     var liveNote = x.mode === "live" && x.model ? h("div", { class: "callrow", style: "background:var(--stack-wash)" },
-      h("div", { class: "line" }, pill("LIVE", "info"), h("b", null, x.model.served), h("span", { class: "small muted" }, x.model.turns + " turns · effort " + x.model.effort + " · " + x.model.seconds + " s")),
-      h("div", { class: "small ink2", style: "margin-top:4px" }, num(x.model.usage.input_tokens || 0) + " input / " + num(x.model.usage.output_tokens || 0) + " output tokens · " + money(x.metered, 4) + " metered to the session's budget"),
+      modelHead(x.model, x.metered),
       x.model.answer ? h("details", { open: true }, h("summary", null, "the model's final reply"), h("pre", null, x.model.answer),
-        h("p", { class: "small muted", style: "margin-top:6px" }, "The agent only learns that the plan lowered orders.total by more than the 30% limit. It can't see the repricing trigger that turned a 10% discount into a 90% drop, so from its side the limit looks wrong.")) : null) : null;
+        h("p", { class: "small muted", style: "margin-top:6px" }, "The agent only learns that the plan lowered orders.total by more than the 30% limit. It can't see the repricing trigger that turned a 10% discount into a 90% drop, so from its side the limit looks wrong.")) : null,
+      turnsOf.length ? h("details", null, h("summary", null, "full transcript, " + turnsOf.length + " turns"), turnsOf) : null) : null;
     var right = calls.map(function (c) { return h("div", { class: "callrow" }, h("div", { class: "line", style: "margin-bottom:6px" }, h("span", { class: "tool" }, c.tool), h("span", { class: "args", style: "margin:0" }, JSON.stringify(c.arguments))), measuredBlock(c)); });
     var permitted = calls.filter(function (c) { return c.gateway && c.gateway.decision === "PERMIT"; }).length;
     var committed = calls.filter(function (c) { return c.outcome === "committed"; }).length;
     var refused = calls.filter(function (c) { return c.outcome === "refused"; }).length;
     return [h("div", { class: "split" },
-      gatewaySide([h("p", { class: "small", style: "margin-bottom:8px" }, h("b", null, x.mode === "live" ? "Live model run." : "Replayed call sequence, no model."), " ", h("span", { class: "ink2" }, "Request: “" + x.request + "”")), liveNote, calls.map(function (c) { return callRow(c); })]),
+      gatewaySide([h("p", { class: "small", style: "margin-bottom:8px" }, h("b", null, x.mode === "live" ? (x.model && x.model.replay ? "Recorded model run, replayed." : "Live model run.") : "Fixed call sequence, no model."), " ", h("span", { class: "ink2" }, "Request: “" + x.request + "”")), liveNote, calls.map(function (c) { return callRow(c); })]),
       stackSide(right)),
       verdictLine(permitted + " of " + calls.length + " allowed", committed + " committed, " + refused + " rolled back after measuring the change")];
   }
@@ -558,7 +559,7 @@
         h("div", { class: "tablewrap" }, h("table", null,
           h("thead", null, h("tr", null, ["Bundle", "Verdict", "Findings", "Network calls", "Members", "Planted values found", "SHA-256"].map(function (t) { return h("th", null, t); }))),
           h("tbody", null, rows))),
-        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for " + many(scan.planted.rows, "customer name") + ", " + many(scan.planted.payloads, "payment ID") + ", " + many(scan.planted.prompts, "prompt or reply text", "prompt and reply texts") + " and " + many(scan.planted.secrets, "private key or secret", "private keys and secrets") + ", each as written and as a SHA-256 hash. Ledger conservation " + x.conservation + "."),
+        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for " + many(scan.planted.rows, "customer name") + ", " + many(scan.planted.payloads, "payment ID") + ", " + many(scan.planted.prompts, "prompt or reply text", "prompt and reply texts") + " and " + many(scan.planted.secrets, "private key or secret", "private keys and secrets") + ", each as written and as a SHA-256 hash." + disclosed(scan) + " Ledger conservation " + x.conservation + "."),
         x.reconciliation ? actionsBlock(x.reconciliation) : null])),
       verdictLine("its own decisions only", "both bundles verified offline against keys pinned outside them, and the DBA override is reported")];
   }
@@ -584,7 +585,9 @@
   }
   function theatre() {
     if (PACK) return packTheatre();
-    var live = DEMO.mode === "live" ? "The first scenario was run live by " + (DEMO.model ? DEMO.model.served : "a model") + "." : "The first scenario replays a fixed call sequence. Pass --live to run it with a model.";
+    var live = DEMO.mode === "live" ? "The first scenario was run live by " + (DEMO.model ? DEMO.model.served : "a model") + "."
+      : DEMO.mode === "replay" ? "In the first scenario " + (DEMO.model ? DEMO.model.served : "a model") + " chooses the calls: its recorded turns, replayed on this engine with no model call."
+      : "The first scenario replays a fixed call sequence. Pass --live to run it with a model.";
     return h("section", { id: "theatre" }, h("div", { class: "wrap" },
       h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Fintech · scenarios"), h("h2", null, "The same calls, through a gateway and through the stack"),
         h("p", null, "Each scenario sends the same tool calls to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + live + " Every figure was measured during the run, which took " + DEMO.seconds + " s.")),
@@ -664,6 +667,13 @@
         return h("li", null, h("span", { class: "sev blocking" }, "unmediated " + w.what), h("span", { class: "small" }, h("code", null, short(w.commit, 10)), " by " + (w.by || "unknown") + ", " + w.at + ": no stage made it"));
       })) : h("p", { class: "small" }, "Every commit carries a stage the chain records as committed."));
   }
+  function disclosed(scan) {
+    // 1.10.0: each delivery receipt names the vendor's id for what it made, and the
+    // scan counts those apart from what must never be in a bundle.
+    var refs = scan && scan.references;
+    if (!refs || !refs.of) return "";
+    return " The bundle names " + refs.named + " of the " + many(refs.of, "id") + " the vendor gave what it made, one in each delivery receipt. Those ids are what the vendor's log is matched on, so they are counted apart.";
+  }
   function reconciled(r) {
     var by = r.actor ? " by " + r.actor : "";
     var said = [r.matched
@@ -675,8 +685,11 @@
     return said.join(" ");
   }
   function actionsBlock(r) {
+    var source = r.bundle_receipts === undefined ? null
+      : "Matched against after.fidb and nothing else from the deployment: the bundle holds " + many(r.bundle_receipts, "receipt") + (r.bundle_deliveries ? ", " + many(r.bundle_deliveries, "delivery receipt") + " among them" : "") + ", and its container, charter and receipts verify.";
     return h("div", { class: "callrow", style: "margin-top:10px" }, h("div", { class: "line" }, pill("SYSTEM OF RECORD", r.phantom ? "warn" : "good"), h("span", { class: "small muted" }, r.export + " · " + r.format)),
       h("p", { class: "small ink2", style: "margin-top:4px" }, reconciled(r)),
+      source ? h("p", { class: "small muted", style: "margin-top:4px" }, source) : null,
       r.phantoms.length ? h("ul", { class: "findings" }, r.phantoms.map(function (w) { return h("li", null, h("span", { class: "sev blocking" }, "phantom"), h("span", { class: "small" }, w + " is in the system's log, and no receipt explains it.")); })) : null,
       h("p", { class: "small muted" }, h("code", null, r.command)));
   }
@@ -749,10 +762,27 @@
   function noteBlock(text) {
     return h("div", { class: "callrow note" }, h("div", { class: "line" }, pill("instruction in the input", "warn")), h("pre", null, text));
   }
-  function liveBlock(x) {
-    var m = x.model, u = m.usage || {};
-    var turns = (m.transcript || []).map(function (t) {
-      return h("div", { class: "turn" }, h("div", { class: "small muted" }, "Turn " + t.turn + " · " + t.stop),
+  function modelHead(m, metered) {
+    // A live model, or a recorded one replayed on this engine (1.10.0): which, when it
+    // was recorded, and how this engine answered it differently.
+    var u = m.usage || {}, r = m.replay;
+    var head = [h("div", { class: "line" }, pill(r ? "RECORDED · REPLAYED" : "LIVE", "info"), h("b", null, m.served), h("span", { class: "small muted" }, m.turns + " turns · effort " + m.effort + " · " + m.seconds + " s")),
+      h("div", { class: "small ink2", style: "margin-top:4px" }, num(u.input_tokens || 0) + " input / " + num(u.output_tokens || 0) + " output tokens · " + money(metered, 4) + " metered to the session's budget by AgentGov" + (m.halted ? " · stopped: " + m.halted : ""))];
+    if (!r) return head;
+    var renamed = Object.keys(r.renamed || {});
+    head.push(h("p", { class: "small", style: "margin-top:6px" }, "Recorded " + short(r.recorded_at, 10) + " on fiduciary " + r.recorded_with + ", and replayed here on this run's engine. The model's turns are as recorded, and no model was called: each turn was metered from its recorded usage, so the ledger shows what the turns cost then (" + money(r.recorded_metered, 6) + "). Everything the stack did with them was done again in this run." + (r.usage_per_turn === "ledger" ? " The recording kept each turn's cost, and its tokens are split to match it." : "")));
+    if (renamed.length) head.push(h("p", { class: "small muted" }, "This run minted its own ids, so the model's text quotes the recorded ones: " + renamed.map(function (k) { return k + " is " + r.renamed[k] + " here"; }).join(", ") + "."));
+    if ((r.results_changed || []).length) head.push(h("details", null, h("summary", null, many(r.results_changed.length, "tool result") + " worded differently by this engine, with the same outcome"),
+      r.results_changed.map(function (c) {
+        return h("div", { class: "tx call" }, h("span", { class: "tool" }, c.tool),
+          h("div", { class: "tx-r" }, h("span", { class: "tx-k" }, "What the model saw"), h("pre", null, c.recorded)),
+          h("div", { class: "tx-r" }, h("span", { class: "tx-k" }, "What this engine says"), h("pre", null, c.now)));
+      })));
+    return head;
+  }
+  function transcriptOf(m) {
+    return (m.transcript || []).map(function (t, i) {
+      return h("div", { class: "turn" }, h("div", { class: "small muted" }, "Turn " + (t.turn || i + 1) + " · " + t.stop),
         t.blocks.map(function (b) {
           if (b.type === "reasoning") return h("div", { class: "tx reasoning" }, h("span", { class: "tx-k" }, "Reasoning (summary)"), h("pre", null, b.text));
           if (b.type === "text") return h("div", { class: "tx" }, h("span", { class: "tx-k" }, "Model"), h("pre", null, b.text));
@@ -760,9 +790,12 @@
             h("div", { class: "tx-r" + (b.error ? " err" : "") }, h("span", { class: "tx-k" }, b.error ? "Returned (refused)" : "Returned"), h("pre", null, b.result)));
         }));
     });
+  }
+  function liveBlock(x) {
+    var m = x.model, u = m.usage || {};
+    var turns = transcriptOf(m);
     return h("div", { class: "callrow", style: "background:var(--stack-wash)" },
-      h("div", { class: "line" }, pill("LIVE", "info"), h("b", null, m.served), h("span", { class: "small muted" }, m.turns + " turns · effort " + m.effort + " · " + m.seconds + " s")),
-      h("div", { class: "small ink2", style: "margin-top:4px" }, num(u.input_tokens || 0) + " input / " + num(u.output_tokens || 0) + " output tokens · " + money(x.metered, 4) + " metered to the session's budget by AgentGov" + (m.halted ? " · stopped: " + m.halted : "")),
+      modelHead(m, x.metered),
       h("p", { class: "small", style: "margin-top:6px" }, h("span", { class: "ink2" }, "Request: “" + x.request + "”")),
       m.answer ? h("details", { open: true }, h("summary", null, "the model's final reply"), h("pre", null, m.answer)) : null,
       turns.length ? h("details", null, h("summary", null, "full transcript, " + turns.length + " turns"), turns) : null);
@@ -856,7 +889,7 @@
         h("div", { class: "tablewrap" }, h("table", null,
           h("thead", null, h("tr", null, ["Bundle", "Verdict", "Findings", "Network calls", "Members", "Planted values found", "SHA-256"].map(function (t) { return h("th", null, t); }))),
           h("tbody", null, rows))),
-        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for " + many(scan.planted.rows, "record value") + " from the database, " + many(scan.planted.payloads, "payload value") + " the vendor received, " + many(scan.planted.prompts, "injected instruction") + " and " + many(scan.planted.secrets, "private key or secret", "private keys and secrets") + ", each as written and as a SHA-256 hash. Ledger conservation " + x.conservation + "."),
+        h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for " + many(scan.planted.rows, "record value") + " from the database, " + many(scan.planted.payloads, "payload value") + " the vendor received, " + many(scan.planted.prompts, "injected instruction") + " and " + many(scan.planted.secrets, "private key or secret", "private keys and secrets") + ", each as written and as a SHA-256 hash." + disclosed(scan) + " Ledger conservation " + x.conservation + "."),
         x.labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "The bundle names " + x.labels.named + " of the " + x.labels.known + " " + x.labels.partition + " keys, in " + many(x.labels.members, "member") + ", because session records and receipts say which " + x.labels.partition + " each action was for. The keys are opaque, and no record behind them is in the bundle.") : null,
         x.reconciliation ? actionsBlock(x.reconciliation) : null])),
       verdictLine("its own decisions only", "both bundles verified offline against keys pinned outside them, and the break-glass change is reported")];
@@ -886,7 +919,9 @@
   var PACK_ACTS = { quorum: packQuorum, amend: actAmend, "break-glass": packBreakGlass, audit: packAudit, "trust-center": actTrust, race: actRace, warrant: actGitWarrant, hotfix: actHotfix };
   function packTheatre() {
     var where = PACK.nouns.substrate === "Git" ? "Git repository and hooks" : PACK.nouns.state === "chart" ? "EHR and its server rules" : "schema and triggers";
-    var live = DEMO.mode === "live" && DEMO.model ? "Scenario 2 was run live by " + DEMO.model.served + ". The others replay a fixed sequence with no model." : "The calls replay a fixed sequence with no model. Pass --live to have a model run scenario 2.";
+    var live = DEMO.mode === "live" && DEMO.model ? "Scenario 2 was run live by " + DEMO.model.served + ". The others replay a fixed sequence with no model."
+      : DEMO.mode === "replay" && DEMO.model ? "In scenario 2 " + DEMO.model.served + " chooses the calls: its recorded turns, replayed on this engine with no model call. The others replay a fixed sequence."
+      : "The calls replay a fixed sequence with no model. Pass --live to have a model run scenario 2.";
     return h("section", { id: "theatre" }, h("div", { class: "wrap" },
       h("div", { class: "sec-head" }, h("span", { class: "kicker" }, PACK.industry + " · scenarios"), h("h2", null, PACK.title),
         h("p", null, "The same engine as every other industry here, on this one's own " + where + ", mandate and approvers (" + PACK.principals.join(", ") + "). Each tool call goes to an input gateway (Cedar policies, " + DEMO.gateway.engine + ") and to the stack. " + live + " Every figure was measured during the run, which took " + DEMO.seconds + " s.")),
@@ -1691,7 +1726,7 @@
     var out = [];
     RUNS.forEach(function (pg) {
       var d = pg.demo && pg.demo.domain ? pg.demo.domain : null, dir = d && PAGES.length > 1 && pg !== ROOT ? d.key + "/" : "";
-      Object.keys(pg.attestations).forEach(function (n) { out.push({ path: dir + n + ".fidb", label: (d ? d.industry : PACK ? PACK.industry : "Fintech") + " · " + n + ".fidb", att: pg.attestations[n], page: pg }); });
+      Object.keys(pg.attestations).forEach(function (n) { out.push({ path: dir + n + ".fidb", label: (d ? d.industry : "Fintech") + " · " + n + ".fidb", att: pg.attestations[n], page: pg }); });
       if (pg.demo) pg.demo.acts.forEach(function (x) {
         if (x.key === "trust-center") x.customers.forEach(function (c) { out.push({ path: dir + c.file, label: (d ? d.industry : "") + " · " + c.customer + " (sealed)", customer: c, page: pg }); });
       });
@@ -1746,8 +1781,8 @@
   function verifyView() {
     var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Offline verification"), h("h2", null, "Verify an audit bundle"),
       h("p", null, LIVE.on
-        ? "Drop any .fidb, fidb/1 or sealed fidb/2. The console runs V1 to V12 on it with no network, against a charter digest pinned outside the bundle. This browser also checks what it can on its own: the container, every member's digest, the hash chain, every record's signature and the seals."
-        : "Drop any .fidb, fidb/1 or sealed fidb/2. This browser checks what it can on its own, with Web Crypto: the container, every member's digest, the hash chain, every record's Ed25519 signature and a sealed bundle's seals. The rest of V1 to V12 needs the verifier, fiduciary verify-bundle."));
+        ? "Drop any .fidb, fidb/1 or sealed fidb/2. The console runs V1 to V12 on it with no network, against a charter digest pinned outside the bundle. This browser also checks what it can on its own: the container, every member's digest, the hash chain, every record's signature, the seals and each relay's delivery receipt."
+        : "Drop any .fidb, fidb/1 or sealed fidb/2. This browser checks what it can on its own, with Web Crypto: the container, every member's digest, the hash chain, every record's Ed25519 signature, a sealed bundle's seals and each relay's delivery receipt. The rest of V1 to V12 needs the verifier, fiduciary verify-bundle."));
     var dz = h("div", { class: "dropzone", tabindex: "0", role: "button", "aria-label": "Choose or drop a .fidb bundle",
       onclick: function () { pickFile(".fidb,application/x-tar", function (f) { fileBytes(f).then(function (u8) { verifyBytes(f.name, u8); }); }); },
       onkeydown: function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.currentTarget.click(); } },

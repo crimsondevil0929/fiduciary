@@ -2,7 +2,8 @@ name: Pages
 
 # The console as a public, static page (https://crimsondevil0929.github.io/fiduciary/),
 # with the demo's bundles beside it and SHA256SUMS to pin both. Built from the commit by
-# `fiduciary demo --domain all` (offline, no model, no secret) on every pull request;
+# `fiduciary demo --domain all --replay` (offline: claude-opus-5-5's recorded turns,
+# replayed on this commit's engine; no model call, no secret) on every pull request;
 # deployed from main only.
 
 on:
