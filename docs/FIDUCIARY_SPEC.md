@@ -2056,7 +2056,7 @@ of them.
 | `fiduciary mandate draft`, `check`, `diff`, `compile`, `propose`, `issue`, `bind`, `derive`, `amend`, `revoke`, `expire`, `show` | Manage mandates. `check` runs `refines` against the parent. `compile` prints the compiled policy and its digest. `derive` signs a child with the service key and issues it. `amend` issues an approved version through the binder (§6.4). `expire` ends every lineage past its term. |
 | `fiduciary tool digest <module:binding>` | Print a binding's digest, for pinning: a file, or `module:name` (a binding `fiduciary.Tool` built in code) |
 | `fiduciary approve <ticket or document> --key <file>` or `--signer <name>` | Sign an approval on the principal's own machine, from the rendered bytes. Needs no database credential. |
-| `fiduciary tickets list`, `show` | Show open tickets and their evidence, rendered as F7-3 requires |
+| `fiduciary tickets list`, `show [--out FILE]` | Show open tickets and their evidence, rendered as F7-3 requires. `--out` also writes the ticket's signed bytes, for `fiduciary approve FILE` on a principal's own machine. *(Amended in 1.10.1.)* |
 | `fiduciary warrant show`, `fiduciary resolve` | Inspect warrants; resolve interrupted executions |
 | `fiduciary serve [--node N] [--bridge HOST:PORT] [--metrics HOST:PORT]` | Run the service under a supervisor (§10.7): the writer (binder, intake and bridge), triggers, settler, executor and metrics, alone or as a node of a cluster. `SIGHUP` opens every key again; `SIGTERM` drains and stops. |
 | `fiduciary mcp serve`, `proxy` | Run the MCP bridge: one session per process, over stdio, or Streamable HTTP with `--http HOST:PORT` (`--token-file`, `--tls-cert`, `--tls-key`). The process also judges the intake and executes the warrants formed, since it holds the quotes and proposals they name (F7-14). |
@@ -2312,6 +2312,24 @@ system an agent will change, with starter tool bindings for it (`fiduciary.start
   `interlock_stage_id` variable gets `interlock_stage.tf`, the marker Interlock reads back
   on recovery, and init says it added it. The README init writes gives the substrate's
   remaining setup steps.
+- **F10-34.** *Added in 1.10.1.* **The writer serves the agent, and init says what it will
+  refuse.**
+  - A deployment init writes for a substrate runs as one writer: `fiduciary serve` holds
+    the ledger and serves the agent's tools on `127.0.0.1:8765`. Its `fiduciary.toml`
+    names that `[bridge]`, and one agent, by the SHA-256 of the bearer token init wrote to
+    `keys/agent.token` (mode 0600). A SQLite ledger has one governor process at a time, so
+    a separate `mcp serve` beside the writer could not open it; `mcp serve` still runs one
+    stdio session while the writer is stopped. An MCP server's deployment (`--mcp`) runs as
+    `mcp proxy`, which records approvals and carries out warrants between messages, as
+    before.
+  - On SQLite, init reads each table's triggers. A trigger that writes a table `--table`
+    left out makes every plan that fires it an unobserved write. A trigger that writes
+    another observed table makes the plan more than the starter mandate's one row. Init
+    names each such trigger, and the README it writes says why it will be refused.
+  - The README init writes ends with the bundle's export and offline verification for the
+    deployment, its mandate and charter digest written in.
+  - `docs/QUICKSTART.md` takes a deployment from init to a 2-of-3 amendment and an offline
+    bundle, and `tests/test_quickstart.py` runs it as written.
 
 ---
 
@@ -2705,6 +2723,7 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-23 (1.8.0): the page's bundle checks | 1.8.0 | the module run by Node over all 35 golden bundles: no false alarm; every V1, V9 or V10 failure caught with pinned keys; each outcome pinned | Implemented (1.8.0). `test_browser_verifier.py`; the site's bundles, `scripts/check_site.py` |
 | F10-25 to F10-27: notices | 1.8.0 | a held ticket, its warrant and execution told in order and signed; a failure retried as the same notice; Slack and PagerDuty shapes; the configuration's refusals; the CLI against a local receiver | Implemented (1.8.0). `test_notify.py` |
 | F10-28 to F10-30: `fiduciary init` | 1.8.0 | each annotation's governance; a tool the grammar cannot hold left out; a deployment run as written: the proxy, a read, a released write, a held one ticketed, two votes, the warrant executed, the relay's calls on the server; a live model through the proxy | Implemented (1.8.0). `test_init.py`; `scripts/init_live.py` |
+| F10-34: the writer serves the agent; init's cautions; the quickstart | 1.10.1 | the bridge's token and configuration; a trigger beyond `--table`, and one beyond the one-row limit, each named; `docs/QUICKSTART.md` run as written, from init to a 2-of-3 amendment and a bundle that passes | Implemented (1.10.1), SQLite. `test_init_substrates.py`, `test_quickstart.py` |
 | F10-31 to F10-33: `fiduciary init --substrate` | 1.9.0 | each of the six substrates written and served through `fiduciary mcp serve`: an allowed write committed, a wider one refused before anything changed; a keyless SQLite table by `rowid`; PostgreSQL's stage role, `grants.sql` and a signed install; Terraform's marker added; the missing-argument refusals | Implemented (1.9.0), SQLite; PostgreSQL where the test DSN is set; Terraform where `tofu` or `terraform` is installed. `test_init_substrates.py` |
 | F10-20 (1.9.0): delivery receipts in the desk | 1.9.0 | a sandbox's receipts include the relay's delivery receipts, shown request-only on their sink | Implemented (1.9.0). `test_interactive_console.py` |
 | F10-18: upgrades in place | 6 | stores each 0.x release wrote, on both stores | Implemented. `test_upgrade.py` |

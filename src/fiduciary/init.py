@@ -95,6 +95,8 @@ class InitReport:
     substrate: str = "mcp"
     notes: list[dict[str, str]] = field(default_factory=list)
     """What init changed outside the deployment's directory (a starter's), and why."""
+    cautions: list[dict[str, str]] = field(default_factory=list)
+    """What the target does that the starter mandate will refuse (1.10.1)."""
 
 
 def discover(command: Sequence[str], *, timeout: float = 30.0) -> list[dict[str, Any]]:
@@ -412,6 +414,7 @@ def init(
             tools=list(st.report),
             skipped=list(st.skipped),
             notes=list(st.notes),
+            cautions=list(st.cautions),
         )
         world = kit.build(root, _starter_pack(label, trio, st))
         try:
@@ -423,6 +426,7 @@ def init(
                     leftover.unlink()
             for name, text in st.files.items():
                 (root / name).write_text(text, encoding="utf-8")
+            _bridge(root, report.scope)
             _write_report(root, report, None, target)
         finally:
             world.close()
@@ -461,6 +465,57 @@ def init(
     return report
 
 
+BRIDGE: Final = "127.0.0.1:8765"
+"""Where ``fiduciary serve`` listens for the agent, on loopback (1.10.1)."""
+
+
+def _bridge(root: Path, scope: str) -> None:
+    """The agent's way in while the writer runs (1.10.1): ``fiduciary serve`` holds the
+    deployment's governor and serves the bridge on :data:`BRIDGE`, and the agent opens
+    sessions there with the bearer token in ``keys/agent.token``. A SQLite ledger has one
+    governor at a time, so a separate ``mcp serve`` process cannot run beside the writer.
+    The configuration holds the token's SHA-256 only (F10-3)."""
+    import hashlib
+    import os
+    import secrets
+
+    token = secrets.token_urlsafe(32)
+    path = root / "keys" / "agent.token"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as out:
+        out.write(token + "\n")
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    with (root / "fiduciary.toml").open("a", encoding="utf-8") as config:
+        config.write(
+            f'[bridge]\nhttp = "{BRIDGE}"\n'
+            f'[bridge.agents.agent]\nmandate = "{scope}"\ntoken_sha256 = "{digest}"\n'
+        )
+
+
+def _audit(root: Path) -> str:
+    """How an auditor exports and checks this deployment's bundle (1.10.1): the mandate
+    and the charter digest written in, the keys pinned from this directory."""
+    from fiduciary.documents import Charter, Mandate
+
+    mandate = Mandate.loads((root / "mandate.json").read_bytes()).mandate_id
+    charter = Charter.loads((root / "charter.json").read_bytes()).digest
+    return f"""## Audit it offline
+
+```
+fiduciary --config fiduciary.toml export-bundle --mandate {mandate} \\
+    --ledger-key keys/ledger-checkpoints.key --out lineage.fidb
+fiduciary verify-bundle lineage.fidb --charter {charter}
+```
+
+`verify-bundle` needs no database and no network: hand an auditor the bundle and the
+charter digest above, and the public keys to pin with `--keys`. It checks V1 to V12 and
+exits 0 when the bundle passes. Drop the bundle on the console's Verify page to check it in
+a browser. A system that keeps its own log of writes (Stripe, SendGrid, Kubernetes, FHIR,
+GitHub) can be matched against the bundle with `fiduciary reconcile-actions lineage.fidb
+<export> --charter {charter}`.
+"""
+
+
 def _write_report(
     root: Path, report: InitReport, command: Sequence[str] | None, target: Target | None
 ) -> None:
@@ -473,6 +528,7 @@ def _write_report(
                 "substrate": report.substrate,
                 "tools": report.tools,
                 "skipped": report.skipped,
+                "cautions": report.cautions,
                 "upstream": list(command or []),
             },
             indent=2,
@@ -528,11 +584,9 @@ Written by `fiduciary init`. Every path in the configuration files is absolute.
 ## Run it
 
 ```
-# the agent's MCP server: only the tools the mandate pins, governed as above
+# the agent's MCP server: only the tools the mandate pins, governed as above; between
+# messages it also records approvals, forms warrants and carries them out
 fiduciary --config fiduciary.toml mcp proxy --mandate {report.scope} -- {upstream}
-
-# the writer: records approvals, forms warrants and executes them
-fiduciary --config fiduciary.toml serve
 
 # the relay: each released request made on the MCP server
 interlock relay --config interlock.toml --relay-id relay-a
@@ -541,12 +595,14 @@ interlock relay --config interlock.toml --relay-id relay-a
 fiduciary console --dir . --accept-approvals --open
 ```
 
+{_audit(report.root)}
 ## The principals' keys
 
 `keys/{p1}.key`, `keys/{p2}.key` and the third sign approvals, and adopted this charter.
 Move each to its principal, who signs with it in `fiduciary console` (the key file is read
 in the page and never sent) or with
-`fiduciary approve <ticket> --principal {p1} --key {p1}.key --submit`, and delete it here.
+`fiduciary tickets show <ticket> --out ticket.json` then
+`fiduciary approve ticket.json --principal {p1} --key {p1}.key --submit`, and delete it here.
 """
 
 
@@ -580,6 +636,12 @@ def _substrate_readme(report: InitReport, target: Target) -> str:
         or "| (none) | | |"
     )
     skipped = "\n".join(f"- `{s['name']}`: {s['why']}" for s in report.skipped)
+    cautions = "".join(f"- **Trigger `{c['name']}`**: {c['why']}.\n" for c in report.cautions)
+    caution = (
+        f"\nWhat init found in the target that the starter mandate refuses:\n\n{cautions}"
+        if cautions
+        else ""
+    )
     p1, _, _ = report.principals
     return f"""# {report.scope}
 
@@ -597,7 +659,7 @@ files is absolute.
 - A call whose measured change goes further than the mandate allows (a trigger's extra
   rows, a guarded path, a replacement) is refused before anything changes, and the agent is
   told why. Allowing more takes a new mandate version, issued by two of the three principals.
-{_left_out(skipped)}
+{caution}{_left_out(skipped)}
 These are starter tools. Edit them under `tools/`, sign them again with `keys/developer.key`,
 and issue a new mandate version that pins them.
 
@@ -608,16 +670,24 @@ and issue a new mandate version that pins them.
 ## Run it
 
 ```
-# the agent's tools, over MCP
-fiduciary --config fiduciary.toml mcp serve --mandate {report.scope}
-
-# the writer: approvals recorded, warrants formed and executed
+# the writer: the agent's tools on http://{BRIDGE}/mcp, approvals recorded,
+# warrants formed and carried out
 fiduciary --config fiduciary.toml serve
+
+# the agent connects with the bearer token in keys/agent.token; with Claude Code:
+claude mcp add --transport http {report.scope} http://{BRIDGE}/mcp \\
+  --header "Authorization: Bearer $(cat keys/agent.token)"
 
 # the approvals desk, in the browser
 fiduciary console --dir . --accept-approvals --open
 ```
 
+One session can also run over stdio while the writer is stopped:
+`fiduciary --config fiduciary.toml mcp serve --mandate {report.scope}`. The ledger has one
+writer process at a time, so the two take turns. `fiduciary.toml` holds only the token's
+SHA-256; keep `keys/agent.token` with the agent.
+
+{_audit(report.root)}
 ## The principals' keys
 
 `keys/{p1}.key` and the other two principals' keys sign approvals, and adopted the charter.
