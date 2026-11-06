@@ -297,6 +297,28 @@ output tokens that what is left of the cap buys, after the turn's input tokens, 
 API counts. `stack_dashboard.py --keep` keeps the packs a recorded run already holds, after
 verifying their bundles again, and plays only the rest.
 
+### Replaying the recorded model
+
+```
+fiduciary demo --replay --out demo
+```
+
+`--replay` runs every industry again on the installed engine, and in each signature
+scenario the recorded `claude-opus-5-5` turns above choose the calls. No model is called and
+nothing leaves the machine. A stand-in client returns each recorded turn, and the session
+meters it from its recorded usage, so the ledger shows the $0.154312 the six scenarios cost
+when they were recorded. Everything else is this run's: keys, ledger, receipts, bundles,
+delivery receipts and reconciliations.
+
+The recording ships with fiduciary (`fiduciary/demo/recording.json`). `--replay FILE` takes
+another, and `--replay DIR` reads one out of a run `--live` wrote. A replay stops (exit 2)
+if a recorded call no longer fits the engine: a tool it no longer offers, arguments its
+schema no longer takes, or an outcome that differs from the recorded one. When that happens
+the model's later turns no longer follow, and the scenario has to be recorded again with
+`--live`. A tool result the engine now words differently, with the same outcome, is kept,
+and the console shows what the model saw beside what the engine says now. So do the ids the
+engine mints afresh (a plan's id), which the model's text quotes from the recording.
+
 ## Features
 
 - **Signed documents (FIDU1).** Canonical JSON signed with Ed25519 (HMAC is not
@@ -570,34 +592,44 @@ the seal key configured checks every seal in the log. With the vendor's mandate 
 (`data.receipt_tenants = "declared"`), the bundle names no other customer at all.
 
 A bundle proves what the stack recorded. What happened around it is in the system's own
-audit log, which `agentgov reconcile-actions` matches against the receipt log: every action
-the system saw is explained by a receipt, or named as a phantom. The SRE and coding-agent
-demo deployments keep theirs beside them:
+log, which `fiduciary reconcile-actions` matches against the receipts the bundle carries:
+every action the system saw is explained by a receipt, or named as a phantom. The bundle is
+verified first, and its receipts are used only when its container, charter and receipts
+verify. Nothing else from the deployment is needed. Each demo deployment keeps its system's
+log beside it, and the console shows the command for each:
 
 ```
-cd <demo>/sre && agentgov reconcile-actions receipts.jsonl audit/kubernetes-audit.jsonl \
-    --format k8s-audit-jsonl --actor system:serviceaccount:sre:remediator
-cd <demo>/coding-agent && agentgov reconcile-actions receipts.jsonl audit/github-audit.json \
-    --format github-audit-json
+cd <demo>/sre && fiduciary reconcile-actions after.fidb audit/kubernetes-audit.jsonl \
+    --charter $(cat charter.digest) --keys pinned-keys.json \
+    --format k8s-audit-jsonl --actor system:serviceaccount:sre:remediator --substrate kubernetes
+cd <demo>/coding-agent && fiduciary reconcile-actions after.fidb audit/github-audit.json \
+    --charter $(cat charter.digest) --keys pinned-keys.json --format github-audit-json --substrate git
 ```
 
 The first names the administrator's `kubectl` call with the remediator's shared token, and
-the second names the teammate's push around the queue. Neither could appear in a bundle.
+the second names the teammate's push around the queue.
 
-The three industries that write through a vendor keep the vendor's own export, matched
-against the delivery receipts the relay's deliveries are settled into:
+The three industries that write through a vendor keep the vendor's own export. A bundle
+carries the delivery receipt the relay's settler wrote for each request it delivered, bound
+to the action receipt that committed it and attested by the relay's key, with the id the
+vendor gave what it made. The vendor's log is matched on those ids:
 
 ```
-cd <demo> && agentgov reconcile-actions receipts.jsonl audit/stripe-events.json \
+cd <demo> && fiduciary reconcile-actions after.fidb audit/stripe-events.json \
+    --charter $(cat charter.digest) --keys pinned-keys.json \
     --format stripe-events --actor api --substrate stripe
-cd <demo>/saas && agentgov reconcile-actions receipts.jsonl audit/sendgrid-events.json \
+cd <demo>/saas && fiduciary reconcile-actions after.fidb audit/sendgrid-events.json \
+    --charter $(cat charter.digest) --keys pinned-keys.json \
     --format sendgrid-events --actor api --substrate notify
-cd <demo>/supply-chain && agentgov reconcile-actions receipts.jsonl audit/edi-messages.jsonl \
+cd <demo>/supply-chain && fiduciary reconcile-actions after.fidb audit/edi-messages.jsonl \
+    --charter $(cat charter.digest) --keys pinned-keys.json \
     --format records --actor erp-integration --substrate edi
 ```
 
 Each names the one request made around the relay with the vendor account: a refund from
-Stripe's Dashboard, a hand-sent invitation, a purchase order sent from the EDI portal.
+Stripe's Dashboard, a hand-sent invitation, a purchase order sent from the EDI portal. Each
+exits 1 for it. `agentgov reconcile-actions receipts.jsonl ...` does the same against the
+deployment's receipt log, for an operator who holds it.
 
 ## Running the service
 
@@ -750,8 +782,9 @@ notice.
 bundles and a `SHA256SUMS` file to pin both:
 
 - the URL is <https://crimsondevil0929.github.io/fiduciary/>;
-- the site is built from each commit to `main` by `fiduciary demo --domain all`, with no
-  model calls;
+- the site is built from each commit to `main` by `fiduciary demo --domain all --replay`:
+  the recorded `claude-opus-5-5` turns, replayed on that commit's engine, with no model
+  calls;
 - before it is published, CI checks it: every bundle verifies as the page says, and passes
   the page's own browser checks.
 
