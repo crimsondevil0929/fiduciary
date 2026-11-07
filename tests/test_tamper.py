@@ -10,8 +10,9 @@ see: a log truncated cleanly, or rewritten by someone holding the service key.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from agentgov import BudgetManager
@@ -24,6 +25,7 @@ from fiduciary.sqlite import SqliteStore
 from fiduciary.store import Store
 from fiduciary.verify import Report, verify_store
 from tests import examples as e
+from tests.conftest import reopen
 
 
 def _owner(store: Store, statements: Sequence[tuple[str, tuple[Any, ...]]]) -> None:
@@ -407,3 +409,147 @@ def test_memos_that_are_not_fiduciarys_are_ignored() -> None:
     assert parse_memo("FIDU1 fiduciary x " + "a" * 64) is None
     assert parse_memo("FIDU1 fiduciary 1 short") is None
     assert parse_memo("FIDU1 fiduciary 3 " + "a" * 64) == ("fiduciary", 3, "a" * 64)
+
+
+# -- anchors in order (1.11.0) ------------------------------------------------------------
+
+
+class _Flaky:
+    """The ledger, refusing its next ``down`` anchors: a busy file, a failover."""
+
+    def __init__(self, ledger: BudgetManager) -> None:
+        self.ledger = ledger
+        self.down = 0
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ledger, name)
+
+    def anchor(self, *args: Any, **kwargs: Any) -> Any:
+        if self.down:
+            self.down -= 1
+            raise OSError("the ledger is briefly unreachable")
+        return self.ledger.anchor(*args, **kwargs)
+
+
+def _anchored(ledger: BudgetManager) -> list[int]:
+    """The records the ledger anchors, in the ledger's order."""
+    from fiduciary.log import parse_memo
+
+    ledger.refresh()
+    found = [parse_memo(en.memo) for en in ledger.audit_trail("fiduciary")]
+    return [f[1] for f in found if f is not None and f[0] == "fiduciary"]
+
+
+_REFUSED = ("approval.refused", {"intake": 77, "digest": "a" * 64, "why": "x"})
+"""A record any log takes (its rules refuse it on replay, which is no anchor's concern)."""
+
+
+def _in_order(store: Store, ledger: BudgetManager) -> None:
+    """Every record anchored, and nothing the anchors' checks name (V12 among them)."""
+    report = _verify(store, ledger)
+    assert report.unanchored == ()
+    assert [p for p in report.problems if "anchor" in p] == [], report.problems
+
+
+def test_a_record_after_a_failed_anchor_waits_for_it(
+    world: Authority, ledger: BudgetManager
+) -> None:
+    """The audit's case: one anchor refused, the next record anchored at once,
+    the first repaired later. The ledger then anchored it after its successor,
+    and V12 named the log tampered with, for good. Now the successor waits."""
+    store = world.log.store
+    flaky = _Flaky(ledger)
+    log = Log(store, e.SERVICE, ledger=cast(BudgetManager, flaky), clock=world.log.now)
+    log.append(*_REFUSED)
+    flaky.down = 1
+    failed = log.append(*_REFUSED)
+    assert failed.seq not in _anchored(ledger)
+    log.append(*_REFUSED)  # the one before it is anchored first
+    order = _anchored(ledger)
+    assert order == sorted(order) == list(range(1, store.head("fiduciary")[0] + 1))
+    _in_order(store, ledger)
+
+
+def test_records_written_while_the_ledger_is_down_are_anchored_in_order(
+    world: Authority, ledger: BudgetManager
+) -> None:
+    store = world.log.store
+    flaky = _Flaky(ledger)
+    log = Log(store, e.SERVICE, ledger=cast(BudgetManager, flaky), clock=world.log.now)
+    log.append(*_REFUSED)
+    flaky.down = 99
+    log.append(*_REFUSED)
+    log.append(*_REFUSED)
+    assert log.anchor_pending() == 0  # stops at the first it cannot anchor
+    flaky.down = 1
+    assert log.anchor_pending() == 0  # still the oldest first: none past it
+    flaky.down = 0
+    log.append(*_REFUSED)
+    order = _anchored(ledger)
+    assert order == list(range(1, store.head("fiduciary")[0] + 1))
+    _in_order(store, ledger)
+
+
+def test_a_log_opened_anew_anchors_what_a_crash_left_before_its_next(
+    world: Authority, ledger: BudgetManager
+) -> None:
+    """A process stopped between a commit and its anchor; the next process's
+    first record is anchored after the one left unanchored, not before."""
+    store = world.log.store
+    Log(store, e.SERVICE, clock=world.log.now).append(*_REFUSED)  # never anchored
+    Log(store, e.SERVICE, ledger=ledger, clock=world.log.now).append(*_REFUSED)
+    order = _anchored(ledger)
+    assert order == list(range(1, store.head("fiduciary")[0] + 1))
+    _in_order(store, ledger)
+
+
+class _Late:
+    """The ledger, as a process whose anchor of a record it committed comes
+    late: its next anchor waits until it is let go."""
+
+    def __init__(self, ledger: BudgetManager) -> None:
+        self.ledger = ledger
+        self.go = threading.Event()
+        self.waiting = threading.Event()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.ledger, name)
+
+    def anchor(self, *args: Any, **kwargs: Any) -> Any:
+        self.waiting.set()
+        assert self.go.wait(10)
+        return self.ledger.anchor(*args, **kwargs)
+
+
+def test_two_processes_appending_to_one_log_anchor_it_in_order(
+    world: Authority, ledger: BudgetManager
+) -> None:
+    """A cluster's executor and writer both append to the log, each with a
+    connection of its own, and each anchors what it committed. The soak found
+    the writer's record anchored before the executor's, committed just before
+    it and anchored late: V12 named the log tampered with. The writer now
+    anchors the executor's record first, and the executor's own anchor of it,
+    late, is a second one."""
+    store = world.log.store
+    other = reopen(store)
+    try:
+        writer = Log(store, e.SERVICE, ledger=ledger, clock=world.log.now)
+        writer.append(*_REFUSED)  # the writer knows the log anchored to here
+        late = _Late(ledger)
+        executor = Log(other, e.SERVICE, ledger=cast(BudgetManager, late), clock=world.log.now)
+        executor._through = store.head("fiduciary")[0]  # it, too, was caught up
+        done = threading.Thread(target=lambda: executor.append(*_REFUSED), daemon=True)
+        done.start()
+        assert late.waiting.wait(10)  # committed; its anchor not yet written
+        writer.append(*_REFUSED)
+        late.go.set()
+        done.join(10)
+        head = store.head("fiduciary")[0]
+        first: dict[int, int] = {}
+        for at, seq in enumerate(_anchored(ledger)):
+            first.setdefault(seq, at)
+        assert sorted(first, key=first.__getitem__) == list(range(1, head + 1))
+        assert _anchored(ledger).count(head - 1) == 2  # the executor's own, late
+        _in_order(store, ledger)
+    finally:
+        other.close()
