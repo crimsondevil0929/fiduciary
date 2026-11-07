@@ -487,3 +487,82 @@ def test_the_writer_serves_the_agent_with_a_token_only_the_agent_holds(tmp_path:
     assert token.read_text().strip() not in (tmp_path / "desk" / "fiduciary.toml").read_text()
     readme = (tmp_path / "desk" / "README.md").read_text()
     assert "claude mcp add --transport http" in readme and "## Audit it offline" in readme
+
+
+def test_init_says_what_it_did_to_the_database_and_how_to_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A developer's own database (1.11.0): init says, measured, that it moved
+    the file to WAL and added Interlock's tables, and that it changed none of
+    theirs; and the next steps it prints are the README's and the quickstart's."""
+    database = tmp_path / "shop.db"
+    _shop(database)
+    out = tmp_path / "desk"
+    argv = ["init", "--out", str(out), "--substrate", "sqlite", "--database", str(database)]
+    assert cli.main(argv) == 0
+    printed = capsys.readouterr().out.splitlines()
+    with closing(sqlite3.connect(database)) as conn:
+        names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        added = sum(1 for name in names if name.startswith("_interlock_"))
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    (changed,) = [line for line in printed if line.startswith("changed")]
+    assert "switched its journal to WAL (it was DELETE)" in changed
+    assert f"added {added} Interlock tables" in changed and added > 10
+    assert changed.endswith("no table of yours changed")
+    said = json.loads((out / "init.json").read_text())["changed"]
+    assert said == [{"name": str(database), "why": changed.split(": ", 1)[1]}]
+    assert said[0]["why"] in (out / "README.md").read_text()
+    steps = {line.split()[0]: line.split(None, 1)[1] for line in printed[-5:]}
+    config = out.resolve() / "fiduciary.toml"
+    assert steps["serve"] == f"fiduciary --config {config} serve"
+    assert steps["agent"].startswith("claude mcp add --transport http desk-agent")
+    assert steps["approve"].startswith("fiduciary console --dir ")
+    assert steps["audit"].endswith(f"--keys {out.resolve() / 'pinned-keys.json'}")
+    assert "holds every private key" in steps["custody"] and "agent.token" in steps["custody"]
+    assert not any("mcp serve" in line for line in printed)
+    quickstart = (Path(__file__).resolve().parent.parent / "docs" / "QUICKSTART.md").read_text()
+    assert "fiduciary --config desk/fiduciary.toml serve" in quickstart
+    assert "claude mcp add --transport http " in quickstart  # the name is the reader's
+
+
+def _export(root: Path, out: Path) -> Path:
+    mandate = json.loads((root / "mandate.json").read_text())["mandate_id"]
+    argv = ["--config", str(root / "fiduciary.toml"), "export-bundle", "--mandate", mandate]
+    key = root / "keys" / "ledger-checkpoints.key"
+    assert cli.main([*argv, "--ledger-key", str(key), "--out", str(out)]) == 0
+    return out
+
+
+def test_init_pins_the_keys_its_bundles_are_checked_against(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B2 (1.11.0): init writes ``pinned-keys.json`` and ``charter.digest``, read
+    from the deployment's configuration as ``export-bundle`` reads it. Its own
+    bundle verifies against them; a bundle of another deployment, which carries a
+    ``keys.json`` of its own, does not."""
+    from fiduciary.bundle.format import unpack
+
+    roots = []
+    for name in ("desk", "other"):
+        database = tmp_path / f"{name}.db"
+        _shop(database)
+        init(tmp_path / name, target=Target("sqlite", database=str(database)))
+        roots.append(tmp_path / name)
+    desk, other = roots
+    pins = json.loads((desk / "pinned-keys.json").read_text())
+    charter = (desk / "charter.digest").read_text().strip()
+    assert "principals" not in pins  # the charter vouches for those
+    ours = _export(desk, tmp_path / "desk.fidb")
+    carried = json.loads(dict(unpack(ours.read_bytes()))["keys.json"])
+    del carried["principals"]
+    assert carried == pins
+    check = ["verify-bundle", "--keys", str(desk / "pinned-keys.json")]
+    capsys.readouterr()
+    assert cli.main([*check, str(ours), "--charter", charter]) == 0
+    assert capsys.readouterr().out.rstrip().endswith("PASS")
+    theirs = _export(other, tmp_path / "other.fidb")
+    their_charter = (other / "charter.digest").read_text().strip()
+    assert cli.main(["verify-bundle", str(theirs), "--charter", their_charter]) == 0
+    capsys.readouterr()
+    assert cli.main([*check, str(theirs), "--charter", their_charter]) != 0
+    assert "V1" in capsys.readouterr().out  # its own keys.json differs from the pins

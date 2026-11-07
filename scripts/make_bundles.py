@@ -6,8 +6,10 @@ bundle tests' scenarios on SQLite (``tests/test_bundle.py``,
 ``tests/test_bundle_deliveries.py``), keeps the
 bundle each one verified, and derives the tampered ones from a valid bundle.
 ``--add NAME ...`` records only those scenarios, and the bundles derived from
-them, and keeps every other bundle as it was recorded. ``index.json`` records, for
-each, what it is verified with (the pinned charter digest, the auditor's
+them, and keeps every other bundle as it was recorded. ``--rederive`` records
+nothing: it derives the tampered bundles again from the valid ones recorded,
+and takes every verdict again (1.11.0), for a verifier whose verdicts changed.
+``index.json`` records, for each, what it is verified with (the pinned charter digest, the auditor's
 keys, a witness, the skew) and the verdict: the exit code, the checks that
 fail, and every finding's text.
 
@@ -291,6 +293,82 @@ def _tampered_sealed(valid: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return {name: {**base, "data": data, "about": about} for name, (data, about) in cases.items()}
 
 
+def _relisted(members: dict[str, bytes], *, signed: bool) -> bytes:
+    """``members`` with the manifest listing their digests again: unsigned, as
+    anyone could, or signed with the service key, as only its holder could."""
+    from tests import examples as e
+
+    manifest = fidu1.parse(members["manifest.json"])
+    manifest.pop("sig", None)
+    entries = {entry["path"]: entry for entry in manifest["members"]}
+    manifest["members"] = [
+        {**entries[path], "sha256": hashlib.sha256(members[path]).hexdigest()}
+        for path in sorted(members)
+        if path != "manifest.json"
+    ]
+    if signed:
+        manifest["sig"] = fidu1.sign("bundle", manifest, e.SERVICE).to_json()
+    return pack({**members, "manifest.json": fidu1.canonical(manifest)})
+
+
+def _incomplete(valid: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """What a bundle may not leave out (1.11.0), from the valid lineage at work:
+    its tail cut off, by anyone; its range ended early under the cut of the
+    whole, signed again; and one receipt its escrow chain names, left out,
+    signed again."""
+    from fiduciary.documents import Record
+    from fiduciary.log import parse_memo
+
+    held = dict(_members(valid["data"]))
+    lines = held["log.jsonl"].splitlines()
+    keep = len(lines) // 2
+    last = Record.loads(lines[keep - 1])
+    entries = held["ledger/entries.jsonl"].splitlines()
+    anchor = next(
+        json.loads(x)["entry"]["sequence"]
+        for x in entries
+        if parse_memo(json.loads(x)["entry"]["memo"]) == ("fiduciary", keep, last.hash)
+    )
+    manifest = fidu1.parse(held["manifest.json"])
+    shorter = {
+        **held,
+        "log.jsonl": b"".join(x + b"\n" for x in lines[:keep]),
+        "manifest.json": fidu1.canonical({**manifest, "range": {"from": 1, "to": keep}}),
+    }
+    cut_off = {
+        **shorter,
+        "ledger/entries.jsonl": b"".join(
+            x + b"\n" for x in entries if int(json.loads(x)["entry"]["sequence"]) <= int(anchor)
+        ),
+    }
+    receipts = sorted(
+        p for p in held if p.startswith("receipts/") and p != "receipts/transitions.json"
+    )
+    for path in receipts:
+        if json.loads(held[path])["receipt"]["v"] == "ARC1":
+            cut_off.pop(path)
+    left_out = dict(held)
+    left_out.pop(next(p for p in receipts if json.loads(held[p])["receipt"]["v"] == "ARC1"))
+    cases = {
+        "v9-tail-cut-off-unsigned": (
+            _relisted(cut_off, signed=False),
+            f"the log cut off after record {keep}, the ledger after its anchor, the receipts "
+            "dropped, and the manifest relisted, unsigned: no key held",
+        ),
+        "v6-cut-past-the-range": (
+            _relisted(shorter, signed=True),
+            f"the range ended at record {keep} under the checkpoint of the whole, signed again "
+            "by the service key",
+        ),
+        "v5-receipt-left-out": (
+            _relisted(left_out, signed=True),
+            "an action receipt its escrow chain names left out, signed again by the service key",
+        ),
+    }
+    base = {k: v for k, v in valid.items() if k != "data"}
+    return {name: {**base, "data": data, "about": about} for name, (data, about) in cases.items()}
+
+
 def _own_withheld(held: dict[str, bytes], found: dict[str, Any]) -> bytes:
     from tests import examples as e
 
@@ -349,16 +427,21 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--add", nargs="+", metavar="NAME", choices=sorted(SCENARIOS), help="record only these"
     )
+    parser.add_argument(
+        "--rederive",
+        action="store_true",
+        help="record nothing: derive the tampered bundles again, and take every verdict again",
+    )
     args = parser.parse_args(argv)
+    if args.rederive:
+        _rederive()
+        return
     names = set(args.add or SCENARIOS)
     with tempfile.TemporaryDirectory() as scratch:
         recorded = _record(Path(scratch), names)
     for name in names:
         recorded[name]["about"] = SCENARIOS[name][1]
-    if "valid-held-release" in names:
-        recorded.update(_tampered(recorded["valid-held-release"]))
-    if "valid-sealed-child" in names:
-        recorded.update(_tampered_sealed(recorded["valid-sealed-child"]))
+    _derive(recorded)
     index: list[dict[str, Any]] = []
     if args.add:  # every other bundle stays as it was recorded
         kept = json.loads((OUT / "index.json").read_text())
@@ -386,6 +469,50 @@ def main(argv: list[str] | None = None) -> None:
         )
         print(f"{name}: exit {verdict['exit_code']} {' '.join(verdict['checks'])}")
     index.sort(key=lambda entry: str(entry["name"]))
+    (OUT / "index.json").write_text(json.dumps(index, indent=2, sort_keys=True) + "\n")
+
+
+def _derive(recorded: dict[str, dict[str, Any]]) -> None:
+    """The bundles derived from each valid one recorded, added to ``recorded``."""
+    if "valid-held-release" in recorded:
+        recorded.update(_tampered(recorded["valid-held-release"]))
+    if "valid-sealed-child" in recorded:
+        recorded.update(_tampered_sealed(recorded["valid-sealed-child"]))
+    if "valid-lineage-at-work" in recorded:
+        recorded.update(_incomplete(recorded["valid-lineage-at-work"]))
+
+
+def _rederive() -> None:
+    kept = {entry["name"]: entry for entry in json.loads((OUT / "index.json").read_text())}
+    valid = {
+        name: {**entry, "data": (OUT / entry["file"]).read_bytes()}
+        for name, entry in kept.items()
+        if name in SCENARIOS
+    }
+    derived: dict[str, dict[str, Any]] = dict(valid)
+    _derive(derived)
+    index = []
+    for name in sorted({*kept, *derived}):
+        entry = derived.get(name) or {**kept[name], "data": (OUT / kept[name]["file"]).read_bytes()}
+        sha = hashlib.sha256(entry["data"]).hexdigest()
+        if name in kept and kept[name]["sha256"] != sha:
+            print(f"{name}: derived to other bytes than recorded")
+        (OUT / f"{name}.fidb").write_bytes(entry["data"])
+        verdict = _verdict(entry)
+        index.append(
+            {
+                "name": name,
+                "about": entry["about"],
+                "file": f"{name}.fidb",
+                "sha256": sha,
+                "charter": entry["charter"],
+                "keys": entry["keys"],
+                "witness": entry["witness"],
+                "skew_seconds": entry["skew_seconds"],
+                **verdict,
+            }
+        )
+        print(f"{name}: exit {verdict['exit_code']} {' '.join(verdict['checks'])}")
     (OUT / "index.json").write_text(json.dumps(index, indent=2, sort_keys=True) + "\n")
 
 

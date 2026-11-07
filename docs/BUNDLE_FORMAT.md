@@ -10,10 +10,11 @@ needs nothing else, apart from the formats the bundle carries from its sources:
   `RECEIPTS_SPEC.md`);
 - ILOK1 records and escrow chains (interlock's `ESCROW_SPEC.md`).
 
-`vectors/fidu1/bundles/` holds 37 golden bundles: four valid (one of them
+`vectors/fidu1/bundles/` holds 40 golden bundles: four valid (one of them
 sealed), and the others each failing one or more checks; three of them carry a
-relay's delivery receipts (§3.5, 1.10.0). `index.json` records, for each one,
-what it is verified with and its verdict (§6).
+relay's delivery receipts (§3.5, 1.10.0), and three leave out what a bundle may
+not (§2, 1.11.0). `index.json` records, for each one, what it is verified with
+and its verdict (§6).
 
 *Amended in 1.4.0:* a **sealed** bundle (`fidb/2`, §3.4) carries one lineage's
 records whole, and of the log's other records their places and hashes only.
@@ -33,6 +34,17 @@ A bundle is an uncompressed POSIX tar (USTAR). Its rules:
 So one lineage over one range exports to identical bytes. A verifier reads the
 tar strictly. A file that is no tar, or holds anything but regular files under
 relative paths, is unreadable (exit 2).
+
+*Amended in 1.11.0:* a verifier reads the tar header by header, as the exporter
+writes it, and accepts nothing else. Each member's header is a POSIX `ustar`
+header (magic `ustar\0`, version `00`) with a correct checksum, type `0` (or NUL),
+a relative path in ASCII (the `prefix` field joined to the name), mode `0644`,
+mtime `0` and an octal size; the member's data lies within the file and its
+padding to 512 bytes is zero; after the end-of-archive block, the file holds only
+zeros. A sparse, pax, GNU or link entry is none of these, so a bundle never
+unpacks to more bytes than it holds. `fiduciary verify-bundle` reads at most
+2 GiB, a member at most 1 GiB, and at most 1,000,000 members. The console's
+in-browser check reads the container by the same rules.
 
 ## 2. The manifest
 
@@ -74,11 +86,19 @@ The fields:
   decision in range is taken again from the state that every earlier record
   built.
 - **`ledger.cut`** is the ledger sequence of the anchor of record `to`. The
-  ledger checkpoint covers exactly `1..cut`.
-- **`sig`** is optional: a FIDU1 signature of the manifest without `sig`,
-  domain `bundle`, by the service key. When present it must verify under the
-  service key (V9); when absent, the report notes it. Nothing else relies on it,
-  because every member is checked against its digest and then on its own terms.
+  ledger checkpoint covers exactly `1..cut`. *Amended in 1.11.0:* the bundle
+  holds that entry, proven, and it is the anchor of record `to` with its hash, or
+  V6 fails. Before 1.11.0 nothing held the cut to the range, so a bundle could end
+  its range early under the checkpoint of more of the ledger.
+- **`sig`** is a FIDU1 signature of the manifest without `sig`, domain `bundle`,
+  by the service key, and it must verify under the service key (V9).
+  *Amended in 1.11.0:* it is required. Before, it was optional, on the reasoning
+  that every member is checked against its digest and then on its own terms.
+  That holds for each member present, but not for one left out: an outside audit
+  cut a bundle's tail off, or dropped its receipts, relisted the manifest
+  unsigned, and both verifiers passed it with every key pinned. The signature is
+  what makes the list of members the exporter's statement. `export-bundle` signs
+  every bundle, and refuses to export without the service key's signer.
 
 ## 3. The members
 
@@ -205,6 +225,16 @@ hash), signed by the receipt log's key, and carrying the relay's own attestation
 what the remote system answered, including the id it gave what it made
 (`delivery.remote_ref`). A settler's receipt has no ledger anchor of its own.
 
+*Amended in 1.11.0:* the bundle carries an action receipt when it carries the
+escrow record the receipt settles (its `anchors.escrow`), wherever the receipt's
+own ledger anchor falls. A receipt is issued after its record and anchored to
+the ledger's head then, so another record's anchor can come between, and a cut
+there would have left the receipt out while its record was in. A receipt that
+names no escrow record goes by its ledger anchor, at or before the cut. Interlock
+writes the receipt's id into the note of the record it settles on
+(`; receipt <id>`), before the receipt is issued, so V5 holds every receipt an
+escrow chain in the bundle names to be in the bundle too.
+
 The bundle carries a delivery receipt when it carries its action receipt, and:
 
 - when the delivery is anchored in the ledger, at or before the cut, as every
@@ -310,6 +340,13 @@ The rules of a run:
 - **Offline (F9-3).** The verifier opens no socket and no database. It writes
   only escrow chains, to a temporary directory, for interlock's chain reader to
   load.
+- **What may not be left out (1.11.0).** The manifest is signed (V9). The cut
+  entry is in the bundle, proven, and is the anchor of record `to` (V6). Every
+  action receipt an escrow chain names is in the bundle (V5): one left out is
+  named by its record, and so is one never issued, when the process that
+  committed the plan stopped before the receipt was logged. `log.jsonl`'s lines
+  are each a record's canonical bytes (V1): the chain links the line, and an
+  anchor names the record's canonical hash, so the two are one.
 
 ### 4.1 V7: what explains an act
 

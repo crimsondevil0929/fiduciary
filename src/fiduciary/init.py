@@ -97,6 +97,59 @@ class InitReport:
     """What init changed outside the deployment's directory (a starter's), and why."""
     cautions: list[dict[str, str]] = field(default_factory=list)
     """What the target does that the starter mandate will refuse (1.10.1)."""
+    changed: list[dict[str, str]] = field(default_factory=list)
+    """What init changed in the target itself, as measured before and after (1.11.0)."""
+
+
+def _sqlite_shape(database: str) -> tuple[str, dict[str, tuple[str, str]]] | None:
+    """A SQLite database's journal mode and its schema (each object's name, type
+    and SQL), read without changing it; ``None`` when it does not exist yet."""
+    import sqlite3
+
+    path = Path(database)
+    if not path.is_file():
+        return None
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        mode = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+        objects = {
+            str(name): (str(kind), str(sql or ""))
+            for name, kind, sql in conn.execute("SELECT name, type, sql FROM sqlite_master")
+        }
+    finally:
+        conn.close()
+    return mode, objects
+
+
+def _sqlite_changes(
+    database: str, before: tuple[str, dict[str, tuple[str, str]]] | None
+) -> dict[str, str]:
+    """What init did to the developer's SQLite database, measured (1.11.0): the
+    stage keeps its outbox and rate windows in the same file, so the change
+    and the outbox row that records it commit together."""
+    after = _sqlite_shape(database)
+    assert after is not None
+    was, objects = before if before is not None else ("none", {})
+    mode, now = after
+    tables = sorted(
+        n for n in set(now) - set(objects) if n.startswith("_interlock_") and now[n][0] == "table"
+    )
+    said = []
+    if mode != was:
+        said.append(f"switched its journal to {mode.upper()} (it was {was.upper()})")
+    if tables:
+        shown = ", ".join(f"`{t}`" for t in tables[:3])
+        said.append(
+            f"added {len(tables)} Interlock tables ({shown} and the rest), with their "
+            f"indexes and append-only triggers, as `interlock install` does"
+        )
+    altered = sorted(n for n in objects if n in now and now[n] != objects[n])
+    gone = sorted(set(objects) - set(now))
+    if altered or gone:
+        said.append(f"changed {', '.join(altered + gone)}")
+    else:
+        said.append("no table of yours changed")
+    return {"name": str(database), "why": "; ".join(said)}
 
 
 def discover(command: Sequence[str], *, timeout: float = 30.0) -> list[dict[str, Any]]:
@@ -405,6 +458,11 @@ def init(
     if target is not None:
         if command:
             raise ValueError("init takes --mcp or --substrate, not both")
+        before = (
+            _sqlite_shape(target.database)
+            if target.substrate == "sqlite" and target.database is not None
+            else None
+        )
         st = starter(target)
         report = InitReport(
             root=root.resolve(),
@@ -424,12 +482,15 @@ def init(
                 world.close()
                 for leftover in root.glob("back_office.db*"):
                     leftover.unlink()
+            if target.substrate == "sqlite" and target.database is not None:
+                report.changed.append(_sqlite_changes(target.database, before))
             for name, text in st.files.items():
                 (root / name).write_text(text, encoding="utf-8")
             _bridge(root, report.scope)
             _write_report(root, report, None, target)
         finally:
             world.close()
+        _write_pins(root)
         return report
     listed = list(discovered) if discovered is not None else (discover(command) if command else [])
     report = InitReport(root=root.resolve(), scope=f"{label}-agent", principals=tuple(principals))
@@ -462,6 +523,7 @@ def init(
         _write_report(root, report, command, None)
     finally:
         world.close()
+    _write_pins(root)
     return report
 
 
@@ -504,16 +566,70 @@ def _audit(root: Path) -> str:
 ```
 fiduciary --config fiduciary.toml export-bundle --mandate {mandate} \\
     --ledger-key keys/ledger-checkpoints.key --out lineage.fidb
-fiduciary verify-bundle lineage.fidb --charter {charter}
+fiduciary verify-bundle lineage.fidb --charter {charter} --keys pinned-keys.json
 ```
 
-`verify-bundle` needs no database and no network: hand an auditor the bundle and the
-charter digest above, and the public keys to pin with `--keys`. It checks V1 to V12 and
+`verify-bundle` needs no database and no network. `pinned-keys.json` holds this
+deployment's public keys and `charter.digest` the charter's digest, so the bundle is
+checked against them and not against the keys it carries. Neither holds a secret: hand them
+to an auditor once, apart from any bundle, and then each bundle alone. It checks V1 to V12 and
 exits 0 when the bundle passes. Drop the bundle on the console's Verify page to check it in
 a browser. A system that keeps its own log of writes (Stripe, SendGrid, Kubernetes, FHIR,
 GitHub) can be matched against the bundle with `fiduciary reconcile-actions lineage.fidb
-<export> --charter {charter}`.
+<export> --charter {charter} --keys pinned-keys.json`.
 """
+
+
+def pinned_keys(root: Path) -> dict[str, Any]:
+    """The public keys an auditor pins with ``verify-bundle --keys`` (1.11.0, B2).
+
+    Read from the deployment's configuration and key files, the places
+    ``export-bundle`` reads them from, so the file names each role exactly as a
+    bundle of this deployment does: the service, the ledger's checkpoint key,
+    the receipt log, the runtime log, the operators and the relays. The
+    principals' keys are left out: the pinned charter digest vouches for them.
+    """
+    from interlock.wiring import trusted_keyring
+
+    from fiduciary.bundle.export import spec
+    from fiduciary.config import load_config
+    from fiduciary.keys import load_key
+
+    config = load_config(root / "fiduciary.toml")
+    executor = spec(config.executor().public_key())
+    operators = {"executor": executor}
+    relays: list[str] = []
+    if config.interlock is not None:
+        interlock = config.interlock_config()
+        if interlock.operators is not None:
+            operators = dict(interlock.operators.keys)
+        keyring = trusted_keyring(interlock, "relay")
+        if keyring is not None:
+            relays = sorted(spec(k) for k in map(keyring.verifier, keyring.ids()) if k is not None)
+    keys: dict[str, Any] = {
+        "service": spec(config.service().public_key()),
+        "ledger": spec(load_key(root / "keys" / "ledger-checkpoints.key").public_key()),
+        "runtime": spec(config.runtime().public_key()),
+        "operators": operators,
+    }
+    if config.receipts_log is not None:
+        keys["receipts"] = [spec(config.receipts().public_key())]
+    if relays:
+        keys["relays"] = relays
+    return keys
+
+
+def _write_pins(root: Path) -> None:
+    """``pinned-keys.json`` and ``charter.digest``: what an auditor checks a bundle
+    against, from outside it. The console's Verify page pins them too."""
+    from fiduciary.documents import Charter
+
+    keys = pinned_keys(root)
+    (root / "pinned-keys.json").write_text(
+        json.dumps(keys, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    charter = Charter.loads((root / "charter.json").read_bytes()).digest
+    (root / "charter.digest").write_text(charter + "\n", encoding="utf-8")
 
 
 def _write_report(
@@ -529,6 +645,7 @@ def _write_report(
                 "tools": report.tools,
                 "skipped": report.skipped,
                 "cautions": report.cautions,
+                "changed": report.changed,
                 "upstream": list(command or []),
             },
             indent=2,
@@ -607,8 +724,8 @@ in the page and never sent) or with
 
 
 _SETUP: Final = {
-    "sqlite": "Init added Interlock's outbox and window tables to the database, as "
-    "`interlock install` does. Nothing else in it changed.",
+    "sqlite": "The stage keeps its outbox and rate windows in the database itself, so a change "
+    "and the record of it commit together. What init did to it:",
     "postgres": "The stage connects as the role in `interlock.toml`'s connection string, which "
     "must never be a superuser. As the tables' owner, grant it what `grants.sql` lists, then "
     "install Interlock's schema, signed with the service key:\n\n```\n"
@@ -643,6 +760,7 @@ def _substrate_readme(report: InitReport, target: Target) -> str:
         else ""
     )
     p1, _, _ = report.principals
+    changed = "".join(f"\n- `{c['name']}`: {c['why']}.\n" for c in report.changed)
     return f"""# {report.scope}
 
 Written by `fiduciary init --substrate {target.substrate}`. Every path in the configuration
@@ -666,7 +784,7 @@ and issue a new mandate version that pins them.
 ## Before the first call
 
 {_SETUP[target.substrate]}
-
+{changed}
 ## Run it
 
 ```

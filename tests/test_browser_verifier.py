@@ -122,3 +122,18 @@ def test_the_page_carries_the_checks() -> None:
     checks = (ROOT / "src" / "fiduciary" / "report" / "verify.js").read_text()
     assert checks in page
     assert page.index("root.FidbVerify = api") < page.index("window.FidbVerify.check(")
+
+
+def test_what_a_bundle_leaves_out_is_named_in_the_browser_too(
+    outcomes: dict[str, dict[str, Any]],
+) -> None:
+    """1.11.0: an unsigned manifest fails, the ledger entries anchors are read
+    from are proven, the cut is the anchor of the range's last record, and a
+    receipt an escrow chain names is held; each with or without pinned keys."""
+    for found in outcomes.values():
+        assert found["v9-tail-cut-off-unsigned"]["checks"]["manifest"] == "fail"
+        assert found["v6-cut-past-the-range"]["checks"]["ledger"] == "fail"
+        assert found["v5-receipt-left-out"]["checks"]["receipts"] == "fail"
+        for name in ("v9-withheld-dropped", "v10-withheld-rewritten"):
+            assert found[name]["checks"]["manifest"] == "fail"
+    assert outcomes["pinned keys"]["v6-other-ledger-key"]["checks"]["ledger"] == "fail"

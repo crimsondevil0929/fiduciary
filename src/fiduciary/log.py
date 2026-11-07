@@ -5,8 +5,11 @@ the documents it names and the projection rows it implies in one store
 transaction. It then anchors the record into the AgentGov ledger as a
 zero-value ``ANCHOR`` entry on the scope ``fiduciary``, memo
 ``FIDU1 <log> <seq> <hash>`` (F4-26). When the ledger cannot be written, the
-record stands and :meth:`Log.anchor_pending` anchors it the next time the log
-is opened, as Interlock's operator log does.
+record stands and :meth:`Log.anchor_pending` anchors it later, as Interlock's
+operator log does. Records are anchored in their order (amended in 1.11.0): while
+an earlier record is unanchored, a later one waits for it, so the ledger never
+anchors a record before its predecessor (V12). A log opened in a new process
+checks first, so a record a crash left unanchored is caught up before the next.
 
 :func:`check_anchors` holds a log to every anchor the ledger has of it: a log
 truncated or rewritten after its records were anchored disagrees with the
@@ -165,6 +168,12 @@ class Log:
         """The state as of the last record read: a record never changes, so
         only those appended since are read, and folded into a copy."""
         self._reading = threading.Lock()
+        self._through: int | None = None
+        """Every record up to this one is known to be anchored (1.11.0); ``None``
+        until checked, in a new process. A record is anchored only once every
+        record before it is: those past this are looked up first, and anchored
+        first when they are not, so none is anchored before its predecessor,
+        whichever process wrote it."""
 
     @property
     def store(self) -> Store:
@@ -319,8 +328,67 @@ class Log:
         return found[0][1] if found else None
 
     def _anchor_all(self, records: Sequence[Record]) -> None:
+        """Anchor ``records``, just committed, once every record before them is
+        anchored (1.11.0). A process that anchored the record before the first
+        of them anchors them at once. Otherwise there is a gap: a record whose
+        anchor the ledger refused, one a crash left, or one another process
+        wrote (a cluster's executor and writer both append to the log). Each
+        record in it is looked up in the ledger by its memo, and anchored
+        first if it is not, oldest first. Two processes can then both anchor a
+        record; the verifiers read a record's first anchor, and each record's
+        first anchor follows its predecessor's."""
+        if self._ledger is None:
+            return
+        try:
+            caught_up = self._catch_up(records[0].seq)
+        except Exception as exc:  # the records stand; anchored on a later turn, in order
+            logger.warning(
+                "records %d to %d wait for an earlier record's anchor (%s: %s)",
+                records[0].seq,
+                records[-1].seq,
+                type(exc).__name__,
+                exc,
+            )
+            return
+        if not caught_up:
+            return
         for record in records:
-            self._anchor(record)
+            assert self._through is not None
+            if record.seq <= self._through:
+                continue  # the catch-up anchored it, with the records before it
+            if not self._anchor(record):
+                return  # the rest wait: a later record is never anchored before this one
+            self._through = record.seq
+
+    def _catch_up(self, first: int) -> bool:
+        """Every record before ``first`` anchored: whether it is, now."""
+        assert self._ledger is not None
+        if self._through is None:  # a new process: the whole log, once
+            self.anchor_pending()
+            return self._through is not None and self._through >= first - 1
+        if self._through >= first - 1:
+            return True
+        self._ledger.refresh()  # what another process anchored since
+        for row in self._store.records(self._log_id, after=self._through):
+            if row.seq >= first:
+                break
+            record = Record.loads(row.data)  # a sealed log's record carries its seal
+            if not self._anchored(record) and not self._anchor(record):
+                return False
+            self._through = row.seq
+        return True
+
+    def _anchored(self, record: Linked) -> bool:
+        """Whether the ledger holds an anchor of ``record``: one lookup, by memo."""
+        assert self._ledger is not None
+        return bool(
+            self._ledger.find_entries(
+                scope_id=self._scope,
+                entry_type=EntryType.ANCHOR,
+                memo=anchor_memo(record),
+                limit=1,
+            )
+        )
 
     # -- anchors ---------------------------------------------------------------
 
@@ -329,9 +397,9 @@ class Log:
             return False
         try:
             self._ledger.anchor(self._scope, anchor_memo(record))
-        except Exception as exc:  # the record stands; anchored on the next open
+        except Exception as exc:  # the record stands; anchored later, in order
             logger.warning(
-                "record %d could not be anchored (%s: %s); it will be on the next open",
+                "record %d could not be anchored (%s: %s); it is anchored later, first",
                 record.seq,
                 type(exc).__name__,
                 exc,
@@ -340,7 +408,10 @@ class Log:
         return True
 
     def anchor_pending(self) -> int:
-        """Anchor every record the ledger does not hold an anchor of. Returns how many."""
+        """Anchor every record the ledger does not hold an anchor of, oldest
+        first, stopping at the first the ledger refuses (amended in 1.11.0: one
+        anchored past a gap would precede its predecessor's anchor, V12).
+        Returns how many."""
         if self._ledger is None:
             return 0
         self._ledger.refresh()
@@ -351,5 +422,12 @@ class Log:
         if problems:
             raise AnchorError("; ".join(problems))
         by_seq = {row.seq: row for row in rows}
-        # the record itself, which carries a sealed log's seal for its memo
-        return sum(1 for seq in unanchored if self._anchor(Record.loads(by_seq[seq].data)))
+        done = 0
+        for seq in unanchored:  # ascending
+            # the record itself, which carries a sealed log's seal for its memo
+            if not self._anchor(Record.loads(by_seq[seq].data)):
+                self._through = seq - 1  # every record before it is anchored
+                return done
+            done += 1
+        self._through = rows[-1].seq if rows else 0
+        return done

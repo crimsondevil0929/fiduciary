@@ -6,6 +6,113 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-11-07
+
+An outside audit, run cold on the released code, found that a bundle could leave things
+out and still pass both verifiers with every key pinned, and that the daemon had three
+ways to go wrong under concurrency. This release closes each one, and turns every proof
+of concept into a test.
+
+### Security
+
+- **A bundle may not leave anything out (F9-10).** Anyone able to rewrite a `.fidb`, with
+  no key at all, could cut its tail off (records, the ledger after the last kept anchor,
+  the receipts) or delete every receipt, relist the manifest unsigned, and `verify-bundle`
+  and the console's in-browser check both passed it. Now:
+  - the manifest's signature by the service key is **required** (V9). `export-bundle`
+    signs every bundle, and refuses to export without the service key's signer. Every
+    bundle the CLI and the demo exported was already signed;
+  - the cut is in the bundle, proven, and is the anchor of the range's last record (V6), so
+    a range cannot end early under the checkpoint of more of the ledger;
+  - every action receipt the lineage's escrow chain names (`; receipt <id>`, which
+    Interlock writes before it issues the receipt) is in the bundle (V5). One left out is
+    named by its record, and so is one never issued.
+- **The container is read as it is written.** `verify-bundle` read bundles with Python's
+  `tarfile`, which fills a GNU sparse member's holes in memory: a 2 KB file made it
+  allocate over 600 MB, through `POST /api/verify` too. Bundles are now read header by
+  header, by the rules the exporter writes and the browser reads: regular files at relative
+  ASCII paths, in POSIX ustar headers, mode 0644, mtime 0, zero padding, zeros after the
+  end. Sparse, pax, GNU and link entries are unreadable (exit 2). At most 2 GiB is read, a
+  member at most 1 GiB, and at most 1,000,000 members.
+- **The browser verifier checks what the anchors are read from.** It read anchor memos
+  from `ledger/entries.jsonl` without checking the entries, so a sealed bundle could hide
+  one of its lineage's own records and pass in the browser. It now recomputes each entry's
+  hash (AGOV1 to AGOV3), checks its inclusion in the checkpoint and the checkpoint's
+  signature by the ledger key, and holds the cut to the range's last record (a new
+  `ledger` check, part of V6). It fails an unsigned manifest, and checks that every receipt
+  an escrow chain names is in the bundle (`receipts`, part of V5). Its inclusion proofs use
+  whole-number arithmetic: a negative or fractional leaf index is refused, and a tree past
+  2^31 leaves is proven correctly.
+- **The two verifiers agree.** Each disagreement the audit found now gets one verdict
+  from both: a member's mode, mtime, type or pax header; a manifest of another format or
+  not canonical; `log.jsonl` with no final newline; a duplicate key; a record line not in
+  canonical form (V1 now requires each line to be its record's canonical bytes).
+- **The TLS bridge can no longer be stalled before authentication.** The listening socket
+  was wrapped whole, so each TLS handshake ran inside `accept`. One client that connected
+  and said nothing stopped every other. Each handshake now runs in its connection's own
+  thread, within 5 seconds, and a connection that waits 60 seconds between bytes of a
+  request is closed.
+- **A webhook's redirect is no longer followed (F10-26, amended).** The notifier posted
+  through urllib's default opener, which followed a `301`, `302` or `303` as a `GET`
+  without the notice, to wherever `Location` pointed, past the URL checked when the
+  webhook was configured, and counted the `2xx` found there as delivered. Every `3xx` is
+  now a failed delivery, retried with backoff as any other.
+
+### Fixed
+
+- **Anchors are written in order (F4-26, amended).** A record whose anchor the ledger
+  refused once stayed unanchored while the next record was anchored at once. The repair a
+  turn later put it after its successor, and V12 then called the log tampered with, for
+  good. Now a record is anchored only once every record before it is: a gap is looked up
+  in the ledger by memo and anchored first, oldest first. That covers a record another
+  process wrote too: a cluster's executor and writer both append to the log, and the
+  writer could anchor its record before the executor's late anchor of the one before
+  (found by the PostgreSQL soak while testing this release). A log opened in a new
+  process checks the whole log first, so a record a crash left unanchored is anchored
+  before the next one.
+- **Threads no longer share a transaction (F10-35).** The SQLite and PostgreSQL stores
+  each serve the service's threads over one connection. A read on another thread saw a
+  transaction's rows before they committed, and kept seeing them after a rollback, so a
+  notice could go out for a record that never stood. A write on another thread joined the
+  open transaction and was lost with its rollback. The store's lock now holds each
+  transaction, from its start to the last action after commit, against every other read
+  and write. The notifier reads through a read-only connection of its own
+  (`Store.reader()`).
+- **`Retry-After` tells the truth.** An agent that holds its most sessions was told to
+  retry in 5 seconds, whatever the wait. It is now told the seconds until its least
+  recently used session is closed idle, and how to end one (`DELETE /mcp`).
+
+### Changed
+
+- **The bridge's listener queues 64 connections** (it was the standard library's 5). A
+  burst of agents opening sessions had connections reset.
+- **`fiduciary init --substrate sqlite` says what it did to your database.** It measures
+  the file before and after, and says so on its output (`changed`), in `init.json`
+  (`changed`) and in the README: the journal moved to WAL, Interlock's tables added, and
+  whether any table of yours changed.
+- **The next steps `init` prints are the README's and the quickstart's**: `fiduciary serve`
+  and the agent's `claude mcp add` line for a substrate, and `mcp proxy` (with its relay)
+  for an MCP server. It printed `mcp serve`, which cannot run beside the writer.
+- **Bundles are checked against pinned keys from the first one.** `fiduciary init` writes
+  `pinned-keys.json`, the deployment's public keys read from its configuration as
+  `export-bundle` reads them, and `charter.digest`. The quickstart and the README `init`
+  writes verify with `--charter` and `--keys`. Before, they verified with the charter alone,
+  so every key but the principals' came from the bundle itself. `init` prints the command
+  (`audit`) and says where the private keys are and who each belongs with (`custody`).
+  The console's Verify page pins the same file.
+- **The quickstart's `call.py` ends its session** with `DELETE /mcp`. Run five times, it
+  used up the agent's four sessions.
+- `uv.lock` resolves interlock-escrow 1.4.3 and interlock-agentgov 1.3.1 from PyPI, so the
+  site is built on agentgov 1.3.1, interlock 1.4.3 and fiduciary 1.11.0. The floors are
+  unchanged. `live-run/stack-demo-latest` is rendered again on those versions with
+  `--replay` ($0): its 16 bundles reach the verdicts and findings they had on 1.10.1 (run
+  ids aside), and pass every check in the browser.
+- **Golden bundles.** There are 40, up from 37: a tail cut off with no key, a range ended
+  early and signed again, and a receipt left out and signed again. The three unsigned
+  vectors now also fail V9. `scripts/make_bundles.py --rederive` derives the tampered
+  bundles again from the valid ones and takes every verdict again; each bundle derived
+  before came out byte for byte the same.
+
 ## [1.10.1] - 2026-11-06
 
 The first thirty minutes, made to work as written; a one-page threat model; and honest

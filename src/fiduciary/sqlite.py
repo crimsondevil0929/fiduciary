@@ -115,26 +115,57 @@ class _FileLock:
 class SqliteStore(Store):
     """A store in one SQLite file, created on first open.
 
+    One connection serves every thread of the process; the store's lock
+    (:class:`~fiduciary.store.Store`) holds a transaction against every other
+    read and write on it (1.11.0). :meth:`reader` opens a read-only connection
+    of its own, which sees only what has committed.
+
     :param path: The database file.
+    :param read_only: Open it to read only: its own connection, which writes
+        nothing and installs nothing (:meth:`reader`).
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, read_only: bool = False) -> None:
         self._path = Path(path)
+        self._read_only = read_only
         try:
-            self._conn = sqlite3.connect(self._path, isolation_level=None, check_same_thread=False)
+            if read_only:
+                self._conn = sqlite3.connect(
+                    f"{self._path.resolve().as_uri()}?mode=ro",
+                    uri=True,
+                    isolation_level=None,
+                    check_same_thread=False,
+                )
+            else:
+                self._conn = sqlite3.connect(
+                    self._path, isolation_level=None, check_same_thread=False
+                )
         except sqlite3.Error as exc:
             raise StoreError(f"cannot open {self._path}: {exc}") from exc
         self._conn.create_function("fiduciary_sha256", 1, _sha256, deterministic=True)
-        self._conn.execute("PRAGMA journal_mode = WAL")
-        self._conn.execute("PRAGMA synchronous = FULL")
+        if not read_only:
+            self._conn.execute("PRAGMA journal_mode = WAL")
+            self._conn.execute("PRAGMA synchronous = FULL")
         self._conn.execute("PRAGMA busy_timeout = 5000")
         super().__init__()
-        with self.transaction():
-            self._install()
+        if not read_only:
+            with self.transaction():
+                self._install()
 
     @property
     def path(self) -> Path:
         return self._path
+
+    def reader(self) -> SqliteStore:
+        """A read-only connection of its own to the same file (1.11.0): in WAL
+        mode it reads what has committed, and never waits on a transaction."""
+        return SqliteStore(self._path, read_only=True)
+
+    def _rows(self, sql: str, args: tuple[Any, ...] | list[Any] = ()) -> list[Any]:
+        """Every row of one query, read under the store's lock: a cursor read
+        after it is released could step past another thread's statement."""
+        with self._lock:
+            return self._conn.execute(sql, args).fetchall()
 
     def _install(self) -> None:
         for statement in _schema().split(";\n"):
@@ -158,34 +189,40 @@ class SqliteStore(Store):
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
-        if self._depth:
-            self._depth += 1
+        if self._read_only:
+            raise StoreError(f"{self._path} is open to read only")
+        # The lock is held from BEGIN to the last action after COMMIT: another
+        # thread's read waits for the outcome, and its write for its own
+        # transaction, rather than joining this one (1.11.0).
+        with self._lock:
+            if self._depth:
+                self._depth += 1
+                try:
+                    yield
+                finally:
+                    self._depth -= 1
+                return
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+            except sqlite3.Error as exc:
+                raise StoreError(f"cannot begin a write: {exc}") from exc
+            self._depth = 1
             try:
                 yield
-            finally:
-                self._depth -= 1
-            return
-        try:
-            self._conn.execute("BEGIN IMMEDIATE")
-        except sqlite3.Error as exc:
-            raise StoreError(f"cannot begin a write: {exc}") from exc
-        self._depth = 1
-        try:
-            yield
-        except BaseException:
-            self._depth = 0
-            self._drop_committed()
-            self._conn.execute("ROLLBACK")
-            raise
-        self._depth = 0
-        try:
-            self._conn.execute("COMMIT")
-        except sqlite3.Error as exc:
-            self._drop_committed()
-            with contextlib.suppress(sqlite3.Error):
+            except BaseException:
+                self._depth = 0
+                self._drop_committed()
                 self._conn.execute("ROLLBACK")
-            raise StoreError(f"the store refused the commit: {exc}") from exc
-        self._run_committed()
+                raise
+            self._depth = 0
+            try:
+                self._conn.execute("COMMIT")
+            except sqlite3.Error as exc:
+                self._drop_committed()
+                with contextlib.suppress(sqlite3.Error):
+                    self._conn.execute("ROLLBACK")
+                raise StoreError(f"the store refused the commit: {exc}") from exc
+            self._run_committed()
 
     def transaction(self) -> AbstractContextManager[None]:
         return self._transaction()
@@ -205,7 +242,8 @@ class SqliteStore(Store):
 
     def _write(self, sql: str, args: tuple[Any, ...]) -> None:
         try:
-            self._conn.execute(sql, args)
+            with self._lock:
+                self._conn.execute(sql, args)
         except sqlite3.Error as exc:
             raise StoreError(f"the store refused the write: {exc}") from exc
 
@@ -219,26 +257,25 @@ class SqliteStore(Store):
         )
 
     def document(self, digest: str) -> tuple[str, bytes] | None:
-        row = self._conn.execute(
-            "SELECT type, body FROM documents WHERE digest = ?", (digest,)
-        ).fetchone()
-        return None if row is None else (str(row[0]), bytes(row[1]))
+        rows = self._rows("SELECT type, body FROM documents WHERE digest = ?", (digest,))
+        return None if not rows else (str(rows[0][0]), bytes(rows[0][1]))
 
     def documents(self) -> Iterator[tuple[str, str, bytes]]:
         # Every reader reads its rows first: a cursor left open holds a read
         # snapshot, and BEGIN IMMEDIATE on a stale one is refused at once,
         # before the busy timeout, when another process wrote since.
-        rows = self._conn.execute("SELECT digest, type, body FROM documents ORDER BY digest")
-        for digest, kind, body in rows.fetchall():
+        for digest, kind, body in self._rows(
+            "SELECT digest, type, body FROM documents ORDER BY digest"
+        ):
             yield str(digest), str(kind), bytes(body)
 
     # -- the log --------------------------------------------------------------
 
     def head(self, log: str) -> tuple[int, str]:
-        row = self._conn.execute(
+        rows = self._rows(
             "SELECT seq, hash FROM log WHERE log_id = ? ORDER BY seq DESC LIMIT 1", (log,)
-        ).fetchone()
-        return (0, fidu1.GENESIS) if row is None else (int(row[0]), str(row[1]))
+        )
+        return (0, fidu1.GENESIS) if not rows else (int(rows[0][0]), str(rows[0][1]))
 
     def insert_record(self, record: StoredRecord) -> None:
         self._write(
@@ -247,11 +284,11 @@ class SqliteStore(Store):
         )
 
     def records(self, log: str, *, after: int = 0) -> Iterator[StoredRecord]:
-        for row in self._conn.execute(
+        for row in self._rows(
             "SELECT log_id, seq, hash, prev, kind, record FROM log WHERE log_id = ? AND seq > ? "
             "ORDER BY seq",
             (log, after),
-        ).fetchall():
+        ):
             yield StoredRecord(
                 str(row[0]), int(row[1]), str(row[2]), str(row[3]), str(row[4]), bytes(row[5])
             )
@@ -266,7 +303,7 @@ class SqliteStore(Store):
     def rows(self, table: str) -> list[tuple[Any, ...]]:
         columns = PROJECTIONS[table]
         return self.sort_rows(
-            [tuple(r) for r in self._conn.execute(f"SELECT {', '.join(columns)} FROM {table}")]
+            [tuple(r) for r in self._rows(f"SELECT {', '.join(columns)} FROM {table}")]
         )
 
     # -- intake ---------------------------------------------------------------
@@ -277,15 +314,15 @@ class SqliteStore(Store):
                 "INSERT INTO intake (received_at, body) VALUES (?, ?)",
                 (fidu1.format_instant(datetime.now(UTC)), data),
             )
-        assert cursor.lastrowid is not None
-        return int(cursor.lastrowid)
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
 
     def intake(self) -> Iterator[tuple[int, bytes]]:
-        for row in self._conn.execute("SELECT id, body FROM intake ORDER BY id").fetchall():
+        for row in self._rows("SELECT id, body FROM intake ORDER BY id"):
             yield int(row[0]), bytes(row[1])
 
     def intake_ids(self) -> list[int]:
-        return [int(r[0]) for r in self._conn.execute("SELECT id FROM intake ORDER BY id")]
+        return [int(r[0]) for r in self._rows("SELECT id FROM intake ORDER BY id")]
 
     def submissions(self, ids: Collection[int]) -> list[tuple[int, bytes]]:
         wanted = sorted(set(ids))
@@ -293,11 +330,12 @@ class SqliteStore(Store):
         for start in range(0, len(wanted), _BATCH):
             batch = wanted[start : start + _BATCH]
             marks = ", ".join("?" for _ in batch)
-            rows = self._conn.execute(
+            rows = self._rows(
                 f"SELECT id, body FROM intake WHERE id IN ({marks}) ORDER BY id", batch
-            ).fetchall()
+            )
             found += [(int(row[0]), bytes(row[1])) for row in rows]
         return found
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

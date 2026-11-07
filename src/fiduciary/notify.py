@@ -320,10 +320,27 @@ Send = Callable[[str, bytes, Mapping[str, str], float], int]
 """``(url, body, headers, timeout) -> HTTP status``."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A webhook's redirect is its answer, not an address to follow (1.11.0).
+
+    urllib's default handler followed a 301, 302 or 303 as a ``GET`` without
+    the body, to wherever ``Location`` pointed (past the URL checked when the
+    webhook was configured), and the notifier took the 2xx found there as the
+    notice delivered. Every 3xx (urllib already refused a ``POST`` on a 307 or
+    308) is now returned as an ``HTTPError``: a failed delivery, retried.
+    """
+
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+_OPENER: Final = urllib.request.build_opener(_NoRedirect())
+
+
 def _send(url: str, body: bytes, headers: Mapping[str, str], timeout: float) -> int:
     request = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")  # noqa: S310 - https, or loopback http, checked when configured
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as reply:  # noqa: S310
+        with _OPENER.open(request, timeout=timeout) as reply:
             return int(reply.status)
     except urllib.error.HTTPError as exc:
         return int(exc.code)

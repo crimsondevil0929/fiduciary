@@ -378,7 +378,7 @@ why authority is counted by principal, never by digest (F7-5).
 | `approval` | `FIDU1/approval/v1\n` | one principal |
 | `warrant` | `FIDU1/warrant/v1\n` | the service |
 | `record` | `FIDU1/record/v1\n` | the service |
-| `bundle` | `FIDU1/bundle/v1\n` | the exporter, optionally |
+| `bundle` | `FIDU1/bundle/v1\n` | the exporter, with the service key (required in 1.11.0) |
 
 - **F3-5.** No FIDU1 domain is a prefix of another, and none begins with `ARC1/` or
   `ILOK1/`. A FIDU1 signature therefore never verifies as an ARC1 or ILOK1 signature, and
@@ -886,6 +886,19 @@ Fiduciary's own acts are records in a hash-chained, signed log. It is built as I
 
   A log truncated or rewritten after its records were anchored disagrees with the ledger
   (V10).
+
+  *Amended in 1.11.0:* records are anchored in their order. A record whose anchor the
+  ledger refused (a busy file, a failover) used to stand unanchored while the next was
+  anchored at once, and the repair a turn later anchored it after its successor, which V12
+  then named as tampering, for good. Now a record is anchored only once every record before
+  it is. A process that anchored the record before anchors the next at once. Otherwise,
+  each record in the gap (one the ledger refused, one a crash left, or one another
+  process wrote: a cluster's executor and writer both append to the log) is looked up in
+  the ledger by its memo and anchored first if it is not, oldest first; `anchor_pending`
+  stops at the first the ledger refuses. A log opened in a new process checks the whole
+  log first. Two processes may then both anchor a record: a record's anchor is its first
+  (V10, V12, and the in-browser checks), and each record's first anchor follows its
+  predecessor's.
 - **F4-27.** The log holds digests. The documents it names are stored beside it,
   content-addressed, and each is checked against its digest when read. Row data, payloads
   and transcripts never enter the log or any document (E3-11's posture).
@@ -1681,10 +1694,13 @@ lineage and its descendants. `docs/BUNDLE_FORMAT.md` specifies its bytes.
 
 The bundle is an uncompressed POSIX tar, with members in sorted order, mode 0644, owner 0
 and mtime 0. One lineage over one range therefore exports to identical bytes.
-`manifest.json` is canonical JSON, and an exporter MAY sign it as a FIDU1 `bundle` document
-with the service key. The verifier never relies on that signature: it checks every member
-against its digest, then on the member's own terms. A signature that is present must verify
-(V9).
+`manifest.json` is canonical JSON, and the exporter signs it as a FIDU1 `bundle` document
+with the service key; the signature must verify (V9). The verifier checks every member
+against its digest, then on the member's own terms. *Amended in 1.11.0:* the signature was
+optional, and the verifier did not rely on it. An outside audit showed what that left open:
+a member's absence is checked on no one's terms. A bundle's tail cut off, or its receipts
+dropped, with the manifest relisted unsigned, passed with every key pinned. The signature
+makes the list of members the exporter's statement, and F9-10 holds the exporter to it.
 
 - **F9-5.** *Amended in 1.4.0.* A **sealed** bundle (`fiduciary export-bundle --sealed`,
   format `fidb/2`) is one lineage's, to hand to the party it serves: one customer of a
@@ -1762,6 +1778,24 @@ against its digest, then on the member's own terms. A signature that is present 
   action in the export is explained by a receipt; 1 when one is not, or the bundle's
   receipts cannot be relied on; 2 on a usage error.
 
+- **F9-10.** *Added in 1.11.0.* **What a bundle may not leave out.** The manifest is
+  signed by the service key (V9), and `export-bundle` refuses to export without its
+  signer. The cut entry is in the bundle, proven, and is the anchor of record `to` with
+  its hash (V6), so a range cannot end before the checkpoint it is held to. Every action
+  receipt an escrow chain in the bundle names (Interlock writes `; receipt <id>` into the
+  note of the record a plan settles on, before it issues the receipt) is in the bundle
+  (V5). One left out is named by its record, and so is one never issued, when the
+  process that committed the plan stopped first. The exporter carries an action receipt
+  when it carries the escrow record the receipt settles, wherever the receipt's own ledger
+  anchor falls, so an honest export of any prefix of the log holds them together. Each
+  line of `log.jsonl` is its record's canonical bytes (V1). The container is read as the
+  exporter writes it, header by header (`docs/BUNDLE_FORMAT.md` §1): a sparse, pax, GNU or
+  link entry is unreadable (exit 2), so no member unpacks to more bytes than the bundle
+  holds, and the console's in-browser checks read the container by the same rules, and
+  check the manifest's signature, the ledger entries anchors are read from (each entry's
+  hash, its inclusion, the checkpoint's signature, and the cut), and the receipts an
+  escrow chain names.
+
 ## 9.3 `fiduciary verify-bundle`
 
 ```
@@ -1776,15 +1810,15 @@ verified under `keys.json`'s key, and the report says it is the exporter's state
 
 | Check | Holds when | Fails as | Exit |
 |---|---|---|---|
-| V1 schema | every member parses strictly (F3-1) and matches its manifest digest | `malformed` | 3 |
+| V1 schema | every member parses strictly (F3-1) and matches its manifest digest; each log line is its record's canonical bytes (1.11.0) | `malformed` | 3 |
 | V2 charter | the chain from the pinned digest verifies: approvals, quorums, suspensions | `authority` | 5 |
 | V3 lineage | versions link; each issued version carries its quorum; each derived one is ⊑ its parent in force; no equivocation; terms nest | `authority` / `monotonicity` | 5 / 6 |
 | V4 compiled policy | `compile` over the bundle's documents gives the compiled digest each `mandate.bound` names, and every receipt meets F6-7, and F6-8 when the manifest says the exporter's checker digests are canonical (U-1) | `policy` | 6 |
-| V5 receipts | agentgov's `verify_bundle` passes offline for each receipt: signature, inclusion, witness, key schedule | `signature` / `evidence` | 4 / 8 |
-| V6 ledger | each entry's inclusion proof verifies against a checkpoint signed by the ledger's checkpoint key; each memo the other checks rely on is in a verified entry | `evidence` | 8 |
+| V5 receipts | agentgov's `verify_bundle` passes offline for each receipt: signature, inclusion, witness, key schedule; every action receipt an escrow chain names is in the bundle (1.11.0, F9-10) | `signature` / `evidence` | 4 / 8 |
+| V6 ledger | each entry's inclusion proof verifies against a checkpoint signed by the ledger's checkpoint key; each memo the other checks rely on is in a verified entry; the cut is in the bundle, proven, and is the anchor of record `to` (1.11.0, F9-10) | `evidence` | 8 |
 | V7 completeness | every ledger entry on the footprint, every receipt, and every ILOK1 operator act on the lineage's messages is explained (see below). Anything else is named, and labeled break-glass when its key is declared so. | `ambient` | 7 |
 | V8 warrants | each warrant's basis is recomputed (§7.3, §7.4); each is executed once; its intent precedes its `not_after`; each step's evidence matches the resolution's targets, heads and amounts | `authority` / `time` | 5 / 9 |
-| V9 records | the FIDU1 log verifies: sequence, links, and signatures under the service key; a signed manifest's signature holds | `signature` | 4 |
+| V9 records | the FIDU1 log verifies: sequence, links, and signatures under the service key; the manifest is signed, and its signature holds (required in 1.11.0, F9-10) | `signature` | 4 |
 | V10 anchors | every FIDU1 record in range is anchored, and every anchor names a record the log holds with that hash | `evidence` | 8 |
 | V11 revocation | no receipt of the lineage commits, and no delivery is made, after its revocation's trip sequence. Plans in flight at the trip, by `STAGE_OPENED` order, must show no commit. | `revocation` | 9 |
 | V12 ordering | every instant the service wrote agrees with the ledger order of its anchor, within the configured skew | `time` | 9 |
@@ -2238,6 +2272,10 @@ the notices, and so does `fiduciary notify`.
   So a retry is the same notice, and a receiver keeps it once: Standard Webhooks'
   `webhook-id`, or PagerDuty's `dedup_key`, which is the ticket's. A webhook that has no
   cursor yet starts at the log's head, so the deployment's past is not announced.
+  *Amended in 1.11.0:* a redirect is the webhook's answer, never followed. A `3xx` is a
+  failed delivery, retried as any other. Before, a `301`, `302` or `303` was followed as a
+  `GET` without the notice, to wherever it pointed, and the `2xx` found there moved the
+  cursor.
 - **F10-27. Signed, or keyed by their receiver.** A `standard` notice is canonical JSON,
   signed under the Standard Webhooks asymmetric convention (`v1a`, Ed25519). The signature
   is by the deployment's notification key (`[notify] key`), which is no other role's key.
@@ -2330,6 +2368,33 @@ system an agent will change, with starter tool bindings for it (`fiduciary.start
     deployment, its mandate and charter digest written in.
   - `docs/QUICKSTART.md` takes a deployment from init to a 2-of-3 amendment and an offline
     bundle, and `tests/test_quickstart.py` runs it as written.
+- **F10-35.** *Added in 1.11.0.* **One process, many threads; a listener no client can
+  stall; and init says what it changed.** Found by an outside audit.
+  - A store's connection is one, shared by the service's threads. The store's lock holds a
+    transaction, from its start to the last action after its commit, against every other
+    read and write on it, on SQLite and on PostgreSQL. A read on another thread waits for
+    the transaction's outcome and never sees its rows before they commit; a write on
+    another thread (the console's intake) is a transaction of its own, never part of one
+    that rolls back.
+  - The `notifier` reads the log through `store.reader()`: on SQLite, a read-only
+    connection of its own, which sees only what has committed. A notice is never sent for
+    a record the writer then rolled back, and its cursor never moves past one.
+  - The bridge's listener queues 64 connections. With TLS, each handshake is made in the
+    connection's own thread, within 5 seconds: one client that connects and says nothing
+    holds only its own thread, never the loop that accepts every other. A connection that
+    waits 60 seconds between bytes of a request is closed.
+  - An agent that holds its most sessions is answered `429` with `Retry-After` set to the
+    seconds until its least recently used session is closed idle.
+  - Init on a SQLite database measures what it changed and says so, on its output, in
+    `init.json` (`changed`) and in the README: the journal moved to WAL, Interlock's tables
+    added, and whether any table of the developer's changed. The next steps it prints are
+    the README's and `docs/QUICKSTART.md`'s: `fiduciary serve` and the agent's
+    `claude mcp add` for a substrate; `mcp proxy` for an MCP server.
+  - Init writes `pinned-keys.json`, the deployment's public keys read from its
+    configuration as `export-bundle` reads them, and `charter.digest`. The quickstart and
+    the README init writes verify the bundle with `--charter` and `--keys` from them, from
+    the first bundle. Init's output says that `keys/` holds every private key, on one
+    machine so that the guide runs there, and who each belongs with.
 
 ---
 
@@ -2714,6 +2779,7 @@ SQLite and on PostgreSQL. The test kinds:
 | F9-4: reports (`--json`, `--report`) and `fiduciary demo` | after 6 | every golden bundle's exit code and findings through `--json`; the demo's seven acts, measured; the control-framework packs by digest; each domain pack's acts, measured; each request-only industry's vendor log reconciled against its delivery receipts; a recorded run retold with its model calls byte-identical; a recorded model replayed on today's engine, each divergence stopping it | Implemented (1.1.0; packs and domains 1.2.0; the coding-agent pack, on Git, 1.3.0; vendor logs and retelling 1.9.0; replay 1.10.0), SQLite. `test_attest.py`, `test_demo.py`, `test_packs.py`, `test_coding_agent.py`, `test_vendor_logs.py`, `test_narration.py`, `test_replay.py` |
 | F9-8: delivery receipts in a bundle | 1.10.0 | a pack's bundles before and after the settler; a relay key not pinned; a forged attestation re-signed by the receipt key; the in-browser checks against each | Implemented (1.10.0). `test_bundle_deliveries.py`, `test_bundle_vectors.py`, `test_browser_verifier.py` |
 | F9-9: a system's log against a bundle | 1.10.0 | each industry's audit through the bundle; the command; a bundle not of the pinned charter | Implemented (1.10.0). `test_bundle_deliveries.py`, `test_packs.py`, `test_vendor_logs.py` |
+| F9-10: what a bundle may not leave out | 1.11.0 | an outside audit's cases: a tail cut off with no key, a range ended early and signed again, a receipt left out, an unsigned manifest; every prefix of a log exported and verified; a receipt anchored past the cut; the container read as written (sparse, pax, GNU, link, mode, mtime, trailing data, bounds); each in the browser too | Implemented (1.11.0). `test_bundle_completeness.py`, `test_bundle_format.py`, `test_bundle_vectors.py`, `test_browser_verifier.py` |
 | F9-5 to F9-7: sealed bundles and sealed logs | 1.4.0 | a lineage's own record withheld, by an exporter that signs the manifest; a key swapped, left out, or a lineage below left out; another lineage's record carried; the seal vectors | Implemented (1.4.0). `test_sealed_bundles.py`, `test_vectors.py`, `test_bundle_vectors.py`, `test_cli_bundle.py` |
 | F10-1 to F10-4: the stores | 1, 3 | the projection fold; append-only enforcement on both stores; the intake role | Implemented. `test_store.py`, `test_postgres.py`, `test_upgrade.py` |
 | F10-5 to F10-8: concurrency | 3, 6 | contention tests; cluster takeover; soak | Implemented. `test_contention.py`, `test_cluster.py`, `test_soak.py` |
@@ -2721,8 +2787,10 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-12 to F10-17, F10-19: the service and the cluster | 6 | process tests: a part restarted, a key reload refused, a leader killed and frozen; the new leader waiting, healthy | Implemented. `test_service.py`, `test_cluster.py`, `test_soak.py` |
 | F10-20 to F10-24: the console | 1.7.0 | each ticket class read from a recorded run and a sandbox; a vote signed outside the console checked under the charter's key, refused when altered or by another key, queued, and recorded by the deployment's writer; a recorded run's every byte unchanged after the console, its sandbox and its votes; the boundary's refusals; every golden bundle through the console's verifier; each substrate's presets | Implemented (1.7.0), both stores. `test_interactive_console.py` |
 | F10-23 (1.8.0): the page's bundle checks | 1.8.0 | the module run by Node over all 35 golden bundles: no false alarm; every V1, V9 or V10 failure caught with pinned keys; each outcome pinned | Implemented (1.8.0). `test_browser_verifier.py`; the site's bundles, `scripts/check_site.py` |
-| F10-25 to F10-27: notices | 1.8.0 | a held ticket, its warrant and execution told in order and signed; a failure retried as the same notice; Slack and PagerDuty shapes; the configuration's refusals; the CLI against a local receiver | Implemented (1.8.0). `test_notify.py` |
+| F10-25 to F10-27: notices | 1.8.0 | a held ticket, its warrant and execution told in order and signed; a failure retried as the same notice; Slack and PagerDuty shapes; the configuration's refusals; the CLI against a local receiver; a redirect not followed (1.11.0) | Implemented (1.8.0; amended 1.11.0). `test_notify.py` |
 | F10-28 to F10-30: `fiduciary init` | 1.8.0 | each annotation's governance; a tool the grammar cannot hold left out; a deployment run as written: the proxy, a read, a released write, a held one ticketed, two votes, the warrant executed, the relay's calls on the server; a live model through the proxy | Implemented (1.8.0). `test_init.py`; `scripts/init_live.py` |
+| F4-26 (amended): anchors in order | 1.11.0 | one anchor refused, then the next record; the ledger down for two records; a crash between a commit and its anchor; two processes appending to one log, one anchoring late (found by the soak) | Implemented (1.11.0), both stores. `test_tamper.py` |
+| F10-35: threads, the listener, init's changes | 1.11.0 | a read and a write on another thread during a transaction that rolls back; the SQLite reader; the notifier's reader; a silent TLS client; a burst of 64; a client that trickles; `Retry-After`; init's measured changes and next steps; init's pins verify its own bundle and refuse another deployment's | Implemented (1.11.0), both stores. `test_store_threads.py`, `test_mcp.py`, `test_init_substrates.py`, `test_init.py` |
 | F10-34: the writer serves the agent; init's cautions; the quickstart | 1.10.1 | the bridge's token and configuration; a trigger beyond `--table`, and one beyond the one-row limit, each named; `docs/QUICKSTART.md` run as written, from init to a 2-of-3 amendment and a bundle that passes | Implemented (1.10.1), SQLite. `test_init_substrates.py`, `test_quickstart.py` |
 | F10-31 to F10-33: `fiduciary init --substrate` | 1.9.0 | each of the six substrates written and served through `fiduciary mcp serve`: an allowed write committed, a wider one refused before anything changed; a keyless SQLite table by `rowid`; PostgreSQL's stage role, `grants.sql` and a signed install; Terraform's marker added; the missing-argument refusals | Implemented (1.9.0), SQLite; PostgreSQL where the test DSN is set; Terraform where `tofu` or `terraform` is installed. `test_init_substrates.py` |
 | F10-20 (1.9.0): delivery receipts in the desk | 1.9.0 | a sandbox's receipts include the relay's delivery receipts, shown request-only on their sink | Implemented (1.9.0). `test_interactive_console.py` |

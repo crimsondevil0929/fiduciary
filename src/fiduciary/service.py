@@ -358,7 +358,15 @@ class _Writer:
                 return fid.session(agent.mandate, tenant=agent.tenant, bridged=True)
 
             agents[name] = Agent(name, agent.token_sha256, opener, agent.max_sessions)
-        bridge = HttpBridge(where[0], where[1], tls=tls, lock=fid.lock, agents=agents)
+        serve = self.config.serve
+        bridge = HttpBridge(
+            where[0],
+            where[1],
+            tls=tls,
+            lock=fid.lock,
+            agents=agents,
+            idle_seconds=serve.idle + serve.every,
+        )
         bridge.start()
         return bridge
 
@@ -659,16 +667,25 @@ class NotifierService(_Part):
         self._writer = writer
         self._every = every
         self._notifier: Any = None
+        self._store: Any = None
+        """The writer's store the notifier was made over."""
+        self._reader: Any = None
+        """What it reads the log through (1.11.0): a connection of its own where
+        the store has one (SQLite, read-only), so a notice is only ever of a
+        record that committed, and is never sent for one the writer rolls back."""
 
     def step(self) -> float:
         fid = self._writer.current
         notify = self._writer.config.notify
         if fid is None or notify is None:
             return self._every
-        if self._notifier is None:
+        if self._notifier is None or self._store is not fid.log.store:
             from fiduciary.notify import for_store
 
-            self._notifier = for_store(notify, fid.log.store)
+            self._drop()
+            self._store = fid.log.store
+            self._reader = self._store.reader()
+            self._notifier = for_store(notify, self._reader)
         delivered = self._notifier.turn()
         total = sum(delivered.values())
         if total:
@@ -676,9 +693,18 @@ class NotifierService(_Part):
             self.metrics.inc("fiduciary_notices_delivered_total", total)
         return self._every
 
+    def _drop(self) -> None:
+        reader, store = self._reader, self._store
+        self._notifier = self._reader = self._store = None
+        if reader is not None and reader is not store:
+            reader.close()
+
     def reopen(self) -> None:
         """The notification key is read again with the store, on the next turn."""
-        self._notifier = None
+        self._drop()
+
+    def close(self) -> None:
+        self._drop()
 
 
 class _Metrics(MetricsService):

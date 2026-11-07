@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shlex
 import sys
 import uuid
 from collections.abc import Callable, Sequence
@@ -1562,14 +1563,43 @@ def _init(args: argparse.Namespace) -> int:
         _out(f"wrote    {note['name']}: {note['why']}")
     for caution in report.cautions:
         _out(f"caution  {caution['name']}: {caution['why']}")
-    _out(f"wrote       {report.root} (mandate {report.scope}; see README.md)")
-    config = Path(report.root).resolve() / "fiduciary.toml"
-    if (Path(report.root) / "grants.sql").is_file():
-        _out(f"first       run {Path(report.root).resolve() / 'grants.sql'} as the schema's owner")
-    _out(f"serve       fiduciary --config {config} mcp serve --mandate {report.scope}")
+    for change in report.changed:
+        _out(f"changed  {change['name']}: {change['why']}")
+    root = Path(report.root).resolve()
+    _out(f"wrote       {root} (mandate {report.scope}; see README.md)")
+    config = root / "fiduciary.toml"
+    if (root / "grants.sql").is_file():
+        _out(f"first       run {root / 'grants.sql'} as the schema's owner")
+    # As README.md and docs/QUICKSTART.md say it (1.11.0).
+    if (root / "keys" / "agent.token").is_file():
+        from fiduciary.init import BRIDGE
+
+        _out(f"serve       fiduciary --config {config} serve")
+        _out(
+            f"agent       claude mcp add --transport http {report.scope} http://{BRIDGE}/mcp "
+            f'--header "Authorization: Bearer $(cat {root / "keys" / "agent.token"})"'
+        )
+    elif command:
+        _out(
+            f"serve       fiduciary --config {config} mcp proxy --mandate {report.scope} -- "
+            + " ".join(shlex.quote(c) for c in command)
+        )
+        if "[relay]" in (root / "interlock.toml").read_text(encoding="utf-8"):
+            relay = root / "interlock.toml"
+            _out(f"relay       interlock relay --config {relay} --relay-id relay-a")
+    else:
+        _out(f"serve       fiduciary --config {config} mcp serve --mandate {report.scope}")
+    _out(f"approve     fiduciary console --dir {root} --accept-approvals --open")
     _out(
-        f"approve     fiduciary console --dir {Path(report.root).resolve()} "
-        f"--accept-approvals --open"
+        f"audit       fiduciary verify-bundle <bundle> --charter $(cat {root / 'charter.digest'}) "
+        f"--keys {root / 'pinned-keys.json'}"
+    )
+    # B2 (1.11.0): what init left on this machine, said where it is seen.
+    _out(
+        f"custody     {root / 'keys'} holds every private key, so that this runs on one "
+        "machine: give each principal their key (or a KMS) and delete it here; keep "
+        "agent.token with the agent alone. pinned-keys.json and charter.digest are "
+        "public: hand them to your auditor once, apart from any bundle"
     )
     return OK
 

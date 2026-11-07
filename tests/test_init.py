@@ -249,3 +249,23 @@ def test_the_deployment_runs_as_written(desk: tuple[Path, Path], tmp_path: Path)
         desk_view.close()
     finally:
         proxy.close()
+
+
+def test_init_prints_the_proxy_for_a_server_it_governs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An MCP server's deployment runs under ``mcp proxy`` (README.md, 1.11.0)."""
+    command = desk_command(tmp_path / "state.json")
+    assert cli.main(["init", "--out", str(tmp_path / "desk"), "--mcp", "--", *command]) == 0
+    printed = capsys.readouterr().out.splitlines()
+    (serve,) = [line for line in printed if line.startswith("serve ")]
+    assert " mcp proxy --mandate desk-agent -- " in serve and serve.endswith(command[-1])
+    assert any(line.startswith("relay ") for line in printed)
+    from fiduciary.bundle.export import spec
+    from fiduciary.keys import load_key
+
+    relay = spec(load_key(tmp_path / "desk" / "keys" / "relay-a.key").public_key())
+    assert json.loads((tmp_path / "desk" / "pinned-keys.json").read_text())["relays"] == [relay]
+    assert cli.main(["init", "--out", str(tmp_path / "bare")]) == 0
+    (serve,) = [line for line in capsys.readouterr().out.splitlines() if line.startswith("serve ")]
+    assert serve.endswith("mcp serve --mandate bare-agent")

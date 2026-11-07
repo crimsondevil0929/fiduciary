@@ -553,12 +553,16 @@ def test_a_commit_after_revocation_is_named(world: bound.World) -> None:
 # -- the log, its anchors, and the clock -------------------------------------------------
 
 
-def test_an_unanchored_record_is_named(world: bound.World) -> None:
+def test_an_unanchored_record_is_named(world: bound.World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A record the ledger never anchored, in range. Since 1.11.0 a service
+    anchors the gap before any record after it (F4-26), so this is a log a
+    service before 1.11.0 wrote, anchoring each record at once, past the gap."""
     mandate, fid = _lineage(world)
     world.store.submit(b"not an approval")
     unanchored = Log(world.store, e.SERVICE, clock=world.clock)
     Authority(unanchored, pinned=world.charter.digest).process_intake()
     seq = world.store.head("fiduciary")[0]
+    monkeypatch.setattr(Log, "_anchor_all", lambda log, records: [log._anchor(r) for r in records])
     _later(fid)
     report = _report(world, mandate)
     _fails(report, "V10", f"record {seq} is in range but has no ledger anchor", code=8)

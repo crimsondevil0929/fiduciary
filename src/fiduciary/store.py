@@ -16,6 +16,7 @@ the service takes, it takes from the state.
 from __future__ import annotations
 
 import abc
+import threading
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, fields
@@ -705,6 +706,18 @@ class Store(abc.ABC):
     def __init__(self) -> None:
         self._depth = 0
         self._committed: list[Callable[[], None]] = []
+        self._lock = threading.RLock()
+        """Held by a transaction from its start to its end, and by every read
+        (1.11.0). A store's connection is one, shared by the service's threads:
+        without it a read on another thread would see the transaction's rows
+        before they commit (and keep them after a rollback), and a write on
+        another thread would join the transaction, and go with its rollback."""
+
+    def reader(self) -> Store:
+        """A store to read from on a thread of its own: this one, its reads
+        serialized against its transactions; a store with a connection of its
+        own for readers says so (the SQLite store's, read-only). Added in 1.11.0."""
+        return self
 
     @abc.abstractmethod
     def transaction(self) -> AbstractContextManager[None]:
@@ -714,10 +727,11 @@ class Store(abc.ABC):
         """Run ``action`` once the outermost transaction open now commits, or
         now when none is open. A rollback drops it: a record that was never
         written is never anchored."""
-        if self._depth:
-            self._committed.append(action)
-        else:
-            action()
+        with self._lock:  # another thread's open transaction is not this one
+            if self._depth:
+                self._committed.append(action)
+                return
+        action()
 
     def _run_committed(self) -> None:
         actions, self._committed = self._committed, []
