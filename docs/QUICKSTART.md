@@ -127,11 +127,17 @@ def ask(n, method, params):
     with urllib.request.urlopen(request) as answer:
         session = answer.headers.get("Mcp-Session-Id") or session
         return json.loads(answer.read())["result"]
-ask(0, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
-for n, (tool, arguments) in enumerate(zip(sys.argv[1::2], sys.argv[2::2]), 1):
-    result = ask(n, "tools/call", {"name": tool, "arguments": json.loads(arguments)})
-    print(f"{tool}: {'refused' if result.get('isError') else 'ok'}")
-    print(result["content"][0]["text"], end="\n\n")
+try:
+    ask(0, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {}})
+    for n, (tool, arguments) in enumerate(zip(sys.argv[1::2], sys.argv[2::2]), 1):
+        result = ask(n, "tools/call", {"name": tool, "arguments": json.loads(arguments)})
+        print(f"{tool}: {'refused' if result.get('isError') else 'ok'}")
+        print(result["content"][0]["text"], end="\n\n")
+finally:  # end the session: an agent holds at most four open at once
+    if session:
+        end = urllib.request.Request("http://127.0.0.1:8765/mcp", method="DELETE", headers={
+            "Authorization": f"Bearer {token}", "Mcp-Session-Id": session})
+        urllib.request.urlopen(end).close()
 EOF
 ```
 

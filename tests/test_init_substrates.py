@@ -487,3 +487,37 @@ def test_the_writer_serves_the_agent_with_a_token_only_the_agent_holds(tmp_path:
     assert token.read_text().strip() not in (tmp_path / "desk" / "fiduciary.toml").read_text()
     readme = (tmp_path / "desk" / "README.md").read_text()
     assert "claude mcp add --transport http" in readme and "## Audit it offline" in readme
+
+
+def test_init_says_what_it_did_to_the_database_and_how_to_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A developer's own database (1.11.0): init says, measured, that it moved
+    the file to WAL and added Interlock's tables, and that it changed none of
+    theirs; and the next steps it prints are the README's and the quickstart's."""
+    database = tmp_path / "shop.db"
+    _shop(database)
+    out = tmp_path / "desk"
+    argv = ["init", "--out", str(out), "--substrate", "sqlite", "--database", str(database)]
+    assert cli.main(argv) == 0
+    printed = capsys.readouterr().out.splitlines()
+    with closing(sqlite3.connect(database)) as conn:
+        names = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")]
+        added = sum(1 for name in names if name.startswith("_interlock_"))
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    (changed,) = [line for line in printed if line.startswith("changed")]
+    assert "switched its journal to WAL (it was DELETE)" in changed
+    assert f"added {added} Interlock tables" in changed and added > 10
+    assert changed.endswith("no table of yours changed")
+    said = json.loads((out / "init.json").read_text())["changed"]
+    assert said == [{"name": str(database), "why": changed.split(": ", 1)[1]}]
+    assert said[0]["why"] in (out / "README.md").read_text()
+    steps = {line.split()[0]: line.split(None, 1)[1] for line in printed[-3:]}
+    config = out.resolve() / "fiduciary.toml"
+    assert steps["serve"] == f"fiduciary --config {config} serve"
+    assert steps["agent"].startswith("claude mcp add --transport http desk-agent")
+    assert steps["approve"].startswith("fiduciary console --dir ")
+    assert not any("mcp serve" in line for line in printed)
+    quickstart = (Path(__file__).resolve().parent.parent / "docs" / "QUICKSTART.md").read_text()
+    assert "fiduciary --config desk/fiduciary.toml serve" in quickstart
+    assert "claude mcp add --transport http " in quickstart  # the name is the reader's
