@@ -1,24 +1,34 @@
 // What a browser can check of a .fidb bundle, with Web Crypto alone, before (or without)
 // fiduciary verify-bundle. It is a partial check, never a verdict:
 //
-//   container   part of V1   a POSIX tar of regular files, sorted, each once, mode 0644
-//   members     part of V1   every member listed in the manifest with its SHA-256, none else
+//   container   part of V1   a POSIX ustar tar of regular files at relative ASCII paths, sorted,
+//                            each once, mode 0644, mtime 0, zeros after the last (1.11.0: read
+//                            as fiduciary's own reader reads it, header by header)
+//   members     part of V1   a fidb/1 or fidb/2 manifest in canonical JSON, and every member
+//                            listed in it with its SHA-256, none else
 //   documents   part of V1   each document's path names the SHA-256 of its bytes
-//   manifest    part of V9   the manifest's Ed25519 signature, by the service key
+//   manifest    part of V9   the manifest's Ed25519 signature, by the service key: required
+//                            (1.11.0), since it binds which members the bundle holds
 //   chain       part of V9   the log's hash chain, record 1 to the last, withheld ones by hash
 //   signatures  part of V9   every whole record's Ed25519 signature, by the service key
 //   pins        part of V1   (given pinned keys) keys.json holds the keys the auditor pinned
 //   seals       part of V10  (fidb/2) every whole record's seal opens under the bundle's keys
+//   ledger      part of V6   (1.11.0) the ledger entries anchors are read from: each hashes to
+//                            itself (AGOV1 to AGOV3) and is included in the ledger's checkpoint,
+//                            which the ledger key signs, of the manifest's cut; the cut is the
+//                            anchor of the range's last record
 //   anchors     part of V10  every record in range has a ledger anchor naming its hash; in
 //                            a fidb/2 bundle, none of a withheld record's tags opens under
 //                            the bundle's keys: a withheld record they open is its own
+//   receipts    part of V5   (when the bundle holds an escrow chain, 1.11.0) every action
+//                            receipt a chain's record names ("; receipt <id>") is in the bundle
 //   deliveries  part of V5   (when the bundle holds any, 1.10.0) every delivery receipt is
 //                            signed by a receipt key, included in its signed checkpoint,
 //                            attested by a relay key, and bound to an action receipt the
 //                            bundle holds, by id, place and leaf hash
 //
-// Without pinned keys, the keys are the bundle's own (keys.json). The ledger's checkpoint,
-// its proofs and cosignatures (V6), replay (V3, V7, V8, V11, V12), the charter (V2), the
+// Without pinned keys, the keys are the bundle's own (keys.json). The ledger's cosignatures
+// and the entries no anchor is read from (the rest of V6), replay (V3, V7, V8, V11, V12), the charter (V2), the
 // compiled policy (V4) and action receipts (the rest of V5) are fiduciary verify-bundle's.
 //
 // Loaded by the console page (window.FidbVerify) and by Node for its golden-vector test
@@ -35,27 +45,34 @@
   function utf8(text) { return new TextEncoder().encode(text); }
   function concat(a, b) { var out = new Uint8Array(a.length + b.length); out.set(a, 0); out.set(b, a.length); return out; }
 
+  function zeros(u8, from, to) { for (var i = from; i < to; i++) if (u8[i] !== 0) return false; return true; }
+
   function readTar(u8) {
+    // As fiduciary's own reader (bundle/format.py unpack) reads a bundle, rule for rule.
     var entries = [], problems = [], off = 0, prev = null;
     function field(hdr, at, len) { var s = ""; for (var i = at; i < at + len && hdr[i]; i++) s += String.fromCharCode(hdr[i]); return s; }
+    function octal(hdr, at, len) { var t = field(hdr, at, len).replace(/^ +| +$/g, ""); return /^[0-7]+$/.test(t) ? parseInt(t, 8) : NaN; }
     while (off + 512 <= u8.length) {
       var hdr = u8.subarray(off, off + 512);
-      var empty = true;
-      for (var z = 0; z < 512; z++) if (hdr[z] !== 0) { empty = false; break; }
-      if (empty) break;
+      if (zeros(hdr, 0, 512)) break;
       var sum = 0; for (var i = 0; i < 512; i++) sum += (i >= 148 && i < 156) ? 32 : hdr[i];
       var name = field(hdr, 0, 100), prefix = field(hdr, 345, 155), type = hdr[156];
-      var full = prefix ? prefix + "/" + name : name, size = parseInt(field(hdr, 124, 12).trim() || "0", 8);
-      if (parseInt(field(hdr, 148, 8).trim(), 8) !== sum) { problems.push((full || "a member") + ": its header checksum is wrong"); break; }
+      var full = prefix ? prefix + "/" + name : name, size = octal(hdr, 124, 12);
+      if (octal(hdr, 148, 8) !== sum) { problems.push((full || "a member") + ": its header checksum is wrong"); break; }
+      if (/[^\x00-\x7f]/.test(full)) problems.push("a member's name is not ASCII");
+      if (field(hdr, 257, 6) !== "ustar" || hdr[262] !== 0 || hdr[263] !== 48 || hdr[264] !== 48) problems.push(full + " is not in a POSIX ustar header");
       if (type !== 48 && type !== 0) problems.push(full + " is not a regular file");
       if (!full || full[0] === "/" || full.split("/").indexOf("..") >= 0) problems.push(full + " is not a relative path");
-      if (parseInt(field(hdr, 100, 8).trim(), 8) !== 420) problems.push(full + ": mode is not 0644");
-      if (parseInt(field(hdr, 136, 12).trim() || "0", 8) !== 0) problems.push(full + ": mtime is not 0");
+      if (octal(hdr, 100, 8) !== 420) problems.push(full + ": mode is not 0644");
+      if (octal(hdr, 136, 12) !== 0) problems.push(full + ": mtime is not 0");
       if (prev !== null && !(prev < full)) problems.push(full + " is out of order, or there twice");
-      if (!isFinite(size) || off + 512 + size > u8.length) { problems.push(full + " runs past the end of the file"); break; }
+      var padded = off + 512 + Math.ceil(size / 512) * 512;
+      if (!isFinite(size) || padded > u8.length) { problems.push(full + " runs past the end of the file"); break; }
+      if (!zeros(u8, off + 512 + size, padded)) problems.push(full + " is padded with data");
       entries.push({ name: full, bytes: u8.subarray(off + 512, off + 512 + size) });
-      prev = full; off += 512 + Math.ceil(size / 512) * 512;
+      prev = full; off = padded;
     }
+    if (!zeros(u8, off, u8.length)) problems.push("data follows the end of the archive");
     return { entries: entries, problems: problems };
   }
 
@@ -109,6 +126,55 @@
     function hmac(keyU8, msgU8) {
       return subtle.importKey("raw", keyU8, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]).then(function (k) { return subtle.sign("HMAC", k, msgU8); }).then(function (ab) { return new Uint8Array(ab); });
     }
+    function byId(specs) { return Promise.all(specs.map(function (s) { return keyId(s).then(function (id) { return [id, s]; }); })).then(function (pairs) { var m = {}; pairs.forEach(function (p) { m[p[0]] = p[1]; }); return m; }); }
+    function verifySig(domain, body, sig, ring) {
+      if (!sig || !ring[sig.key_id]) return Promise.resolve(false);
+      return arc1Input(domain, body, sig).then(function (msg) { return edVerify(ring[sig.key_id], msg, sig.signature); });
+    }
+    function strip(doc) { var c = Object.assign({}, doc); delete c.sig; return c; }
+    function nodeHash(l, r) { return sha("SHA-256", concat(concat(new Uint8Array([1]), hexBytes(l)), hexBytes(r))); }
+    function included(leaf, proof, root) {
+      // RFC 9162 2.1.3.2: the audit path from leaf proof.leaf_index to a tree of proof.tree_size.
+      // Whole numbers only, halved by division: an index past 2^31 is no 32-bit integer (1.11.0).
+      var fn = proof.leaf_index, sn = proof.tree_size - 1, path = proof.audit_path;
+      if (!Number.isSafeInteger(fn) || !Number.isSafeInteger(proof.tree_size) || fn < 0 || !(fn <= sn) || !Array.isArray(path)) return Promise.resolve(false);
+      if (!path.every(function (p) { return typeof p === "string" && /^[0-9a-f]{64}$/.test(p); })) return Promise.resolve(false);
+      function half(x) { return Math.floor(x / 2); }
+      var step = Promise.resolve(leaf);
+      path.forEach(function (p) {
+        step = step.then(function (r) {
+          if (r === null || sn === 0) return null;
+          var next;
+          if (fn % 2 === 1 || fn === sn) {
+            next = nodeHash(p, r);
+            while (fn % 2 === 0 && fn !== 0) { fn = half(fn); sn = half(sn); }
+          } else next = nodeHash(r, p);
+          fn = half(fn); sn = half(sn);
+          return next;
+        });
+      });
+      return step.then(function (r) { return r !== null && sn === 0 && r === root; });
+    }
+    function entryHash(e) {
+      // An AgentGov ledger entry's hash from its audit record (agentgov core._hash_entry): AGOV3,
+      // canonical JSON of its fields; AGOV1 and AGOV2, a JSON array with every non-ASCII
+      // character escaped. Fields not as the ledger writes them hash to nothing here.
+      if (!e || typeof e !== "object") return Promise.resolve(null);
+      var texts = ["amount", "balance_after", "counterparty_id", "direction", "entry_id", "entry_type", "memo", "prev_hash", "ref", "scope_id", "sequence", "timestamp", "transaction_id", "version"];
+      if (!texts.every(function (k) { return typeof e[k] === "string"; }) || !/^(0|[1-9][0-9]*)$/.test(e.sequence)) return Promise.resolve(null);
+      var seq = Number(e.sequence), party = e.counterparty_id || null, ref = e.ref || null, text;
+      if (!Number.isSafeInteger(seq)) return Promise.resolve(null);
+      if (e.version === "AGOV3") {
+        var FIXED = /^-?(0|[1-9][0-9]*)\.[0-9]{8}$/;
+        if (!FIXED.test(e.amount) || !FIXED.test(e.balance_after) || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(e.timestamp)) return Promise.resolve(null);
+        text = canon({ amount: e.amount, balance_after: e.balance_after, counterparty_id: party, direction: e.direction, entry_id: e.entry_id, entry_type: e.entry_type, format: "AGOV3", memo: e.memo, prev_hash: e.prev_hash, ref: ref, scope_id: e.scope_id, sequence: seq, timestamp: e.timestamp, transaction_id: e.transaction_id });
+      } else if (e.version === "AGOV1" || e.version === "AGOV2") {
+        var fields = [e.version, e.prev_hash, seq, e.entry_id, e.transaction_id, e.timestamp, e.entry_type, e.direction, e.scope_id, party, e.amount, e.balance_after, e.memo];
+        if (e.version === "AGOV2") fields.push(ref);
+        text = JSON.stringify(fields).replace(/[\u0080-\uffff]/g, function (c) { return "\\u" + ("000" + c.charCodeAt(0).toString(16)).slice(-4); });
+      } else return Promise.resolve(null);
+      return sha("SHA-256", utf8(text));
+    }
 
     var tar = readTar(u8);
     var by = {}; tar.entries.forEach(function (e) { by[e.name] = e.bytes; });
@@ -132,6 +198,8 @@
         if (DOCUMENTS.test(p[0]) && p[0].split("/").pop().slice(0, 64) !== p[1]) docs.push(p[0]);
       });
       Object.keys(listed).forEach(function (n) { if (!(n in by)) bad.push(n + " is listed but missing"); });
+      if (man.type !== "bundle" || (man.format !== "fidb/1" && man.format !== "fidb/2")) bad.unshift("manifest.json is not a fidb/1 or fidb/2 manifest");
+      else if (canon(man) !== manText) bad.unshift("manifest.json is not canonical JSON");
       add("members", "Every member listed in the manifest, by SHA-256", "V1", bad.length ? "fail" : "pass",
         bad.length ? bad.slice(0, 3).join("; ") + (bad.length > 3 ? "; and " + (bad.length - 3) + " more" : "") : pairs.length + " members hash to their entries");
       add("documents", "Each document's path names the SHA-256 of its bytes", "V1", docs.length ? "fail" : "pass",
@@ -148,7 +216,7 @@
         if (!differ.length) service = pins.service || service;
       }
       if (!man.sig) {
-        add("manifest", "The manifest's signature, by the service key", "V9", "skip", "the manifest is not signed (optional); every member is checked on its own");
+        add("manifest", "The manifest's signature, by the service key", "V9", "fail", "the manifest is not signed: what the bundle holds is no one's statement, and a member could have been dropped");
         return null;
       }
       if (!service) { add("manifest", "The manifest's signature, by the service key", "V9", "fail", "keys.json names no service key"); return null; }
@@ -161,7 +229,31 @@
           });
         });
       }).catch(function () { ed.ok = false; add("manifest", "The manifest's signature, by the service key", "V9", "skip", "no Ed25519 in this Web Crypto"); });
-    }).then(function () { return logChecks(); }).then(function () { return deliveryChecks(); }).then(function () { return out; });
+    }).then(function () { return logChecks(); }).then(function () { receiptChecks(); return deliveryChecks(); }).then(function () { return out; });
+
+    function receiptChecks() {
+      // The record a plan settles on names its action receipt before the receipt is issued, so
+      // one left out of the bundle is named by its record (1.11.0; the chain's own integrity is
+      // fiduciary verify-bundle's).
+      var chains = Object.keys(by).filter(function (n) { return /^escrow\/[^/]+\.chain$/.test(n); }).sort();
+      if (!chains.length) return;
+      var NAME = "Every action receipt the escrow chains name, in the bundle";
+      var named = 0, missing = [];
+      chains.forEach(function (n) {
+        dec.decode(by[n]).split("\n").forEach(function (line) {
+          if (!line) return;
+          var r; try { r = JSON.parse(line); } catch (e) { return missing.push(n + ": a record is no JSON"); }
+          var m = r && typeof r.note === "string" ? /; receipt ([0-9a-f-]{36})/.exec(r.note) : null;
+          if (!m) return;
+          named++;
+          var held = null; try { held = by["receipts/" + m[1] + ".json"] ? JSON.parse(dec.decode(by["receipts/" + m[1] + ".json"])) : null; } catch (e) { held = null; }
+          if (!held || !held.receipt || held.receipt.v !== "ARC1") missing.push(r.record_type + " record " + r.sequence + " names receipt " + m[1] + ", which the bundle does not hold");
+        });
+      });
+      add("receipts", NAME, "V5", missing.length ? "fail" : "pass",
+        missing.length ? missing.slice(0, 3).join("; ") + (missing.length > 3 ? "; and " + (missing.length - 3) + " more" : "")
+          : named + " receipt" + (named === 1 ? "" : "s") + " named by " + chains.length + " chain" + (chains.length === 1 ? "" : "s") + ", each held");
+    }
 
     function deliveryChecks() {
       var bundles = {};
@@ -178,33 +270,7 @@
       Object.keys(bundles).forEach(function (n) { var b = bundles[n]; if (b && b.receipt && b.receipt.v === "ARC1") actions[b.receipt.receipt_id] = b.receipt; });
       var relaySpecs = (pins && pins.relays) || (keys && keys.relays) || [];
       var receiptSpecs = (pins && pins.receipts) || (keys && keys.receipts) || [];
-      function byId(specs) { return Promise.all(specs.map(function (s) { return keyId(s).then(function (id) { return [id, s]; }); })).then(function (pairs) { var m = {}; pairs.forEach(function (p) { m[p[0]] = p[1]; }); return m; }); }
-      function verifySig(domain, body, sig, ring) {
-        if (!sig || !ring[sig.key_id]) return Promise.resolve(false);
-        return arc1Input(domain, body, sig).then(function (msg) { return edVerify(ring[sig.key_id], msg, sig.signature); });
-      }
-      function strip(doc) { var c = Object.assign({}, doc); delete c.sig; return c; }
       function leafHash(doc) { return sha("SHA-256", concat(new Uint8Array([0]), utf8(canon(doc)))); }
-      function nodeHash(l, r) { return sha("SHA-256", concat(concat(new Uint8Array([1]), hexBytes(l)), hexBytes(r))); }
-      function included(leaf, proof, root) {
-        // RFC 9162 2.1.3.2: the audit path from leaf proof.leaf_index to a tree of proof.tree_size.
-        var fn = proof.leaf_index, sn = proof.tree_size - 1, path = proof.audit_path || [];
-        if (!(fn <= sn)) return Promise.resolve(false);
-        var step = Promise.resolve(leaf);
-        path.forEach(function (p) {
-          step = step.then(function (r) {
-            if (r === null || sn === 0) return null;
-            var next;
-            if ((fn & 1) || fn === sn) {
-              next = nodeHash(p, r);
-              if (!(fn & 1)) while (!(fn & 1) && fn !== 0) { fn >>= 1; sn >>= 1; }
-            } else next = nodeHash(r, p);
-            fn >>= 1; sn >>= 1;
-            return next;
-          });
-        });
-        return step.then(function (r) { return r !== null && sn === 0 && r === root; });
-      }
       return Promise.all([byId(receiptSpecs), byId(relaySpecs)]).then(function (rings) {
         var receiptRing = rings[0], relayRing = rings[1];
         return Promise.all(names.map(function (n) {
@@ -236,7 +302,8 @@
     }
 
     function logChecks() {
-      var lines = by["log.jsonl"] ? dec.decode(by["log.jsonl"]).split("\n").filter(function (l) { return l.length; }) : [];
+      var logText = by["log.jsonl"] ? dec.decode(by["log.jsonl"]) : "";
+      var lines = logText.split("\n").filter(function (l) { return l.length; });
       var held = null; try { held = by["withheld.json"] ? JSON.parse(dec.decode(by["withheld.json"])) : null; } catch (e) { held = { broken: true }; }
       out.records = lines.length; out.withheld = held && held.records ? held.records.length : 0;
       var recs = []; try { recs = lines.map(function (l) { return JSON.parse(l); }); } catch (e) { add("chain", "The log's hash chain", "V9", "fail", "log.jsonl holds a line that is no JSON"); return Promise.resolve(); }
@@ -248,6 +315,7 @@
         ((held && held.records) || []).forEach(function (w) { if (at[w.seq]) problems.push("record " + w.seq + " is both whole and withheld"); at[w.seq] = { hash: w.hash, prev: null }; });
         var top = Object.keys(at).reduce(function (t, k) { return Math.max(t, Number(k)); }, 0);
         if (man.range && Number(man.range.to) !== top) problems.push("the log ends at record " + top + ", the manifest's range at " + man.range.to);
+        if (logText && (logText[logText.length - 1] !== "\n" || logText.indexOf("\n\n") >= 0 || logText[0] === "\n")) problems.push("log.jsonl is not one record a line, each ending in a newline");
         for (var n = 1; n <= top; n++) {
           if (!at[n]) { problems.push("record " + n + " is missing"); continue; }
           if (at[n].prev === null) continue;
@@ -271,26 +339,66 @@
       }).then(function () { return sealChecks(recs, held, hashesOf); });
     }
 
-    function anchorsOf() {
-      var anchors = {};
-      var entries = by["ledger/entries.jsonl"] ? dec.decode(by["ledger/entries.jsonl"]).split("\n").filter(function (l) { return l.length; }) : [];
-      entries.forEach(function (line) {
-        var e; try { e = JSON.parse(line).entry; } catch (x) { return; }
-        var memo = e && typeof e.memo === "string" ? e.memo.split(" ") : [];
-        if (memo[0] === "FIDU1" && memo.length >= 4 && /^\d+$/.test(memo[2]) && /^[0-9a-f]{64}$/.test(memo[3])) {
-          anchors[memo[1] + "/" + memo[2]] = { hash: memo[3], tags: memo.slice(4, 6) };
-        }
+    function memoOf(e) {
+      // A FIDU1 anchor's memo: FIDU1 <log> <seq> <hash> [<tag> <tag>].
+      var memo = e && typeof e.memo === "string" ? e.memo.split(" ") : [];
+      if (memo[0] === "FIDU1" && memo.length >= 4 && /^\d+$/.test(memo[2]) && /^[0-9a-f]{64}$/.test(memo[3])) return { log: memo[1], seq: Number(memo[2]), hash: memo[3], tags: memo.slice(4, 6) };
+      return null;
+    }
+
+    function ledgerChecks(log, known) {
+      // Part of V6 (1.11.0). The anchors V10 reads are only those of entries that hash to
+      // themselves and are included in the checkpoint, which the ledger key signs, of exactly
+      // the manifest's cut; and the cut is the anchor of the range's last record.
+      var NAME = "The ledger entries anchors are read from: hashed, proven, signed, cut at the range's end";
+      var lines = by["ledger/entries.jsonl"] ? dec.decode(by["ledger/entries.jsonl"]).split("\n").filter(function (l) { return l.length; }) : [];
+      var cp = null; try { cp = by["ledger/checkpoint.json"] ? JSON.parse(dec.decode(by["ledger/checkpoint.json"])) : null; } catch (e) { cp = null; }
+      var cut = man.ledger ? man.ledger.cut : null, to = man.range ? Number(man.range.to) : 0;
+      var anchors = {}, problems = [];
+      if (!cp || typeof cp.root_hash !== "string") { add("ledger", NAME, "V6", "fail", "the bundle holds no readable ledger checkpoint"); return Promise.resolve(anchors); }
+      if (cp.tree_size !== cut) problems.push("the checkpoint is of " + cp.tree_size + " entries, not the manifest's cut, " + cut);
+      var spec = (pins && pins.ledger) || (keys && keys.ledger);
+      var signed = !spec ? Promise.resolve(problems.push("keys.json names no ledger key")) : !ed.ok ? Promise.resolve() :
+        byId([spec]).then(function (ring) { return verifySig("checkpoint", strip(cp), cp.sig, ring); }).then(function (ok) { if (!ok) problems.push("the checkpoint is not signed by the ledger key"); });
+      var proven = [];
+      var entries = Promise.all(lines.map(function (line) {
+        var item; try { item = JSON.parse(line); } catch (x) { return problems.push("an entry is no JSON"); }
+        var e = item && item.entry, where = "ledger entry " + (e && e.sequence);
+        return entryHash(e).then(function (h) {
+          if (h === null || h !== e.entry_hash) return problems.push(where + ": its fields do not hash to its entry hash");
+          if (item.index !== Number(e.sequence) - 1) return problems.push(where + ": its proof is for another place");
+          return sha("SHA-256", concat(new Uint8Array([0]), hexBytes(e.entry_hash))).then(function (leaf) {
+            return included(leaf, { leaf_index: item.index, tree_size: cp.tree_size, audit_path: item.proof }, cp.root_hash);
+          }).then(function (ok) { if (!ok) problems.push(where + ": not included in the checkpoint"); else proven.push(e); });
+        });
+      }));
+      return Promise.all([signed, entries]).then(function () {
+        var last = null;
+        proven.forEach(function (e) {
+          var m = memoOf(e);
+          if (Number(e.sequence) === cut) last = m;
+          if (m && !anchors[m.log + "/" + m.seq]) anchors[m.log + "/" + m.seq] = m;
+        });
+        if (!proven.some(function (e) { return Number(e.sequence) === cut; })) problems.push("the cut, ledger entry " + cut + ", is not in the bundle, proven");
+        else if (!last || last.log !== log || last.seq !== to || (known[to] !== undefined && last.hash !== known[to])) problems.push("the cut, ledger entry " + cut + ", is not the anchor of record " + to + ", the range's last");
+        add("ledger", NAME, "V6", problems.length ? "fail" : ed.ok ? "pass" : "skip",
+          problems.length ? problems.slice(0, 3).join("; ") + (problems.length > 3 ? "; and " + (problems.length - 3) + " more" : "")
+            : ed.ok ? proven.length + " entries proven in the checkpoint of " + cut + ", signed by the ledger key; the cut anchors record " + to
+              : "no Ed25519 in this Web Crypto: the checkpoint's signature was not checked");
+        return anchors;
       });
-      return anchors;
     }
 
     function sealChecks(recs, held, hashes) {
       var log = recs.length ? recs[0].log : "fiduciary";
-      var anchors = anchorsOf();
       var withheld = (held && held.records) || [];
       var known = {};
       recs.forEach(function (r, i) { known[r.seq] = hashes[i]; });
       withheld.forEach(function (w) { known[w.seq] = w.hash; });
+      return ledgerChecks(log, known).then(function (anchors) { return anchorChecks(log, anchors, held, withheld, known, recs); });
+    }
+
+    function anchorChecks(log, anchors, held, withheld, known, recs) {
       var from = man.range ? Number(man.range.from) : 1, to = man.range ? Number(man.range.to) : 0;
       var missing = [];
       for (var n = from; n <= to; n++) {
@@ -302,7 +410,7 @@
         problems = missing.concat(problems);
         add("anchors", "Every record in range anchored by its hash" + (out.format === "fidb/2" ? ", no withheld one the bundle's own" : ""), "V10", problems.length ? "fail" : "pass",
           problems.length ? problems.slice(0, 3).join("; ") + (problems.length > 3 ? "; and " + (problems.length - 3) + " more" : "")
-            : (to - from + 1) + " records anchored in the ledger entries the bundle carries" + (withheld.length ? "; " + withheld.length + " withheld, none opening under the bundle's keys" : "") + " (the entries' own proofs are V6's)");
+            : (to - from + 1) + " records anchored in the ledger entries proven above" + (withheld.length ? "; " + withheld.length + " withheld, none opening under the bundle's keys" : ""));
       }
       if (out.format !== "fidb/2") {
         if (held) add("seals", "Seals", "V10", "fail", "a fidb/1 bundle carries a withheld.json");
