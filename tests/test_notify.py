@@ -260,3 +260,70 @@ def test_the_cli_delivers_and_tests_a_webhook(
     finally:
         server.shutdown()
         server.server_close()
+
+
+class _Redirecting(http.server.BaseHTTPRequestHandler):
+    """Answers every request with the status in its path, pointing elsewhere."""
+
+    target: ClassVar[str] = ""
+    hits: ClassVar[list[tuple[str, str]]] = []
+
+    def _answer(self) -> None:
+        length = int(self.headers.get("Content-Length") or 0)
+        self.rfile.read(length)
+        _Redirecting.hits.append((self.command, self.path))
+        if self.path.startswith("/elsewhere"):
+            self.send_response(204)
+        else:
+            self.send_response(int(self.path.strip("/")))
+            self.send_header("Location", _Redirecting.target)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_POST(self) -> None:
+        self._answer()
+
+    def do_GET(self) -> None:
+        self._answer()
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        return
+
+
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_a_redirect_is_a_failed_delivery_and_is_not_followed(status: int) -> None:
+    """B9 (1.11.0): before, urllib followed a 301/302/303 as a GET without the
+    notice, to wherever the webhook pointed, and its 2xx counted as delivered."""
+    from fiduciary.notify import _send
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Redirecting)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        _Redirecting.target, _Redirecting.hits = f"{base}/elsewhere", []
+        answer = _send(f"{base}/{status}", b"{}", {"Content-Type": "application/json"}, 5.0)
+        assert answer == status
+        assert _Redirecting.hits == [("POST", f"/{status}")]  # nothing went to /elsewhere
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_a_redirected_notice_stays_due(sandbox: SandboxDeployment, tmp_path: Path) -> None:
+    """End to end, on the notifier's own sender: a webhook that answers 302
+    delivers nothing, and the notice is still due."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Redirecting)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{server.server_port}"
+        _Redirecting.target, _Redirecting.hits = f"{base}/elsewhere", []
+        generate_key(tmp_path / "notify.key")
+        config = _config(tmp_path, Webhook("moved", f"{base}/302", events=("ticket.raised",)))
+        notifier = for_store(config, sandbox.built().world.store)
+        notifier.turn()
+        sandbox.call({"preset": "held"})
+        assert notifier.turn() == {"moved": 0}
+        assert _Redirecting.hits == [("POST", "/302")]
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -2272,6 +2272,10 @@ the notices, and so does `fiduciary notify`.
   So a retry is the same notice, and a receiver keeps it once: Standard Webhooks'
   `webhook-id`, or PagerDuty's `dedup_key`, which is the ticket's. A webhook that has no
   cursor yet starts at the log's head, so the deployment's past is not announced.
+  *Amended in 1.11.0:* a redirect is the webhook's answer, never followed. A `3xx` is a
+  failed delivery, retried as any other. Before, a `301`, `302` or `303` was followed as a
+  `GET` without the notice, to wherever it pointed, and the `2xx` found there moved the
+  cursor.
 - **F10-27. Signed, or keyed by their receiver.** A `standard` notice is canonical JSON,
   signed under the Standard Webhooks asymmetric convention (`v1a`, Ed25519). The signature
   is by the deployment's notification key (`[notify] key`), which is no other role's key.
@@ -2386,6 +2390,11 @@ system an agent will change, with starter tool bindings for it (`fiduciary.start
     added, and whether any table of the developer's changed. The next steps it prints are
     the README's and `docs/QUICKSTART.md`'s: `fiduciary serve` and the agent's
     `claude mcp add` for a substrate; `mcp proxy` for an MCP server.
+  - Init writes `pinned-keys.json`, the deployment's public keys read from its
+    configuration as `export-bundle` reads them, and `charter.digest`. The quickstart and
+    the README init writes verify the bundle with `--charter` and `--keys` from them, from
+    the first bundle. Init's output says that `keys/` holds every private key, on one
+    machine so that the guide runs there, and who each belongs with.
 
 ---
 
@@ -2778,10 +2787,10 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-12 to F10-17, F10-19: the service and the cluster | 6 | process tests: a part restarted, a key reload refused, a leader killed and frozen; the new leader waiting, healthy | Implemented. `test_service.py`, `test_cluster.py`, `test_soak.py` |
 | F10-20 to F10-24: the console | 1.7.0 | each ticket class read from a recorded run and a sandbox; a vote signed outside the console checked under the charter's key, refused when altered or by another key, queued, and recorded by the deployment's writer; a recorded run's every byte unchanged after the console, its sandbox and its votes; the boundary's refusals; every golden bundle through the console's verifier; each substrate's presets | Implemented (1.7.0), both stores. `test_interactive_console.py` |
 | F10-23 (1.8.0): the page's bundle checks | 1.8.0 | the module run by Node over all 35 golden bundles: no false alarm; every V1, V9 or V10 failure caught with pinned keys; each outcome pinned | Implemented (1.8.0). `test_browser_verifier.py`; the site's bundles, `scripts/check_site.py` |
-| F10-25 to F10-27: notices | 1.8.0 | a held ticket, its warrant and execution told in order and signed; a failure retried as the same notice; Slack and PagerDuty shapes; the configuration's refusals; the CLI against a local receiver | Implemented (1.8.0). `test_notify.py` |
+| F10-25 to F10-27: notices | 1.8.0 | a held ticket, its warrant and execution told in order and signed; a failure retried as the same notice; Slack and PagerDuty shapes; the configuration's refusals; the CLI against a local receiver; a redirect not followed (1.11.0) | Implemented (1.8.0; amended 1.11.0). `test_notify.py` |
 | F10-28 to F10-30: `fiduciary init` | 1.8.0 | each annotation's governance; a tool the grammar cannot hold left out; a deployment run as written: the proxy, a read, a released write, a held one ticketed, two votes, the warrant executed, the relay's calls on the server; a live model through the proxy | Implemented (1.8.0). `test_init.py`; `scripts/init_live.py` |
 | F4-26 (amended): anchors in order | 1.11.0 | one anchor refused, then the next record; the ledger down for two records; a crash between a commit and its anchor; two processes appending to one log, one anchoring late (found by the soak) | Implemented (1.11.0), both stores. `test_tamper.py` |
-| F10-35: threads, the listener, init's changes | 1.11.0 | a read and a write on another thread during a transaction that rolls back; the SQLite reader; the notifier's reader; a silent TLS client; a burst of 64; a client that trickles; `Retry-After`; init's measured changes and next steps | Implemented (1.11.0), both stores. `test_store_threads.py`, `test_mcp.py`, `test_init_substrates.py`, `test_init.py` |
+| F10-35: threads, the listener, init's changes | 1.11.0 | a read and a write on another thread during a transaction that rolls back; the SQLite reader; the notifier's reader; a silent TLS client; a burst of 64; a client that trickles; `Retry-After`; init's measured changes and next steps; init's pins verify its own bundle and refuse another deployment's | Implemented (1.11.0), both stores. `test_store_threads.py`, `test_mcp.py`, `test_init_substrates.py`, `test_init.py` |
 | F10-34: the writer serves the agent; init's cautions; the quickstart | 1.10.1 | the bridge's token and configuration; a trigger beyond `--table`, and one beyond the one-row limit, each named; `docs/QUICKSTART.md` run as written, from init to a 2-of-3 amendment and a bundle that passes | Implemented (1.10.1), SQLite. `test_init_substrates.py`, `test_quickstart.py` |
 | F10-31 to F10-33: `fiduciary init --substrate` | 1.9.0 | each of the six substrates written and served through `fiduciary mcp serve`: an allowed write committed, a wider one refused before anything changed; a keyless SQLite table by `rowid`; PostgreSQL's stage role, `grants.sql` and a signed install; Terraform's marker added; the missing-argument refusals | Implemented (1.9.0), SQLite; PostgreSQL where the test DSN is set; Terraform where `tofu` or `terraform` is installed. `test_init_substrates.py` |
 | F10-20 (1.9.0): delivery receipts in the desk | 1.9.0 | a sandbox's receipts include the relay's delivery receipts, shown request-only on their sink | Implemented (1.9.0). `test_interactive_console.py` |
