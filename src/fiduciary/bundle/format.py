@@ -130,6 +130,8 @@ def pack(members: Mapping[str, bytes]) -> bytes:
     out = io.BytesIO()
     with tarfile.open(fileobj=out, mode="w", format=tarfile.USTAR_FORMAT) as tar:
         for name in sorted(members):
+            if not name.isascii():
+                raise BundleError(f"member {name!r}: a bundle's paths are ASCII")
             data = members[name]
             info = tarfile.TarInfo(name)
             info.size = len(data)
@@ -142,27 +144,92 @@ def pack(members: Mapping[str, bytes]) -> bytes:
     return out.getvalue()
 
 
+MAX_BUNDLE_BYTES: Final = 2 << 30
+"""The largest bundle read, in bytes (2 GiB). A member is a slice of the bundle's
+own bytes, so what a bundle unpacks to is never more than it is. Added in 1.11.0."""
+MAX_MEMBER_BYTES: Final = 1 << 30
+"""The largest member read, in bytes (1 GiB). Added in 1.11.0."""
+MAX_MEMBERS: Final = 1_000_000
+"""The most members a bundle may hold. Added in 1.11.0."""
+_BLOCK: Final = 512
+
+
+def _field(header: bytes, start: int, length: int) -> bytes:
+    """A header field up to its first NUL, as a POSIX tar reader reads it."""
+    raw = header[start : start + length]
+    end = raw.find(b"\x00")
+    return raw if end < 0 else raw[:end]
+
+
+def _octal(header: bytes, start: int, length: int) -> int | None:
+    """An octal header field, or ``None`` when it is not one: a base-256 number
+    (a GNU extension) or anything else is not what :func:`pack` writes."""
+    text = _field(header, start, length).strip(b" ")
+    if not text or any(c not in b"01234567" for c in text):
+        return None
+    return int(text, 8)
+
+
 def unpack(data: bytes) -> list[tuple[str, bytes]]:
     """The members of a bundle, in the order the tar holds them, duplicates
     and all (the schema check names a duplicate or one out of order).
 
-    :raises BundleError: When it is no tar, or holds anything but regular files
-        under relative paths.
+    The tar is read as :func:`pack` writes it and as the console's in-browser
+    check reads it (``report/verify.js``), header by header, and nothing else is
+    accepted (1.11.0): each member a regular file (type ``0``) under a relative
+    ASCII path, in a POSIX ``ustar`` header with a correct checksum, mode 0644
+    and mtime 0, its data within the bundle and its padding zero; then zeros to
+    the end. No sparse, pax, GNU or link entry is read, so no member can
+    unpack to more bytes than the bundle holds (``MAX_BUNDLE_BYTES``,
+    ``MAX_MEMBER_BYTES``, ``MAX_MEMBERS`` bound the rest).
+
+    :raises BundleError: When it is no such tar.
     """
+    if len(data) > MAX_BUNDLE_BYTES:
+        raise BundleError(f"not a bundle: {len(data)} bytes, more than {MAX_BUNDLE_BYTES} read")
     found: list[tuple[str, bytes]] = []
-    try:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as tar:
-            for info in tar.getmembers():
-                name = info.name
-                if not info.isreg():
-                    raise BundleError(f"member {name!r} is not a regular file")
-                if name.startswith("/") or ".." in name.split("/"):
-                    raise BundleError(f"member {name!r} is outside the bundle")
-                handle = tar.extractfile(info)
-                assert handle is not None
-                found.append((name, handle.read()))
-    except (tarfile.TarError, EOFError, OSError) as exc:
-        raise BundleError(f"not a bundle: {exc}") from exc
+    view = memoryview(data)
+    offset = 0
+    while offset + _BLOCK <= len(data):
+        header = bytes(view[offset : offset + _BLOCK])
+        if not any(header):
+            break
+        summed = sum(header[:148]) + 8 * 32 + sum(header[156:])
+        if _octal(header, 148, 8) != summed:
+            raise BundleError("not a bundle: a member's header checksum is wrong")
+        try:
+            name = _field(header, 0, 100).decode("ascii")
+            prefix = _field(header, 345, 155).decode("ascii")
+        except UnicodeDecodeError:
+            raise BundleError("not a bundle: a member's name is not ASCII") from None
+        name = f"{prefix}/{name}" if prefix else name
+        if header[257:265] != b"ustar\x0000":
+            raise BundleError(f"not a bundle: member {name!r} is not in a POSIX ustar header")
+        if header[156:157] not in (b"0", b"\x00"):
+            raise BundleError(f"member {name!r} is not a regular file")
+        if not name or name.startswith("/") or ".." in name.split("/"):
+            raise BundleError(f"member {name!r} is outside the bundle")
+        if _octal(header, 100, 8) != 0o644:
+            raise BundleError(f"member {name!r}: its mode is not 0644")
+        if _octal(header, 136, 12) != 0:
+            raise BundleError(f"member {name!r}: its mtime is not 0")
+        size = _octal(header, 124, 12)
+        if size is None:
+            raise BundleError(f"member {name!r}: its size is not an octal number")
+        if size > MAX_MEMBER_BYTES:
+            raise BundleError(f"member {name!r}: {size} bytes, more than {MAX_MEMBER_BYTES} read")
+        start = offset + _BLOCK
+        padded = start + -(-size // _BLOCK) * _BLOCK
+        if padded > len(data):
+            raise BundleError(f"not a bundle: member {name!r} runs past the end of the file")
+        if any(view[start + size : padded]):
+            raise BundleError(f"not a bundle: member {name!r} is padded with data")
+        if len(found) >= MAX_MEMBERS:
+            raise BundleError(f"not a bundle: more than {MAX_MEMBERS} members")
+        found.append((name, bytes(view[start : start + size])))
+        offset = padded
+    if any(view[offset:]):
+        raise BundleError("not a bundle: data follows the end of the archive")
     if not found:
         raise BundleError("an empty archive is no bundle")
     return found
