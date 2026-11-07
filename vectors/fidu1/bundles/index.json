@@ -20,7 +20,7 @@
     "name": "unreadable-not-a-tar",
     "sha256": "550a6a87961646c07f30bf2104f172993fb15d7007a36a67fffc33648d5cd94b",
     "skew_seconds": 5,
-    "unreadable": "not a bundle: invalid header",
+    "unreadable": "not a bundle: a member's header checksum is wrong",
     "witness": null
   },
   {
@@ -224,11 +224,13 @@
     "about": "a withheld record's hash rewritten: its anchor names another",
     "charter": "6907f671ea513b52351840c964946cfab0a5c1e1059415272f89b53ab565bb1e",
     "checks": [
+      "V9",
       "V10"
     ],
-    "exit_code": 8,
+    "exit_code": 4,
     "file": "v10-withheld-rewritten.fidb",
     "findings": [
+      "V9 signature: manifest.json is not signed by the service key: what the bundle holds is no one's statement, and a member could have been dropped",
       "V10 evidence: the ledger anchors record 11 of log 'fiduciary' as 8855593ba6f2abd6, but the log holds abababababababab: it was rewritten",
       "V10 evidence: record 11 is withheld but has no ledger anchor"
     ],
@@ -476,6 +478,84 @@
     },
     "name": "v5-other-receipt-key",
     "sha256": "9b6b3bbe05090126051e36fe74742fafbd289bd773dc9bdb5d36f2b4b6b69d6f",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "an action receipt its escrow chain names left out, signed again by the service key",
+    "charter": "07dd667b8ef4b30cd5e7eb176cd8a78eb1619087f16a425b0aab9d7f9d1ca071",
+    "checks": [
+      "V5"
+    ],
+    "exit_code": 8,
+    "file": "v5-receipt-left-out.fidb",
+    "findings": [
+      "V5 evidence: escrow chain 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31: committed record 22 names receipt b55023ad-9264-459a-ac44-7fcbe725b715, which the bundle does not hold: it was left out, or never issued"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v5-receipt-left-out",
+    "sha256": "6972bafa40ea15008ea59c7c9c13a76252f59f180e9978fd09e71217c86a4c08",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "the range ended at record 7 under the checkpoint of the whole, signed again by the service key",
+    "charter": "07dd667b8ef4b30cd5e7eb176cd8a78eb1619087f16a425b0aab9d7f9d1ca071",
+    "checks": [
+      "V4",
+      "V6",
+      "V7",
+      "V10"
+    ],
+    "exit_code": 6,
+    "file": "v6-cut-past-the-range.fidb",
+    "findings": [
+      "V6 evidence: the cut, ledger entry 32, is not the anchor of record 7, the range's last",
+      "V4 policy: receipt b55023ad-9264-459a-ac44-7fcbe725b715: no version 1 of 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31 was bound to issue it",
+      "V4 policy: receipt d3a69477-4d68-4d8f-9a24-3fcb24ea05d8: no version 1 of 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31 was bound to issue it",
+      "V4 policy: receipt e880df8f-1b24-40a2-b251-c2ecba642a10: no version 1 of 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31 was bound to issue it",
+      "V4 policy: receipt f14d74f0-fd03-4b2d-b0d4-26e68607b305: no version 1 of 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31 was bound to issue it",
+      "V10 evidence: the ledger anchors record 8 of log 'fiduciary' (entry 12), which the log does not hold: it was truncated",
+      "V10 evidence: the ledger anchors record 9 of log 'fiduciary' (entry 13), which the log does not hold: it was truncated",
+      "V10 evidence: the ledger anchors record 10 of log 'fiduciary' (entry 18), which the log does not hold: it was truncated",
+      "V10 evidence: the ledger anchors record 11 of log 'fiduciary' (entry 19), which the log does not hold: it was truncated",
+      "V10 evidence: the ledger anchors record 12 of log 'fiduciary' (entry 20), which the log does not hold: it was truncated",
+      "V10 evidence: the ledger anchors record 13 of log 'fiduciary' (entry 22), which the log does not hold: it was truncated",
+      "V10 evidence: the ledger anchors record 14 of log 'fiduciary' (entry 32), which the log does not hold: it was truncated",
+      "V7 ambient: ledger entry 11 (allocation) on support-agent: delegation without a recorded binding",
+      "V7 ambient: ledger entry 23 (hold) on support-agent: references session dd5de2f4-33de-486d-a2a2-371fed7bf8d7, which this lineage never opened",
+      "V7 ambient: ledger entry 24 (hold_void) on support-agent: 'authorization captured' does not trace to a binding, plan, session, recovery, extension or warrant",
+      "V7 ambient: ledger entry 25 (spend) on support-agent: references session dd5de2f4-33de-486d-a2a2-371fed7bf8d7, which this lineage never opened",
+      "V7 ambient: ledger entry 26 (hold) on support-agent: references session dd5de2f4-33de-486d-a2a2-371fed7bf8d7, which this lineage never opened",
+      "V7 ambient: ledger entry 27 (hold_void) on support-agent: 'authorization captured' does not trace to a binding, plan, session, recovery, extension or warrant",
+      "V7 ambient: ledger entry 28 (spend) on support-agent: references session dd5de2f4-33de-486d-a2a2-371fed7bf8d7, which this lineage never opened",
+      "V7 ambient: ledger entry 29 (hold) on support-agent: references session dd5de2f4-33de-486d-a2a2-371fed7bf8d7, which this lineage never opened",
+      "V7 ambient: ledger entry 30 (hold_void) on support-agent: 'authorization captured' does not trace to a binding, plan, session, recovery, extension or warrant",
+      "V7 ambient: ledger entry 31 (spend) on support-agent: references session dd5de2f4-33de-486d-a2a2-371fed7bf8d7, which this lineage never opened"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v6-cut-past-the-range",
+    "sha256": "b735d8df9a380dac609924afed376eee0f62ab9259a25bb481fd6683e40c584e",
     "skew_seconds": 5,
     "witness": null
   },
@@ -840,6 +920,7 @@
       "V9 signature: record 3: expected record 2: records are missing or out of order",
       "V9 signature: record 3: expected record 4: records are missing or out of order",
       "V9 signature: record 3: does not link to the record before it",
+      "V9 signature: manifest.json is not signed by the service key: what the bundle holds is no one's statement, and a member could have been dropped",
       "V10 evidence: the ledger anchors record 2 of log 'fiduciary' (entry 4), which the log does not hold: it was truncated"
     ],
     "keys": {
@@ -922,6 +1003,40 @@
     "witness": null
   },
   {
+    "about": "the log cut off after record 7, the ledger after its anchor, the receipts dropped, and the manifest relisted, unsigned: no key held",
+    "charter": "07dd667b8ef4b30cd5e7eb176cd8a78eb1619087f16a425b0aab9d7f9d1ca071",
+    "checks": [
+      "V5",
+      "V6",
+      "V9"
+    ],
+    "exit_code": 8,
+    "file": "v9-tail-cut-off-unsigned.fidb",
+    "findings": [
+      "V9 signature: manifest.json is not signed by the service key: what the bundle holds is no one's statement, and a member could have been dropped",
+      "V6 evidence: the cut, ledger entry 32, is not in the bundle, proven",
+      "V5 evidence: escrow chain 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31: committed record 6 names receipt f14d74f0-fd03-4b2d-b0d4-26e68607b305, which the bundle does not hold: it was left out, or never issued",
+      "V5 evidence: escrow chain 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31: aborted record 11 names receipt d3a69477-4d68-4d8f-9a24-3fcb24ea05d8, which the bundle does not hold: it was left out, or never issued",
+      "V5 evidence: escrow chain 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31: aborted record 16 names receipt e880df8f-1b24-40a2-b251-c2ecba642a10, which the bundle does not hold: it was left out, or never issued",
+      "V5 evidence: escrow chain 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31: committed record 22 names receipt b55023ad-9264-459a-ac44-7fcbe725b715, which the bundle does not hold: it was left out, or never issued"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v9-tail-cut-off-unsigned",
+    "sha256": "64e179a8bd2c52c88ce1a645671f3836bae98fa7e3d82fa93281bd6d88309b09",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "a withheld record dropped: the chain has a gap",
     "charter": "6907f671ea513b52351840c964946cfab0a5c1e1059415272f89b53ab565bb1e",
     "checks": [
@@ -933,6 +1048,7 @@
     "findings": [
       "V9 signature: record 18: expected record 17: records are missing or out of order",
       "V9 signature: the log holds 19 records, not 20",
+      "V9 signature: manifest.json is not signed by the service key: what the bundle holds is no one's statement, and a member could have been dropped",
       "V10 evidence: the ledger anchors record 17 of log 'fiduciary' (entry 31), which the log does not hold: it was truncated"
     ],
     "keys": {

@@ -93,7 +93,8 @@ class Evidence:
         those its tickets and warrants name.
     :param witnesses: Ledger witnesses to cosign the checkpoint (each with
         ``cosign``, ``latest`` and ``path``, as AgentGov's ``FileWitness``).
-    :param service: The service key; when a signer, it also signs the manifest.
+    :param service: The service key's signer: it signs the manifest, which a bundle
+        must carry signed (V9, 1.11.0).
     :param sealer: A sealed log's sealer: what a sealed bundle is cut by, and
         the keys it carries.
     :param relay_keys: The relays' keys, which sign the attestation each
@@ -207,6 +208,9 @@ def export_bundle(
         sealed, no sealer, a log not sealed, or a record to withhold that the
         ledger has not anchored.
     """
+    if not hasattr(evidence.service, "sign"):
+        # The manifest's signature binds what the bundle holds (V9, 1.11.0).
+        raise BundleError("a bundle is signed by the service key: give the service's signer")
     stored = list(store.records(log_id))
     head = len(stored)
     first, last = from_seq or 1, to_seq or head
@@ -308,13 +312,15 @@ def export_bundle(
     )
 
     # -- receipts and escrow chains ---------------------------------------------------
-    receipt_members, attested = _receipts(evidence, lineages, cut)
-    members.update(receipt_members)
+    carried_chains: dict[str, tuple[EscrowRecord, ...]] = {}
     for lineage, (path, kept) in chains.items():
         count = sum(1 for r in kept if r.timestamp <= cut_at)
         if count:
             lines = path.read_bytes().splitlines(keepends=True)
             members[f"escrow/{lineage}.chain"] = b"".join(lines[:count])
+            carried_chains[lineage] = kept[:count]
+    receipt_members, attested = _receipts(evidence, lineages, cut, carried_chains)
+    members.update(receipt_members)
 
     # -- the deployment compilation reads, and the keys ------------------------------
     depths = {}
@@ -361,9 +367,8 @@ def export_bundle(
             for path, data in sorted(members.items())
         ],
     }
-    if hasattr(evidence.service, "sign"):
-        signature = fidu1.sign("bundle", manifest, evidence.service)  # type: ignore[arg-type]
-        manifest["sig"] = signature.to_json()
+    signature = fidu1.sign("bundle", manifest, evidence.service)  # type: ignore[arg-type]
+    manifest["sig"] = signature.to_json()
     members["manifest.json"] = _json(manifest)
     return pack(members)
 
@@ -615,20 +620,31 @@ def _cosign(
 
 
 def _receipts(
-    evidence: Evidence, lineages: Sequence[str], cut: int
+    evidence: Evidence,
+    lineages: Sequence[str],
+    cut: int,
+    chains: Mapping[str, Sequence[EscrowRecord]],
 ) -> tuple[dict[str, bytes], set[str]]:
     """The lineage's receipts as members, and the key ids of the relays that
     attested a delivery among them.
 
-    An action receipt is the lineage's when its issuer is, and inside the
-    bundle when its ledger anchor is at or before the cut. A delivery receipt
-    goes with its action receipt. One a relay's settler issued carries no
-    ledger anchor (1.10.0): the receipt log's order stands in for the ledger's,
-    so it is inside when it precedes every receipt anchored after the cut."""
+    An action receipt is the lineage's when its issuer is. It is inside the
+    bundle when the escrow record it settles (``anchors.escrow``) is in the
+    part of the lineage's chain the bundle carries (amended in 1.11.0: the
+    chain's record names its receipt, V5, so the two are cut together; the
+    receipt is issued after its record, and its ledger anchor can fall past the
+    cut when the record does not). One that names no escrow record is inside
+    when its ledger anchor is at or before the cut. A delivery receipt goes with
+    its action receipt. One a relay's settler issued carries no ledger anchor
+    (1.10.0): the receipt log's order stands in for the ledger's, so it is
+    inside when it precedes every receipt anchored after the cut."""
     log = evidence.receipts
     if log is None:
         return {}, set()
-    issuers = {f"fiduciary:{m}" for m in lineages}
+    issuers = {f"fiduciary:{m}": m for m in lineages}
+    settled = {
+        (lineage, r.sequence, r.record_hash) for lineage, kept in chains.items() for r in kept
+    }
     documents = log.receipts()
     chosen: list[tuple[int, str]] = []
     actions: set[str] = set()
@@ -637,9 +653,14 @@ def _receipts(
         anchor = document.anchors.agentgov
         if anchor is not None and anchor.seq > cut:
             later = min(later, index)
-        if anchor is None or anchor.seq > cut:
+        if not isinstance(document, ActionReceipt) or document.issuer not in issuers:
             continue
-        if isinstance(document, ActionReceipt) and document.issuer in issuers:
+        escrow = document.anchors.escrow
+        if escrow is not None:
+            inside = (issuers[document.issuer], escrow.seq, escrow.head) in settled
+        else:
+            inside = anchor is not None and anchor.seq <= cut
+        if inside:
             chosen.append((index, document.receipt_id))
             actions.add(document.receipt_id)
     attested: set[str] = set()

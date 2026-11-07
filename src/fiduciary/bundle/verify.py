@@ -90,6 +90,9 @@ _RETURNED: Final = re.compile(r"unused recovery reserve for (\S+) returned")
 _STEP: Final = re.compile(r"recovery step (\d+)(?:: \S+| settled)")
 _TOOL: Final = re.compile(r"(?:repair of plan-[0-9a-f]+: )?FIDU1 tool (\S+) ([0-9a-f]{16})")
 _UNNAMED: Final = re.compile(r"FIDU1 tool (\S+) ([0-9a-f]{16})")
+_NAMED_RECEIPT: Final = re.compile(r"; receipt ([0-9a-f-]{36})")
+"""The action receipt an escrow record names, as Interlock writes it into the
+note of the record a plan settles on (``interlock.settlement``'s own reading)."""
 """A passthrough call's hold as 0.4 wrote it, before its memo named the session."""
 _TIME_WORDS: Final = ("expired", "runs until", "not_after", "after its deadline")
 
@@ -351,6 +354,10 @@ def _parse(path: str, data: bytes, out: _Bundle) -> None:
     elif path == "log.jsonl":
         for line in _lines(data):
             record = Record.loads(line)
+            # The chain links the line's own bytes, and an anchor names the record's
+            # canonical hash: they are the same bytes, or the two would disagree (1.11.0).
+            if record.canonical() != line:
+                raise FiduciaryError(f"record {record.seq} is not in canonical form")
             out.records.append(record)
             out.stored.append(
                 StoredRecord(
@@ -605,12 +612,22 @@ class _Checks:
             self.add("V9", "signature", f"the log holds {len(self.chain)} records, not {self.last}")
 
     def _v9_manifest(self) -> None:
-        """A signed manifest is the service's: its signature must hold."""
+        """The manifest is the service's: it is signed, and its signature holds.
+
+        Amended in 1.11.0: the signature is required. It is what binds which
+        members a bundle holds, and so its range, its cut and every receipt in
+        it: unsigned, a member could be dropped and the manifest relisted, and
+        what is left would still hold together."""
         assert self.k.service is not None
         manifest = dict(self.b.manifest)
         raw = manifest.pop("sig", None)
         if raw is None:
-            self.r.notes.append("the manifest is not signed by the service key")
+            self.add(
+                "V9",
+                "signature",
+                "manifest.json is not signed by the service key: what the bundle holds is "
+                "no one's statement, and a member could have been dropped",
+            )
             return
         try:
             fidu1.verify("bundle", manifest, fidu1.Signature.from_json(raw), self.k.service)
@@ -848,6 +865,26 @@ class _Checks:
                     "remote system's word",
                 }.get(measured, "transaction")
             )
+        self._v5_named(actions)
+
+    def _v5_named(self, actions: Mapping[str, ReceiptBundle]) -> None:
+        """Every action receipt the lineage's escrow chains name is in the
+        bundle (1.11.0). Interlock writes the id of a plan's receipt into the
+        terminal record it settles on (``; receipt <id>``), before the receipt
+        is issued, so a receipt left out of a bundle is named by its record,
+        and one never issued (the process stopped first) is too."""
+        held = {b.receipt.receipt_id for b in actions.values()}
+        for lineage, records in sorted(self.escrow.items()):
+            for record in records:
+                named = _NAMED_RECEIPT.search(record.note)
+                if named is not None and named[1] not in held:
+                    self.add(
+                        "V5",
+                        "evidence",
+                        f"escrow chain {lineage}: {record.record_type.value} record "
+                        f"{record.sequence} names receipt {named[1]}, which the bundle does not "
+                        f"hold: it was left out, or never issued",
+                    )
 
     # -- V6 ledger ---------------------------------------------------------------------
 
@@ -901,6 +938,31 @@ class _Checks:
             found = parse_memo(entry.memo) if entry.entry_type is EntryType.ANCHOR else None
             if found is not None and found[0] == LOG_ID:
                 self.anchors.setdefault(found[1], entry)
+        self._v6_cut(cut)
+
+    def _v6_cut(self, cut: int) -> None:
+        """The cut is the anchor of the range's last record, and the bundle
+        holds it, proven (amended in 1.11.0). A cut any later would let a bundle
+        end its range early under a checkpoint of more of the ledger than the
+        range reaches."""
+        entry = self.ledger.get(cut)
+        if entry is None:
+            self.add("V6", "evidence", f"the cut, ledger entry {cut}, is not in the bundle, proven")
+            return
+        found = parse_memo(entry.memo) if entry.entry_type is EntryType.ANCHOR else None
+        digest = {record.seq: digest for record, digest in self.links}.get(self.last)
+        if (
+            found is None
+            or found[0] != LOG_ID
+            or found[1] != self.last
+            or (digest is not None and found[2] != digest)
+        ):
+            self.add(
+                "V6",
+                "evidence",
+                f"the cut, ledger entry {cut}, is not the anchor of record {self.last}, the "
+                f"range's last",
+            )
 
     # -- the escrow chains -----------------------------------------------------------
 
