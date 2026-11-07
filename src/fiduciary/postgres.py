@@ -222,39 +222,46 @@ class PostgresStore(Store):
         return self._conn
 
     def _execute(self, sql: str, args: tuple[Any, ...] = ()) -> Any:
+        """One statement, under the store's lock (1.11.0). Its cursor holds the
+        whole result already (a client-side cursor), so it is read after."""
         try:
-            return self._conn.execute(sql, args)
+            with self._lock:
+                return self._conn.execute(sql, args)
         except self._errors as exc:
             raise StoreError(f"the store refused: {exc}") from exc
 
     @contextmanager
     def _transaction(self) -> Iterator[None]:
-        if self._depth:
-            self._depth += 1
+        # Held from BEGIN to the last action after COMMIT: the connection is
+        # one, so another thread's statement would otherwise run inside this
+        # transaction, read what it has not committed, and go with its rollback.
+        with self._lock:
+            if self._depth:
+                self._depth += 1
+                try:
+                    yield
+                finally:
+                    self._depth -= 1
+                return
+            self._depth = 1
             try:
-                yield
+                with self._conn.transaction():
+                    # One writer at a time, as SQLite's BEGIN IMMEDIATE: what a
+                    # transaction reads of the log stays its head until it commits.
+                    self._conn.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                        (f"{self._s}.transaction",),
+                    )
+                    yield
+            except self._errors as exc:
+                self._drop_committed()
+                raise StoreError(f"the store refused the write: {exc}") from exc
+            except BaseException:
+                self._drop_committed()
+                raise
             finally:
-                self._depth -= 1
-            return
-        self._depth = 1
-        try:
-            with self._conn.transaction():
-                # One writer at a time, as SQLite's BEGIN IMMEDIATE: what a
-                # transaction reads of the log stays its head until it commits.
-                self._conn.execute(
-                    "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-                    (f"{self._s}.transaction",),
-                )
-                yield
-        except self._errors as exc:
-            self._drop_committed()
-            raise StoreError(f"the store refused the write: {exc}") from exc
-        except BaseException:
-            self._drop_committed()
-            raise
-        finally:
-            self._depth = 0
-        self._run_committed()
+                self._depth = 0
+            self._run_committed()
 
     def transaction(self) -> AbstractContextManager[None]:
         return self._transaction()
@@ -369,4 +376,5 @@ class PostgresStore(Store):
         return [(int(row[0]), bytes(row[1])) for row in rows]
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

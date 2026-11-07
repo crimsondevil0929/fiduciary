@@ -570,3 +570,109 @@ def test_an_agents_token_opens_sessions_of_its_own(world: bound.World, fid: Fidu
     events = [event for events in state.sessions.values() for event, _, _ in events]
     assert events.count("opened") == 5 and events.count("closed") == 4  # the static stays
     _verify(world)
+
+
+# -- the listener (1.11.0) -------------------------------------------------------------------
+
+
+def test_a_silent_tls_client_holds_only_its_own_thread(
+    fid: Fiduciary, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A server socket wrapped whole makes each handshake inside ``accept``:
+    one client that connected and said nothing stalled every other, before
+    any token was asked for. The handshake is the connection's own now, and
+    bounded."""
+    import socket
+
+    monkeypatch.setattr(mcp_module, "HANDSHAKE_SECONDS", 4.0)
+    cert, key = _certificate(tmp_path)
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls.load_cert_chain(cert, key)
+    bridge = HttpBridge("127.0.0.1", 0, tls=tls, lock=fid.lock)
+    token = bridge.add(_session(fid))
+    bridge.start()
+    silent = socket.create_connection(bridge.address)
+    try:
+        client = ssl.create_default_context(cafile=str(cert))
+        ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        started = time.monotonic()
+        status, _, body = _post(bridge.address, ping, token=token, context=client)
+        assert status == 200 and body["result"] == {}
+        assert time.monotonic() - started < 3.0  # not once the silent client's bound ran out
+        silent.settimeout(10)
+        assert silent.recv(1) == b""  # closed once its handshake's time ran out
+    finally:
+        silent.close()
+        bridge.stop()
+
+
+def test_the_listener_queues_a_burst_of_connections(fid: Fiduciary) -> None:
+    bridge = HttpBridge("127.0.0.1", 0, lock=fid.lock)
+    token = bridge.add(_session(fid))
+    assert bridge._http.request_queue_size == mcp_module.BACKLOG == 64
+    bridge.start()
+    try:
+        ping = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+        answers: list[int] = []
+        threads = [
+            threading.Thread(
+                target=lambda: answers.append(_post(bridge.address, ping, token=token)[0])
+            )
+            for _ in range(64)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(30)
+        assert answers == [200] * 64
+    finally:
+        bridge.stop()
+
+
+def test_a_client_that_trickles_its_request_is_let_go(
+    fid: Fiduciary, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import socket
+
+    monkeypatch.setattr(mcp_module, "READ_SECONDS", 0.5)
+    bridge = HttpBridge("127.0.0.1", 0, lock=fid.lock)
+    token = bridge.add(_session(fid))
+    bridge.start()
+    try:
+        slow = socket.create_connection(bridge.address)
+        slow.sendall(
+            b"POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+            + f"Authorization: Bearer {token}\r\nContent-Length: 100\r\n\r\n{{".encode()
+        )
+        slow.settimeout(5)
+        assert slow.recv(1) == b""  # the rest never came: the connection is closed
+        slow.close()
+    finally:
+        bridge.stop()
+
+
+def test_a_full_agent_is_told_when_a_session_frees(fid: Fiduciary) -> None:
+    """``Retry-After`` counts down to the moment the agent's least recently
+    used session is closed idle (it said five seconds, whatever the wait)."""
+    import hashlib
+
+    from fiduciary.mcp import Agent
+
+    desk = Agent(
+        "desk",
+        hashlib.sha256(b"desk-token").hexdigest(),
+        lambda: fid.session(bound.SCOPE, tenant="acme", bridged=True),
+        1,
+    )
+    init = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    for idle, expected in ((901.0, range(895, 902)), (None, range(1, 2))):
+        bridge = HttpBridge("127.0.0.1", 0, lock=fid.lock, agents={"desk": desk}, idle_seconds=idle)
+        bridge.start()
+        try:
+            assert _post(bridge.address, init, token="desk-token")[0] == 200
+            status, headers, body = _post(bridge.address, init, token="desk-token")
+            assert status == 429 and int(headers["retry-after"]) in expected
+            assert "DELETE /mcp" in body["error"]
+        finally:
+            bridge.close_sessions()
+            bridge.stop()

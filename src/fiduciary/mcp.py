@@ -31,16 +31,19 @@ binding of its name, and every call to it is metered and counted (F8-7).
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import ipaddress
 import json
 import logging
+import math
 import os
 import secrets
 import select
 import ssl
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -72,6 +75,16 @@ MAX_MESSAGE: Final = 1_048_576
 SERVICE_SECONDS: Final = 1.0
 """How often a bridge judges the intake and executes the warrants formed: a
 warrant for a quote or a proposal this process holds is executed here (F7-14)."""
+HANDSHAKE_SECONDS: Final = 5.0
+"""How long a client has to finish its TLS handshake, which runs in its
+connection's own thread (1.11.0): one that connects and says nothing holds only
+that thread, never the loop that accepts every other client."""
+READ_SECONDS: Final = 60.0
+"""How long a connection may wait between bytes of a request before it is
+closed (1.11.0): a client that trickles its request holds a thread no longer."""
+BACKLOG: Final = 64
+"""Connections the bridge's listener queues before it accepts them (1.11.0; the
+standard library's default is 5)."""
 
 PARSE_ERROR: Final = -32700
 INVALID_REQUEST: Final = -32600
@@ -333,6 +346,51 @@ class _Opened:
     used: float
 
 
+class _Listener(ThreadingHTTPServer):
+    """The bridge's listener (1.11.0). It queues :data:`BACKLOG` connections,
+    and with TLS it accepts the bare connection and makes the handshake in the
+    connection's own thread, bounded by :data:`HANDSHAKE_SECONDS`: a server
+    socket wrapped whole would make it inside ``accept``, where one silent
+    client stalls every other."""
+
+    daemon_threads = True
+    request_queue_size = BACKLOG
+
+    def __init__(
+        self,
+        address: tuple[str, int],
+        handler: type[BaseHTTPRequestHandler],
+        tls: ssl.SSLContext | None,
+    ) -> None:
+        self.tls = tls
+        super().__init__(address, handler)
+
+    def finish_request(self, request: Any, client_address: Any) -> None:
+        if self.tls is None:
+            super().finish_request(request, client_address)
+            return
+        request.settimeout(HANDSHAKE_SECONDS)
+        try:
+            wrapped = self.tls.wrap_socket(request, server_side=True)
+        except (OSError, ValueError) as exc:  # timed out, refused, or gone
+            logger.debug("bridge: no TLS handshake from %s: %s", client_address, exc)
+            return
+        try:
+            super().finish_request(wrapped, client_address)
+        finally:
+            with contextlib.suppress(OSError):
+                wrapped.close()
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        """A connection that broke, or timed out, is the client's to retry:
+        named at debug level. Anything else is logged with its traceback."""
+        error = sys.exc_info()[1]
+        if isinstance(error, OSError):
+            logger.debug("bridge: connection from %s ended: %s", client_address, error)
+        else:
+            logger.warning("bridge: request from %s failed", client_address, exc_info=error)
+
+
 class HttpBridge:
     """Sessions over Streamable HTTP (F8-6): ``POST /mcp``. Nothing else is
     served, but ``DELETE /mcp``, which ends an agent's session.
@@ -348,6 +406,10 @@ class HttpBridge:
     :param tls: The server's TLS context.
     :param service: Called every :data:`SERVICE_SECONDS`, under the lock.
     :param agents: The agents sessions are opened for, by name.
+    :param idle_seconds: How long after its last request an agent's session is
+        closed idle, at the latest (the service's ``idle``, and a turn of the
+        writer that closes it): what ``Retry-After`` counts down to when an
+        agent holds its most sessions (1.11.0).
     :raises McpError: When asked to listen beyond loopback without TLS.
     """
 
@@ -360,6 +422,7 @@ class HttpBridge:
         service: Callable[[], object] | None = None,
         lock: threading.RLock | None = None,
         agents: Mapping[str, Agent] | None = None,
+        idle_seconds: float | None = None,
     ) -> None:
         if tls is None and not _loopback(host):
             raise McpError(
@@ -371,12 +434,14 @@ class HttpBridge:
         self._agents: dict[str, Agent] = dict(agents or {})
         self._opened: dict[str, _Opened] = {}
         self._service = service
+        self._idle_seconds = idle_seconds
         self._stopped = threading.Event()
         bridge = self
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "fiduciary"
             sys_version = ""
+            timeout = READ_SECONDS
 
             def log_message(self, *args: object) -> None:
                 pass
@@ -485,15 +550,12 @@ class HttpBridge:
                 try:
                     return bridge._open(agent)
                 except _FullError as exc:
-                    self._send(429, {"error": str(exc)}, {"Retry-After": "5"})
+                    self._send(429, {"error": str(exc)}, {"Retry-After": str(exc.retry_after)})
                 except FiduciaryError as exc:  # the lineage is not bound, or not in force
                     self._send(403, {"error": str(exc)[:512]})
                 return None
 
-        self._http = ThreadingHTTPServer((host, port), Handler)
-        self._http.daemon_threads = True
-        if tls is not None:
-            self._http.socket = tls.wrap_socket(self._http.socket, server_side=True)
+        self._http = _Listener((host, port), Handler, tls)
         self._thread: threading.Thread | None = None
         self._ticker: threading.Thread | None = None
 
@@ -528,10 +590,13 @@ class HttpBridge:
 
     def _open(self, agent: Agent) -> McpServer:
         with self._lock:
-            held = sum(1 for o in self._opened.values() if o.agent == agent.name)
-            if held >= agent.max_sessions:
+            used = [o.used for o in self._opened.values() if o.agent == agent.name]
+            if len(used) >= agent.max_sessions:
                 raise _FullError(
-                    f"agent {agent.name} has {held} sessions open, its most: close one first"
+                    f"agent {agent.name} has {len(used)} sessions open, its most: close one "
+                    f"(DELETE /mcp with its Mcp-Session-Id), or retry once the least recently "
+                    f"used closes idle",
+                    retry_after=self._retry_after(min(used)),
                 )
             session = agent.open()
             server = McpServer(session, lock=self._lock)
@@ -569,6 +634,13 @@ class HttpBridge:
                 if opened.agent not in kept:
                     del self._opened[session_id]
                     _close(opened.server.session)
+
+    def _retry_after(self, used: float) -> int:
+        """Seconds until a session last used at ``used`` is closed idle
+        (``idle_seconds`` after it, 1.11.0); without that bound, one second."""
+        if self._idle_seconds is None:
+            return 1
+        return max(1, math.ceil(used + self._idle_seconds - time.monotonic()))
 
     def close_idle(self, seconds: float) -> int:
         """Close every agent's session no request reached for ``seconds``.
@@ -631,7 +703,12 @@ class HttpBridge:
 
 
 class _FullError(FiduciaryError):
-    """An agent holds as many sessions as it may."""
+    """An agent holds as many sessions as it may. ``retry_after``: the seconds
+    until its least recently used session closes idle, as ``Retry-After`` says."""
+
+    def __init__(self, message: str, *, retry_after: int) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 def _close(session: Session) -> None:
