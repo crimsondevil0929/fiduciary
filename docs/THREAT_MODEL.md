@@ -81,7 +81,11 @@ bundle holds.
 no network. Given the charter digest and public keys pinned from somewhere other than the
 bundle, it proves:
 
-- every record, document and receipt is intact, ordered and signed;
+- every record, document and receipt is intact, ordered and signed, and the service key
+  signed the list of what the bundle holds (1.11.0);
+- nothing is missing from the range it names: the checkpoint is cut at the anchor of the
+  range's last record, and every receipt the lineage's escrow chain names is in the bundle
+  (1.11.0);
 - every act on the lineage's ledger, outbox and escrow chain traces to a mandate version or
   a warrant, or is named;
 - every warrant had its quorum, on the state it was decided on, before it expired;
@@ -89,6 +93,10 @@ bundle, it proves:
 
 It does not prove anything about time beyond the ledger's own order, anything a record does
 not carry, or anything about a key the auditor did not pin. A bundle cannot vouch for
-itself. The console's in-browser check covers the container, the signatures, the chain, the
-seals, the anchors and the deliveries, as part of V1, V5, V9 and V10. It is a partial check,
-not a verdict.
+itself. Nor does it prove that its range ends at the log's head: the holder of the service
+and ledger keys can export an earlier range, honestly signed. That a bundle reaches a given
+moment takes a checkpoint from outside it, such as a witness's cosignature (`--witness`).
+The console's in-browser check covers the container, the manifest's signature, the chain,
+the record signatures, the seals, the ledger entries the anchors are read from, the
+anchors, the receipts the escrow chains name and the deliveries, as part of V1, V5, V6, V9
+and V10. It is a partial check, not a verdict.
