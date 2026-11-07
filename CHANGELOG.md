@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.11.0] - 2026-11-06
+## [1.11.0] - 2026-11-07
 
 An outside audit, run cold on the released code, found that a bundle could leave things
 out and still pass both verifiers with every key pinned, and that the daemon had three
@@ -52,6 +52,11 @@ of concept into a test.
   and said nothing stopped every other. Each handshake now runs in its connection's own
   thread, within 5 seconds, and a connection that waits 60 seconds between bytes of a
   request is closed.
+- **A webhook's redirect is no longer followed (F10-26, amended).** The notifier posted
+  through urllib's default opener, which followed a `301`, `302` or `303` as a `GET`
+  without the notice, to wherever `Location` pointed, past the URL checked when the
+  webhook was configured, and counted the `2xx` found there as delivered. Every `3xx` is
+  now a failed delivery, retried with backoff as any other.
 
 ### Fixed
 
@@ -88,10 +93,20 @@ of concept into a test.
 - **The next steps `init` prints are the README's and the quickstart's**: `fiduciary serve`
   and the agent's `claude mcp add` line for a substrate, and `mcp proxy` (with its relay)
   for an MCP server. It printed `mcp serve`, which cannot run beside the writer.
+- **Bundles are checked against pinned keys from the first one.** `fiduciary init` writes
+  `pinned-keys.json`, the deployment's public keys read from its configuration as
+  `export-bundle` reads them, and `charter.digest`. The quickstart and the README `init`
+  writes verify with `--charter` and `--keys`. Before, they verified with the charter alone,
+  so every key but the principals' came from the bundle itself. `init` prints the command
+  (`audit`) and says where the private keys are and who each belongs with (`custody`).
+  The console's Verify page pins the same file.
 - **The quickstart's `call.py` ends its session** with `DELETE /mcp`. Run five times, it
   used up the agent's four sessions.
-- `uv.lock` resolves interlock-escrow 1.4.3 and interlock-agentgov 1.3.1. The floors are
-  unchanged.
+- `uv.lock` resolves interlock-escrow 1.4.3 and interlock-agentgov 1.3.1 from PyPI, so the
+  site is built on agentgov 1.3.1, interlock 1.4.3 and fiduciary 1.11.0. The floors are
+  unchanged. `live-run/stack-demo-latest` is rendered again on those versions with
+  `--replay` ($0): its 16 bundles reach the verdicts and findings they had on 1.10.1 (run
+  ids aside), and pass every check in the browser.
 - **Golden bundles.** There are 40, up from 37: a tail cut off with no key, a range ended
   early and signed again, and a receipt left out and signed again. The three unsigned
   vectors now also fail V9. `scripts/make_bundles.py --rederive` derives the tampered
