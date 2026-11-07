@@ -252,16 +252,22 @@ deployment's mandate and charter digest written in:
 <!-- quickstart: run -->
 ```bash
 MANDATE=$(python3 -c "import json; print(json.load(open('desk/mandate.json'))['mandate_id'])")
-CHARTER=$(python3 -c "from fiduciary.documents import Charter; print(Charter.loads(open('desk/charter.json','rb').read()).digest)")
 fiduciary --config desk/fiduciary.toml export-bundle --mandate "$MANDATE" \
   --ledger-key desk/keys/ledger-checkpoints.key --out desk.fidb
-fiduciary verify-bundle desk.fidb --charter "$CHARTER"
+fiduciary verify-bundle desk.fidb \
+  --charter "$(cat desk/charter.digest)" --keys desk/pinned-keys.json
 ```
 
 The verifier checks V1 to V12: the container, the charter you pinned, the delegation, the
 compiled policy, every receipt, the ledger, that every act traces to a mandate or a warrant,
 that the warrant had its quorum, and the ordering in time. It ends `PASS`. Drop
 `desk.fidb` on the console's **Verify a bundle** page to check it in a browser too.
+
+`--charter` and `--keys` are what make the check mean something. A bundle carries its own
+`keys.json`, and a bundle checked only against itself can vouch for itself. `init` wrote the
+deployment's public keys to `desk/pinned-keys.json` and the charter's digest to
+`desk/charter.digest`. Neither file holds a secret. Hand both to your auditor once, by a
+channel the bundles do not travel on, and they check every later bundle against them.
 
 A system that keeps its own log of writes can be matched against the bundle alone. A
 SQLite file keeps none, so see it on the demo from step 1, against Stripe's event log:
@@ -277,10 +283,15 @@ Stripe's dashboard, around the agent.
 
 ## 7. Before you rely on it
 
-- **Move the principals' keys.** `init` wrote all three into `desk/keys/` so this guide could
-  run on one machine. Give each to its principal (or to a KMS), and delete them here.
+- **Move the private keys.** `init` wrote every private key into `desk/keys/` so this guide
+  could run on one machine: the three principals', the service's, the ledger's, and the
+  agent's bearer token beside them. Whoever holds two principals' keys can sign a warrant.
+  Give each principal their key (or move it to a KMS) and delete it here. Keep
+  `agent.token` with the agent alone, and the service and ledger keys with the service.
 - **Read [what it does and does not protect against](THREAT_MODEL.md).**
 - **Tighten the starter tools** to what your agent needs. Edit them under `desk/tools/`, sign
   them with `desk/keys/developer.key`, and issue a mandate version that pins them.
-- **Pin the keys you verify with.** `verify-bundle --keys` takes the public keys from
-  somewhere other than the bundle, so a bundle cannot vouch for itself.
+- **Keep the pins apart from the bundles.** `desk/pinned-keys.json` and
+  `desk/charter.digest` are public, but an auditor who receives them with a bundle can be
+  handed a forged set. Give them over once, out of band. A new mandate version keeps them;
+  a new charter or a rotated key changes them.

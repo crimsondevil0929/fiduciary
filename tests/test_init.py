@@ -261,6 +261,11 @@ def test_init_prints_the_proxy_for_a_server_it_governs(
     (serve,) = [line for line in printed if line.startswith("serve ")]
     assert " mcp proxy --mandate desk-agent -- " in serve and serve.endswith(command[-1])
     assert any(line.startswith("relay ") for line in printed)
+    from fiduciary.bundle.export import spec
+    from fiduciary.keys import load_key
+
+    relay = spec(load_key(tmp_path / "desk" / "keys" / "relay-a.key").public_key())
+    assert json.loads((tmp_path / "desk" / "pinned-keys.json").read_text())["relays"] == [relay]
     assert cli.main(["init", "--out", str(tmp_path / "bare")]) == 0
     (serve,) = [line for line in capsys.readouterr().out.splitlines() if line.startswith("serve ")]
     assert serve.endswith("mcp serve --mandate bare-agent")

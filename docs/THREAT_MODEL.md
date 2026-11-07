@@ -79,7 +79,8 @@ bundle holds.
 
 `fiduciary verify-bundle <bundle> --charter <digest> [--keys <file>]` needs no database and
 no network. Given the charter digest and public keys pinned from somewhere other than the
-bundle, it proves:
+bundle (`init` writes them as `charter.digest` and `pinned-keys.json`, to hand an auditor
+once, apart from any bundle), it proves:
 
 - every record, document and receipt is intact, ordered and signed, and the service key
   signed the list of what the bundle holds (1.11.0);

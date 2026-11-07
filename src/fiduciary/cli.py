@@ -1590,6 +1590,17 @@ def _init(args: argparse.Namespace) -> int:
     else:
         _out(f"serve       fiduciary --config {config} mcp serve --mandate {report.scope}")
     _out(f"approve     fiduciary console --dir {root} --accept-approvals --open")
+    _out(
+        f"audit       fiduciary verify-bundle <bundle> --charter $(cat {root / 'charter.digest'}) "
+        f"--keys {root / 'pinned-keys.json'}"
+    )
+    # B2 (1.11.0): what init left on this machine, said where it is seen.
+    _out(
+        f"custody     {root / 'keys'} holds every private key, so that this runs on one "
+        "machine: give each principal their key (or a KMS) and delete it here; keep "
+        "agent.token with the agent alone. pinned-keys.json and charter.digest are "
+        "public: hand them to your auditor once, apart from any bundle"
+    )
     return OK
 
 

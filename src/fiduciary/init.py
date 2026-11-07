@@ -490,6 +490,7 @@ def init(
             _write_report(root, report, None, target)
         finally:
             world.close()
+        _write_pins(root)
         return report
     listed = list(discovered) if discovered is not None else (discover(command) if command else [])
     report = InitReport(root=root.resolve(), scope=f"{label}-agent", principals=tuple(principals))
@@ -522,6 +523,7 @@ def init(
         _write_report(root, report, command, None)
     finally:
         world.close()
+    _write_pins(root)
     return report
 
 
@@ -564,16 +566,70 @@ def _audit(root: Path) -> str:
 ```
 fiduciary --config fiduciary.toml export-bundle --mandate {mandate} \\
     --ledger-key keys/ledger-checkpoints.key --out lineage.fidb
-fiduciary verify-bundle lineage.fidb --charter {charter}
+fiduciary verify-bundle lineage.fidb --charter {charter} --keys pinned-keys.json
 ```
 
-`verify-bundle` needs no database and no network: hand an auditor the bundle and the
-charter digest above, and the public keys to pin with `--keys`. It checks V1 to V12 and
+`verify-bundle` needs no database and no network. `pinned-keys.json` holds this
+deployment's public keys and `charter.digest` the charter's digest, so the bundle is
+checked against them and not against the keys it carries. Neither holds a secret: hand them
+to an auditor once, apart from any bundle, and then each bundle alone. It checks V1 to V12 and
 exits 0 when the bundle passes. Drop the bundle on the console's Verify page to check it in
 a browser. A system that keeps its own log of writes (Stripe, SendGrid, Kubernetes, FHIR,
 GitHub) can be matched against the bundle with `fiduciary reconcile-actions lineage.fidb
-<export> --charter {charter}`.
+<export> --charter {charter} --keys pinned-keys.json`.
 """
+
+
+def pinned_keys(root: Path) -> dict[str, Any]:
+    """The public keys an auditor pins with ``verify-bundle --keys`` (1.11.0, B2).
+
+    Read from the deployment's configuration and key files, the places
+    ``export-bundle`` reads them from, so the file names each role exactly as a
+    bundle of this deployment does: the service, the ledger's checkpoint key,
+    the receipt log, the runtime log, the operators and the relays. The
+    principals' keys are left out: the pinned charter digest vouches for them.
+    """
+    from interlock.wiring import trusted_keyring
+
+    from fiduciary.bundle.export import spec
+    from fiduciary.config import load_config
+    from fiduciary.keys import load_key
+
+    config = load_config(root / "fiduciary.toml")
+    executor = spec(config.executor().public_key())
+    operators = {"executor": executor}
+    relays: list[str] = []
+    if config.interlock is not None:
+        interlock = config.interlock_config()
+        if interlock.operators is not None:
+            operators = dict(interlock.operators.keys)
+        keyring = trusted_keyring(interlock, "relay")
+        if keyring is not None:
+            relays = sorted(spec(k) for k in map(keyring.verifier, keyring.ids()) if k is not None)
+    keys: dict[str, Any] = {
+        "service": spec(config.service().public_key()),
+        "ledger": spec(load_key(root / "keys" / "ledger-checkpoints.key").public_key()),
+        "runtime": spec(config.runtime().public_key()),
+        "operators": operators,
+    }
+    if config.receipts_log is not None:
+        keys["receipts"] = [spec(config.receipts().public_key())]
+    if relays:
+        keys["relays"] = relays
+    return keys
+
+
+def _write_pins(root: Path) -> None:
+    """``pinned-keys.json`` and ``charter.digest``: what an auditor checks a bundle
+    against, from outside it. The console's Verify page pins them too."""
+    from fiduciary.documents import Charter
+
+    keys = pinned_keys(root)
+    (root / "pinned-keys.json").write_text(
+        json.dumps(keys, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    charter = Charter.loads((root / "charter.json").read_bytes()).digest
+    (root / "charter.digest").write_text(charter + "\n", encoding="utf-8")
 
 
 def _write_report(
