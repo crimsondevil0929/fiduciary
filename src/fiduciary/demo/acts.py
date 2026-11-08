@@ -104,10 +104,10 @@ MAX_TURNS: Final = 8
 MAX_OUTPUT: Final = 4096
 """Each live turn's ``max_tokens``: the mandate's ``max_output_tokens``."""
 TITLES: Final = {
-    "queue": "Refund and discount: a trigger reprices the order to 10%",
+    "queue": "A 10% discount that a pricing trigger turns into a 90% cut",
     "settlement": "One dispute flag reaches 50 orders in four tenants",
     "fleet": "50 sub-agent sessions against one refund window",
-    "crash": "The relay dies after Stripe answers; the refund is made once",
+    "crash": "The relay crashes mid-refund, and the customer is refunded once",
     "quorum": "Held refund released by 2 of 3 principals",
     "break-glass": "DBA releases a held refund and resets the breaker by hand",
     "audit": "Offline audit of both bundles, and Stripe's event log",

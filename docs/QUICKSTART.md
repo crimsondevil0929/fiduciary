@@ -3,8 +3,8 @@
 This guide takes you from `pip install` to an agent whose writes are measured before they
 commit, an exception two of three people approve, and an audit bundle anyone can verify
 offline. It uses a small SQLite database so every step runs on a laptop. The same steps
-work on PostgreSQL, a Git repository, a Kubernetes namespace, a Terraform configuration or
-a FHIR server: see [step 2](#2-point-it-at-your-system-5-minutes).
+work on PostgreSQL, a Git repository, a directory of files, a Kubernetes namespace, a
+Terraform configuration, a FHIR server, or a JSON REST API: see [step 2](#2-point-it-at-your-system-5-minutes).
 
 Every command block marked to run below is run, in order, by this repository's tests
 (`tests/test_quickstart.py`), so the guide cannot drift from the code.
@@ -22,8 +22,9 @@ pip install 'interlock-fiduciary[demo]'
 fiduciary --version
 ```
 
-To see the whole stack before you set anything up, run the demo, which replays a recorded
-`claude-opus-5-5` session in six industries and opens the console in your browser:
+To see the whole stack before you set anything up, run the demo. It plays eight agent
+workflows (recorded `claude-opus-5-5` sessions where it has them, scripted calls elsewhere) and
+opens the console in your browser:
 
 ```bash
 fiduciary demo --replay --out demo --serve --open
@@ -76,9 +77,11 @@ For another system, only the `init` line changes:
 ```bash
 fiduciary init --out desk --substrate postgres --database 'postgresql://stage_role:...@host/db'
 fiduciary init --out desk --substrate git --repository /path/to/repo.git
+fiduciary init --out desk --substrate filesystem --directory /srv/checkout-config
 fiduciary init --out desk --substrate kubernetes --server https://... --token-file token --namespace prod
 fiduciary init --out desk --substrate terraform --directory infra/
 fiduciary init --out desk --substrate fhir --server https://fhir.example/fhir --type MedicationRequest
+fiduciary init --out desk --substrate rest --server https://desk.example/api --resource tickets=/tickets
 fiduciary init --out desk --mcp -- <the command that starts your MCP server>
 ```
 

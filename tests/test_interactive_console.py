@@ -355,7 +355,13 @@ def test_sandbox_calls_and_drafts_refuse_what_is_not_theirs(client: _Client) -> 
 
 @pytest.mark.parametrize(
     ("key", "rung", "cascade"),
-    [("healthcare", "V", "compensated"), ("sre", "P", "refused"), ("coding-agent", "T", "refused")],
+    [
+        ("healthcare", "V", "compensated"),
+        ("sre", "P", "refused"),
+        ("coding-agent", "T", "refused"),
+        ("workspace", "T", "refused"),
+        ("service-desk", "V", "compensated"),
+    ],
 )
 def test_each_substrate_measures_its_presets(
     client: _Client, key: str, rung: str, cascade: str
@@ -400,12 +406,14 @@ def test_each_substrate_measures_its_presets(
 def test_the_sandbox_describes_every_industry(console: tuple[_Client, Console]) -> None:
     described = console[1].sandbox.describe()["domains"]
     assert [d["key"] for d in described] == [
-        "fintech",
-        "healthcare",
-        "sre",
-        "supply-chain",
-        "saas",
         "coding-agent",
+        "workspace",
+        "sre",
+        "healthcare",
+        "service-desk",
+        "saas",
+        "supply-chain",
+        "fintech",
     ]
     assert {d["rung"] for d in described} == {"T", "P", "V"}
     assert all(len(d["presets"]) == 3 for d in described)

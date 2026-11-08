@@ -49,6 +49,7 @@ from typing import Any, Final
 from interlock.fhir import FhirSubstrate, FhirType, fingerprint
 from interlock.outbound import OperationSpec, SinkSpec
 from interlock.sim.fhir import Change, LoopbackFhirServer, RuleContext
+from interlock.text import tally
 
 from fiduciary.demo.gateway import Policy
 from fiduciary.demo.packs.kit import (
@@ -773,7 +774,7 @@ def acts(run: PackRun) -> None:
     run.say(
         f"  chart 4D: {before['active_orders']} active orders and {before['scheduled_doses']} "
         f"scheduled doses before; {after['active_orders']} and {after['scheduled_doses']} after; "
-        f"{after['voided']} record(s) marked entered-in-error"
+        f"{tally(after['voided'], 'record')} marked entered-in-error"
     )
     run.act(
         2,

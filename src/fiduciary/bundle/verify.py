@@ -52,6 +52,7 @@ from agentgov.receipts.signing import Verifier
 from interlock.chain import EscrowChain, EscrowRecord, RecordType
 from interlock.outbound import OperationSpec, SinkRegistry, SinkSpec
 from interlock.records import SignedRecord
+from interlock.text import tally
 
 from fiduciary import documents, fidu1
 from fiduciary._upstream import ILOK1_DIGESTS
@@ -443,7 +444,7 @@ def _trusted(bundle: _Bundle, keys: TrustedKeys | None, report: BundleReport) ->
     for role in ("service", "ledger", "receipts", "runtime", "operators"):
         if role not in pinned and named.get(role):
             report.notes.append(
-                f"the {role} key(s) come from the bundle's own keys.json, not from the auditor: "
+                f"the {role} keys come from the bundle's own keys.json, not from the auditor: "
                 f"pin them with --keys"
             )
     for role in ("service", "ledger", "runtime", "operators"):
@@ -464,7 +465,7 @@ def _trusted(bundle: _Bundle, keys: TrustedKeys | None, report: BundleReport) ->
             )
     elif named.get("relays"):
         report.notes.append(
-            "the relay key(s) come from the bundle's own keys.json, not from the auditor: "
+            "the relay keys come from the bundle's own keys.json, not from the auditor: "
             "pin them with --keys"
         )
     chosen = {role: pinned.get(role, named.get(role)) for role in named.keys() | pinned.keys()}
@@ -839,13 +840,16 @@ class _Checks:
                 self.add("V5", kind, f"receipt {name}: {text}")
         if unattested:
             self.r.notes.append(
-                f"{unattested} delivery receipt(s) carry a relay attestation by a key "
-                f"keys.json does not name: their attestations were not checked"
+                f"{tally(unattested, 'delivery receipt')} "
+                f"{'carries' if unattested == 1 else 'carry'} a relay attestation by a key "
+                f"keys.json does not name, so "
+                + ("its attestation was" if unattested == 1 else "their attestations were")
+                + " not checked"
             )
         if deliveries:
             self.r.notes.append(
-                f"{deliveries} delivery receipt(s): each signed by the receipt log and bound "
-                f"to the action receipt that committed its request"
+                f"{tally(deliveries, 'delivery receipt')}, each signed by the receipt log and "
+                f"bound to the action receipt that committed its request"
             )
         # What a receipt's effect is worth: one measured short of a transaction
         # says so, and the report names how many (ARC1 1.3 coverage.measurement).
@@ -857,7 +861,8 @@ class _Checks:
                 classes[measured] = classes.get(measured, 0) + 1
         for measured, count in sorted(classes.items()):
             self.r.notes.append(
-                f"measured {measured}: {count} receipt(s) whose effect was not measured in a "
+                f"measured {measured}: {tally(count, 'receipt')} whose effect was not measured "
+                f"in a "
                 + {
                     "plan-bound": "transaction, but as the plan the system applied",
                     "predicted": "transaction, but predicted, written conditionally and read back",

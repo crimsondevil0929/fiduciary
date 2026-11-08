@@ -6,6 +6,58 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-07
+
+Agents that edit files and agents that work through SaaS APIs, governed like the rest; a console
+rebuilt as a workbench; and every count written as English. Requires interlock-escrow 1.5.0 and
+interlock-agentgov 1.3.2.
+
+### Added
+
+- **Two new workflows in the demo.**
+  - `--domain workspace` (Platform ops): an ops agent edits a checkout service's config
+    workspace on interlock's new filesystem substrate, in `swap` mode. A config edit is swapped
+    in as one new version; a renderer hook that turns one edit into 25 region files is refused;
+    a token appended to `.env` and a deleted backup script are refused by path class; an
+    engineer's hand edit to the live config refuses the commit that measured it; a production
+    rollout waits for 2 of 3; a staging rollout is released with the break-glass key.
+  - `--domain service-desk` (Customer support): a support agent works tickets on a JSON REST
+    API through interlock's new REST substrate. A triage is written on its ETag; an escalation
+    that the desk's automation turns into a reassignment and a new incident is caught by the
+    read-back and undone; another account's ticket and a $400 credit are refused before the
+    desk or billing sees them; a human agent's edit refuses the write; a goodwill credit waits
+    for 2 of 3.
+  - Both play scripted calls, so `--replay` stays free. Both have sandbox presets.
+- **`fiduciary init --substrate filesystem --directory DIR`:** `write_file` and
+  `replace_in_file` in a private copy of the directory; the starter mandate allows config,
+  source, tests, docs and other files, and refuses secrets, workflows, infrastructure,
+  dependencies and scripts.
+- **`fiduciary init --substrate rest --server URL --resource NAME=/PATH`:** a
+  `set_<resource>_status` tool for each collection, written on the version read and read back,
+  with `--tenant-field` naming each record's account and `--managed` the fields the API writes
+  itself.
+
+### Changed
+
+- **The console is a workbench, not one long page.** One workflow at a time, picked from eight
+  in six families (coding and repo agents, cloud and infrastructure, clinical, SaaS and CRM,
+  supply chain, fintech), with the coding agent first. Each workflow has four tabs: Scenarios
+  (a rail of the seven scenarios beside the one open, the input gateway and the staged
+  execution side by side), Mandate and lineage, Warrants and operator log, and Offline proof.
+  The overview, the measurement ladder and which check stopped which plan moved to "How it
+  works". Every view has a route (`#/run/<workflow>/<tab>/<scenario>`), and old anchors still
+  land on the right tab. It prints the view on screen, not every section at once. Checked in
+  light and dark, at desktop, tablet and phone widths.
+- **Plain English throughout.** The console, the scenario titles, the overview and the README
+  were rewritten as a person would say them: "Each delivery receipt records the vendor's own
+  ID for what it created", not "the ids the vendor gave what it made". The measurement ladder
+  says the directory and REST substrates are shipped, instead of "next".
+- **No message writes `receipt(s)` or `turn(s)` any more.** Every count fiduciary prints takes
+  the form its number takes, as interlock's and AgentGov's now do. Signed records written by
+  earlier versions (golden vectors, upgrade fixtures) keep their bytes.
+- **The overview lists eight workflows.** A refused commit after a concurrent edit counts as
+  "commit only on the version measured" on every substrate, not only Git and FHIR.
+
 ## [1.11.0] - 2026-11-07
 
 An outside audit, run cold on the released code, found that a bundle could leave things

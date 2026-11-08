@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Final
 
 from agentgov.receipts.signing import Signer
+from interlock.text import noun
 
 __all__ = ["SignerSpec", "generate_key", "load_key", "open_signer", "parse_signers"]
 
@@ -104,7 +105,7 @@ def parse_signers(raw: object) -> dict[str, SignerSpec]:
             raise ValueError(f"{where}: type is 'aws-kms' or 'http', not {kind!r}")
         unknown = sorted(set(entry) - _KEYS[kind])
         if unknown:
-            raise ValueError(f"{where}: unknown key(s) {', '.join(unknown)}")
+            raise ValueError(f"{where}: unknown {noun(len(unknown), 'key')} {', '.join(unknown)}")
         required = ("key_id",) if kind == "aws-kms" else ("url", "key")
         for key in required:
             if not isinstance(entry.get(key), str) or not entry[key]:

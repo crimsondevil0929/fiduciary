@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from agentgov.receipts.signing import Signer
+from interlock.text import noun, tally
 
 from fiduciary import __version__, fidu1
 from fiduciary.documents import (
@@ -1251,8 +1252,8 @@ def _reconcile_actions(args: argparse.Namespace) -> int:
 
     verdict = found.bundle
     _out(
-        f"bundle      {args.bundle}: {found.receipts} receipt(s), {found.deliveries} of them "
-        f"deliveries; V1, V2 and V5 pass"
+        f"bundle      {args.bundle}: {tally(found.receipts, 'receipt')}, {found.deliveries} of "
+        f"them {noun(found.deliveries, 'delivery')}; V1, V2 and V5 pass"
         + ("" if verdict.passed else f"; the bundle itself exits {verdict.exit_code}")
     )
     for finding in verdict.findings:
@@ -1436,13 +1437,13 @@ def _demo(args: argparse.Namespace) -> int:
         replayed = model.get("replay")
         if replayed is None:
             say(
-                f"live        {where}: {model['served']}, {model['turns']} turn(s), "
+                f"live        {where}: {model['served']}, {tally(model['turns'], 'turn')}, "
                 f"${model['metered']} metered"
             )
         else:
             say(
                 f"replayed    {where}: {model['served']} as recorded "
-                f"{replayed['recorded_at'][:10]}, {model['turns']} turn(s), "
+                f"{replayed['recorded_at'][:10]}, {tally(model['turns'], 'turn')}, "
                 f"${model['metered']} metered then, $0 now"
             )
     url = outcome.dashboard.resolve().as_uri()
@@ -1548,6 +1549,9 @@ def _init(args: argparse.Namespace) -> int:
             directory=args.directory,
             executable=tuple(args.executable.split()),
             types=tuple(args.types),
+            resources=tuple(args.resources),
+            tenant_field=args.tenant_field,
+            **({"managed": tuple(args.managed)} if args.managed else {}),
         )
     try:
         report = init(
@@ -1645,7 +1649,7 @@ def _notify(args: argparse.Namespace) -> int:
     while True:
         for name, count in notifier.turn().items():
             if count:
-                _out(f"{name}: {count} notice(s) delivered")
+                _out(f"{name}: {tally(count, 'notice')} delivered")
         if args.once:
             return OK
         time.sleep(args.every)
@@ -2012,7 +2016,16 @@ def _parser() -> argparse.ArgumentParser:
     target = init.add_argument_group("--substrate: a system the agent changes directly (1.9.0)")
     target.add_argument(
         "--substrate",
-        choices=("sqlite", "postgres", "git", "kubernetes", "terraform", "fhir"),
+        choices=(
+            "sqlite",
+            "postgres",
+            "git",
+            "filesystem",
+            "kubernetes",
+            "terraform",
+            "fhir",
+            "rest",
+        ),
         help="what the stage runs on; starter tools are written for it",
     )
     target.add_argument("--database", help="sqlite: the file; postgres: the connection string")
@@ -2022,16 +2035,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     target.add_argument("--repository", type=Path, help="git: the repository")
     target.add_argument("--branch", default="main", help="git: the branch (main)")
-    target.add_argument("--server", help="kubernetes: the API server; fhir: the base URL")
-    target.add_argument("--token-file", type=Path, help="kubernetes, fhir: the bearer token")
-    target.add_argument("--ca-file", type=Path, help="kubernetes, fhir: the CA bundle")
+    target.add_argument("--server", help="kubernetes: the API server; fhir, rest: the base URL")
+    target.add_argument("--token-file", type=Path, help="kubernetes, fhir, rest: the bearer token")
+    target.add_argument("--ca-file", type=Path, help="kubernetes, fhir, rest: the CA bundle")
     target.add_argument(
         "--namespace",
         action="append",
         default=[],
         help="kubernetes: a namespace the agent may change (repeat for each)",
     )
-    target.add_argument("--directory", type=Path, help="terraform: the configuration")
+    target.add_argument(
+        "--directory", type=Path, help="terraform: the configuration; filesystem: the workspace"
+    )
     target.add_argument(
         "--executable", default="terraform", help="terraform: terraform or tofu (terraform)"
     )
@@ -2041,6 +2056,25 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="fhir: a resource type the agent may change (repeat for each)",
+    )
+    target.add_argument(
+        "--resource",
+        dest="resources",
+        action="append",
+        default=[],
+        metavar="NAME=/PATH",
+        help="rest: a collection the agent may change, as tickets=/tickets (repeat for each)",
+    )
+    target.add_argument(
+        "--tenant-field",
+        help="rest: the field naming each record's account or organization (account_id)",
+    )
+    target.add_argument(
+        "--managed",
+        action="append",
+        default=[],
+        metavar="FIELD",
+        help="rest: a field the API writes itself (repeat; updated_at, updated_by, version)",
     )
     init.add_argument("command", nargs=argparse.REMAINDER, help="-- the MCP server's command")
     init.set_defaults(handler=_init)
@@ -2080,20 +2114,30 @@ def _parser() -> argparse.ArgumentParser:
     console.add_argument(
         "--sandbox",
         action="store_true",
-        help="add the demo's six industries, built in scratch, to try calls and votes",
+        help="add the demo's eight workflows, built in scratch, to try calls and votes",
     )
     console.add_argument("--open", action="store_true", help="open the console in a browser")
     console.set_defaults(handler=_console)
 
     demo = commands.add_parser(
         "demo",
-        help="run the whole stack offline in seven acts, beside an input gateway, and write "
-        "its dashboard (--domain picks the industry)",
+        help="run the whole stack offline in seven scenarios, beside an input gateway, and write "
+        "its dashboard (--domain picks the workflow)",
     )
     demo.add_argument("--out", help="the directory to write the deployment into (new or empty)")
     demo.add_argument(
         "--domain",
-        choices=("fintech", "healthcare", "sre", "supply-chain", "saas", "coding-agent", "all"),
+        choices=(
+            "coding-agent",
+            "workspace",
+            "sre",
+            "healthcare",
+            "service-desk",
+            "saas",
+            "supply-chain",
+            "fintech",
+            "all",
+        ),
         help="the industry: fintech (the default; all with --replay), a domain pack on the "
         "same engine, or all of them, each in its own subdirectory, behind one dashboard",
     )

@@ -16,6 +16,7 @@ import re
 from collections.abc import Iterable
 
 from interlock.feedback import FeedbackHint, Guidance
+from interlock.text import noun
 from interlock.types import EffectDiff, EffectKind, EffectPlan, InvariantViolation, Severity
 
 __all__ = ["BoundStatements", "MandateScope", "TenantAllowlist", "admits_scope"]
@@ -105,7 +106,8 @@ class TenantAllowlist:
         return (
             _blocking(
                 self.name,
-                f"plan reaches tenant(s) {', '.join(outside)} outside the mandate's",
+                f"plan reaches {noun(len(outside), 'tenant')} {', '.join(outside)} outside the "
+                f"mandate's",
                 tenants=",".join(outside),
             ),
         )
@@ -149,7 +151,9 @@ class BoundStatements:
         return (
             _blocking(
                 self.name,
-                f"effect(s) {', '.join(unbound)} run a statement no pinned tool binding carries",
+                f"{noun(len(unbound), 'effect').capitalize()} {', '.join(unbound)} "
+                f"{'runs' if len(unbound) == 1 else 'run'} a statement no pinned tool binding "
+                f"carries",
                 effects=",".join(unbound),
             ),
         )

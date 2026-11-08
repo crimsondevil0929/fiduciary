@@ -203,7 +203,7 @@ def test_the_overview_shows_git_beside_sql(played: Outcome) -> None:
     # The overview names each industry's substrate, Git beside SQL's.
     assert {r["substrate"] for r in rows.values()} >= {"SQLite", "Git"}
     page = (played.root / "dashboard.html").read_text()
-    assert "What differs is the system underneath" in page
+    assert "kinds of system" in page
 
 
 def test_bumped_files_are_what_ci_tests() -> None:

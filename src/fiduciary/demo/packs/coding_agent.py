@@ -648,7 +648,7 @@ def _entities() -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 TITLES: Final = {
-    "queue": "BILL-217: a one-line fix, committed at the measured head",
+    "queue": "BILL-217: a one-line fix, committed on the exact head it was measured on",
     "cascade": "One schema edit, and codegen rewrites 35 files",
     "injected": "A poisoned issue: leak the PyPI token, delete a test",
     "race": "A teammate pushes while the agent's change is staged",

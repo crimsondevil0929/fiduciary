@@ -90,6 +90,7 @@ from interlock.extension import BudgetGuard, ExtensionGrant, ExtensionRequest
 from interlock.feedback import AgentFeedback, feedback_for_error
 from interlock.outbound import schema_problems
 from interlock.recovery import RecoveryRuntime, RecoveryStep, Trip, TripKind
+from interlock.text import tally
 from interlock.types import Compensation, EffectId, EffectKind, EffectPlan, OutboundRequest
 
 from fiduciary import fidu1
@@ -1433,7 +1434,10 @@ def _committed(
     if binding.requests:
         queued = sorted({f"{r.sink} {r.operation}" for r in binding.requests} - set(held))
         if queued:
-            lines.append(f"Outbound request(s) queued for delivery: {', '.join(queued)}.")
+            lines.append(
+                f"Queued for delivery: {tally(len(queued), 'outbound request')} "
+                f"({', '.join(queued)})."
+            )
         if held:
             lines.append(
                 f"Held for the principals' approval, not yet made: {', '.join(held)}. It is "

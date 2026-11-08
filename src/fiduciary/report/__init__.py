@@ -23,6 +23,8 @@ from collections.abc import Mapping
 from importlib.resources import files
 from typing import Any, Final
 
+from interlock.text import noun, tally
+
 __all__ = ["console_html", "html", "markdown", "payload"]
 
 _ASSETS: Final = files("fiduciary.report")
@@ -147,7 +149,8 @@ def markdown(data: Mapping[str, Any]) -> str:
             out += ["", "### Warrants", ""]
             for w in a["warrants"]:
                 out.append(
-                    f"- `{w['warrant_id']}`: {w['action']}, on {len(w['basis'])} approval(s), "
+                    f"- `{w['warrant_id']}`: {w['action']}, on "
+                    f"{tally(len(w['basis']), 'approval')}, "
                     f"formed {w['formed_at']}, valid until {w['not_after']}"
                 )
         ambient = [o for o in a["operators"] if o["ambient"]]
@@ -189,7 +192,8 @@ def markdown(data: Mapping[str, Any]) -> str:
             )
             out.append(
                 f"- **Model:** {model['served']} ran scenario 2 ({how}) in {model['turns']} "
-                f"turn(s), {model['usage'].get('input_tokens', 0)} input and "
+                f"{noun(model['turns'], 'turn')}, "
+                f"{model['usage'].get('input_tokens', 0)} input and "
                 f"{model['usage'].get('output_tokens', 0)} output tokens, "
                 f"${model['metered']} metered"
             )

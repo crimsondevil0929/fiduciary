@@ -49,6 +49,7 @@ from interlock.records import Keyring, RecordLog
 from interlock.relay import DELIVERED, Delivery, DeliveryResult, LedgerBreaker, Relay
 from interlock.sqlite_outbox import OPERATOR, RELAY, SqliteOutboxStore, install_sqlite_outbox
 from interlock.substrate import ShadowSubstrate, SqliteSubstrate, TableSpec
+from interlock.text import tally
 
 from fiduciary import _upstream, fidu1
 from fiduciary.authority import Authority
@@ -1165,7 +1166,7 @@ def work(
     model["metered"] = f"{spent:.6f}"
     run.model = model
     run.say(
-        f"  live {model['served']}: {model['turns']} turn(s), {len(calls)} call(s), "
+        f"  live {model['served']}: {tally(model['turns'], 'turn')}, {tally(len(calls), 'call')}, "
         f"${spent:.6f} metered"
     )
     return calls, {"mode": "live", "request": request, "model": model, "metered": f"{spent:.6f}"}
@@ -1180,15 +1181,20 @@ def blocked(found: Called) -> list[str]:
 
 def say_call(run: PackRun, found: Called, what: str) -> None:
     m = found.measured or {}
+    if found.result is None:
+        run.say(f"  {what}: gateway {found.gateway.decision}; never sent to the stack")
+        return
     stack = (
         "committed"
         if found.committed
         else "written, read back, put back"
         if m.get("compensated")
-        else f"rolled back ({', '.join(blocked(found)) or (found.result and found.result.outcome)})"
+        else f"refused ({', '.join(blocked(found)) or found.result.outcome})"
     )
-    rows = f"{m.get('rows', 0)} rows" if m else "nothing measured"
-    run.say(f"  {what}: gateway {found.gateway.decision}; stack {rows}, {stack}")
+    plural = run.pack.nouns.get("rows", "rows")
+    singular = plural[:-1] if plural.endswith("s") else plural
+    rows = tally(int(m.get("rows", 0)), singular, plural) if m else "nothing measured"
+    run.say(f"  {what}: gateway {found.gateway.decision}; stack measured {rows}, {stack}")
 
 
 # --------------------------------------------------------------------------

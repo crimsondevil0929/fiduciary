@@ -39,6 +39,7 @@ from decimal import Decimal
 from typing import Any, Final, TypeVar
 
 from agentgov.receipts.signing import Signer, Verifier
+from interlock.text import noun
 
 from fiduciary import fidu1
 from fiduciary.checkers import admits_scope
@@ -1088,7 +1089,8 @@ class Decide:
         strays = [scope for scope in listed if not admits_scope(subject, scope)]
         if strays or len(set(listed)) != len(listed):
             raise AuthorityError(
-                f"session {session_id} names scope(s) {', '.join(strays) or 'twice'}, outside "
+                f"session {session_id} names {noun(len(strays) or 2, 'scope')} "
+                f"{', '.join(strays) or 'twice'}, outside "
                 f"its subject {subject!r} and its satellites (F8-8)"
             )
         return {"session": session_id, "mandate_id": opened["mandate_id"], "scopes": listed}

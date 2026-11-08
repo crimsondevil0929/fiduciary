@@ -65,6 +65,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from agentgov.core import EntryType  # noqa: E402
+from interlock.text import tally  # noqa: E402
 from tests import bound  # noqa: E402
 from tests import bridge_kit as kit  # noqa: E402
 from tests import bundle_kit as bk  # noqa: E402
@@ -787,7 +788,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     for outcome in outcomes:
         mark = "held" if outcome.held else "FAILED: " + "; ".join(outcome.problems)
         print(
-            f"{outcome.scenario:18} {outcome.mode:28} {len(outcome.calls):2} call(s)  "
+            f"{outcome.scenario:18} {outcome.mode:28} {tally(len(outcome.calls), 'call'):>8}  "
             f"bundle {outcome.bundle or '-':12} {mark}"
         )
     print(f"spent ${spent}; results in {out / 'results.json'}")

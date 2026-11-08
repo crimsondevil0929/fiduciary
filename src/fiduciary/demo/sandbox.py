@@ -32,7 +32,16 @@ from fiduciary.demo import acts as fintech
 from fiduciary.demo import packs
 from fiduciary.demo.gateway import Gateway
 from fiduciary.demo.overview import INDUSTRIES
-from fiduciary.demo.packs import coding_agent, healthcare, kit, saas, sre, supply_chain
+from fiduciary.demo.packs import (
+    coding_agent,
+    healthcare,
+    kit,
+    saas,
+    service_desk,
+    sre,
+    supply_chain,
+    workspace,
+)
 from fiduciary.demo.world import ORDERS, PRINCIPALS, SCOPE, TENANTS, World, tenant_of
 from fiduciary.demo.world import build as build_fintech
 from fiduciary.documents import Approval, Record
@@ -274,6 +283,80 @@ def _presets() -> dict[str, tuple[Preset, ...]]:
                 coding_agent.REPO,
             ),
         ),
+        "workspace": (
+            Preset(
+                "everyday",
+                "commits",
+                "Raise the checkout timeout",
+                "One config file, edited in a private copy of the workspace and swapped in as the "
+                "next version with one rename.",
+                "edit_config",
+                {
+                    "path": workspace.SERVICE,
+                    "old": workspace.TIMEOUT_OLD,
+                    "new": workspace.TIMEOUT_NEW,
+                },
+                workspace.WORKSPACE,
+            ),
+            Preset(
+                "cascade",
+                "refused",
+                "Raise the base timeout",
+                "The renderer rewrites the 24 region files, so the measured diff is 25 files in a "
+                "path class the mandate doesn't grant. The live workspace never changes.",
+                "edit_config",
+                {
+                    "path": workspace.BASE,
+                    "old": workspace.TIMEOUT_OLD,
+                    "new": workspace.TIMEOUT_NEW,
+                },
+                workspace.WORKSPACE,
+            ),
+            Preset(
+                "held",
+                "held",
+                "Roll the workspace out to production",
+                "A production rollout waits in the deploy outbox for two of three principals.",
+                "roll_out_production",
+                {"reason": "the new timeout, after a day in staging"},
+                workspace.WORKSPACE,
+            ),
+        ),
+        "service-desk": (
+            Preset(
+                "everyday",
+                "commits",
+                "Triage one ticket",
+                "One ticket, predicted, written with If-Match on the version read, and read back "
+                "with the rest of its account.",
+                "update_ticket",
+                {
+                    "ticket_id": service_desk.ticket_id(0, 0),
+                    "status": "pending",
+                    "priority": "high",
+                },
+                service_desk.ACCOUNTS[0],
+            ),
+            Preset(
+                "cascade",
+                "refused",
+                "Escalate one ticket",
+                "The desk's automation reassigns the ticket and opens an incident. The read-back "
+                "differs from the prediction, so both are undone.",
+                "escalate_ticket",
+                {"ticket_id": service_desk.ticket_id(1, 0)},
+                service_desk.ACCOUNTS[1],
+            ),
+            Preset(
+                "held",
+                "held",
+                "Credit the account $120",
+                "A goodwill credit waits in the billing outbox for two of three principals.",
+                "issue_credit",
+                {"amount_usd": 120},
+                service_desk.ACCOUNTS[0],
+            ),
+        ),
     }
 
 
@@ -417,6 +500,8 @@ class SandboxDeployment(Deployment):
             self._built.world.close()
             healthcare._EHRS.pop(root, None)
             sre._CLUSTERS.pop(root, None)
+            workspace._WORKSPACES.pop(root, None)
+            service_desk._DESKS.pop(root, None)
             self._built = None
             self._state = None
 
