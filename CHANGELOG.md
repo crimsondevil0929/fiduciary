@@ -58,12 +58,6 @@ interlock-agentgov 1.3.2.
 - **The overview lists eight workflows.** A refused commit after a concurrent edit counts as
   "commit only on the version measured" on every substrate, not only Git and FHIR.
 
-### Build
-
-- Until interlock-escrow 1.5.0 and interlock-agentgov 1.3.2 are on PyPI, `[tool.uv.sources]`
-  pins their branch commits and `scripts/upstream_pins.py` lets CI's bare install and upstream
-  job take them. Both temporary pins are removed before tagging 1.12.0.
-
 ## [1.11.0] - 2026-11-07
 
 An outside audit, run cold on the released code, found that a bundle could leave things
