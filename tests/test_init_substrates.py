@@ -277,6 +277,67 @@ def test_a_fhir_server_gets_status_tools(tmp_path: Path, serve: list[Serve]) -> 
         server.stop()
 
 
+def test_a_directory_gets_file_tools(tmp_path: Path, serve: list[Serve]) -> None:
+    workspace = tmp_path / "service"
+    (workspace / "config").mkdir(parents=True)
+    (workspace / "config" / "app.toml").write_text("timeout_ms = 2500\n")
+    (workspace / ".env").write_text("TOKEN=placeholder\n")
+    report = init(tmp_path / "desk", target=Target("filesystem", directory=workspace))
+    assert [t["name"] for t in report.tools] == ["write_file", "replace_in_file"]
+    assert [s["name"] for s in report.skipped] == ["delete_file"]
+    assert any(".service.interlock" in n["name"] for n in report.notes)
+    mcp = _open(serve, tmp_path / "desk", "desk-agent")
+    text, error = mcp.tool(
+        "replace_in_file", {"path": "config/app.toml", "old": "2500", "new": "4000"}
+    )
+    assert not error, text
+    text, error = mcp.tool("write_file", {"path": ".env", "text": "TOKEN=sk_live_" + "x" * 24})
+    assert error and "table_allowlist" in text, "a write to .env is outside the mandate"
+    assert (workspace / "config" / "app.toml").read_text() == "timeout_ms = 4000\n"
+    assert (workspace / ".env").read_text() == "TOKEN=placeholder\n"
+    with pytest.raises(ValueError, match="no directory"):
+        init(tmp_path / "bad", target=Target("filesystem", directory=tmp_path / "none"))
+
+
+def test_a_rest_api_gets_status_tools(tmp_path: Path, serve: list[Serve]) -> None:
+    from interlock.sim.rest import Collection, LoopbackRestServer
+
+    server = LoopbackRestServer((Collection("tickets", filters=("account_id",)),))
+    server.start()
+    try:
+        server.seed("tickets", {"id": "t-1", "account_id": "acme", "status": "open"})
+        report = init(
+            tmp_path / "desk",
+            target=Target(
+                "rest",
+                server=server.url,
+                resources=("tickets=/tickets",),
+                tenant_field="account_id",
+                managed=("updated_at", "updated_by", "version", "last_request"),
+            ),
+        )
+        assert [t["name"] for t in report.tools] == ["set_tickets_status"]
+        assert not report.cautions
+        mcp = _open(serve, tmp_path / "desk", "desk-agent")
+        text, error = mcp.tool("set_tickets_status", {"id": "t-1", "status": "solved"})
+        assert not error, text
+        found = server.get("tickets", "t-1")
+        assert found is not None and found["status"] == "solved"
+        bare = init(
+            tmp_path / "bare",
+            target=Target("rest", server=server.url, resources=("notes=/notes",)),
+        )
+        assert [c["name"] for c in bare.cautions] == ["--tenant-field"]
+        for spec, why in (("tickets", "name=/collection/path"), ("Bad=/x", "name=/collection")):
+            with pytest.raises(ValueError, match=why):
+                init(
+                    tmp_path / f"r-{uuid.uuid4().hex[:6]}",
+                    target=Target("rest", server=server.url, resources=(spec,)),
+                )
+    finally:
+        server.stop()
+
+
 TERRAFORM = """
 variable "size" {
   type    = number
@@ -345,6 +406,8 @@ def test_init_needs_what_each_substrate_names(tmp_path: Path) -> None:
         (Target("sqlite"), "--database"),
         (Target("kubernetes", server="http://127.0.0.1:1"), "--token-file, --namespace"),
         (Target("fhir", server="http://127.0.0.1:1"), "--type"),
+        (Target("rest", server="http://127.0.0.1:1"), "--resource"),
+        (Target("filesystem"), "--directory"),
         (Target("mongo"), "no substrate"),
         (Target("sqlite", database=str(tmp_path / "none.db")), "no SQLite database"),
         (Target("git", repository=tmp_path / "none.git"), "no repository"),

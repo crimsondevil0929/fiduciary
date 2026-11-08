@@ -61,6 +61,7 @@ from interlock.outbound_checks import (
 from interlock.receipts import ReceiptIssuer, checker_records
 from interlock.recovery import Channel, Directive, RecoveryPolicy, TripKind
 from interlock.sensors import SensorAttestation
+from interlock.text import noun
 from interlock.types import Severity, canonical_hash
 from interlock.windows import (
     Measure,
@@ -298,7 +299,8 @@ def _describe(
         missing = [op for op in bounds.operations if spec.operation(op) is None]
         if missing:
             problems.append(
-                f"outbound.sinks.{sink}: operation(s) {', '.join(missing)} not installed"
+                f"outbound.sinks.{sink}: {noun(len(missing), 'operation')} "
+                f"{', '.join(missing)} not installed"
             )
             continue
         installed[sink] = spec

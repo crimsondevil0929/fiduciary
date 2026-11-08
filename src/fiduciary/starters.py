@@ -13,6 +13,8 @@ Substrate       Starter tools
 ``kubernetes``  ``scale_deployment`` and ``set_image``
 ``terraform``   ``set_<variable>`` for each input variable
 ``fhir``        ``set_<type>_status`` for each resource type named
+``filesystem``  ``write_file`` and ``replace_in_file``, on a directory (1.12.0)
+``rest``        ``set_<resource>_status`` for each REST resource named (1.12.0)
 ==============  ==================================================================
 
 There are no delete tools. The starter mandate allows inserts and updates, one
@@ -50,7 +52,16 @@ __all__ = [
     "terraform_config",
 ]
 
-SUBSTRATES: Final = ("sqlite", "postgres", "git", "kubernetes", "terraform", "fhir")
+SUBSTRATES: Final = (
+    "sqlite",
+    "postgres",
+    "git",
+    "filesystem",
+    "kubernetes",
+    "terraform",
+    "fhir",
+    "rest",
+)
 WRITE: Final = "write"
 _IDENT: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
 _DECIMAL: Final = {"type": "string", "pattern": r"^-?[0-9]{1,30}(\.[0-9]{1,18})?$"}
@@ -85,6 +96,12 @@ class Target:
     executable: tuple[str, ...] = ("terraform",)
     types: tuple[str, ...] = ()
     """FHIR: the resource types the agent may change."""
+    resources: tuple[str, ...] = ()
+    """REST: each resource the agent may change, as ``name=/collection/path``."""
+    tenant_field: str | None = None
+    """REST: the field naming each resource's tenant (an account, an organization)."""
+    managed: tuple[str, ...] = ("updated_at", "updated_by", "version")
+    """REST: the fields the API writes on every record itself, never predicted or compared."""
 
     def check(self) -> None:
         """:raises ValueError: When something the substrate needs is missing."""
@@ -95,12 +112,19 @@ class Target:
             "kubernetes": ("server", "token_file", "namespaces"),
             "terraform": ("directory",),
             "fhir": ("server", "types"),
+            "filesystem": ("directory",),
+            "rest": ("server", "resources"),
         }
         if self.substrate not in need:
             raise ValueError(
                 f"no substrate {self.substrate!r}; it is one of {', '.join(SUBSTRATES)}"
             )
-        flags = {"token_file": "token-file", "namespaces": "namespace", "types": "type"}
+        flags = {
+            "token_file": "token-file",
+            "namespaces": "namespace",
+            "types": "type",
+            "resources": "resource",
+        }
         missing = [n for n in need[self.substrate] if not getattr(self, n)]
         if missing:
             named = ", ".join(f"--{flags.get(n, n)}" for n in missing)
@@ -979,6 +1003,204 @@ def _terraform(target: Target) -> Starter:
     )
 
 
+_WORKSPACE_ALLOWED: Final = ("config", "docs", "other", "src", "tests")
+"""The path classes the starter mandate lets a workspace plan write: never secrets,
+workflows, governance, infrastructure, dependencies or scripts."""
+
+
+def _filesystem(target: Target) -> Starter:
+    from interlock.filesystem import COLUMNS, DEFAULT_CLASSES, FALLBACK_CLASS
+
+    from fiduciary.demo.packs.kit import Table
+
+    assert target.directory is not None
+    directory = target.directory.resolve()
+    if not directory.is_dir() or directory.is_symlink():
+        raise ValueError(f"no directory at {directory}")
+    classes = [c.name for c in DEFAULT_CLASSES] + [FALLBACK_CLASS]
+    specs = [Table(name, tuple(COLUMNS), None) for name in classes]
+    text = {"type": "string", "maxLength": 200000}
+    tools = [
+        _tool(
+            "write_file",
+            "Create or replace one file of the workspace with the given text.",
+            {"path": dict(_PATH), "text": text},
+            [
+                _effect(
+                    "write",
+                    "update",
+                    "config",
+                    "write :path :text",
+                    {"path": "$.path", "text": "$.text"},
+                )
+            ],
+        ),
+        _tool(
+            "replace_in_file",
+            "Replace one passage of text, which must occur exactly once, in one file of the "
+            "workspace.",
+            {"path": dict(_PATH), "old": text, "new": text},
+            [
+                _effect(
+                    "replace",
+                    "update",
+                    "config",
+                    "replace :path :old :new",
+                    {"path": "$.path", "old": "$.old", "new": "$.new"},
+                )
+            ],
+        ),
+    ]
+    guarded = ", ".join(c for c in classes if c not in _WORKSPACE_ALLOWED)
+    report = [
+        {
+            "name": "write_file",
+            "mode": WRITE,
+            "why": f"config, source, tests, docs and other files; writes to {guarded} are refused",
+        },
+        {"name": "replace_in_file", "mode": WRITE, "why": "the same paths as write_file"},
+    ]
+    skipped = [
+        {
+            "name": "delete_file",
+            "why": "the starter mandate allows no delete; add the tool and allow delete for a "
+            "path class in a new mandate version to have one",
+        }
+    ]
+    notes = [
+        {
+            "name": f"{directory.parent / ('.' + directory.name + '.interlock')}",
+            "why": "the substrate's state beside the workspace: each stage's private copy, the "
+            "commit lock, journals and commit markers. Nothing is written inside the workspace "
+            "except by a committed plan",
+        }
+    ]
+
+    def head(root: Path, control: Path) -> str:
+        ignore = '[".git/**", "node_modules/**", ".venv/**", "__pycache__/**"]'
+        return (
+            f'substrate = "filesystem"\ndatabase = {_toml(str(control))}\n'
+            f"[filesystem]\nroot = {_toml(str(directory))}\n"
+            f"workspace = {_toml(directory.name)}\nignore = {ignore}\n"
+        )
+
+    return Starter(
+        tables=specs,
+        tools=tools,
+        data=_data({c: ["insert", "update"] for c in _WORKSPACE_ALLOWED}, max_rows=1),
+        windows=[dict(_WINDOW)],
+        interlock=head,
+        nouns={"substrate": "filesystem", "rows": "files", "tables": "path classes"},
+        report=report,
+        skipped=skipped,
+        notes=notes,
+    )
+
+
+_RESOURCE_SPEC: Final = re.compile(r"([a-z][a-z0-9_]{0,40})=(/[A-Za-z0-9._~/-]{1,200})")
+_REST_ID: Final = {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"}
+
+
+def _rest(target: Target) -> Starter:
+    from interlock.rest import RestResource
+
+    from fiduciary.demo.packs.kit import Table
+
+    parsed = []
+    for spec in target.resources:
+        found = _RESOURCE_SPEC.fullmatch(spec)
+        if found is None:
+            raise ValueError(f"--resource is name=/collection/path, not {spec!r}")
+        parsed.append((found.group(1), found.group(2).rstrip("/")))
+    if len({n for n, _ in parsed}) != len(parsed):
+        raise ValueError("each --resource has its own name")
+    tenant = target.tenant_field
+    resources = [
+        RestResource(
+            name,
+            path,
+            columns={"status": "status"},
+            tenant=tenant,
+            managed=target.managed,
+        )
+        for name, path in parsed
+    ]
+    specs = [
+        Table(r.table, tuple(r.spec().columns), "tenant" if tenant else None) for r in resources
+    ]
+    tools = []
+    report = []
+    for r in resources:
+        name = f"set_{r.table}_status"
+        tools.append(
+            _tool(
+                name,
+                f"Set the status of one record of {r.table}.",
+                {"id": dict(_REST_ID), "status": {"type": "string", "pattern": "^[a-z_-]{1,64}$"}},
+                [
+                    _effect(
+                        "status",
+                        "update",
+                        r.table,
+                        f'patch {r.table} :id \'{{"status": ":status"}}\' :status',
+                        {"id": "$.id", "status": "$.status"},
+                        compensation=f"restore {r.table}",
+                    )
+                ],
+            )
+        )
+        report.append(
+            {
+                "name": name,
+                "mode": WRITE,
+                "why": "predicted, written on the version read (If-Match), read back, and undone "
+                "if the API changed anything else",
+            }
+        )
+    cautions = []
+    if tenant is None:
+        cautions.append(
+            {
+                "name": "--tenant-field",
+                "label": "No option",
+                "why": "without a field naming each record's account, the read-back checks only "
+                "the records a plan writes, not their neighbors, and the mandate can't keep a plan "
+                "to one account. Pass --tenant-field (account_id, org_id) if the API has one",
+            }
+        )
+
+    def head(root: Path, control: Path) -> str:
+        return (
+            f'substrate = "rest"\ndatabase = {_toml(str(control))}\n'
+            f"[rest]\nserver = {_toml(target.server)}\n"
+            + (
+                f"token_file = {_toml(str(target.token_file.resolve()))}\n"
+                if target.token_file
+                else ""
+            )
+            + (f"ca_file = {_toml(str(target.ca_file.resolve()))}\n" if target.ca_file else "")
+            + f"journal = {_toml(str(root / 'journal'))}\n"
+            + "".join(
+                f"[[rest.resources]]\ntable = {_toml(r.table)}\npath = {_toml(r.path)}\n"
+                'columns = { status = "status" }\n'
+                + (f"tenant = {_toml(tenant)}\n" if tenant else "")
+                + f"managed = {json.dumps(list(target.managed))}\n"
+                for r in resources
+            )
+        )
+
+    return Starter(
+        tables=specs,
+        tools=tools,
+        data=_data({r.table: ["update"] for r in resources}),
+        windows=[dict(_WINDOW)],
+        interlock=head,
+        nouns={"substrate": "rest", "rows": "records", "tables": "resource types"},
+        report=report,
+        cautions=cautions,
+    )
+
+
 def starter(target: Target) -> Starter:
     """The starter deployment's pieces for ``target``.
 
@@ -999,4 +1221,8 @@ def starter(target: Target) -> Starter:
         return _kubernetes(target)
     if target.substrate == "fhir":
         return _fhir(target)
+    if target.substrate == "filesystem":
+        return _filesystem(target)
+    if target.substrate == "rest":
+        return _rest(target)
     return _terraform(target)

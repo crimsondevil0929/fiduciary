@@ -1,6 +1,6 @@
-"""The console's overview: the same engine in six industries (on SQL, Git,
-Kubernetes and a FHIR server), the measurement ladder, and the live acceptance
-matrix Interlock recorded.
+"""The console's overview: the same engine in eight workflows of six families (on SQL, Git, a
+directory, Kubernetes, a FHIR server and a REST API), the measurement ladder, and the live
+acceptance matrix Interlock recorded.
 
 :func:`overview` reads the payloads of the industries a run played and counts,
 from what each one measured, which check refused a plan, which warrants formed,
@@ -19,27 +19,9 @@ __all__ = ["ACCEPTANCE", "INDUSTRIES", "LADDER", "overview"]
 
 INDUSTRIES: Final = (
     {
-        "key": "fintech",
-        "industry": "Fintech",
-        "title": "Support refunds and order adjustments",
-        "frameworks": ["soc2", "owasp-asi-2026", "eu-ai-act"],
-        "class": "T",
-        "nouns": {
-            "measure": "rows of orders and refunds",
-            "hidden": "a cascading settlement trigger",
-            "unit": "USD",
-            "partition": "the tenant",
-            "approvers": "CFO, head of ops, security",
-            "vendor": "a Stripe webhook",
-            "verifier": "auditor, insurer",
-        },
-    },
-    {"key": "healthcare", "class": "V", "substrate": "FHIR R4"},
-    {"key": "sre", "class": "P", "substrate": "Kubernetes"},
-    {"key": "supply-chain", "class": "T"},
-    {"key": "saas", "class": "T"},
-    {
         "key": "coding-agent",
+        "family": "Coding & repo agents",
+        "workflow": "Coding agent",
         "industry": "Coding agents",
         "title": "A maintainer agent on a Git repository",
         "frameworks": ["soc2", "iso27001", "nist800_53"],
@@ -55,25 +37,60 @@ INDUSTRIES: Final = (
             "verifier": "the security team, a SOC 2 auditor",
         },
     },
-)
-"""Every industry the overview shows, in order. The packs' own entries come
-from their profiles; these fill in fintech, and what each runs on."""
+    {
+        "key": "workspace",
+        "family": "Coding & repo agents",
+        "workflow": "Workspace agent",
+        "class": "T",
+        "substrate": "Files",
+    },
+    {"key": "sre", "family": "Cloud & infrastructure", "workflow": "Cloud SRE", "class": "P",
+     "substrate": "Kubernetes"},
+    {"key": "healthcare", "family": "Clinical & regulated", "workflow": "Clinical EHR",
+     "class": "V", "substrate": "FHIR R4"},
+    {"key": "service-desk", "family": "SaaS, ticketing & CRM", "workflow": "Service desk & CRM",
+     "class": "V", "substrate": "REST API"},
+    {"key": "saas", "family": "SaaS, ticketing & CRM", "workflow": "SaaS admin", "class": "T"},
+    {"key": "supply-chain", "family": "Supply chain & ERP", "workflow": "Supply chain ERP",
+     "class": "T"},
+    {
+        "key": "fintech",
+        "family": "Fintech & payments",
+        "workflow": "Refunds & payments",
+        "industry": "Fintech",
+        "title": "Support refunds and order adjustments",
+        "frameworks": ["soc2", "owasp-asi-2026", "eu-ai-act"],
+        "class": "T",
+        "nouns": {
+            "measure": "rows of orders and refunds",
+            "hidden": "a cascading settlement trigger",
+            "unit": "USD",
+            "partition": "the tenant",
+            "approvers": "CFO, head of ops, security",
+            "vendor": "a Stripe webhook",
+            "verifier": "auditor, insurer",
+        },
+    },
+)  # fmt: skip
+"""Every workflow the overview shows, in the order the workbench lists them, each in its
+family. The packs' own entries come from their profiles; these fill in fintech, the coding
+agent's nouns, and what each runs on."""
 
 LADDER: Final = (
     {
         "class": "T",
         "name": "Transactional",
-        "promise": "The change runs inside a transaction. What commits is exactly what was "
-        "measured, or nothing commits.",
-        "where": "SQLite and PostgreSQL, and a Git branch moved by compare-and-swap. An atomic "
-        "directory swap is next.",
+        "promise": "The change runs inside a transaction, or in a private copy of the system. "
+        "What commits is exactly what was measured, or nothing commits.",
+        "where": "SQLite and PostgreSQL. A Git branch, moved by compare-and-swap. A directory, "
+        "committed only onto the files that were measured, or swapped in whole with one rename.",
         "shipped": True,
     },
     {
         "class": "P",
         "name": "Plan-bound",
-        "promise": "The system's own dry run or saved plan is measured, and the apply is "
-        "refused if the system moved in between.",
+        "promise": "The system's own dry run or saved plan is measured, and the apply is refused "
+        "if the system changed in between.",
         "where": "A Kubernetes API server's dry run, admission webhooks included, applied on the "
         "measured resourceVersion. Terraform and OpenTofu saved plans, applied on the state's "
         "serial.",
@@ -82,19 +99,20 @@ LADDER: Final = (
     {
         "class": "V",
         "name": "Predicted and verified",
-        "promise": "The current state is read and the result predicted. The write is "
-        "conditional on the version read, then read back and compared with the prediction.",
-        "where": "A FHIR R4 server, with each write on If-Match. Salesforce, ServiceNow, Jira and "
-        "Workday are next.",
+        "promise": "Reads the current version, predicts the result, writes conditionally "
+        "(If-Match), then reads the records back and undoes the write if anything unexpected "
+        "changed.",
+        "where": "A FHIR R4 server, and any JSON REST API with ETags or version fields: "
+        "ticketing, CRM, HR.",
         "shipped": True,
     },
     {
         "class": "R",
         "name": "Request-only",
-        "promise": "The request is measured, judged and delivered once. What it does is up to "
-        "the vendor, so the vendor's log is reconciled against the delivery receipts.",
-        "where": "Every outbound request in every industry: Stripe, a pharmacy, EDI, a cloud API, "
-        "email.",
+        "promise": "The request is measured, checked and delivered exactly once. What happens next "
+        "is up to the vendor, so the vendor's own log is matched against the delivery receipts.",
+        "where": "Every outbound request in every workflow: Stripe, a pharmacy, EDI, a deploy "
+        "system, billing, email.",
         "shipped": True,
     },
 )
@@ -115,8 +133,9 @@ ACCEPTANCE: Final = {
     "generated": "2026-10-11",
     "interlock": "1.0.0",
     "source": "interlock, docs/CUSTOMER_ACCEPTANCE_MATRIX.md",
-    "note": "A recorded live run. One policy function builds every domain's checks, and only "
-    "table names, column names and limits differ. This dashboard doesn't run it again.",
+    "note": "A recorded live run. One policy function builds every domain's checks; only table "
+    "names, column names and limits differ. This page shows the recording and doesn't run it "
+    "again.",
 }
 
 ENGINE: Final = (
@@ -128,8 +147,8 @@ ENGINE: Final = (
     ("table_allowlist", "TableAllowlist", "plans refused"),
     ("no_delete", "NoDelete", "plans refused"),
     ("rate_window", "RateWindow", "plans refused"),
-    ("stale_head", "Commit only on the measured version", "plans refused"),
-    ("read_back", "Read back and put back", "plans undone"),
+    ("stale_head", "Commit only on the version measured", "plans refused"),
+    ("read_back", "Read back, undo if different", "writes undone"),
     ("warrant", "Quorum warrant", "formed"),
     ("break-glass", "Break-glass action found offline", "named"),
     ("offline", "Bundle verified offline", "verified"),
@@ -182,9 +201,10 @@ def _engine(payload: Mapping[str, Any]) -> dict[str, Any]:
         1 for a in acts if isinstance(a.get("git"), Mapping) and a["git"].get("pushed")
         and not a["git"].get("landed")
     ) + sum(
-        # A FHIR write on a version that moved after it was measured: 412.
-        1 for a in acts if isinstance(a.get("race"), Mapping) and a["race"].get("status")
-        and not a["race"].get("landed")
+        # A write on a version that moved after it was measured: a FHIR or REST 412, a
+        # workspace file edited under the stage, an account changed while it was staged.
+        1 for a in acts if isinstance(a.get("race"), Mapping) and not a["race"].get("landed")
+        and (a["race"].get("status") or a["race"].get("edited") or a["race"].get("edited_by"))
     )  # fmt: skip
     # A predicted write the read-back did not match: written, then put back.
     cells["read_back"] = sum(1 for m in _measured(acts) if m.get("compensated"))
@@ -218,6 +238,8 @@ def overview(played: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
         profile = (payload or {}).get("demo", {}).get("domain") or {}
         row: dict[str, Any] = {
             "key": key,
+            "family": entry.get("family"),
+            "workflow": entry.get("workflow"),
             "industry": profile.get("industry", entry.get("industry", key)),
             "title": profile.get("title", entry.get("title", "")),
             "frameworks": profile.get("frameworks", entry.get("frameworks", [])),

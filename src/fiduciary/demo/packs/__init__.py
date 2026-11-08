@@ -24,7 +24,15 @@ from typing import Any, Final
 from fiduciary import __version__, report
 from fiduciary.attest import attest
 from fiduciary.demo.acts import Live
-from fiduciary.demo.packs import coding_agent, healthcare, saas, sre, supply_chain
+from fiduciary.demo.packs import (
+    coding_agent,
+    healthcare,
+    saas,
+    service_desk,
+    sre,
+    supply_chain,
+    workspace,
+)
 from fiduciary.demo.packs.kit import Pack, PackGateway, PackRun, build, pinned
 from fiduciary.demo.vendor_logs import VendorLog
 
@@ -32,7 +40,15 @@ __all__ = ["PACKS", "run"]
 
 PACKS: Final[dict[str, Pack]] = {
     p.key: p
-    for p in (healthcare.PACK, sre.PACK, supply_chain.PACK, saas.PACK, coding_agent.PACK)
+    for p in (
+        coding_agent.PACK,
+        workspace.PACK,
+        sre.PACK,
+        healthcare.PACK,
+        service_desk.PACK,
+        saas.PACK,
+        supply_chain.PACK,
+    )
     if p
 }
 """Every pack the installed packages can run: the coding-agent pack needs

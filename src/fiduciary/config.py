@@ -83,6 +83,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
+from interlock.text import noun
+
 from fiduciary import fidu1
 from fiduciary.keys import SignerSpec, open_signer, parse_signers
 
@@ -541,7 +543,7 @@ def load_config(path: str | Path) -> Config:
     base = where.resolve().parent
     unknown = sorted(set(raw) - _TOP)
     if unknown:
-        raise ConfigError(f"{where}: unknown key(s) {', '.join(unknown)}")
+        raise ConfigError(f"{where}: unknown {noun(len(unknown), 'key')} {', '.join(unknown)}")
 
     def place(value: object, name: str) -> Path:
         if not isinstance(value, str) or not value:
@@ -582,7 +584,9 @@ def load_config(path: str | Path) -> Config:
             raise ConfigError(f"{where}: [{name}] is a table")
         extra = sorted(set(table) - allowed)
         if extra:
-            raise ConfigError(f"{where}: [{name}] has unknown key(s) {', '.join(extra)}")
+            raise ConfigError(
+                f"{where}: [{name}] has unknown {noun(len(extra), 'key')} {', '.join(extra)}"
+            )
     digest = charter.get("digest")
     if digest is not None and (not isinstance(digest, str) or not fidu1.HASH.fullmatch(digest)):
         raise ConfigError(f"{where}: [charter] digest is 64 lowercase hex characters")
@@ -665,7 +669,9 @@ def load_config(path: str | Path) -> Config:
         raise ConfigError(f"{where}: [binding] is a table")
     extra = sorted(set(binding) - {"tools", "directives", "chains"})
     if extra:
-        raise ConfigError(f"{where}: [binding] has unknown key(s) {', '.join(extra)}")
+        raise ConfigError(
+            f"{where}: [binding] has unknown {noun(len(extra), 'key')} {', '.join(extra)}"
+        )
     lists: dict[str, list[str]] = {}
     for key in ("tools", "directives"):
         value = binding.get(key, [])
@@ -748,7 +754,9 @@ def _units(raw: object, where: Path, place: Callable[[str, str], Path]) -> dict[
             raise ConfigError(f"{where}: {name} is a table")
         extra = sorted(set(table) - {"ledger", "places", "schema"})
         if extra:
-            raise ConfigError(f"{where}: {name} has unknown key(s) {', '.join(extra)}")
+            raise ConfigError(
+                f"{where}: {name} has unknown {noun(len(extra), 'key')} {', '.join(extra)}"
+            )
         ledger, places = table.get("ledger"), table.get("places", 8)
         if not isinstance(ledger, str) or not ledger:
             raise ConfigError(f"{where}: {name} ledger is a SQLite file or a postgresql:// DSN")
@@ -775,7 +783,9 @@ def _table(raw: object, name: str, allowed: set[str], where: Path) -> dict[str, 
         raise ConfigError(f"{where}: [{name}] is a table")
     extra = sorted(set(raw) - allowed)
     if extra:
-        raise ConfigError(f"{where}: [{name}] has unknown key(s) {', '.join(extra)}")
+        raise ConfigError(
+            f"{where}: [{name}] has unknown {noun(len(extra), 'key')} {', '.join(extra)}"
+        )
     return raw
 
 

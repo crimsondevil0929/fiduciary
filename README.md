@@ -16,9 +16,9 @@ documents. Anyone with the public keys can verify them offline.
 
 ## Start here
 
-**See the whole stack working:** <https://crimsondevil0929.github.io/fiduciary/>. Six
-industries run on one engine, a real model's recorded turns are replayed on the current
-release, and 16 audit bundles can be verified in your browser.
+**See the whole stack working:** <https://crimsondevil0929.github.io/fiduciary/>. Eight
+agent workflows across six families run on one engine, a real model's recorded turns are
+replayed on the current release, and 20 audit bundles can be verified in your browser.
 
 A gateway decides whether an agent may call a tool. This stack decides whether what the call
 changed may be kept, and produces evidence for someone who trusts neither the agent nor the
@@ -44,29 +44,47 @@ pip install 'interlock-fiduciary[demo]'
 fiduciary demo --replay --out demo --serve --open
 ```
 
-## One engine, any industry
+## One engine, every kind of agent workflow
 
-The demo starts with fintech, but nothing in the engine is specific to payments. The same
-checks, budgets, quorum warrants and offline proof apply to any agent action that has a
-consequence, a limit, or someone who has to approve it. What changes between industries is
-the vocabulary:
+The same checks, budgets, quorum warrants and offline proof apply to any agent action that has
+a consequence, a limit, or someone who has to approve it. The demo runs eight workflows, in six
+families, across six kinds of system (SQL, Git, local directories, Kubernetes, FHIR R4, and
+JSON REST APIs, plus outbound vendor relays). Only the system underneath and the vocabulary
+change:
 
-| | Fintech | Healthcare | Cloud SRE | Supply chain | Multi-tenant SaaS | Coding agents |
-|---|---|---|---|---|---|---|
-| **What the stack measures** | orders and refunds | a change to a patient's chart on a FHIR server, predicted, written on the version read, and read back | workloads, read from the Kubernetes API server's own dry run | purchase-order lines, stock levels | customer records, role grants | a diff of files, read from Git |
-| **What the gateway let through, and the stack stopped** | a dispute flag whose trigger reached 4 tenants | a discontinue that the EHR's rule turned into a whole encounter stopped (caught by the read-back, and put back); an order for the patient in the next bed; a dose change on an order a nurse had just edited (412) | 6 replicas that a mutating webhook made 60; a volume resize that replaced the database | a reorder point that exploded into 400 PO lines; a remittance note that rewrote a bank account | a filter that reached 4 customers; a role that carried admin rights | one edit that a code generator turned into 36 files; a workflow step that posted the PyPI token |
-| **Partition** | tenant | chart, and its facility | environment, and its cloud account | warehouse, and each line's supplier | customer org | repository |
-| **Conserved beside dollars** | | morphine milligram equivalents | vCPUs | | | |
-| **Held for a warrant** | | every Schedule II dispense | every security-group change | | | |
-| **Approvers** | CFO, head of ops, security | chief pharmacist, CMIO, privacy officer | on-call SRE, service owner, security | procurement lead, AP manager, treasury | platform security, product owner, trust and safety | lead maintainer, security reviewer, release captain |
-| **Frameworks mapped** | SOC 2, OWASP agentic, EU AI Act | HIPAA, 21 CFR Part 11 | NIST 800-53, ISO 27001 | SOX IT general controls | SOC 2, ISO 27001, GDPR | SOC 2, ISO 27001, NIST 800-53 |
-| **Run it** | `fiduciary demo` | `--domain healthcare` | `--domain sre` | `--domain supply-chain` | `--domain saas` | `--domain coding-agent` |
+| Workflow | Runs on | What the gateway let through, and the stack stopped | Partition | Approvers | Run it |
+|---|---|---|---|---|---|
+| **Coding agent** | Git (T) | one edit that a code generator turned into 36 files; a workflow step that posted the PyPI token | repository | lead maintainer, security reviewer, release captain | `--domain coding-agent` |
+| **Workspace agent** | a directory of files (T) | one config edit that a renderer turned into 25 files; a token appended to `.env`; a hand edit to the live config while a change was staged | workspace | SRE lead, security engineer, service owner | `--domain workspace` |
+| **Cloud SRE** | Kubernetes (P) | 6 replicas that a mutating webhook made 60; a volume resize that replaced the database | environment, cloud account | on-call SRE, service owner, security | `--domain sre` |
+| **Clinical EHR** | FHIR R4 (V) | a discontinue that the EHR's rule turned into a whole encounter stopped (caught by the read-back, and undone); an order for the patient in the next bed | chart, facility | chief pharmacist, CMIO, privacy officer | `--domain healthcare` |
+| **Service desk & CRM** | a JSON REST API (V) | an escalation that the desk's automation turned into a reassignment and a new incident (undone after the write); another account's ticket; a $400 credit | customer account | support lead, finance controller, privacy officer | `--domain service-desk` |
+| **SaaS admin** | SQLite (T) | a filter that reached 4 customers; a role that carried admin rights | customer org | platform security, product owner, trust and safety | `--domain saas` |
+| **Supply chain ERP** | SQLite (T) | a reorder point that exploded into 400 PO lines; a remittance note that rewrote a bank account | warehouse, supplier | procurement lead, AP manager, treasury | `--domain supply-chain` |
+| **Refunds & payments** | SQLite and Stripe (T, R) | a 10% discount a pricing trigger turned into a 90% cut; a dispute flag that reached 4 tenants | tenant | CFO, head of ops, security | `fiduciary demo` |
 
-`fiduciary demo --domain all` runs all six behind one dashboard in under a minute.
-Each industry is a deployment of its own on the real stack, with its own triggers (or, for
-coding agents, a Git repository and its hooks), mandate, principals and break-glass key, and
-each ends with its audit bundles verified offline. The dashboard opens on an overview that
-counts, from what was measured, which check stopped what in each industry.
+T, P, V and R are how much of a change is known before it's final: inside a transaction (or a
+private copy of the system), the system's own plan, a prediction read back after the write, or
+the request only. `fiduciary demo --domain all` runs all eight behind one console in about half
+a minute. Each workflow is a deployment of its own on the real stack, with its own mandate,
+principals and break-glass key, and each ends with its audit bundles verified offline.
+
+**Workspace agents run on files.** An ops or coding agent that edits a directory, not a
+database or a branch, stages each change in a private copy of the workspace on [Interlock's
+filesystem substrate](https://github.com/crimsondevil0929/interlock/blob/main/docs/SYSTEMS.md).
+Every changed file is measured by hash, size, line counts and the credential-shaped strings it
+adds, and classed by path (`secrets` for `.env` and keys, `infra`, `config`, `scripts` and so
+on), so the mandate can grant `config` and refuse everything else. The commit lands only on
+files still at the hashes the stage measured. In the demo the workspace is a link to a version
+directory, and one rename swaps the new version in, so the service never reads a mix of old and
+new files.
+
+**Support agents run on a REST API.** A ticketing or CRM API can't hold a transaction open
+either. [Interlock's REST substrate](https://github.com/crimsondevil0929/interlock/blob/main/docs/SYSTEMS.md)
+reads each ticket with its `ETag` and the rest of its account, predicts the change, writes with
+`If-Match`, and reads the account back. When the desk's escalation automation reassigns the
+ticket and opens an incident, the read-back sees changes the plan didn't make, undoes both, and
+records the plan as `compensated`.
 
 **Healthcare runs on a FHIR server, predicted and verified.** The chart lives on the
 hospital's EHR, behind its FHIR R4 API, which can neither hold a transaction open nor dry-run
@@ -90,8 +108,7 @@ on the EHR created is marked `entered-in-error` rather than deleted, and the rec
    shared token. The EHR's `AuditEvent` log, reconciled against the receipts in scenario 7,
    names that write as the one phantom.
 
-**Coding agents run on Git, not SQL.** Three of the other industries stage each change in a
-database transaction. The coding-agent pack stages it in a worktree of its own at the head
+**Coding agents run on Git.** The coding-agent pack stages each change in a worktree of its own at the head
 of `main`, on [Interlock's Git substrate](https://github.com/crimsondevil0929/interlock#git-the-same-guarantee-on-a-branch),
 and gets the same guarantee as a transaction: what commits is exactly what was measured, or
 nothing commits. The agent's edit runs first, then the repository's code generator, and then
@@ -267,7 +284,7 @@ with networking disabled. The run takes a few seconds and writes:
 report elsewhere, and `--serve` serves the dashboard on 127.0.0.1, with the console
 described in [The console](#the-console). `fiduciary demo --out DIR --serve`
 on a directory that already holds a run serves that run again, read and never written.
-`--domain` picks the industry (see [One engine, any industry](#one-engine-any-industry));
+`--domain` picks the workflow (see [One engine, every kind of agent workflow](#one-engine-every-kind-of-agent-workflow));
 with `all`, each domain pack is written to a subdirectory named for it.
 
 ### Scenario 1 with a live model
@@ -398,7 +415,10 @@ engine mints afresh (a plan's id), which the model's text quotes from the record
   pack runs this way. A FHIR server is governed through Interlock's predicted substrate:
   each effect declares its undo (`compensation`, `void` or `restore`), the prediction is
   judged, the write is conditional on the version read, and a read-back that is not the
-  prediction is put back and refused to the agent. The healthcare pack runs this way.
+  prediction is put back and refused to the agent. The healthcare pack runs this way, and
+  any JSON REST API with ETags or version fields runs on the same predicted-and-verified
+  loop (`service-desk`), while local config directories stage in a private copy and swap in
+  atomically (`workspace`).
 - **An analyzer's word.** `data.sensors` makes every plan wait for an analyzer's clean,
   signed verdict on the exact diff the stage measured: a policy engine, a schema check, a
   scanner. The mandate pins the analyzer's public key; the analyzer runs as its own
@@ -744,7 +764,7 @@ that run it:
 A held call is ticketed by the proxy's own turn, and the agent is told it is waiting.
 `scripts/init_live.py` runs a live Claude model through it.
 
-### A database, a repository, a cluster, a Terraform configuration or a FHIR server
+### A database, a repository, a directory, a cluster, Terraform, a FHIR server or a REST API
 
 `init --substrate` writes the same kind of deployment for a system the agent changes
 directly, with starter tools read from the system itself:
@@ -758,6 +778,9 @@ fiduciary init --out ops --substrate kubernetes --server https://10.0.0.1:6443 \
 fiduciary init --out infra --substrate terraform --directory infra --executable tofu
 fiduciary init --out ehr --substrate fhir --server https://ehr.example.org/fhir \
     --token-file agent.token --type MedicationRequest
+fiduciary init --out ops --substrate filesystem --directory /srv/checkout-config
+fiduciary init --out desk --substrate rest --server https://desk.example.com/api \
+    --token-file agent.token --resource tickets=/tickets --tenant-field account_id
 ```
 
 | Substrate | Starter tools |
@@ -767,6 +790,8 @@ fiduciary init --out ehr --substrate fhir --server https://ehr.example.org/fhir 
 | `kubernetes` | `scale_deployment` and `set_image` |
 | `terraform` | `set_<variable>` for each input variable |
 | `fhir` | `set_<type>_status` for each resource type named |
+| `filesystem` | `write_file` and `replace_in_file`, in a private copy of the directory |
+| `rest` | `set_<resource>_status` for each `--resource` named |
 
 The starter mandate allows inserts and updates, one row or object per plan, at most 120
 plans an hour. It allows no deletes, so there are no delete tools. A call whose measured
@@ -844,8 +869,9 @@ It has three views:
   the charter digest and keys you pinned (or the deployment's), and maps each check to the
   nine control frameworks.
 - **Sandbox**, with `--sandbox` or under `fiduciary demo --serve`: each demo industry built
-  fresh in a temporary directory, to try calls on SQL, Git, a Kubernetes API server and a
-  FHIR server, and to vote on the tickets they raise.
+  fresh in a temporary directory, to try calls on SQL, Git, a directory of files, a
+  Kubernetes API server, a FHIR server and a JSON REST API, and to vote on the tickets they
+  raise.
 
 The console never holds a principal's key and never writes a deployment's log. To vote, a
 principal picks their key file in the browser; the page signs the approval there and sends

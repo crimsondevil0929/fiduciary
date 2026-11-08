@@ -141,10 +141,19 @@ jobs:
       - run: uv python install 3.12
       - run: uv sync --frozen --python 3.12
       - name: Install interlock and AgentGov from main
-        run: >-
-          uv pip install --python .venv/bin/python
-          "interlock-agentgov @ git+https://github.com/crimsondevil0929/agentgov@main"
-          "interlock-escrow @ git+https://github.com/crimsondevil0929/interlock@main"
+        # While pyproject.toml pins an upstream to a commit main doesn't have yet
+        # (removed before a release is tagged), that commit stands in for main.
+        run: |
+          mapfile -t pins < <(python3 scripts/upstream_pins.py)
+          echo "pinned: ${pins[*]:-none}"
+          reqs=()
+          for dist in interlock-agentgov:agentgov interlock-escrow:interlock; do
+            name="${dist%%:*}"
+            pin=$(printf '%s\n' "${pins[@]}" | grep "^${name} @ " || true)
+            reqs+=("${pin:-${name} @ git+https://github.com/crimsondevil0929/${dist##*:}@main}")
+          done
+          printf '%s\n' "${reqs[@]}"
+          uv pip install --python .venv/bin/python "${reqs[@]}"
       - name: Type-check the package against them (mypy --strict)
         run: uv run --no-sync mypy src/
       - name: Tests, both stores
@@ -160,7 +169,11 @@ jobs:
       - name: Install the wheel into a bare environment
         run: |
           uv venv "${{ runner.temp }}/bare" --python 3.12
-          uv pip install --python "${{ runner.temp }}/bare/bin/python" "${{ runner.temp }}"/dist/*.whl
+          # While an upstream is pinned to a commit not yet on PyPI (removed
+          # before a release is tagged), the bare install takes that commit too.
+          mapfile -t pins < <(python3 scripts/upstream_pins.py)
+          echo "pinned: ${pins[*]:-none}"
+          uv pip install --python "${{ runner.temp }}/bare/bin/python" "${{ runner.temp }}"/dist/*.whl "${pins[@]}"
           "${{ runner.temp }}/bare/bin/fiduciary" --version
           "${{ runner.temp }}/bare/bin/python" -W error -c "import fiduciary.cli, fiduciary.postgres, fiduciary.verify"
           # A bare install runs the whole stack: signing is a base dependency.

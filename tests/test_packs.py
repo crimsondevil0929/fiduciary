@@ -18,7 +18,15 @@ from agentgov.interceptor import TokenUsage
 from fiduciary import cli
 from fiduciary.demo import DOMAINS, Live, Outcome, run
 from fiduciary.demo.overview import ACCEPTANCE, overview
-from fiduciary.demo.packs import PACKS, coding_agent, healthcare, saas, supply_chain
+from fiduciary.demo.packs import (
+    PACKS,
+    coding_agent,
+    healthcare,
+    saas,
+    service_desk,
+    supply_chain,
+    workspace,
+)
 from fiduciary.demo.packs.kit import PackGateway
 
 
@@ -115,6 +123,73 @@ def test_healthcare(stack: Outcome) -> None:
     )
     assert hc_report.passed, hc_report.render()
     assert any("measured predicted:" in note for note in hc_report.notes)
+
+
+def test_workspace(stack: Outcome) -> None:
+    """On a directory, in swap mode: a config edit becomes the next version by one rename of
+    the workspace's link; the renderer's 24 region files refuse the plan that set them off; a
+    token in .env and a deleted script are outside the grant; a hand edit to the live version
+    refuses the commit that measured it (1.12.0)."""
+    queue = _act(stack, "workspace", "queue")
+    (edit,) = queue["calls"]
+    assert edit["outcome"] == "committed" and edit["measured"]["tables"] == {"config": 1}
+    assert queue["workspace"]["before"] == "v0-initial" != queue["workspace"]["after"]
+    cascade = _act(stack, "workspace", "cascade")
+    (rendered,) = cascade["calls"]
+    assert rendered["measured"]["rows"] == 25 and rendered["unchanged"]
+    assert {"blast_radius", "table_allowlist"} <= _blocking(rendered)
+    assert cascade["workspace"]["after"] == queue["workspace"]["after"]
+    leak, drop = _act(stack, "workspace", "injected")["calls"]
+    assert "table_allowlist" in _blocking(leak) and leak["measured"]["tables"] == {"secrets": 1}
+    assert {"no_delete", "table_allowlist"} <= _blocking(drop)
+    race = _act(stack, "workspace", "race")
+    assert race["race"]["kept_hand_edit"] and not race["race"]["landed"]
+    assert race["race"]["after"] == race["race"]["measured_at"]
+    assert race["calls"][0]["outcome"] != "committed"
+    quorum = _act(stack, "workspace", "quorum")
+    assert len(quorum["warrant"]["basis"]) == 2 and quorum["delivered"] == "delivered"
+    root = stack.root / "workspace"
+    assert (root / "checkout-service").is_symlink()
+    assert "timeout_ms = 4000" in (root / "checkout-service" / "config/service.toml").read_text()
+    assert "STRIPE_KEY" in (root / "checkout-service" / ".env").read_text()
+    assert "SUPPORT_TOKEN" not in (root / "checkout-service" / ".env").read_text()
+    assert (root / "checkout-service" / "scripts/backup.sh").is_file()
+    receipts = [
+        json.loads(line)
+        for line in (root / "receipts.jsonl").read_text().splitlines()
+        if "coverage" in json.loads(line)
+    ]
+    # transactional receipts name no class (ARC1 1.3); the rollouts are requests only
+    assert {r["coverage"].get("measurement") for r in receipts} == {None, "request-only"}
+
+
+def test_service_desk(stack: Outcome) -> None:
+    """On a REST API, predicted and verified: a triage is written on the version read; the
+    desk's escalation automation is caught by the read-back and put back; another account's
+    ticket and an oversized credit are refused before the desk sees them; a human's edit in
+    the desk refuses the agent's write (1.12.0)."""
+    (triage,) = _act(stack, "service-desk", "queue")["calls"]
+    assert triage["outcome"] == "committed" and triage["measured"]["tables"] == {"tickets": 1}
+    cascade = _act(stack, "service-desk", "cascade")
+    (escalated,) = cascade["calls"]
+    assert escalated["measured"]["compensated"] and escalated["unchanged"]
+    assert cascade["read_back"]["after"]["cancelled"] == 1
+    assert cascade["read_back"]["after"]["urgent"] == cascade["read_back"]["before"]["urgent"]
+    other, credit = _act(stack, "service-desk", "injected")["calls"]
+    assert other["gateway"]["decision"] == "PERMIT" and "tenant_isolation" in _blocking(other)
+    assert any(b.startswith("payload_amount_cap") for b in _blocking(credit))
+    race = _act(stack, "service-desk", "race")
+    assert race["race"]["edited_by"] == service_desk.HUMAN and not race["race"]["landed"]
+    quorum = _act(stack, "service-desk", "quorum")
+    assert [v["counted"] for v in quorum["votes"]] == [True, True, False, True]
+    desk_root = stack.root / "service-desk"
+    receipts = [
+        json.loads(line)
+        for line in (desk_root / "receipts.jsonl").read_text().splitlines()
+        if "coverage" in json.loads(line)
+    ]
+    assert {r["coverage"].get("measurement") for r in receipts} == {"predicted", "request-only"}
+    assert {r["outcome"]["status"] for r in receipts} >= {"committed", "compensated"}
 
 
 def test_sre(stack: Outcome) -> None:
@@ -260,19 +335,25 @@ def test_the_overview_counts_only_what_ran(stack: Outcome) -> None:
     found = stack.payload["overview"]
     rows = {r["key"]: r for r in found["industries"]}
     assert [r["key"] for r in found["industries"]] == [
-        "fintech",
-        "healthcare",
-        "sre",
-        "supply-chain",
-        "saas",
         "coding-agent",
+        "workspace",
+        "sre",
+        "healthcare",
+        "service-desk",
+        "saas",
+        "supply-chain",
+        "fintech",
     ]
+    assert [r["family"] for r in found["industries"]][:2] == ["Coding & repo agents"] * 2
+    assert len({r["family"] for r in found["industries"]}) == 6
     assert all(rows[k]["ran"] for k in ("fintech", *PACKS))
     assert rows["coding-agent"]["ran"] is ("coding-agent" in PACKS)
     assert rows["coding-agent"]["substrate"] == "Git" and rows["saas"]["substrate"] == "SQLite"
     assert not any(r.get("planned") for r in found["industries"])
     assert (rows["sre"]["class"], rows["sre"]["substrate"]) == ("P", "Kubernetes")
     assert (rows["healthcare"]["class"], rows["healthcare"]["substrate"]) == ("V", "FHIR R4")
+    assert (rows["workspace"]["class"], rows["workspace"]["substrate"]) == ("T", "Files")
+    assert (rows["service-desk"]["class"], rows["service-desk"]["substrate"]) == ("V", "REST API")
     assert not rows["sre"].get("note")
     ladder = {rung["class"]: rung["shipped"] for rung in found["ladder"]}
     assert ladder == {"T": True, "P": True, "V": True, "R": True}
@@ -285,6 +366,8 @@ def test_the_overview_counts_only_what_ran(stack: Outcome) -> None:
     assert engine["supply-chain"]["tenant_drawdown_guard"] == 1
     assert engine["saas"]["tenant_isolation"] == 1
     assert engine["supply-chain"]["warrant"] == [{"action": "reject", "approvals": 1}]
+    assert engine["workspace"]["table_allowlist"] == 3 and engine["workspace"]["stale_head"] == 1
+    assert engine["service-desk"]["read_back"] == 1 and engine["service-desk"]["stale_head"] == 1
     assert all(e["break-glass"] and e["offline"] for e in engine.values())
     assert found["acceptance"] == ACCEPTANCE
     assert (ACCEPTANCE["passed"], ACCEPTANCE["cases"], ACCEPTANCE["metered_usd"]) == (
@@ -326,7 +409,14 @@ def test_one_pack_alone_and_what_the_command_refuses(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="domain is one of"):
         run(tmp_path / "y", domain="retail")
     assert DOMAINS == ("fintech", *PACKS, "all")
-    assert set(PACKS) - {"coding-agent"} == {"healthcare", "sre", "supply-chain", "saas"}
+    assert set(PACKS) - {"coding-agent"} == {
+        "healthcare",
+        "sre",
+        "supply-chain",
+        "saas",
+        "workspace",
+        "service-desk",
+    }
 
 
 def test_a_recorded_fintech_run_gains_the_other_industries(stack: Outcome, tmp_path: Path) -> None:
@@ -404,6 +494,11 @@ SIGNATURE: dict[str, tuple[str, dict[str, Any]]] = {
         "edit_file",
         {"path": coding_agent.SCHEMA, "old": '"version": "1.4"', "new": '"version": "1.5"'},
     ),
+    "workspace": (
+        "edit_config",
+        {"path": workspace.BASE, "old": workspace.TIMEOUT_OLD, "new": workspace.TIMEOUT_NEW},
+    ),
+    "service-desk": ("escalate_ticket", {"ticket_id": service_desk.ticket_id(1, 0)}),
 }
 
 
@@ -466,7 +561,7 @@ def test_a_live_model_works_each_packs_signature_act(key: str, tmp_path: Path) -
     for name in ("before", "after"):
         scanned = audit["verdicts"][name]["scan"]
         assert scanned["planted"]["prompts"] >= 4 and scanned["found"]["prompts"] == 0
-    assert outcome.payload["overview"]["industries"][list(PACKS).index(key) + 1]["mode"] == "live"
+    assert outcome.payload["overview"]["industries"][list(PACKS).index(key)]["mode"] == "live"
 
 
 def test_a_live_pack_act_stops_at_its_cost_cap(tmp_path: Path) -> None:

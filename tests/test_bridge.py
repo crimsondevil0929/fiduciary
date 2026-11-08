@@ -436,7 +436,7 @@ def test_feedback_an_agent_can_act_on(world: bound.World) -> None:
     assert done.value == {"plan_id": plan_id}
     assert done.feedback == (
         f"Committed: refund_order ran as plan {plan_id}.\n"
-        "Outbound request(s) queued for delivery: stripe refunds.create."
+        "Queued for delivery: 1 outbound request (stripe refunds.create)."
     )
     capped = session.call(
         "refund_order", {"order_id": 9, "amount": "250.00", "payment_intent": "pi_0000000009"}

@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, ClassVar, Final
 
+from interlock.text import noun
+
 from fiduciary import fidu1
 from fiduciary.documents._base import IDENTIFIER, Document
 from fiduciary.documents.mandate import OPERATION, SINK_NAME, TOOL
@@ -63,7 +65,8 @@ def check_schema(schema: object, path: str) -> None:
         raise MalformedError(
             "fields",
             path,
-            f"unsupported keyword(s) {', '.join(unknown)}: they would be ignored, not enforced",
+            f"unsupported {noun(len(unknown), 'keyword')} {', '.join(unknown)}: ignored, not "
+            f"enforced",
         )
     kinds = schema.get("type")
     if kinds is not None:

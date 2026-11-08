@@ -740,6 +740,15 @@ _SETUP: Final = {
     "`-out`, measures the saved plan and applies exactly that plan.",
     "fhir": "The server must allow client-assigned ids and conditional updates (`If-Match`). "
     "Each write is read back and put back if it differs from the prediction.",
+    "filesystem": "Each plan runs in a private copy of the directory, beside it, and lands only "
+    "on files still at the hashes it measured. To swap the whole directory in with one rename "
+    "instead, so readers never see a mix of old and new files, run "
+    "`python -c 'from interlock.filesystem import prepare_swap; prepare_swap(\"<dir>\")'` once "
+    'and set `mode = "swap"` under `[filesystem]` in `interlock.toml`.',
+    "rest": "The API must answer each record with a version (an `ETag`, or a version field) and "
+    "refuse a write whose `If-Match` is stale (`412`). Each write is read back with its tenant's "
+    "other records, and undone if the API changed anything the plan didn't predict. Name the "
+    "fields the API writes itself under `managed` in `interlock.toml`.",
 }
 
 
@@ -753,7 +762,9 @@ def _substrate_readme(report: InitReport, target: Target) -> str:
         or "| (none) | | |"
     )
     skipped = "\n".join(f"- `{s['name']}`: {s['why']}" for s in report.skipped)
-    cautions = "".join(f"- **Trigger `{c['name']}`**: {c['why']}.\n" for c in report.cautions)
+    cautions = "".join(
+        f"- **{c.get('label', 'Trigger')} `{c['name']}`**: {c['why']}.\n" for c in report.cautions
+    )
     caution = (
         f"\nWhat init found in the target that the starter mandate refuses:\n\n{cautions}"
         if cautions

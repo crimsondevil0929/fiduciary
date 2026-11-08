@@ -68,7 +68,7 @@ def test_a_bundle_carries_its_delivery_receipts(played: Path) -> None:
     assert set(named) <= set(_pins(played)["relays"])
     report = _verify(played, data)
     assert not report.failed("V5") and not report.failed("V1"), report.render()
-    assert any("2 delivery receipt(s)" in n for n in report.notes)
+    assert any("2 delivery receipts" in n for n in report.notes)
     assert report.exit_code == 7, "the after bundle names the break-glass act, as before"
 
 

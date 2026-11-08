@@ -558,7 +558,7 @@ def test_the_command_reports_serves_opens_and_says_what_ran(
         assert cli.main(["demo", "--report", str(reports), "--serve", "--open"]) == 0
     text = printed.getvalue()
     assert f"a deployment in {tmp_path / 'made'}" in text
-    assert "live        fintech: claude-opus-5-5, 3 turn(s), $0.039492 metered" in text
+    assert "live        fintech: claude-opus-5-5, 3 turns, $0.039492 metered" in text
     assert "serving     http://x/d" in text and opened == ["http://x/d"] and closed == [True]
     assert (reports / "dashboard.html").read_text().startswith("<!doctype html>")
     payload["demo"]["acts"][-1]["verdicts"]["before"]["passed"] = False

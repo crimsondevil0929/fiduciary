@@ -253,7 +253,7 @@ def test_the_cli_delivers_and_tests_a_webhook(
         assert cli.main(["--config", str(path), "notify", "--once"]) == 0  # sets the cursor
         sandbox.call({"preset": "held"})
         assert cli.main(["--config", str(path), "notify", "--once"]) == 0
-        assert "1 notice(s) delivered" in capsys.readouterr().out
+        assert "1 notice delivered" in capsys.readouterr().out
         events = [json.loads(b)["event"] for _, b in _Receiver.got]
         assert events == ["notice.test", "ticket.raised"]
         assert cli.main(["--config", str(path), "notify", "--test", "nope"]) == 2

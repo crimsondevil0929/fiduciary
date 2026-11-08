@@ -33,6 +33,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from interlock.text import tally
+
 from fiduciary import cli
 from fiduciary.attest import attest
 from fiduciary.bundle import TrustedKeys, verify_bundle
@@ -94,7 +96,9 @@ def main(argv: list[str] | None = None) -> int:
         played = [p for p in outcome.payload["domains"] if p["demo"]["domain"]["key"] not in kept]
         metered = [p["demo"]["model"] for p in played if p["demo"]["model"]]
         total = sum((Decimal(m["metered"]) for m in metered), Decimal(0))
-        print(f"live        {len(metered)} pack act(s), ${total:.6f} metered of ${budget}")
+        print(
+            f"live        {tally(len(metered), 'pack scenario')}, ${total:.6f} metered of ${budget}"
+        )
     print(f"dashboard   {outcome.dashboard}")
     return 0 if outcome.held else 1
 
