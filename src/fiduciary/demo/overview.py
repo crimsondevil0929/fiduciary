@@ -99,9 +99,11 @@ LADDER: Final = (
     {
         "class": "V",
         "name": "Predicted and verified",
-        "promise": "Reads the current version, predicts the result, writes conditionally "
-        "(If-Match), then reads the records back and undoes the write if anything unexpected "
-        "changed.",
+        "promise": (
+            "Reads current resource version, predicts exact state transition, executes conditional "
+            "write (If-Match), and reads back post-write state to automatically compensate "
+            "unpredicted side effects."
+        ),
         "where": "A FHIR R4 server, and any JSON REST API with ETags or version fields: "
         "ticketing, CRM, HR.",
         "shipped": True,
@@ -147,8 +149,8 @@ ENGINE: Final = (
     ("table_allowlist", "TableAllowlist", "plans refused"),
     ("no_delete", "NoDelete", "plans refused"),
     ("rate_window", "RateWindow", "plans refused"),
-    ("stale_head", "Commit only on the version measured", "plans refused"),
-    ("read_back", "Read back, undo if different", "writes undone"),
+    ("stale_head", "Commit precondition on measured version", "plans refused"),
+    ("read_back", "Post-write read-back verification & compensation", "writes undone"),
     ("warrant", "Quorum warrant", "formed"),
     ("break-glass", "Break-glass action found offline", "named"),
     ("offline", "Bundle verified offline", "verified"),

@@ -629,3 +629,32 @@ def test_init_pins_the_keys_its_bundles_are_checked_against(
     capsys.readouterr()
     assert cli.main([*check, str(theirs), "--charter", their_charter]) != 0
     assert "V1" in capsys.readouterr().out  # its own keys.json differs from the pins
+
+
+def test_kubernetes_starter_omits_token_file_when_not_provided(tmp_path: Path) -> None:
+    from fiduciary.starters import _kubernetes
+
+    target = Target("kubernetes", server="https://10.0.0.1:6443", namespaces=("default",))
+    st = _kubernetes(target)
+    assert st.interlock is not None
+    head_toml = st.interlock(tmp_path / "root", tmp_path / "control.db")
+    assert "token_file" not in head_toml
+    assert 'server = "https://10.0.0.1:6443"' in head_toml
+    assert 'namespaces = ["default"]' in head_toml
+
+
+def test_kubernetes_starter_includes_token_file_when_provided(tmp_path: Path) -> None:
+    from fiduciary.starters import _kubernetes
+
+    token = tmp_path / "k8s.token"
+    token.write_text("secret")
+    target = Target(
+        "kubernetes",
+        server="https://10.0.0.1:6443",
+        token_file=token,
+        namespaces=("default",),
+    )
+    st = _kubernetes(target)
+    assert st.interlock is not None
+    head_toml = st.interlock(tmp_path / "root", tmp_path / "control.db")
+    assert f'token_file = "{token.resolve()}"' in head_toml

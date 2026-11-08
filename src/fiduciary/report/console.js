@@ -86,8 +86,12 @@
   function tipOn(el, text) {
     el.addEventListener("mousemove", function (ev) {
       tip.textContent = text; tip.classList.add("on");
-      var x = Math.min(ev.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
-      tip.style.left = x + "px"; tip.style.top = (ev.clientY + 14) + "px";
+      var x = Math.max(8, Math.min(ev.clientX + 14, window.innerWidth - tip.offsetWidth - 8));
+      var y = ev.clientY + 14;
+      if (y + tip.offsetHeight > window.innerHeight - 8) {
+        y = Math.max(8, ev.clientY - tip.offsetHeight - 8);
+      }
+      tip.style.left = x + "px"; tip.style.top = y + "px";
     });
     el.addEventListener("mouseleave", function () { tip.classList.remove("on"); });
     return el;
@@ -174,12 +178,12 @@
   // -- the verdict ---------------------------------------------------------------------------
   function statusLine(a) {
     var v = a.verdict;
-    if (v.passed) return "All twelve checks pass. Every action on this lineage traces back to a signed mandate or warrant, and every record verifies against keys the auditor pinned outside the bundle.";
+    if (v.passed) return "All 12 verification checks passed. Every action on this lineage traces back to a signed mandate or warrant, and every record verifies against keys the auditor pinned outside the bundle.";
     var first = a.checks.filter(function (c) { return c.status === "fail"; });
     var n = first.reduce(function (t, c) { return t + c.findings.length; }, 0);
     var ids = first.map(function (c) { return c.id; }).join(", ");
-    if (v.status === "BREAK-GLASS DETECTED") return many(n, "finding") + " on " + ids + ": actions taken without a warrant, one of them signed with the declared break-glass key. Every other check passes.";
-    if (v.exit_code === 7) return many(n, "finding") + " on " + ids + ": an action that no agent call to a pinned tool explains, taken outside any warrant. Every other check passes. Exit code 7.";
+    if (v.status === "BREAK-GLASS DETECTED") return many(n, "finding") + " on " + ids + ": direct operator actions bypassed warrant quorum (including one signed with the declared break-glass key). All other checks passed.";
+    if (v.exit_code === 7) return many(n, "finding") + " on " + ids + ": detected an out-of-band state change with no matching bound tool call or warrant (exit code 7). All other checks passed.";
     return many(n, "finding") + " on " + first.map(function (c) { return c.id + " (" + c.name + ")"; }).join(", ") + ". Exit code " + v.exit_code + ".";
   }
   function verdictCard() {
@@ -234,13 +238,13 @@
       h("div", { class: "composition" }, bars.map(function (b) { return tipOn(h("i", { style: "flex:" + b[1] + ";background:" + b[2] }), many(b[1], b[0] + " member")); })),
       h("div", { class: "legend" }, bars.map(function (b) { return h("span", null, h("i", { class: "dot", style: "background:" + b[2] }), b[0] + " " + b[1]); })));
     return h("div", { class: "card privacy" },
-      h("div", { class: "eyebrow", style: "margin:0" }, h("span", null, "Data in the bundle"), pill(scan ? "none found" : "digests only", "good")),
+      h("div", { class: "eyebrow", style: "margin:0" }, h("span", null, "Data in the bundle"), pill(scan ? "0 leaked" : "digests only", "good")),
       h("div", { class: "zeros" }, cells),
       composition,
       h("p", { class: "claim" }, scan && PACK
-        ? "We searched the bundle for every record value, payload, injected instruction, private key and vendor secret in this deployment, both as written and as a SHA-256 hash. None was found." + (audit.labels ? " The bundle does contain " + audit.labels.named + " of the " + audit.labels.known + " " + audit.labels.partition + " keys. They're opaque labels that session records and receipts use to say which " + audit.labels.partition + " an action was for." : "")
+        ? "Scanned all archive files for raw database records, request payloads, prompt injections, private keys, and API secrets: 0 matches found." + (audit.labels ? " The bundle does contain " + audit.labels.named + " of the " + audit.labels.known + " " + audit.labels.partition + " keys. They're opaque labels that session records and receipts use to say which " + audit.labels.partition + " an action was for." : "")
         : scan
-        ? "We searched the bundle for every customer name, payment ID, prompt, model reply, private key and vendor secret in this deployment. None was found. The bundle holds digests, signatures and amounts."
+        ? "Scanned archive files for customer names, payment IDs, prompts, model replies, private keys, and API secrets: 0 matches found. The bundle holds digests, signatures, and amounts."
         : a.privacy.claim));
   }
   function kpis() {
@@ -507,7 +511,7 @@
     var principals = A().authority.charter.principals.map(function (p) { return p.name; });
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "Gateway · approval"),
-        h("div", { class: "empty-gw" }, h("b", null, "Someone clicks Approve."), "A gateway's approval covers the call as it was displayed. It isn't signed with the approver's own key, and it isn't tied to the exact option they chose or to the state of the system when they chose it.")),
+        h("div", { class: "empty-gw" }, h("b", null, "Unbound UI button click."), "A gateway approval only records that a user clicked Approve on a displayed tool call. It is not signed with an individual principal's key, nor bound to a specific resolution option or log head.")),
       stackSide([
         h("div", { class: "callrow" }, h("div", { class: "line" }, pill("ticket", "info"), h("b", null, x.ticket["class"]), h("span", { class: "small muted" }, "raised and signed by the service · ledger seq " + x.ticket.observed.ledger.sequence + " · log seq " + x.ticket.observed.log.seq)),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "Options: " + x.ticket.options.map(function (o) { return o.action + " (quorum " + o.quorum + ")"; }).join(" · "))),
@@ -634,7 +638,7 @@
       ["Plans refused", String(refused.length), num(rows) + " " + (PACK.nouns.rows || "rows") + " measured, none written", "interlock"],
       ["Largest hidden change", num(biggest), (PACK.nouns.rows || "rows") + " from one call the gateway allowed", "interlock"],
       ["Warrants", String(a.warrants.length), "each formed by 2 of 3 and tied to one ticket", "fiduciary"],
-      ["Outside a warrant", glass ? "Named" : "None", glass ? "the bundle exported after it exits 7" : "no action outside a warrant", "fiduciary"],
+      ["Outside a warrant", glass ? "Flagged" : "None", glass ? "Unwarranted override caught by check V7 in after.fidb" : "no action outside a warrant", "fiduciary"],
       ["Ledger", v6.status === "pass" ? "Balanced" : "Fails", "inclusion proofs check out against the signed checkpoint", "agentgov"]
     ];
   }
@@ -728,7 +732,7 @@
           h("div", { class: "small ink2", style: "margin-top:4px" }, "The plan passed every check, so only the commit is left.")),
         h("div", { class: "callrow" }, h("div", { class: "line" }, pill("PUSH", "warn"), h("span", { class: "small" }, "a teammate's commit, straight to main: "), hash(g.pushed, 10))),
         h("div", { class: "outcome good" }, icon("shield"), "COMMIT REFUSED · main stayed at " + short(g.after, 10) + (g.landed ? "" : " · the agent's change is not on it")),
-        h("p", { class: "small ink2" }, "The commit is git update-ref main <new> <measured head>, which moves main only if it's still where the stage measured it. It wasn't, so nothing moved. The escrow chain records why."),
+        h("p", { class: "small ink2" }, "Commit executes an atomic compare-and-swap (git update-ref main <new> <expected-old>). Because main advanced concurrently, the ref update aborted cleanly and recorded the conflict on the escrow chain."),
         chainList(x.chain),
         reconcileBlock(x.reconcile, "Reconciliation reads main's history. Every commit has to carry a stage trailer that the chain records as committed.")])),
       verdictLine("1 of 1 allowed", "nothing committed on a head the stage didn't measure, and the push around it is named")];
@@ -796,7 +800,7 @@
       h("div", { class: "small ink2", style: "margin-top:4px" }, num(u.input_tokens || 0) + " input / " + num(u.output_tokens || 0) + " output tokens · " + money(metered, 4) + " metered to the session's budget by AgentGov" + (m.halted ? " · stopped: " + m.halted : ""))];
     if (!r) return head;
     var renamed = Object.keys(r.renamed || {});
-    head.push(h("p", { class: "small", style: "margin-top:6px" }, "Recorded " + short(r.recorded_at, 10) + " on fiduciary " + r.recorded_with + ", and replayed here on this run's engine. The model's turns are as recorded, and no model was called: each turn was metered from its recorded usage, so the ledger shows what the turns cost then (" + money(r.recorded_metered, 6) + "). Everything the stack did with them was done again in this run." + (r.usage_per_turn === "ledger" ? " The recording kept each turn's cost, and its tokens are split to match it." : "")));
+    head.push(h("p", { class: "small", style: "margin-top:6px" }, "Replayed from a live session recorded on " + short(r.recorded_at, 10) + " (fiduciary " + r.recorded_with + ") with zero live LLM API calls. Recorded tool calls were re-executed against the local stack, while recorded token spend was debited from the budget ledger (" + money(r.recorded_metered, 6) + ")." + (r.usage_per_turn === "ledger" ? " The recording preserved each turn's cost and matched token counts." : "")));
     if (renamed.length) head.push(h("p", { class: "small muted" }, "This run minted its own ids, so the model's text quotes the recorded ones: " + renamed.map(function (k) { return k + " is " + r.renamed[k] + " here"; }).join(", ") + "."));
     if ((r.results_changed || []).length) head.push(h("details", null, h("summary", null, many(r.results_changed.length, "tool result") + " worded differently by this engine, with the same outcome"),
       r.results_changed.map(function (c) {
@@ -955,7 +959,7 @@
       stackSide([
         table(["Customer", "Org key", "Bundle", "Members", "Records whole / withheld", "Others' records", "Others' names or account ids", "Others' org keys", "Others' email domains"], rows),
         h("p", { class: "small ink2", style: "margin-top:10px" }, "Each bundle covers one customer's workspace mandate. It was verified with every socket refused (" + x.customers.reduce(function (t, c) { return t + c.sockets; }, 0) + " network calls) against keys pinned outside it, and searched for every opportunity name, email address, org key and email domain of the other customers, as written and as SHA-256. Files: " + x.customers.map(function (c) { return c.file; }).join(", ") + "."),
-        sealed ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How a bundle leaves the others out. "), "Each bundle is sealed. It carries the customer's own records whole. Of every other record in the log it carries only the record's position and hash, and the ledger's signed anchor of that record vouches for both, so the log still checks end to end. Every record was sealed when it was written" + (sealed.seals ? " (" + sealed.seals + ")" : "") + ", and the bundle carries the customer's own keys, so its verifier proves that none of the withheld records belong to this customer, while learning nothing about which customer owns the rest. The vendor's mandate names no customer: it holds one hash over every customer's allowed email domains (" + sealed.entries + " entries, each salted with " + sealed.salts + "), and each workspace mandate opens only its own entry. Receipts name only the customer the action was for, and count any others a refused action reached.") : null,
+        sealed ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "Cryptographic tenant isolation (fidb/2). "), "Each sealed bundle includes full plaintext records only for that tenant's lineage. Other tenants' records are redacted to sequence number + SHA-256 digest—anchored by signed ledger checkpoints so the global hash chain still verifies end-to-end. Every record was sealed when it was written" + (sealed.seals ? " (" + sealed.seals + ")" : "") + ", and the bundle carries the customer's own keys, proving that none of the withheld records belong to this customer, without disclosing other customer identities. The vendor's mandate names no customer: it holds one hash over every customer's allowed email domains (" + sealed.entries + " entries, each salted with " + sealed.salts + "), and each workspace mandate opens only its own entry. Receipts name only the customer the action was for, and count any others a refused action reached.") : null,
         flagged.length ? h("p", { class: "small", style: "margin-top:6px" }, flagged.map(function (c) { return c.customer; }).join(", ") + ": this bundle fails on purpose. It records the support engineer's hand-sent invitation in that customer's own workspace (scenario 5), a break-glass action the customer is entitled to see.") : null,
         ps ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How org keys are made. "), "Each org key is " + ps.derivation + ". The vendor holds the pseudonym key, as it holds its signing keys. Without it, an org key can't be reversed or linked to an account. With it, the vendor, or an auditor it chooses, can recompute the key from the account id. Every bundle was searched for the key, as written and in hex, and for each other customer's name and account id: " + (ps.key_in_bundles + x.customers.reduce(function (t, c) { return t + (c.other_names || 0) + (c.other_accounts || 0); }, 0)) + " found.") : null,
         labels || domains ? h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others" + (labels ? ": their org keys, in session records and receipts, because the bundle carries the deployment's whole log" : "") + (domains ? "; and each org key's email domain, in the mandate documents only: the vendor-wide mandate maps every org key to its allowed recipient domain, and every customer's mandate is derived from it" : "") + ". So these bundles are not anonymous.") : h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others: how many records the log holds that are not theirs, and when the ledger anchored them. Nothing names who those records were for.")])),
@@ -1445,7 +1449,7 @@
       h("b", { class: "ink2" }, "Notes from the verifier on " + current + ".fidb"),
       h("ul", null, a.notes.map(function (n) { return h("li", null, n); })),
       h("p", { style: "margin-top:10px" }, "Verifier: fiduciary " + a.verifier.fiduciary + ", interlock-escrow " + a.verifier.interlock + ", interlock-agentgov " + a.verifier.agentgov + ". Optional upstream features available: " + (Object.keys(up).filter(function (k) { return up[k]; }).join(", ") || "none") + (Object.keys(up).some(function (k) { return !up[k]; }) ? "; not available: " + Object.keys(up).filter(function (k) { return !up[k]; }).join(", ") : "") + ". Generated " + a.generated_at + "."),
-      h("p", { style: "margin-top:6px" }, "The evidence is signed and can be checked offline. That makes tampering visible; it doesn't prevent it. " + (LIVE.on ? "Served by the console on loopback; the page talks only to it." : "This page makes no network requests.")),
+      h("p", { style: "margin-top:6px" }, "Cryptographic evidence is signed and verifiable offline. Signatures make any post-hoc state tampering immediately detectable. " + (LIVE.on ? "Served by the console on loopback; the page talks only to it." : "This page makes no network requests.")),
       docsLine()));
   }
 

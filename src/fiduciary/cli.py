@@ -2000,7 +2000,8 @@ def _parser() -> argparse.ArgumentParser:
     init = commands.add_parser(
         "init",
         help="write a deployment ready to run: for an MCP server's tools (--mcp), or for a "
-        "database, repository, cluster, Terraform configuration or FHIR server (--substrate)",
+        "database, repository, workspace directory, cluster, Terraform configuration, "
+        "FHIR server, or REST API (--substrate)",
     )
     init.add_argument("--out", required=True, help="the directory to write (new or empty)")
     init.add_argument("--name", help="the deployment's name (the directory's, by default)")

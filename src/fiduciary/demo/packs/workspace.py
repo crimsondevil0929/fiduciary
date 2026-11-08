@@ -391,7 +391,7 @@ def _entities() -> dict[str, str]:
 
 
 TITLES: Final = {
-    "queue": "OPS-412: raise the checkout timeout, swapped in as one new version",
+    "queue": "OPS-412: Atomic directory symlink swap updates service timeout without partial reads",
     "cascade": "One edit to base.toml, and the renderer rewrites 24 region files",
     "injected": "A poisoned runbook: add a token to .env, delete the backup script",
     "race": "An on-call engineer edits the live config while the change is staged",

@@ -789,12 +789,15 @@ def _kubernetes(target: Target) -> Starter:
     ]
 
     def head(root: Path, control: Path) -> str:
-        token = target.token_file.resolve() if target.token_file else None
+        token_line = (
+            f"token_file = {_toml(str(target.token_file.resolve()))}\n" if target.token_file else ""
+        )
+        ca_line = f"ca_file = {_toml(str(target.ca_file.resolve()))}\n" if target.ca_file else ""
         return (
             f'substrate = "kubernetes"\ndatabase = {_toml(str(control))}\n'
             f"[kubernetes]\nserver = {_toml(target.server)}\n"
-            f"token_file = {_toml(str(token))}\n"
-            + (f"ca_file = {_toml(str(target.ca_file.resolve()))}\n" if target.ca_file else "")
+            + token_line
+            + ca_line
             + f"namespaces = {json.dumps(list(target.namespaces))}\n"
             f"journal = {_toml(str(root / 'journal'))}\n"
             f'[[kubernetes.kinds]]\ntable = "deployments"\nplural = "deployments"\n'

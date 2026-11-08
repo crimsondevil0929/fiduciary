@@ -340,7 +340,7 @@ TITLES: Final = {
     "grant": "A custom role that carries admin rights",
     "quorum": "Invitation held during a phishing review",
     "break-glass": "Support sends a held invitation, then one more, by hand",
-    "trust-center": "One sealed bundle per customer",
+    "trust-center": "One sealed bundle per tenant (fidb/2) with redacted cross-tenant records",
     "audit": "Vendor-wide audit offline, and SendGrid's event log",
 }
 

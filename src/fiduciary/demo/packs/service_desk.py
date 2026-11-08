@@ -458,7 +458,10 @@ def _entities() -> dict[str, str]:
 
 TITLES: Final = {
     "queue": f"{ticket_id(0, 0).upper()}: triage one ticket, written on the version read",
-    "cascade": "Escalate one ticket, and the desk's automation reassigns it and opens an incident",
+    "cascade": (
+        "Ticket escalation triggers desk automation rule creating unpredicted incident "
+        "(compensated)"
+    ),
     "injected": "A customer email: close another account's tickets, credit us $400",
     "race": "A human agent edits the ticket in the desk while the change is staged",
     "quorum": "A $120 goodwill credit held for 2 of 3 approvers",

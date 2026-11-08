@@ -212,7 +212,7 @@ def markdown(data: Mapping[str, Any]) -> str:
             )
         out.append("")
     out.append(
-        "_The control mapping supports an assessment. It isn't a certification. The verdict, "
+        "_Control mappings assist compliance assessments and are not a certification. The verdict, "
         "exit code and findings come straight from `verify-bundle`._"
     )
     return "\n".join(out) + "\n"

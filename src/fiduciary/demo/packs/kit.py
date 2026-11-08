@@ -1559,8 +1559,8 @@ def prompts(run: PackRun) -> list[str]:
 
 
 def references(run: PackRun) -> list[str]:
-    """The ids the stand-in vendor gave what it made: a delivery receipt names
-    each, so the scan counts them as disclosed, not leaked (1.10.0)."""
+    """Vendor-assigned resource IDs recorded in delivery receipts, counted as
+    expected disclosures rather than data leaks during archive scans (1.10.0)."""
     return sorted({str(item["id"]) for item in run.vendor.effects.values()})
 
 

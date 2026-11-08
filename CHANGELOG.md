@@ -6,6 +6,28 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.13.0] - 2026-11-08
+
+Complete 8-workflow live benchmark recording (`claude-opus-5-5`), responsive layout and boundary fixes, natural senior-engineer prose across all workflows, and pin against `interlock-escrow>=1.5.1`.
+
+### Added
+
+- **Full 8-workflow live LLM recordings in `src/fiduciary/demo/recording.json`:** recorded takes with `claude-opus-5-5` for `workspace` (Platform ops) and `service-desk` (Customer support), matching the earlier 6 workflows and enabling 100% offline `--replay` across all 8 workflows with zero live API spend.
+
+### Fixed
+
+- **Responsive layout & horizontal overflow:**
+  - Viewport boundary detection in `console.js` `tipOn()` to flip tooltips upward when near bottom of viewport.
+  - Set `min-width: 0; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;` on `.tablewrap` and `.side`.
+  - Responsive wrapping on `table.inds-t` at screen widths <= 900px and horizontal scrolling on mobile navigation links (`nav.views`).
+- **Kubernetes substrate starter:** omit `token_file` configuration line in starter output when no token file was provided.
+- **CLI init help text:** updated `--substrate` description to include workspace directories and REST APIs.
+
+### Changed
+
+- **De-AI editorial review:** polished elliptical and riddle-like phrasing across `console.js`, `console.css`, `report/__init__.py`, `overview.py`, `acts.py`, and domain packs into direct, concrete senior-engineer prose.
+- **Dependency upgrade:** bumped `interlock-escrow` dependency floor to `>=1.5.1` (bounded REST response body reads and cyclic pagination guard).
+
 ## [1.12.0] - 2026-11-07
 
 Agents that edit files and agents that work through SaaS APIs, governed like the rest; a console
