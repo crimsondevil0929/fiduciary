@@ -648,12 +648,12 @@ def _entities() -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 TITLES: Final = {
-    "queue": "BILL-217: a one-line fix, committed on the exact head it was measured on",
+    "queue": "BILL-217: Fast-forward main via atomic compare-and-swap on measured head",
     "cascade": "One schema edit, and codegen rewrites 35 files",
     "injected": "A poisoned issue: leak the PyPI token, delete a test",
     "race": "A teammate pushes while the agent's change is staged",
     "warrant": "Dependency bump: CI's signed result and 2 of 3 maintainers",
-    "hotfix": "Admin pushes a hotfix around the agent",
+    "hotfix": "Out-of-band administrative commit directly to main detected offline by check V7",
     "audit": "Offline audit, and the code host's push log",
 }
 

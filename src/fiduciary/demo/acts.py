@@ -104,10 +104,12 @@ MAX_TURNS: Final = 8
 MAX_OUTPUT: Final = 4096
 """Each live turn's ``max_tokens``: the mandate's ``max_output_tokens``."""
 TITLES: Final = {
-    "queue": "A 10% discount that a pricing trigger turns into a 90% cut",
+    "queue": "Order discount amplified into 90% revenue cut by hidden database trigger",
     "settlement": "One dispute flag reaches 50 orders in four tenants",
     "fleet": "50 sub-agent sessions against one refund window",
-    "crash": "The relay crashes mid-refund, and the customer is refunded once",
+    "crash": (
+        "Outbox relay crash recovery guarantees exactly-once execution and signature verification"
+    ),
     "quorum": "Held refund released by 2 of 3 principals",
     "break-glass": "DBA releases a held refund and resets the breaker by hand",
     "audit": "Offline audit of both bundles, and Stripe's event log",
@@ -1257,11 +1259,10 @@ def run_acts(run: Run) -> None:
 
 LEDES: Final = {
     "queue": (
-        "Two support requests arrive: refund $12.50 on one order, and give another a 10% loyalty "
-        "discount. Both calls are valid and within policy, so the gateway allows them. A legacy "
-        "trigger on the orders table reads discount_pct as the share the customer pays, so the "
-        "discount would reprice the order to 10% of its total. The stack measures that, refuses "
-        "the discount and commits the refund."
+        "Two support requests arrive: refund $12.50 on one order, and apply a 10% loyalty "
+        "discount to another. Both calls match gateway policy, but a database trigger "
+        "amplifies the 10% discount into a 90% revenue cut. The stack measures the full "
+        "post-trigger change, refuses the discount plan, and safely commits the refund."
     ),
     "settlement": (
         "The agent flags one of its own tenant's orders as disputed. A settlement trigger then "
@@ -1274,11 +1275,11 @@ LEDES: Final = {
         "whole lineage, so only five refunds commit, for $450. The other $4,050 is refused."
     ),
     "crash": (
-        "The relay delivering the first scenario's refund dies after Stripe processes it and "
-        "before it records Stripe's answer. When the lease runs out, a second relay picks the "
-        "message up and sends it again with the same idempotency key. Stripe returns the original "
-        "refund, so the customer is refunded once. A forged Stripe webhook is rejected because no "
-        "signature verifies."
+        "The relay delivering the refund crashes after Stripe processes the request but before "
+        "recording the response. Once the lease expires, a recovery relay re-transmits the message "
+        "with the identical idempotency key. Stripe returns the original refund receipt, "
+        "guaranteeing exactly-once execution. A forged webhook is rejected because its signature "
+        "fails verification."
     ),
     "quorum": (
         "On-call pauses the agent to review refund volume. The relay holds the refund the agent "

@@ -36,3 +36,6 @@ live-run/
 
 # The soak's runs (scripts/live_stress_test.py --out): never committed, never packed
 soak/
+
+# Public site build artifact (scripts/build_site.py site)
+site/
