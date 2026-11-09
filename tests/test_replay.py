@@ -44,7 +44,7 @@ def _cost(take: Take, turn: dict[str, Any]) -> Decimal:
     return priced / Decimal(1_000_000)
 
 
-def test_the_bundled_recording_is_six_scenarios_of_one_model() -> None:
+def test_the_bundled_recording_is_eight_scenarios_of_one_model() -> None:
     recording = bundled()
     assert set(recording.takes) == {
         "fintech",
@@ -53,8 +53,10 @@ def test_the_bundled_recording_is_six_scenarios_of_one_model() -> None:
         "supply-chain",
         "saas",
         "coding-agent",
+        "workspace",
+        "service-desk",
     }
-    assert recording.metered == Decimal("0.154312")
+    assert recording.metered == Decimal("0.193480")
     for take in recording.takes.values():
         assert take.model == take.served == "claude-opus-5-5"
         for name in ("input_tokens", "output_tokens"):
