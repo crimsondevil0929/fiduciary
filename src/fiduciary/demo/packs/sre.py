@@ -786,7 +786,7 @@ LEDES: Final = {
         "The lineage is exported before and after the administrator's actions. An auditor "
         "verifies both bundles with networking off, using only the charter digest and public "
         "keys, and searches them for every image, endpoint and secret. The cluster's audit log is "
-        "then matched against the receipts."
+        "then reconciled against delivery receipts to surface unattested Kubernetes operations."
     ),
 }
 """What the console says each scenario is (1.9.0): kept beside the titles, so a

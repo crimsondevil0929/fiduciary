@@ -152,7 +152,7 @@ ENGINE: Final = (
     ("stale_head", "Commit precondition on measured version", "plans refused"),
     ("read_back", "Post-write read-back verification & compensation", "writes undone"),
     ("warrant", "Quorum warrant", "formed"),
-    ("break-glass", "Break-glass action found offline", "named"),
+    ("break-glass", "Break-glass action found offline", "flagged"),
     ("offline", "Bundle verified offline", "verified"),
 )
 
@@ -198,7 +198,7 @@ def _engine(payload: Mapping[str, Any]) -> dict[str, Any]:
             for n in range(extra):
                 plans[f"{act['key']}-unsampled-{n}"] = 0
     # A Git stage whose branch moved after it was measured: refused at the
-    # compare-and-swap, after every check passed, so no finding names it.
+    # compare-and-swap, after every check passed, so no audit finding flags it.
     cells["stale_head"] = sum(
         1 for a in acts if isinstance(a.get("git"), Mapping) and a["git"].get("pushed")
         and not a["git"].get("landed")
@@ -218,8 +218,8 @@ def _engine(payload: Mapping[str, Any]) -> dict[str, Any]:
         for w in warrants
     ]
     after = payload["attestations"].get("after", {}).get("verdict", {})
-    # Named offline: labeled break-glass (an operator's declared key), or, for
-    # an act with no operator key, an ambient act the after bundle names (V7).
+    # Flagged offline: labeled break-glass (an operator's declared key), or, for
+    # an action with no operator key, an ambient action flagged by check V7 in after.fidb.
     cells["break-glass"] = "break-glass" in after.get("labels", []) or after.get("exit_code") == 7
     audit = next((a for a in acts if a["key"] == "audit"), None)
     if audit is not None:

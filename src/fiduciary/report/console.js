@@ -482,7 +482,7 @@
     });
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What the input gateway saw"),
-        h("div", { class: "empty-gw" }, h("b", null, "One call, allowed in scenario 1."), "The gateway decides before the call runs. It never sees the relay, the retries or Stripe's answer.")),
+        h("div", { class: "empty-gw" }, h("b", null, "Pre-execution evaluation only. "), "The input gateway evaluates the tool call before execution occurs. It has no visibility into message queuing, network retries, crash recovery, or upstream API responses.")),
       stackSide([
         h("div", { class: "mini-stats" },
           h("div", { class: "mini" }, h("b", { class: "tnum" }, String(x.stripe.requests_for_message)), h("span", null, "requests received by Stripe")),
@@ -511,7 +511,7 @@
     var principals = A().authority.charter.principals.map(function (p) { return p.name; });
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "Gateway · approval"),
-        h("div", { class: "empty-gw" }, h("b", null, "Unbound UI button click."), "A gateway approval only records that a user clicked Approve on a displayed tool call. It is not signed with an individual principal's key, nor bound to a specific resolution option or log head.")),
+        h("div", { class: "empty-gw" }, h("b", null, "UI button click only. "), "A gateway approval only records that a user clicked Approve on a displayed tool call. It is not signed with an individual principal's key, nor bound to a specific resolution option or log head.")),
       stackSide([
         h("div", { class: "callrow" }, h("div", { class: "line" }, pill("ticket", "info"), h("b", null, x.ticket["class"]), h("span", { class: "small muted" }, "raised and signed by the service · ledger seq " + x.ticket.observed.ledger.sequence + " · log seq " + x.ticket.observed.log.seq)),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "Options: " + x.ticket.options.map(function (o) { return o.action + " (quorum " + o.quorum + ")"; }).join(" · "))),
@@ -531,7 +531,7 @@
     var v7 = after.checks[6];
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "Gateway · Cedar"),
-        h("div", { class: "empty-gw" }, h("b", null, "Nothing."), "No agent call was made. The administrator acted directly on the outbox and the ledger.")),
+        h("div", { class: "empty-gw" }, h("b", null, "No gateway event. "), "No tool call crossed the gateway. Because the DBA modified the outbox and Stripe Dashboard directly, the input gateway logged zero events.")),
       stackSide([
         h("div", { class: "callrow" }, h("div", { class: "line" }, pill("operator action", "bad"), h("span", { class: "mono small" }, "key " + x.operator), pill("break-glass key", "warn")),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "Released message " + short(x.message, 8) + " and reset the circuit breaker directly. The relay delivered the message (" + x.delivered + "). Both actions are signed and anchored, like every operator action.")),
@@ -554,7 +554,7 @@
     var scan = x.verdicts.after.scan;
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "Gateway · its log"),
-        h("div", { class: "empty-gw" }, h("b", null, "Its own decisions."), "A gateway log, even a hash-chained one, records only what the gateway decided. It can't show what the database did, who approved an exception, or what happened outside the gateway.")),
+        h("div", { class: "empty-gw" }, h("b", null, "Input-only decision log. "), "Even a tamper-evident gateway log only records that a tool call was permitted—it has no visibility into downstream database triggers, quorum warrants, or out-of-band console edits.")),
       stackSide([
         h("div", { class: "tablewrap" }, h("table", null,
           h("thead", null, h("tr", null, ["Bundle", "Verdict", "Findings", "Network calls", "Members", "Planted values found", "SHA-256"].map(function (t) { return h("th", null, t); }))),
@@ -766,7 +766,7 @@
         slots(A().authority.charter.principals.map(function (p) { return p.name; }), function (p) { return inWarrant[p] ? "signed" : "none"; }, need), votes,
         h("div", { class: "callrow", style: "margin-top:10px" },
           h("div", { class: "line" }, pill("WARRANT", "good"), hash(x.warrant.digest, 16), h("span", { class: "small muted" }, "formed " + x.warrant.formed_at)),
-          h("div", { class: "small ink2", style: "margin-top:4px" }, "Executed: " + x.executed.join(" → ") + ". The plan names the head the maintainers reviewed (" + short(x.git.pinned, 10) + ") and commits only there. main was at " + short(x.git.reviewed, 10) + " and moved to " + short(x.git.after, 10) + "."),
+          h("div", { class: "small ink2", style: "margin-top:4px" }, "Executed: " + x.executed.join(" → ") + ". The plan pins the commit hash the maintainers reviewed (" + short(x.git.pinned, 10) + ") and commits only there. main was at " + short(x.git.reviewed, 10) + " and moved to " + short(x.git.after, 10) + "."),
           landed ? h("div", { class: "small", style: "margin-top:4px" }, pill(landed.committed ? "COMMITTED" : "REFUSED", landed.committed ? "good" : "bad"), " " + many(landed.rows, "file") + ": " + landed.changed.map(function (r) { return r.id; }).join(", ")) : null)])),
       verdictLine("3 of 3 allowed", "dependency changes commit only with CI's signed result for those bytes; the bump commits on 2 of 3 maintainers at the reviewed head, and the workflow edit never does")];
   }
@@ -776,18 +776,18 @@
     var m = x.measured;
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What the input gateway saw"),
-        h("div", { class: "empty-gw" }, h("b", null, "Nothing."), "No agent call was made. The administrator used the deployment's own credentials.")),
+        h("div", { class: "empty-gw" }, h("b", null, "No gateway event. "), "No tool call crossed the gateway. The platform administrator committed directly to main using repository credentials, completely bypassing the agent input proxy.")),
       stackSide([
         h("div", { class: "callrow" }, h("div", { class: "line" }, pill("PLAN", "bad"), h("span", { class: "mono small" }, x.plan), pill(x.holder, "warn")),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "“" + x.intent + "”: measured and checked like every plan" + (m && m.committed ? ", and committed (" + m.rows + " file)." : "."))),
         gitLine(x.git),
-        reconcileBlock(x.reconcile, "To Git and to reconciliation, the hotfix is an ordinary commit. It carries a stage trailer, and the chain records that stage as committed. Reconciliation names the push from scenario 4 instead."),
+        reconcileBlock(x.reconcile, "To Git and to reconciliation, the hotfix is an ordinary commit. It carries a stage trailer, and the chain records that stage as committed. Reconciliation identifies the unmediated push from scenario 4 instead."),
         h("h4", { style: "margin:10px 0 6px;font-size:13px" }, "V7 findings in the audited bundle"),
         v7.findings.length ? h("ul", { class: "findings" }, v7.findings.map(function (f) {
           return h("li", null, h("span", { class: "sev blocking" }, f.label || kindLabel(f.kind)), h("span", null, f.message));
         })) : h("p", { class: "small" }, "No finding."),
         h("p", { class: "small muted", style: "margin-top:10px" }, "Found after the fact, from the escrow chain. Every plan on a lineage's chain has to be a session's call to a tool the mandate pins. The bundle exported before the hotfix verifies, and the one exported after it fails with exit code 7.")])),
-      verdictLine("not involved", "Git sees an ordinary commit; the offline verifier names the plan that no tool call explains")];
+      verdictLine("not involved", "Git sees an ordinary commit; the offline verifier flags the out-of-band plan that lacks an authorizing tool call")];
   }
   function noteBlock(text) {
     return h("div", { class: "callrow note" }, h("div", { class: "line" }, pill("instruction in the input", "warn")), h("pre", null, text));
@@ -859,7 +859,7 @@
   function readBack(rb) {
     if (rb.before.active_orders !== undefined) {
       return h("div", { class: "callrow" }, h("div", { class: "line" }, pill("READ-BACK", "warn"), h("span", { class: "small" }, "the chart, read again after the write and compared with the prediction")),
-        h("p", { class: "small ink2", style: "margin-top:4px" }, "The prediction was one stopped order. After the write, the EHR held more than that: a rule had also stopped the encounter's other orders and cancelled their doses. Everything the write changed was put back, each write conditional on the version read back. The task the rule opened was marked entered-in-error rather than deleted."),
+        h("p", { class: "small ink2", style: "margin-top:4px" }, "After the write ran, an EHR rule stopped every active order in the encounter and cancelled their scheduled doses. Read-back verification caught those unpredicted changes, reverted them using conditional writes on the post-rule versions, and marked the new task entered-in-error."),
         table(["", "Active orders", "Doses scheduled", "Marked entered-in-error"], [["before", String(rb.before.active_orders), String(rb.before.scheduled_doses), String(rb.before.voided)], ["after", String(rb.after.active_orders), String(rb.after.scheduled_doses), String(rb.after.voided)]]));
     }
     return h("div", { class: "callrow" }, h("div", { class: "line" }, pill("READ-BACK", "warn"), h("span", { class: "small" }, "the account, listed again after the write and compared with the prediction")),
@@ -898,7 +898,7 @@
   function packBreakGlass(x) {
     var parts = actBreakGlass(x), held = heldCall(x);
     if (held) parts[0].lastChild.insertBefore(held, parts[0].lastChild.children[1] || null);
-    parts[1] = verdictLine("not involved", "the bundle exported after the action names it and labels the release break-glass");
+    parts[1] = verdictLine("not involved", "the post-incident bundle records the event and flags the manual release as an unmediated break-glass action");
     return parts;
   }
   function actAmend(x) {
@@ -911,7 +911,7 @@
     });
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What a gateway does with a policy change"),
-        h("div", { class: "empty-gw" }, h("b", null, "Whoever edits the policy deploys it."), "A gateway's policy is changed in its console. Nothing ties the change to a quorum of named approvers, or to the exact text they approved.")),
+        h("div", { class: "empty-gw" }, h("b", null, "Unmediated policy modification. "), "Gateway policies are updated directly in an administrative dashboard with no cryptographic linkage to multi-principal quorum signatures or immutable document digests.")),
       stackSide([
         h("div", { class: "callrow" }, h("div", { class: "line" }, pill("TICKET", "info"), h("b", null, x.ticket["class"]), h("span", { class: "small muted" }, "raised and signed by the service; proposed version " + x.proposed.version + " by " + x.proposed.by)),
           h("div", { class: "small ink2", style: "margin-top:4px" }, "What the new version widens: " + x.ticket.wider.map(function (w) { return w.path + " (" + w.message + ")"; }).join("; ")),
@@ -933,13 +933,13 @@
     var scan = x.verdicts.after.scan;
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What a gateway log gives an auditor"),
-        h("div", { class: "empty-gw" }, h("b", null, "Its own decisions."), "A gateway log records what the gateway decided. It cannot show what the database did, who approved an exception, or what an administrator did around the agent.")),
+        h("div", { class: "empty-gw" }, h("b", null, "Input-only decision log. "), "Even a tamper-evident gateway log only records that a tool call was permitted—it has no visibility into downstream database triggers, quorum warrants, or out-of-band console edits.")),
       stackSide([
         h("div", { class: "tablewrap" }, h("table", null,
           h("thead", null, h("tr", null, ["Bundle", "Verdict", "Findings", "Network calls", "Members", "Planted values found", "SHA-256"].map(function (t) { return h("th", null, t); }))),
           h("tbody", null, rows))),
         h("p", { class: "small ink2", style: "margin-top:10px" }, "Searched for " + many(scan.planted.rows, "record value") + " from the database, " + many(scan.planted.payloads, "payload value") + " the vendor received, " + many(scan.planted.prompts, "injected instruction") + " and " + many(scan.planted.secrets, "private key or secret", "private keys and secrets") + ", each as written and as a SHA-256 hash." + disclosed(scan) + " Ledger conservation " + x.conservation + "."),
-        x.labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "The bundle names " + x.labels.named + " of the " + x.labels.known + " " + x.labels.partition + " keys, in " + many(x.labels.members, "member") + ", because session records and receipts say which " + x.labels.partition + " each action was for. The keys are opaque, and no record behind them is in the bundle.") : null,
+        x.labels ? h("p", { class: "small muted", style: "margin-top:6px" }, "The bundle includes " + x.labels.named + " of the " + x.labels.known + " " + x.labels.partition + " keys, in " + many(x.labels.members, "member") + ", because session records and receipts record which " + x.labels.partition + " each action was for. The keys are opaque, and no record behind them is in the bundle.") : null,
         x.reconciliation ? actionsBlock(x.reconciliation) : null])),
       verdictLine("its own decisions only", "both bundles verified offline against keys pinned outside them, and the break-glass change is reported")];
   }
@@ -955,14 +955,14 @@
     var sealed = x.sealed;
     return [h("div", { class: "split" },
       h("div", { class: "side gw" }, h("div", { class: "side-title" }, icon("gate"), "What a gateway can give a customer"),
-        h("div", { class: "empty-gw" }, h("b", null, "A log the vendor keeps."), "A customer has to trust the vendor's export of the vendor's own log. Nothing in it can be checked without the vendor's systems.")),
+        h("div", { class: "empty-gw" }, h("b", null, "Vendor-hosted log only. "), "Vendor-hosted logs only show what the vendor's server recorded, with no offline signature check or per-tenant redaction.")),
       stackSide([
         table(["Customer", "Org key", "Bundle", "Members", "Records whole / withheld", "Others' records", "Others' names or account ids", "Others' org keys", "Others' email domains"], rows),
         h("p", { class: "small ink2", style: "margin-top:10px" }, "Each bundle covers one customer's workspace mandate. It was verified with every socket refused (" + x.customers.reduce(function (t, c) { return t + c.sockets; }, 0) + " network calls) against keys pinned outside it, and searched for every opportunity name, email address, org key and email domain of the other customers, as written and as SHA-256. Files: " + x.customers.map(function (c) { return c.file; }).join(", ") + "."),
-        sealed ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "Cryptographic tenant isolation (fidb/2). "), "Each sealed bundle includes full plaintext records only for that tenant's lineage. Other tenants' records are redacted to sequence number + SHA-256 digest—anchored by signed ledger checkpoints so the global hash chain still verifies end-to-end. Every record was sealed when it was written" + (sealed.seals ? " (" + sealed.seals + ")" : "") + ", and the bundle carries the customer's own keys, proving that none of the withheld records belong to this customer, without disclosing other customer identities. The vendor's mandate names no customer: it holds one hash over every customer's allowed email domains (" + sealed.entries + " entries, each salted with " + sealed.salts + "), and each workspace mandate opens only its own entry. Receipts name only the customer the action was for, and count any others a refused action reached.") : null,
+        sealed ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "Cryptographic tenant isolation (fidb/2). "), "Each sealed bundle includes full plaintext records only for that tenant's lineage. Other tenants' records are redacted to sequence number + SHA-256 digest—anchored by signed ledger checkpoints so the global hash chain still verifies end-to-end. Every record was sealed when it was written" + (sealed.seals ? " (" + sealed.seals + ")" : "") + ", and the bundle carries the customer's own keys, proving that none of the withheld records belong to this customer, without disclosing other customer identities. The root vendor mandate contains no plaintext customer identifiers: it stores salted domain digests (" + sealed.entries + " entries, each salted with " + sealed.salts + "), and each workspace mandate opens only its own entry. Lineage receipts record only the executing customer's tenant ID, while reporting counts for any cross-tenant boundaries touched by refused actions.") : null,
         flagged.length ? h("p", { class: "small", style: "margin-top:6px" }, flagged.map(function (c) { return c.customer; }).join(", ") + ": this bundle fails on purpose. It records the support engineer's hand-sent invitation in that customer's own workspace (scenario 5), a break-glass action the customer is entitled to see.") : null,
         ps ? h("p", { class: "small", style: "margin-top:10px" }, h("b", null, "How org keys are made. "), "Each org key is " + ps.derivation + ". The vendor holds the pseudonym key, as it holds its signing keys. Without it, an org key can't be reversed or linked to an account. With it, the vendor, or an auditor it chooses, can recompute the key from the account id. Every bundle was searched for the key, as written and in hex, and for each other customer's name and account id: " + (ps.key_in_bundles + x.customers.reduce(function (t, c) { return t + (c.other_names || 0) + (c.other_accounts || 0); }, 0)) + " found.") : null,
-        labels || domains ? h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others" + (labels ? ": their org keys, in session records and receipts, because the bundle carries the deployment's whole log" : "") + (domains ? "; and each org key's email domain, in the mandate documents only: the vendor-wide mandate maps every org key to its allowed recipient domain, and every customer's mandate is derived from it" : "") + ". So these bundles are not anonymous.") : h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others: how many records the log holds that are not theirs, and when the ledger anchored them. Nothing names who those records were for.")])),
+        labels || domains ? h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others" + (labels ? ": their org keys, in session records and receipts, because the bundle carries the deployment's whole log" : "") + (domains ? "; and each org key's email domain, in the mandate documents only: the vendor-wide mandate maps every org key to its allowed recipient domain, and every customer's mandate is derived from it" : "") + ". So these bundles are not anonymous.") : h("p", { class: "small muted", style: "margin-top:6px" }, "What a customer's bundle does show about the others: how many records the log holds that are not theirs, and when the ledger anchored them. No record reveals third-party tenant identities.")])),
       verdictLine("not available", x.customers.length + " customer bundles, each verified on its own; " + (labels || domains ? "0 records, names or account ids of any other customer" : "0 records, names, account ids, org keys or email domains of any other customer"))];
   }
   var PACK_ACTS = { quorum: packQuorum, amend: actAmend, "break-glass": packBreakGlass, audit: packAudit, "trust-center": actTrust, race: actRace, warrant: actGitWarrant, hotfix: actHotfix };
@@ -1627,7 +1627,7 @@
       h("p", null, LIVE.on
         ? "Each ticket is read from its deployment's log, as signed. A vote is an approval signed with the principal's own key, either here in the browser (the key file never leaves the page) or with fiduciary approve. The deployment's writer records it. At quorum, a warrant forms and releases exactly what it pins, at the heads the ticket recorded."
         : "What each run's after.fidb records: every ticket, the approvals that decided it and the warrant they formed, as the verifier replayed them when this page was built. To sign a new vote, run the console with fiduciary demo --out <dir> --serve, or fiduciary console next to a deployment."));
-    if (!deps.length) return h("section", { id: "desk" }, h("div", { class: "wrap" }, head, h("div", { class: "card pad empty-gw" }, h("b", null, "No deployment here."), "Start the console in a directory that holds a fiduciary.toml, or name one with --deployment FILE.")));
+    if (!deps.length) return h("section", { id: "desk" }, h("div", { class: "wrap" }, head, h("div", { class: "card pad empty-gw" }, h("b", null, "No deployment found. "), "Start the console in a directory containing fiduciary.toml, or specify one via --deployment FILE.")));
     var depList = h("div", { class: "dep-list", role: "list" }, deps.map(function (d) {
       var kind = d.kind === "sandbox" ? pill("SANDBOX", "info") : d.kind === "recorded" ? pill("RECORDED", "permit") : d.kind === "bundle" ? pill("BUNDLE", "permit") : d.accepts ? pill("TAKES APPROVALS", "good") : pill("READ-ONLY", "permit");
       return h("button", { class: "dep" + (d.id === dep.id ? " on" : ""), role: "listitem", "aria-current": d.id === dep.id ? "true" : null, onclick: function () { selectDep(d.id); } },
@@ -2157,7 +2157,7 @@
       h("button", { class: "btn sm", disabled: SB.busy ? "disabled" : null, onclick: function () { SB.busy = true; SB.error = null; render(); api("POST", "sandbox/" + dom.key + "/reset", {}).then(function (p) { SB.busy = false; SB.profiles[dom.key] = p; SB.calls[dom.key] = []; if (DESK.dep === p.id) selectDep(p.id); refreshStatus(); }).catch(failed(SB)); } }, "Reset")),
       presets, composer, ledger);
     var right = h("div", { class: "sb-right" }, SB.busy ? h("div", { class: "card pad" }, busyLine("Staging and measuring…")) : null, errorLine(SB.error),
-      calls.length ? calls.slice().reverse().map(function (r, i) { return callCard(r, prof, i === 0); }) : h("div", { class: "card pad empty-gw" }, h("b", null, "No call yet."), "Run a preset: one commits, one has a consequence the gateway cannot see, one waits for two of three approvers."));
+      calls.length ? calls.slice().reverse().map(function (r, i) { return callCard(r, prof, i === 0); }) : h("div", { class: "card pad empty-gw" }, h("b", null, "No calls run yet. "), "Pick a preset to send a test call through the gateway and the staging engine: one commits cleanly, one triggers a hidden side effect that gets rolled back, and one pauses for 2-of-3 approval."));
     return h("div", { class: "sb-grid" }, left, right);
   }
   function runCall(dom, body) {

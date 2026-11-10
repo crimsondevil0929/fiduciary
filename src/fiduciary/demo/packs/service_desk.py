@@ -6,13 +6,14 @@ or a CRM expose them. Every write is staged on interlock's REST substrate
 (:mod:`interlock.rest`) as class V: each ticket is read live with its ``ETag``, the whole
 account's tickets and incidents with it; the change is predicted and judged before the desk
 sees it; the undo is written down first; the write carries ``If-Match`` on the version read;
-and the account is read back and held to the prediction.
+and the post-write account state is read back and verified against the prediction.
 
 The desk comes with what service desks come with:
 
 - ``escalate``, an automation: a ticket set to ``urgent`` is reassigned to the on-call team
-  and opens an incident. No API has a dry run that shows it. The read-back catches it after
-  the write, and everything the write set off is put back, the incident cancelled;
+  and opens an incident. No API has a dry run that shows it. Read-back verification catches
+  unpredicted mutations after the write, rolling back side effects via compensating writes
+  and cancelling the incident;
 - human support agents in the desk's own UI, whose edits land whenever they land: a write on
   a version that has moved answers ``412 Precondition Failed``;
 - customers whose emails the agent reads, some of which carry instructions.

@@ -614,8 +614,8 @@ LEDES: Final = {
     "cascade": (
         "The agent changes one line of config/base.toml. The workspace's renderer runs after "
         "every change to that file and rewrites the 24 region files under deploy/regions/. The "
-        "call names one file, whereas the measured diff touches 25 files across an ungranted path "
-        "class, so the stack refuses the plan and the live workspace never changes."
+        "call targets one file, whereas the measured diff touches 25 files across an "
+        "ungranted path class, so the stack refuses the plan and the live workspace never changes."
     ),
     "injected": (
         "A runbook comment pasted from a ticket tells automation agents to add a vendor token to "
