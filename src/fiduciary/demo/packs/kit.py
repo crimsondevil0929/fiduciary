@@ -148,7 +148,7 @@ class Pack:
     """The gateway's entity store: each resource it knows (``argument:value``),
     and its tenant."""
     resource: Mapping[str, str]
-    """For each tool, the argument that names its resource."""
+    """For each tool, the argument identifying its target resource."""
     summed: Mapping[str, str]
     """For each tool the gateway counts per session, the argument it sums."""
     titles: Mapping[str, str]
@@ -1567,7 +1567,7 @@ def references(run: PackRun) -> list[str]:
 def payloads(run: PackRun) -> list[str]:
     """Every value the stand-in vendor received or answered with, as text:
     what an agent's arguments put in a payload, not the constants a signed
-    tool binding names (the bundle holds the bindings, as it must)."""
+    tool binding specifies (the bundle stores the bindings, as required)."""
     bound = json.dumps([t.body() for t in run.world.tools.values()])
     labels = set(run.pack.tenants)
     found: set[str] = set()

@@ -1160,18 +1160,16 @@ LEDES: Final = {
         "Two of three approve, and the warrant commits it at the head they reviewed."
     ),
     "hotfix": (
-        "During an incident, the platform administrator lands a one-line hotfix on main around "
-        "the agent queue. They use the deployment's own credentials, outside any agent session, "
-        "with no warrant. The stack still measures and checks the change, and it commits. Git and "
-        "the push-log reconciliation see an ordinary recorded commit. The offline verifier sees a "
-        "plan that no agent call to a pinned tool explains."
+        "During an incident, the platform administrator pushes a one-line hotfix directly to "
+        "main outside the agent queue. Using repository credentials without a quorum warrant, "
+        "the change commits. Git and reconciliation see an ordinary recorded commit, but the "
+        "offline verifier identifies an unmediated plan lacking an authorizing agent tool call."
     ),
     "audit": (
         "The lineage is exported before and after the administrator's hotfix. An auditor verifies "
         "both bundles with networking off, using only the charter digest and public keys, and "
         "searches them for every file's contents, payload and secret. The code host's audit log "
-        "of pushes to main is then matched against the receipts, and every push has to be "
-        "explained by one."
+        "of pushes to main is then reconciled against receipts to detect unattested commits."
     ),
 }
 """What the console says each scenario is (1.9.0): kept beside the titles, so a

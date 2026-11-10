@@ -6,6 +6,16 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.13.1] - 2026-11-08
+
+Natural human-engineer editorial pass across all verification check descriptions, gateway summaries, and scenario narratives.
+
+### Changed
+
+- **Direct, plainspoken V1–V12 verification descriptions:** replaced repetitive "Verifies..." prefixes in `src/fiduciary/attest.py` with direct statements of what holds true across bundle integrity, charter pinning, quorum warrants, receipt checkpoints, and ledger monotonicity.
+- **Gateway and audit card phrasing:** streamlined gateway decision notes in `console.js` to highlight pre-execution evaluation limits, unmediated administrative actions, and offline cryptographic proof properties without repetitive or dramatic fragments.
+- **Scenario narratives & pack copy:** polished scenario summaries and ledes in `narration.py`, `acts.py`, and across all 8 workflow packs to read clearly and conversationally while preserving all invariant substrings and audit invariants.
+
 ## [1.13.0] - 2026-11-08
 
 Complete 8-workflow live benchmark recording (`claude-opus-5-5`), responsive layout and boundary fixes, natural senior-engineer prose across all workflows, and pin against `interlock-escrow>=1.5.1`.

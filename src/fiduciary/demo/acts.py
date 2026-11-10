@@ -1131,7 +1131,7 @@ def canaries(run: Run, stripe: Stripe) -> dict[str, list[str]]:
     world = run.world
     rows = [str(r[0]) for r in world.fetch("SELECT customer FROM orders")]
     payloads = sorted(f"pi_{n:010d}" for n in range(1, ORDERS + 1))
-    # Stripe's ids for the refunds it made: a delivery receipt names each, so an
+    # Stripe's transaction IDs for created refunds: each delivery receipt records one, so an
     # auditor can match Stripe's log to the bundle (1.10.0). Disclosed, not leaked.
     references = sorted(r["id"] for r in stripe.refunds.values())
     keys_dir = world.root / "keys"
@@ -1149,10 +1149,10 @@ def canaries(run: Run, stripe: Stripe) -> dict[str, list[str]]:
 
 def scan(data: bytes, planted: Mapping[str, Sequence[str]]) -> dict[str, Any]:
     """Each planted value, its SHA-256 and the first 32 characters of a long
-    one, looked for in every member of the bundle. ``references``, the ids a
-    vendor gave what it made for a delivered request, are disclosed, not
-    planted: each delivery receipt names one, and the scan counts them apart
-    (1.10.0)."""
+    one, looked for in every member of the bundle. ``references``, the external
+    transaction identifiers returned by vendors for delivered requests, are
+    disclosed, not leaked: each delivery receipt records one, and the scan
+    counts them apart (1.10.0)."""
     from fiduciary.bundle.format import unpack
 
     members = unpack(data)
@@ -1290,16 +1290,16 @@ LEDES: Final = {
     ),
     "break-glass": (
         "During a second pause, another refund is held. The night-shift DBA releases it and "
-        "resets the circuit breaker directly, with no ticket and no warrant. No agent call is "
-        f"involved, so the gateway sees nothing. The DBA then refunds order {DASHBOARD_ORDER} from "
-        "Stripe's Dashboard, outside the relay."
+        "resets the circuit breaker directly, with no ticket and no warrant. Because no tool call "
+        f"crosses the gateway, the input proxy logs zero events. The DBA then refunds order "
+        f"{DASHBOARD_ORDER} directly in Stripe's Dashboard, outside the relay."
     ),
     "audit": (
         "The lineage is exported before and after the DBA's override. An auditor verifies both "
         "bundles with networking off, using only the charter digest and the deployment's public "
         "keys. The second bundle fails on the break-glass release. Stripe's event log is then "
-        "matched against the delivery receipts, and the Dashboard refund is the one event no "
-        "receipt explains."
+        "matched against the delivery receipts, and reconciliation identifies the unmediated "
+        "Dashboard refund as an unattested phantom event."
     ),
 }
 """What the console says each scenario is (1.9.0): kept beside the titles, so a

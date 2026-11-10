@@ -70,8 +70,8 @@ def _held(page: dict[str, Any]) -> bool:
     held = bool(before["passed"]) and after["exit_code"] == 7 and leaked == 0
     for act in demo["acts"]:
         for customer in act.get("customers", []):
-            # A customer's bundle passes, or names the break-glass act done in
-            # that customer's own workspace; and names nothing of the others.
+            # A customer's bundle passes, or records the break-glass action taken in
+            # that customer's own workspace; and discloses nothing of the others.
             named = customer["exit_code"] == 7 and any(
                 "[break-glass]" in f for f in customer["findings"]
             )
@@ -93,8 +93,8 @@ class Outcome:
     @property
     def held(self) -> bool:
         """What the demo shows held, in every domain it ran: the bundle before
-        the administrator's act verifies, the one after it names that act, and
-        nothing planted leaked."""
+        the administrator's action verifies, the post-incident bundle flags that
+        action, and no planted data leaked."""
         pages = [self.payload, *self.payload.get("domains", [])]
         return all(_held(page) for page in pages)
 
