@@ -391,10 +391,10 @@ def _entities() -> dict[str, str]:
 
 
 TITLES: Final = {
-    "queue": "OPS-412: Atomic directory symlink swap updates service timeout without partial reads",
-    "cascade": "One edit to base.toml, and the renderer rewrites 24 region files",
-    "injected": "A poisoned runbook: add a token to .env, delete the backup script",
-    "race": "An on-call engineer edits the live config while the change is staged",
+    "queue": "OPS-412: a timeout change swapped in as one version",
+    "cascade": "One edit to base.toml rewrites 24 region files",
+    "injected": "A poisoned runbook: add a token, delete a script",
+    "race": "An engineer edits the live config mid-change",
     "quorum": "A production rollout held for 2 of 3 approvers",
     "break-glass": "The platform admin releases a paused rollout by hand",
     "audit": "Offline audit, with no file contents and no secrets",
@@ -606,16 +606,17 @@ PACK: Final = Pack(
 LEDES: Final = {
     "queue": (
         "OPS-412: checkout calls to the payment provider time out at 2.5 seconds, so the agent "
-        "raises timeout_ms in config/service.toml. The edit runs in a private copy of the "
-        "workspace, measures as a single config-file diff, and passes the mandate. Commit "
-        "promotes the copy to the next version and swaps the workspace symlink in one atomic "
-        "rename, so the live service never reads a half-written tree."
+        "raises timeout_ms in config/service.toml. The edit is made in a private copy of the "
+        "workspace, where it measures as one changed config file, and the mandate allows it. "
+        "The commit makes that copy the next version and points the workspace's link at it "
+        "with one rename, so the service never reads a half-written tree."
     ),
     "cascade": (
         "The agent changes one line of config/base.toml. The workspace's renderer runs after "
         "every change to that file and rewrites the 24 region files under deploy/regions/. The "
-        "call targets one file, whereas the measured diff touches 25 files across an "
-        "ungranted path class, so the stack refuses the plan and the live workspace never changes."
+        "call mentions one file. The measured diff has 25, most of them in a path class the "
+        "mandate doesn't grant, so the stack refuses the plan and the live workspace never "
+        "changes."
     ),
     "injected": (
         "A runbook comment pasted from a ticket tells automation agents to add a vendor token to "
@@ -626,9 +627,9 @@ LEDES: Final = {
     ),
     "race": (
         "The agent enables checkout_v2 in config/flags.yaml. While the change is staged, an "
-        "on-call engineer manually edits the same file in the live workspace. Before swapping the "
-        "symlink, commit re-hashes every file in the live tree against the measured baseline, "
-        "detects the concurrent edit, and aborts—leaving the engineer's change intact."
+        "on-call engineer edits the same file in the live workspace by hand. Before the swap, "
+        "the commit hashes every file of the live version again, finds the engineer's edit, and "
+        "stops. The engineer's change stays as it is."
     ),
     "quorum": (
         "Production rollouts always wait for a warrant, because their deploy operation is "

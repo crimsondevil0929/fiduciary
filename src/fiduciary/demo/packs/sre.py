@@ -532,8 +532,8 @@ TITLES: Final = {
     "cascade": "A mutating webhook turns 6 replicas into 60",
     "replace": "A volume resize would replace the orders database",
     "fleet": "Five sub-agents against one hour's vCPU budget",
-    "quorum": "Port 22 change held for on-call and the service owner",
-    "break-glass": "Platform admin releases a change and runs kubectl by hand",
+    "quorum": "Opening port 22 waits for on-call and the owner",
+    "break-glass": "An admin releases a change and runs kubectl by hand",
     "audit": "Offline audit, and the cluster's own audit log",
 }
 
@@ -786,7 +786,7 @@ LEDES: Final = {
         "The lineage is exported before and after the administrator's actions. An auditor "
         "verifies both bundles with networking off, using only the charter digest and public "
         "keys, and searches them for every image, endpoint and secret. The cluster's audit log is "
-        "then reconciled against delivery receipts to surface unattested Kubernetes operations."
+        "then matched against the receipts."
     ),
 }
 """What the console says each scenario is (1.9.0): kept beside the titles, so a

@@ -15,12 +15,12 @@ its workspace, can only narrow it, and the AI admin works in it. The
 partition is the customer org, labeled by an org key that is a keyed
 pseudonym of the customer's account id (:func:`pseudonym`).
 
-The root mandate stores no plaintext customer identifiers: the email domains each customer's
-invitations may go to are *sealed* into it (:data:`SEAL`), one hash over every customer's
+The root names no customer: the email domains each customer's invitations may
+go to are *sealed* into it (:data:`SEAL`), one hash over every customer's
 entry, and each workspace opens its own. Each workspace's lineage is exported
 *sealed*, as that customer's bundle for the vendor's trust center: whole only
 its own records, and of the rest of the log, places and hashes. So a
-customer's bundle discloses no other customer's org key or domain. Thresholds are
+customer's bundle names no other customer's org key or domain. Thresholds are
 placeholders.
 """
 
@@ -270,7 +270,7 @@ def _data() -> dict[str, Any]:
             }
         ],
         "facts": [],
-        # Receipts go into one customer's bundle, each scoped exclusively to its own tenant ID.
+        # Receipts go into one customer's bundle: each names only its own org.
         "receipt_tenants": "declared",
     }
 
@@ -339,8 +339,8 @@ TITLES: Final = {
     "cascade": "A bulk reassign reaches four customers' records",
     "grant": "A custom role that carries admin rights",
     "quorum": "Invitation held during a phishing review",
-    "break-glass": "Support sends a held invitation, then one more, by hand",
-    "trust-center": "One sealed bundle per tenant (fidb/2) with redacted cross-tenant records",
+    "break-glass": "Support sends two invitations by hand",
+    "trust-center": "One sealed bundle per customer",
     "audit": "Vendor-wide audit offline, and SendGrid's event log",
 }
 
@@ -699,7 +699,7 @@ LEDES: Final = {
         "The vendor's whole lineage, including every customer's workspace, is exported before and "
         "after the support engineer's actions. An auditor verifies both bundles with networking "
         "off and searches them for every record and email address. SendGrid's event log is then "
-        "reconciled against delivery receipts to detect phantom mail deliveries."
+        "matched against the delivery receipts."
     ),
 }
 """What the console says each scenario is (1.9.0): kept beside the titles, so a

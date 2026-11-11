@@ -99,11 +99,9 @@ LADDER: Final = (
     {
         "class": "V",
         "name": "Predicted and verified",
-        "promise": (
-            "Reads current resource version, predicts exact state transition, executes conditional "
-            "write (If-Match), and reads back post-write state to automatically compensate "
-            "unpredicted side effects."
-        ),
+        "promise": "Reads the current version, predicts the result, writes conditionally "
+        "(If-Match), then reads the records back and undoes the write if anything unexpected "
+        "changed.",
         "where": "A FHIR R4 server, and any JSON REST API with ETags or version fields: "
         "ticketing, CRM, HR.",
         "shipped": True,
@@ -111,8 +109,9 @@ LADDER: Final = (
     {
         "class": "R",
         "name": "Request-only",
-        "promise": "The request is measured, checked and delivered exactly once. What happens next "
-        "is up to the vendor, so the vendor's own log is matched against the delivery receipts.",
+        "promise": "The request is measured and checked, then delivered with an idempotency key, "
+        "so a retry doesn't repeat it. What happens next is up to the vendor, so the vendor's "
+        "own log is matched against the delivery receipts.",
         "where": "Every outbound request in every workflow: Stripe, a pharmacy, EDI, a deploy "
         "system, billing, email.",
         "shipped": True,
@@ -149,11 +148,11 @@ ENGINE: Final = (
     ("table_allowlist", "TableAllowlist", "plans refused"),
     ("no_delete", "NoDelete", "plans refused"),
     ("rate_window", "RateWindow", "plans refused"),
-    ("stale_head", "Commit precondition on measured version", "plans refused"),
-    ("read_back", "Post-write read-back verification & compensation", "writes undone"),
+    ("stale_head", "Commit only on the version measured", "plans refused"),
+    ("read_back", "Read back, undo if different", "writes undone"),
     ("warrant", "Quorum warrant", "formed"),
-    ("break-glass", "Break-glass action found offline", "flagged"),
-    ("offline", "Bundle verified offline", "verified"),
+    ("break-glass", "Action outside a warrant", "found offline"),
+    ("offline", "Bundles verified offline", "before and after"),
 )
 
 
@@ -198,7 +197,7 @@ def _engine(payload: Mapping[str, Any]) -> dict[str, Any]:
             for n in range(extra):
                 plans[f"{act['key']}-unsampled-{n}"] = 0
     # A Git stage whose branch moved after it was measured: refused at the
-    # compare-and-swap, after every check passed, so no audit finding flags it.
+    # compare-and-swap, after every check passed, so no finding names it.
     cells["stale_head"] = sum(
         1 for a in acts if isinstance(a.get("git"), Mapping) and a["git"].get("pushed")
         and not a["git"].get("landed")
@@ -218,8 +217,8 @@ def _engine(payload: Mapping[str, Any]) -> dict[str, Any]:
         for w in warrants
     ]
     after = payload["attestations"].get("after", {}).get("verdict", {})
-    # Flagged offline: labeled break-glass (an operator's declared key), or, for
-    # an action with no operator key, an ambient action flagged by check V7 in after.fidb.
+    # Named offline: labeled break-glass (an operator's declared key), or, for
+    # an act with no operator key, an ambient act the after bundle names (V7).
     cells["break-glass"] = "break-glass" in after.get("labels", []) or after.get("exit_code") == 7
     audit = next((a for a in acts if a["key"] == "audit"), None)
     if audit is not None:

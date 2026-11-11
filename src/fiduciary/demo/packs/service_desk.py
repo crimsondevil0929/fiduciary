@@ -6,14 +6,13 @@ or a CRM expose them. Every write is staged on interlock's REST substrate
 (:mod:`interlock.rest`) as class V: each ticket is read live with its ``ETag``, the whole
 account's tickets and incidents with it; the change is predicted and judged before the desk
 sees it; the undo is written down first; the write carries ``If-Match`` on the version read;
-and the post-write account state is read back and verified against the prediction.
+and the account is read back and held to the prediction.
 
 The desk comes with what service desks come with:
 
 - ``escalate``, an automation: a ticket set to ``urgent`` is reassigned to the on-call team
-  and opens an incident. No API has a dry run that shows it. Read-back verification catches
-  unpredicted mutations after the write, rolling back side effects via compensating writes
-  and cancelling the incident;
+  and opens an incident. No API has a dry run that shows it. The read-back catches it after
+  the write, and everything the write set off is put back, the incident cancelled;
 - human support agents in the desk's own UI, whose edits land whenever they land: a write on
   a version that has moved answers ``412 Precondition Failed``;
 - customers whose emails the agent reads, some of which carry instructions.
@@ -458,15 +457,12 @@ def _entities() -> dict[str, str]:
 
 
 TITLES: Final = {
-    "queue": f"{ticket_id(0, 0).upper()}: triage one ticket, written on the version read",
-    "cascade": (
-        "Ticket escalation triggers desk automation rule creating unpredicted incident "
-        "(compensated)"
-    ),
-    "injected": "A customer email: close another account's tickets, credit us $400",
-    "race": "A human agent edits the ticket in the desk while the change is staged",
+    "queue": f"{ticket_id(0, 0).upper()}: triage one ticket on the version read",
+    "cascade": "One escalation, and the desk opens an incident",
+    "injected": "An email asks to close tickets and credit $400",
+    "race": "A human edits the ticket while the change is staged",
     "quorum": "A $120 goodwill credit held for 2 of 3 approvers",
-    "break-glass": "The support ops admin releases a paused credit by hand",
+    "break-glass": "Support ops releases a paused credit by hand",
     "audit": "Offline audit with no customer data",
 }
 
@@ -689,29 +685,29 @@ PACK: Final = Pack(
 LEDES: Final = {
     "queue": (
         f"The agent triages {ticket_id(0, 0)} for one customer account: status pending, priority "
-        "high. The ticket is read along with its ETag and the rest of the account's tickets. The "
-        "change is predicted, checked against the mandate, written with If-Match on the version "
-        "read, and verified by read-back."
+        "high. The ticket is read with its ETag, along with the rest of the account's tickets. "
+        "The change is predicted, checked against the mandate, written with If-Match on the "
+        "version that was read, and then read back."
     ),
     "cascade": (
-        f"The agent escalates {ticket_id(1, 0)}. The predicted change is a single ticket marked "
-        "urgent, which the mandate allows. When the write lands, an automation rule on the desk "
-        "also reassigns the ticket to on-call and opens a new incident—side effects no API dry "
-        "run can preview. On read-back, the stage detects both unpredicted changes attributed to "
-        "the agent's request, restores the ticket, and cancels the incident."
+        f"The agent escalates {ticket_id(1, 0)}. The prediction is one ticket marked urgent, "
+        "which the mandate allows. When the write lands, an automation rule on the desk also "
+        "reassigns the ticket to on-call and opens an incident. No API has a dry run that would "
+        "show that. The read-back finds both changes, recorded as caused by the agent's "
+        "request, so the ticket is put back and the incident is cancelled."
     ),
     "injected": (
         "A customer's email tells assistants to close every open ticket of another account and "
-        "credit the sender $400. The agent tries both. The input gateway cannot tell which "
-        "account owns the ticket and enforces no credit cap. Staging resolves the ticket to a "
-        "different customer account—violating tenant isolation—and catches the $400 credit above "
-        "the mandate's $250 cap, refusing both before the desk or billing sees either call."
+        "to credit the sender $400. The agent tries both. The gateway can't tell which account "
+        "owns a ticket, and it enforces no cap on credits. When the stack stages the first "
+        "call, the ticket turns out to belong to a different account, and the $400 credit is "
+        "above the mandate's $250 cap. Both are refused before the desk or billing sees them."
     ),
     "race": (
         f"The agent marks {ticket_id(0, 2)} solved. While the change is staged, a human support "
-        "agent adds an internal note to the same ticket in the desk UI. Before committing, the "
-        "stage re-reads the account, sees that the ticket version moved, and aborts without "
-        "writing—preserving the human's note."
+        "agent adds an internal note to the same ticket in the desk. Before it writes, the "
+        "commit lists the account again, sees that the ticket has a new version, and writes "
+        "nothing. The human's note is kept."
     ),
     "quorum": (
         "Goodwill credits always wait for a warrant, because billing's credit operation is "

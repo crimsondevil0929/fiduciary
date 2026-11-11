@@ -546,14 +546,10 @@ sign = [
 
 [[package]]
 name = "interlock-escrow"
-version = "1.5.1"
-source = { registry = "https://pypi.org/simple" }
+version = "1.5.2"
+source = { git = "https://github.com/crimsondevil0929/interlock?rev=2acbcb7a2f683adaf776ce3991340fd3f043849a#2acbcb7a2f683adaf776ce3991340fd3f043849a" }
 dependencies = [
     { name = "interlock-agentgov" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/8b/2fee2d107c8d6cd82cd08a7f8fb69b882e4ebba19a1ed3759a1aa0bc884f/interlock_escrow-1.5.1.tar.gz", hash = "sha256:21618a091f0c4cac2303a316c2c91f4f36806e723568449221b4efb128844729", size = 1597355, upload-time = "2026-11-08T22:36:34.897Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/39/cb168a30155dd264fb4810c2fa4e5b49e340c2340b3b30d3d5c5e8056905/interlock_escrow-1.5.1-py3-none-any.whl", hash = "sha256:856de828b986d7d91109ff52e6afc08347256d8f310f93ece4b84da0dad3633d", size = 636685, upload-time = "2026-11-08T22:36:33.145Z" },
 ]
 
 [package.optional-dependencies]
@@ -563,7 +559,7 @@ postgres = [
 
 [[package]]
 name = "interlock-fiduciary"
-version = "1.13.1"
+version = "1.13.2"
 source = { editable = "." }
 dependencies = [
     { name = "interlock-agentgov", extra = ["sign"] },
@@ -611,8 +607,8 @@ requires-dist = [
     { name = "interlock-agentgov", extras = ["otel"], marker = "extra == 'otel'", specifier = ">=1.3.2" },
     { name = "interlock-agentgov", extras = ["sign"], specifier = ">=1.3.2" },
     { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'sign'", specifier = ">=1.3.2" },
-    { name = "interlock-escrow", specifier = ">=1.5.1" },
-    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=1.5.1" },
+    { name = "interlock-escrow", git = "https://github.com/crimsondevil0929/interlock?rev=2acbcb7a2f683adaf776ce3991340fd3f043849a" },
+    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", git = "https://github.com/crimsondevil0929/interlock?rev=2acbcb7a2f683adaf776ce3991340fd3f043849a" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
 ]
 provides-extras = ["postgres", "sign", "kms-aws", "otel", "cedar", "demo"]

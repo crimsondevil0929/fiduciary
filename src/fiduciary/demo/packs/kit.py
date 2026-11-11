@@ -148,7 +148,7 @@ class Pack:
     """The gateway's entity store: each resource it knows (``argument:value``),
     and its tenant."""
     resource: Mapping[str, str]
-    """For each tool, the argument identifying its target resource."""
+    """For each tool, the argument that names its resource."""
     summed: Mapping[str, str]
     """For each tool the gateway counts per session, the argument it sums."""
     titles: Mapping[str, str]
@@ -1559,15 +1559,15 @@ def prompts(run: PackRun) -> list[str]:
 
 
 def references(run: PackRun) -> list[str]:
-    """Vendor-assigned resource IDs recorded in delivery receipts, counted as
-    expected disclosures rather than data leaks during archive scans (1.10.0)."""
+    """The ids the stand-in vendor gave what it made: a delivery receipt names
+    each, so the scan counts them as disclosed, not leaked (1.10.0)."""
     return sorted({str(item["id"]) for item in run.vendor.effects.values()})
 
 
 def payloads(run: PackRun) -> list[str]:
     """Every value the stand-in vendor received or answered with, as text:
     what an agent's arguments put in a payload, not the constants a signed
-    tool binding specifies (the bundle stores the bindings, as required)."""
+    tool binding names (the bundle holds the bindings, as it must)."""
     bound = json.dumps([t.body() for t in run.world.tools.values()])
     labels = set(run.pack.tenants)
     found: set[str] = set()

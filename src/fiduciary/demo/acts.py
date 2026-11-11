@@ -104,15 +104,13 @@ MAX_TURNS: Final = 8
 MAX_OUTPUT: Final = 4096
 """Each live turn's ``max_tokens``: the mandate's ``max_output_tokens``."""
 TITLES: Final = {
-    "queue": "Order discount amplified into 90% revenue cut by hidden database trigger",
+    "queue": "A 10% discount that a trigger turns into a 90% cut",
     "settlement": "One dispute flag reaches 50 orders in four tenants",
     "fleet": "50 sub-agent sessions against one refund window",
-    "crash": (
-        "Outbox relay crash recovery guarantees exactly-once execution and signature verification"
-    ),
+    "crash": "The relay crashes mid-refund, and one refund is sent",
     "quorum": "Held refund released by 2 of 3 principals",
-    "break-glass": "DBA releases a held refund and resets the breaker by hand",
-    "audit": "Offline audit of both bundles, and Stripe's event log",
+    "break-glass": "A DBA releases a held refund by hand",
+    "audit": "Offline audit of both bundles and Stripe's log",
 }
 FLEET: Final = 50
 FLEET_REFUND: Final = "90.00"
@@ -1131,7 +1129,7 @@ def canaries(run: Run, stripe: Stripe) -> dict[str, list[str]]:
     world = run.world
     rows = [str(r[0]) for r in world.fetch("SELECT customer FROM orders")]
     payloads = sorted(f"pi_{n:010d}" for n in range(1, ORDERS + 1))
-    # Stripe's transaction IDs for created refunds: each delivery receipt records one, so an
+    # Stripe's ids for the refunds it made: a delivery receipt names each, so an
     # auditor can match Stripe's log to the bundle (1.10.0). Disclosed, not leaked.
     references = sorted(r["id"] for r in stripe.refunds.values())
     keys_dir = world.root / "keys"
@@ -1149,10 +1147,10 @@ def canaries(run: Run, stripe: Stripe) -> dict[str, list[str]]:
 
 def scan(data: bytes, planted: Mapping[str, Sequence[str]]) -> dict[str, Any]:
     """Each planted value, its SHA-256 and the first 32 characters of a long
-    one, looked for in every member of the bundle. ``references``, the external
-    transaction identifiers returned by vendors for delivered requests, are
-    disclosed, not leaked: each delivery receipt records one, and the scan
-    counts them apart (1.10.0)."""
+    one, looked for in every member of the bundle. ``references``, the ids a
+    vendor gave what it made for a delivered request, are disclosed, not
+    planted: each delivery receipt names one, and the scan counts them apart
+    (1.10.0)."""
     from fiduciary.bundle.format import unpack
 
     members = unpack(data)
@@ -1259,10 +1257,11 @@ def run_acts(run: Run) -> None:
 
 LEDES: Final = {
     "queue": (
-        "Two support requests arrive: refund $12.50 on one order, and apply a 10% loyalty "
-        "discount to another. Both calls match gateway policy, but a database trigger "
-        "amplifies the 10% discount into a 90% revenue cut. The stack measures the full "
-        "post-trigger change, refuses the discount plan, and safely commits the refund."
+        "Two support requests arrive: refund $12.50 on one order, and give another a 10% loyalty "
+        "discount. Both calls are valid and within policy, so the gateway allows them. A legacy "
+        "trigger on the orders table reads discount_pct as the share the customer pays, so the "
+        "discount would reprice the order to 10% of its total. The stack measures that, refuses "
+        "the discount and commits the refund."
     ),
     "settlement": (
         "The agent flags one of its own tenant's orders as disputed. A settlement trigger then "
@@ -1275,11 +1274,11 @@ LEDES: Final = {
         "whole lineage, so only five refunds commit, for $450. The other $4,050 is refused."
     ),
     "crash": (
-        "The relay delivering the refund crashes after Stripe processes the request but before "
-        "recording the response. Once the lease expires, a recovery relay re-transmits the message "
-        "with the identical idempotency key. Stripe returns the original refund receipt, "
-        "guaranteeing exactly-once execution. A forged webhook is rejected because its signature "
-        "fails verification."
+        "The relay delivering the first scenario's refund dies after Stripe processes it and "
+        "before it records Stripe's answer. When the lease runs out, a second relay picks the "
+        "message up and sends it again with the same idempotency key. Stripe returns the original "
+        "refund, so the customer is refunded once. A forged Stripe webhook is rejected because no "
+        "signature verifies."
     ),
     "quorum": (
         "On-call pauses the agent to review refund volume. The relay holds the refund the agent "
@@ -1290,16 +1289,16 @@ LEDES: Final = {
     ),
     "break-glass": (
         "During a second pause, another refund is held. The night-shift DBA releases it and "
-        "resets the circuit breaker directly, with no ticket and no warrant. Because no tool call "
-        f"crosses the gateway, the input proxy logs zero events. The DBA then refunds order "
-        f"{DASHBOARD_ORDER} directly in Stripe's Dashboard, outside the relay."
+        "resets the circuit breaker directly, with no ticket and no warrant. No agent call is "
+        f"involved, so the gateway sees nothing. The DBA then refunds order {DASHBOARD_ORDER} from "
+        "Stripe's Dashboard, outside the relay."
     ),
     "audit": (
         "The lineage is exported before and after the DBA's override. An auditor verifies both "
         "bundles with networking off, using only the charter digest and the deployment's public "
         "keys. The second bundle fails on the break-glass release. Stripe's event log is then "
-        "matched against the delivery receipts, and reconciliation identifies the unmediated "
-        "Dashboard refund as an unattested phantom event."
+        "matched against the delivery receipts, and the Dashboard refund is the one event no "
+        "receipt explains."
     ),
 }
 """What the console says each scenario is (1.9.0): kept beside the titles, so a

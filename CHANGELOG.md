@@ -6,6 +6,72 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.13.2] - 2026-11-11
+
+The console's copy is plain English again and a test now keeps it that way, and the workbench
+fits a laptop screen and a phone. Requires interlock-escrow 1.5.2, which fixes how a commit on
+a FHIR server or a REST API is settled when it cannot finish.
+
+### Fixed
+
+- **Statements that 1.13.0 and 1.13.1 got wrong.**
+  - V11 was described as covering a lineage that is "paused, revoked, or expired". It covers
+    one that is revoked, suspended or expired. A paused agent's held request can still be
+    released by a warrant, which is what scenario 5 shows.
+  - The coding agent's hotfix (scenario 6) was described as pushed "directly to main". It
+    goes through the engine on the deployment's own credentials, which is why Git and
+    reconciliation see an ordinary commit and only the offline verifier reports it.
+  - Fintech scenario 4 said the relay "guarantees exactly-once execution". It says what
+    happens: the retry carries the same idempotency key, and Stripe returns the original
+    refund.
+  - The sealed-bundle panel called itself "cryptographic tenant isolation", above text that
+    says the bundles are not anonymous.
+  - "Data in the bundle" said "raw database records" on workflows whose data is files,
+    cluster objects, charts or API records.
+  - The footer claimed that signatures make "any post-hoc state tampering immediately
+    detectable". It says again what they do: "That makes tampering visible; it doesn't
+    prevent it."
+- **A model's own emphasis is drawn as bold.** A recorded reply showed `**not**`.
+- **"Which check stopped which plan" shows all eight workflows.** The table was 1,607 px
+  wide in a 1,182 px container, so three workflows sat off-screen with nothing to say so.
+  On a phone its first column stays in place while the rest scrolls, and a line says to
+  scroll.
+- **No page scrolls sideways on a phone.** At 390 px, six scenario views did: a checker's
+  id or a field path is one long word, and now wraps. The lineage tree keeps its size and
+  scrolls where it used to shrink until it could not be read.
+- **Smaller things:** "1 warrant" where it said "1 warrants"; times to the second
+  ("2026-11-11 20:26:32 UTC") where microseconds showed; the charter's principals wrap
+  inside their box in the lineage tree; the row for an action outside a warrant says
+  "found" in its label and in its cells; the approvals desk counts receipts in the
+  workflow's own nouns.
+
+### Changed
+
+- **Every string is in one voice, and `tests/test_prose.py` holds it there.** The modules
+  that hold what the demo says are back at their 1.12.0 text, then rewritten once against
+  `docs/STYLE.md`. The test reads every string the console and the demo can show and fails
+  on a dash set tight between two words, a count written with `(s)`, any of 24 phrases
+  ("out-of-band", "unattested", "guarantee", "input proxy" among them), "names" used as the
+  verb for everything (it was, 21 times), Markdown in a string the console draws, a
+  scenario title over 52 characters, or a lede that is not two to six whole sentences.
+- **The workbench starts higher.** The header is one line, all eight workflows sit in one
+  row, a workflow's facts are on one line, and "how to read this" comes after the
+  scenarios. On a 1512 by 949 screen the gateway and the stack are side by side from 500 px
+  down (it was about 740), with the whole scenario rail in view.
+- **Scenario titles fit two lines of the rail,** and none is clipped in the phone's strip.
+- **Refusals read in each system's own nouns,** from interlock 1.5.2: on the directory
+  workflow, "plan deletes 1 file from ungranted path class: scripts".
+- **The request-only rung says how** a request is delivered once (an idempotency key, so a
+  retry doesn't repeat it), where it asserted "exactly once".
+- The README's first paragraph no longer says the stack checks "database writes".
+
+### Added
+
+- `docs/STYLE.md`: how the console, the demo and the docs are written, with the words the
+  gate refuses and the plain way to say each.
+- `scripts/upstream_pins.py`: tells CI's two pip steps which upstream commit
+  `pyproject.toml` pins while a change there is unreleased.
+
 ## [1.13.1] - 2026-11-08
 
 Natural human-engineer editorial pass across all verification check descriptions, gateway summaries, and scenario narratives.

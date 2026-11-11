@@ -9,8 +9,8 @@ database came with a material-requirements trigger:
   of materials into a purchase-order line for every component, from every
   supplier that makes one.
 
-- ``sync_remittance``: a supplier's remittance note containing an IBAN is
-  copied into the bank-account table read by payment runs.
+- ``sync_remittance``: a supplier's remittance note that names an IBAN is
+  copied into the bank-account table the payment run reads.
 
 The mandate grants the agent supplier contact details, never bank accounts: a
 bank-account change needs the mandate widened, and widening it needs a quorum.
@@ -417,7 +417,7 @@ TITLES: Final = {
     "cascade": "A reorder-point change explodes into 400 PO lines",
     "drawdown": "One allocation would drain 30% of a warehouse",
     "injected": "Phishing email: change supplier 7's bank account",
-    "amend": "Widening the mandate takes 2 of 3; one rejection stops it",
+    "amend": "Widening the mandate takes 2 of 3; one says no",
     "break-glass": "ERP admin sends a held PO, then one more by hand",
     "audit": "SOX evidence offline, and the EDI gateway's log",
 }
@@ -720,7 +720,7 @@ LEDES: Final = {
         "The lineage is exported before and after the administrator's actions. A SOX auditor "
         "verifies both bundles with networking off and searches them for every bank account, "
         "supplier contact and customer in the database. The EDI gateway's message log is then "
-        "reconciled against delivery receipts to identify out-of-band orders."
+        "matched against the delivery receipts."
     ),
 }
 """What the console says each scenario is (1.9.0): kept beside the titles, so a
