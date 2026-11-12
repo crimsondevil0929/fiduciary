@@ -37,17 +37,21 @@ from agentgov.receipts import CheckerRecord, ReceiptLog
 from interlock.checker_packs import CheckerPackError, PackPin, load_pack
 from interlock.invariants import (
     BlastRadius,
+    ChangeLimit,
     ColumnValueGuard,
     CrossEffectAgreement,
     FactAgreement,
     InvariantChecker,
+    KindAllowlist,
     NoDelete,
     NoSchemaChange,
+    PartitionIsolation,
     StatedFootprint,
     TableAllowlist,
     TenantDrawdownGuard,
     TenantIsolation,
     TruncationGuard,
+    ValueGuard,
 )
 from interlock.meters import Meter, MeterCheck
 from interlock.outbound import SinkRegistry, SinkSpec
@@ -76,10 +80,11 @@ from interlock.windows import (
 from fiduciary import fidu1
 from fiduciary.checkers import BoundStatements, MandateScope, TenantAllowlist
 from fiduciary.documents import Mandate, MandateRef, ToolBinding
-from fiduciary.documents.mandate import PER_PARTITION
+from fiduciary.documents.mandate import PER_PARTITION, RESOURCE, SHADOW
 from fiduciary.exceptions import FiduciaryError
 
 __all__ = [
+    "ALWAYS_ENFORCED",
     "SET_BEARING",
     "CompileError",
     "CompiledMandate",
@@ -94,8 +99,18 @@ __all__ = [
 ]
 
 COMPILER: Final = "fiduciary-compile/1"
+ALWAYS_ENFORCED: Final = ("fiduciary_mandate",)
+"""The checkers a shadow mandate's engine still enforces: a plan that is not
+this mandate's subject's is not this mandate's to commit, observed or not."""
 SET_BEARING: Final = frozenset(
-    {"TableAllowlist", "NoDelete", "SinkAllowlist", "RecipientAllowlist", "FactAgreement"}
+    {
+        "TableAllowlist",
+        "KindAllowlist",
+        "NoDelete",
+        "SinkAllowlist",
+        "RecipientAllowlist",
+        "FactAgreement",
+    }
 )
 """The built-in checkers whose configuration holds a set: before U-1, the
 digests receipts record for them change with the hash seed (F6-8)."""
@@ -206,6 +221,10 @@ class CompiledMandate:
     issuer: str
     policy_epoch: int
     meters: tuple[UnitMeter, ...] = ()
+    shadow: bool = False
+    """The mandate is in shadow mode (1.14.0): its engine is built
+    ``observe_only``, so a bound a plan breaks is recorded and not refused.
+    :data:`ALWAYS_ENFORCED` still refuses."""
 
     def receipt_issuer(self, log: ReceiptLog, *, row_secret: bytes | None = None) -> ReceiptIssuer:
         """The issuer of this version's receipts: ``fiduciary:<mandate_id>``, at
@@ -270,9 +289,14 @@ def _describe(
         elif name not in columns:
             problems.append(f"{where}: column {table}.{name} is not observed")
 
+    neutral = data.vocabulary == RESOURCE
     for table in sorted(data.tables):
         if table not in deployment.tables:
-            problems.append(f"data.tables: table {table!r} is not observed by the substrate")
+            problems.append(
+                f"data.kinds: {table!r} is not a kind the system measures"
+                if neutral
+                else f"data.tables: table {table!r} is not observed by the substrate"
+            )
     for guard in data.drawdown:
         column(guard.table, guard.column, "data.drawdown")
     for rule in data.agreements:
@@ -386,16 +410,51 @@ def _describe(
             else {},
         ],
         ["NoSchemaChange", {}],
-        ["BlastRadius", {"limit": data.max_rows}],
-        ["TenantIsolation", {"max_tenants": data.max_tenants, "declared": data.declared_tenants}],
+        # The four checks that have a name for every system are compiled under the
+        # vocabulary the mandate is written in (1.14.0): a mandate that says
+        # ``kinds`` is judged by ``kind_allowlist``, one that says ``tables`` by
+        # ``table_allowlist``, as every mandate compiled before.
         *(
             [
-                "TenantIsolation",
-                {"max_tenants": rule.max, "declared": rule.declared, "dimension": dimension},
+                ["ChangeLimit", {"limit": data.max_rows}],
+                [
+                    "PartitionIsolation",
+                    {
+                        "dimension": "tenant",
+                        "max": data.max_tenants,
+                        "declared": data.declared_tenants,
+                    },
+                ],
+                *(
+                    [
+                        "PartitionIsolation",
+                        {"dimension": dimension, "max": rule.max, "declared": rule.declared},
+                    ]
+                    for dimension, rule in sorted(data.partitions.items())
+                ),
+                ["KindAllowlist", {"kinds": sorted(data.tables)}],
             ]
-            for dimension, rule in sorted(data.partitions.items())
+            if neutral
+            else [
+                ["BlastRadius", {"limit": data.max_rows}],
+                [
+                    "TenantIsolation",
+                    {"max_tenants": data.max_tenants, "declared": data.declared_tenants},
+                ],
+                *(
+                    [
+                        "TenantIsolation",
+                        {
+                            "max_tenants": rule.max,
+                            "declared": rule.declared,
+                            "dimension": dimension,
+                        },
+                    ]
+                    for dimension, rule in sorted(data.partitions.items())
+                ),
+                ["TableAllowlist", {"tables": sorted(data.tables)}],
+            ]
         ),
-        ["TableAllowlist", {"tables": sorted(data.tables)}],
         ["NoDelete", {"granted": sorted(t for t, ops in data.tables.items() if "delete" in ops)}],
     ]
     if data.stated_footprint is not None:
@@ -409,7 +468,13 @@ def _describe(
             ]
         )
     for guard in data.drawdown:
-        kind = "ColumnValueGuard" if guard.per == "table" else "TenantDrawdownGuard"
+        kind = (
+            "TenantDrawdownGuard"
+            if guard.per != "table"
+            else "ValueGuard"
+            if neutral
+            else "ColumnValueGuard"
+        )
         args: dict[str, Any] = {
             "table": guard.table,
             "column": guard.column,
@@ -507,6 +572,9 @@ def _describe(
     }
     if mandate.budgets:
         description["budgets"] = {u: b.to_json() for u, b in sorted(mandate.budgets.items())}
+    if mandate.shadow:
+        # Only when shadow, so every policy compiled before keeps its digest (1.14.0).
+        description["enforcement"] = SHADOW
     if mandate.data.receipt_tenants != "touched":
         description["receipts"]["tenants"] = mandate.data.receipt_tenants
     return description, problems
@@ -529,16 +597,24 @@ _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
     "TruncationGuard": lambda a: TruncationGuard(a.get("acknowledged_unknown", ())),
     "NoSchemaChange": lambda a: NoSchemaChange(),
     "BlastRadius": lambda a: BlastRadius(a["limit"]),
+    "ChangeLimit": lambda a: ChangeLimit(a["limit"]),
     "TenantIsolation": lambda a: TenantIsolation(
         a["max_tenants"], declared=a["declared"], dimension=a.get("dimension", "tenant")
     ),
+    "PartitionIsolation": lambda a: PartitionIsolation(
+        a["dimension"], max=a["max"], declared=a["declared"]
+    ),
     "TableAllowlist": lambda a: TableAllowlist(a["tables"]),
+    "KindAllowlist": lambda a: KindAllowlist(a["kinds"]),
     "NoDelete": lambda a: NoDelete(a["granted"]),
     "StatedFootprint": lambda a: StatedFootprint(
         tolerance=float(Decimal(a["tolerance"])),
         severity=Severity.BLOCKING if a["blocking"] else Severity.ADVISORY,
     ),
     "ColumnValueGuard": lambda a: ColumnValueGuard(
+        a["table"], a["column"], max_drop_fraction=_drop(a), max_rise_fraction=_rise(a)
+    ),
+    "ValueGuard": lambda a: ValueGuard(
         a["table"], a["column"], max_drop_fraction=_drop(a), max_rise_fraction=_rise(a)
     ),
     "TenantDrawdownGuard": lambda a: TenantDrawdownGuard(
@@ -760,6 +836,7 @@ def _build(description: Mapping[str, Any], digest: str, deployment: Deployment) 
         "recovery": recovery,
         "guard": guard,
         "meters": meters,
+        "shadow": description.get("enforcement") == SHADOW,
     }
 
 

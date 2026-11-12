@@ -21,7 +21,7 @@ import pytest
 GUIDE = Path(__file__).resolve().parents[1] / "docs" / "QUICKSTART.md"
 _BLOCK = re.compile(
     r"(?P<stop><!-- quickstart: stop -->\s*\n)?"
-    r"<!-- quickstart: (?P<mode>run(?: background)?) -->\s*\n```bash\n(?P<body>.*?)```",
+    r"<!-- quickstart: (?P<mode>run(?: background)?|file \S+) -->\s*\n```\w+\n(?P<body>.*?)```",
     re.S,
 )
 
@@ -41,7 +41,11 @@ def _script() -> str:
     for stop, mode, body in _blocks():
         if stop:
             lines.append('kill "$BACKGROUND"; wait "$BACKGROUND" 2>/dev/null || true')
-        if mode == "run background":
+        if mode.startswith("file "):
+            # a file the reader saves, written where the guide's shell stands then
+            name = mode.removeprefix("file ")
+            lines.append(f"cat > {name} <<'QUICKSTART_FILE'\n{body}QUICKSTART_FILE")
+        elif mode == "run background":
             lines.append(f"{body.strip()} > background.log 2>&1 &")
             lines.append("BACKGROUND=$!")
             lines.append("sleep 2")
@@ -78,5 +82,9 @@ def test_the_quickstart_runs_as_written(tmp_path: Path) -> None:
     assert "blast_radius" in out, "the trigger's audit row was measured"
     assert "orders_audit" in out, "init named the trigger before the first call"
     assert "warranted  amend" in out, "two of three approved the amendment"
+    # the first minute: one tool in shadow mode, then enforced (1.14.0)
+    assert "ticket 1 closed" in out and "all closed" in out
+    assert "blast_radius: 1 plan, from close_all (1)" in out
+    assert "issued      mandate" in out
     assert out.rstrip().endswith("PASS"), "the bundle verified offline"
     assert out.count("update_orders: ok") == 1, "the same call committed under version 2"

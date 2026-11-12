@@ -37,8 +37,14 @@ MODULES = (
     "demo/overview.py",
     "demo/packs/kit.py",
     *(f"demo/packs/{name}.py" for name in PACKS),
+    # 1.14.0: what a governed tool, a solo deployment and the shadow report say
+    "sdk.py",
+    "solo.py",
+    "shadow.py",
+    "adapters.py",
+    "init.py",
 )
-"""Where the demo's and the reports' words are written."""
+"""Where the demo's, the reports' and the SDK's words are written."""
 
 BANNED = (
     # Security-marketing register: say what happened, to what, in plain words.
@@ -173,11 +179,14 @@ def test_names_is_not_the_verb_for_everything() -> None:
 
 
 def test_no_markdown_is_left_in_a_string() -> None:
-    """The console draws text, not Markdown. (``report/__init__.py`` writes ``report.md``,
-    which is Markdown, so it is the one file this rule skips.)"""
+    """The console draws text, not Markdown. (``report/__init__.py`` writes ``report.md`` and
+    ``init.py`` a deployment's ``README.md``, which are Markdown, so they are the files this
+    rule skips.)"""
     rule = re.compile(r"\*\*\w|\w\*\*")
     found = [
-        f"{f}:{n}: {s!r}" for f, n, s in CORPUS if f != "report/__init__.py" and rule.search(s)
+        f"{f}:{n}: {s!r}"
+        for f, n, s in CORPUS
+        if f not in ("report/__init__.py", "init.py") and rule.search(s)
     ]
     assert not found, "\n".join(found)
 

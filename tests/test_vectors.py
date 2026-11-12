@@ -136,11 +136,13 @@ OPTIONAL = (
     "unit_field",
     "sealed",
     "openings",
+    "enforcement",
 )
-"""Members 1.4 adds, each written only when set: a document without one is
-the document it always was."""
+"""Members 1.4 adds (and 1.14's ``enforcement``), each written only when set: a document
+without one is the document it always was."""
 DATA_MAPS = (
     ".tables",
+    ".kinds",
     ".sinks",
     ".per_sink",
     ".maximum",

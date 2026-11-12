@@ -10,14 +10,54 @@ produces evidence that an auditor can verify without trusting the agent or the o
 Fiduciary records who set each limit and who approved each exception, as signed
 documents. Anyone with the public keys can verify them offline.
 
-> **Start here:** [the live console](https://crimsondevil0929.github.io/fiduciary/) ·
+> **Start here:** [one tool in shadow mode, in 60 seconds](#wrap-one-tool-in-shadow-mode-in-60-seconds) ·
+> [the live console](https://crimsondevil0929.github.io/fiduciary/) ·
 > [30-minute quickstart](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/QUICKSTART.md) · [threat model](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/THREAT_MODEL.md) ·
 > [how the three packages fit together](#start-here)
+
+## Wrap one tool, in shadow mode, in 60 seconds
+
+```bash
+pip install interlock-fiduciary
+fiduciary init --solo --shadow --substrate sqlite --database app.db
+```
+
+```python
+import fiduciary
+
+gov = fiduciary.open()  # the deployment init wrote into .fiduciary/
+
+
+@gov.tool
+def close_all(db: fiduciary.Sql) -> str:
+    """Close every open ticket."""
+    db.execute("UPDATE tickets SET status = 'closed' WHERE status = 'open'")
+    return "all closed"
+```
+
+Each call runs in a stage. The function writes through its handle, and when it returns the
+writes are measured and checked against the mandate as one plan. In shadow mode the plan
+commits either way, and `fiduciary shadow report` lists what would have been refused and why
+(here, a call that changed more rows than the mandate allows). `fiduciary solo enforce`
+turns the same bounds on: from then on such a call raises `fiduciary.Refused`, nothing
+changes, and the text says why in words written for the agent.
+
+- **Systems:** `fiduciary.Sql` (SQLite, PostgreSQL), `fiduciary.Workspace` (a directory),
+  `fiduciary.Rest` (a JSON REST API). Only what goes through the handle is staged: a tool
+  that opens its own connection writes outside the stage, where nothing measures it.
+- **Agent frameworks:** `fiduciary.adapters` hands the same tools to MCP, the Claude Agent
+  SDK, the OpenAI Agents SDK and LangGraph.
+- **One principal, then three:** `--solo` is you alone. `fiduciary solo add-principals`
+  names two more, and from then on two of the three approve anything that grants more.
+
+The [quickstart](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/QUICKSTART.md)
+runs this in its first minute, then builds the full deployment: an agent over MCP, an
+exception two of three approve, and an audit bundle anyone can verify offline.
 
 ## Start here
 
 **See the whole stack working:** <https://crimsondevil0929.github.io/fiduciary/>. Eight
-agent workflows across six families run on one engine, a real model's recorded turns are
+agent workflows on six kinds of system run on one engine, a real model's recorded turns are
 replayed on the current release, and 20 audit bundles can be verified in your browser.
 
 A gateway decides whether an agent may call a tool. This stack decides whether what the call
@@ -47,9 +87,9 @@ fiduciary demo --replay --out demo --serve --open
 ## One engine, every kind of agent workflow
 
 The same checks, budgets, quorum warrants and offline proof apply to any agent action that has
-a consequence, a limit, or someone who has to approve it. The demo runs eight workflows, in six
-families, across six kinds of system (SQL, Git, local directories, Kubernetes, FHIR R4, and
-JSON REST APIs, plus outbound vendor relays). Only the system underneath and the vocabulary
+a consequence, a limit, or someone who has to approve it. The demo runs eight workflows across
+six kinds of system (local directories, Git, Kubernetes, FHIR R4, JSON REST APIs, and SQL,
+plus outbound vendor relays). Only the system underneath and the vocabulary
 change:
 
 | Workflow | Runs on | What the gateway let through, and the stack stopped | Partition | Approvers | Run it |
@@ -734,6 +774,37 @@ filesystem, or a network filesystem with cross-host locking. A writer that freez
 its locks until it resumes or exits, and the node that took over its role waits, healthy,
 until then. Configure your supervisor to kill a node whose `/healthz` stops responding;
 that bounds the wait (see `docs/FIDUCIARY_SPEC.md`, F10-19).
+
+## Tools in your own code: `fiduciary.open` and `@gov.tool`
+
+`fiduciary init --solo` writes a deployment into `.fiduciary/`, and `fiduciary.open()` finds
+it from the project or any folder below it (or from `$FIDUCIARY_CONFIG`). `@gov.tool` wraps a
+function whose first parameter is the handle; the rest are the tool's arguments, typed, and
+its docstring is the tool's description.
+
+| Handle | System | Writes | Reads in the stage |
+|---|---|---|---|
+| `fiduciary.Sql` | SQLite, PostgreSQL | `execute(statement, parameters)`: one INSERT, UPDATE or DELETE | `query(statement, parameters)`, rolled back |
+| `fiduciary.Workspace` | a directory | `write`, `append`, `replace`, `delete`, `move` | `read(path)`, `paths()` |
+| `fiduciary.Rest` | a JSON REST API | `create`, `patch`, `expect_version` | none: the stage holds predictions |
+
+A call returns the function's value when its plan commits. It raises `fiduciary.Refused` when
+the arguments or the plan are refused; `str(exc)` is written for the agent, and `exc.result`
+holds the measured diff and the verdict for you. A function that raises leaves nothing
+behind. Under a shadow mandate, `gov.observed` lists what this process let through.
+
+```python
+from fiduciary.adapters import claude_agent_server, langchain_tools, openai_agents_tools, serve_mcp
+```
+
+Each adapter wraps the same tools in a framework's own type, and a refusal reaches the model
+as the tool's error. The frameworks are not dependencies of fiduciary.
+
+**What is not governed.** Only writes through the handle are staged. A tool that opens its
+own connection, writes a file by its own path or calls an API directly does so outside the
+stage, where nothing measures, checks or undoes it. On a solo deployment the owner's key is on
+the same machine as the code, as it is for any one-person setup: grow the deployment to
+three principals before the mandate guards anything the code's author must not decide alone.
 
 ## An MCP server's tools, governed: `fiduciary init`
 

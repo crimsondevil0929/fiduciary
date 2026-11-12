@@ -335,17 +335,19 @@ def test_the_overview_counts_only_what_ran(stack: Outcome) -> None:
     found = stack.payload["overview"]
     rows = {r["key"]: r for r in found["industries"]}
     assert [r["key"] for r in found["industries"]] == [
-        "coding-agent",
         "workspace",
+        "coding-agent",
         "sre",
         "healthcare",
         "service-desk",
+        "fintech",
         "saas",
         "supply-chain",
-        "fintech",
     ]
-    assert [r["family"] for r in found["industries"]][:2] == ["Coding & repo agents"] * 2
-    assert len({r["family"] for r in found["industries"]}) == 6
+    families = [r["family"] for r in found["industries"]]
+    systems = ["Files", "Git", "Kubernetes", "FHIR", "REST API", "SQL"]
+    assert list(dict.fromkeys(families)) == systems
+    assert families.count("SQL") == 3
     assert all(rows[k]["ran"] for k in ("fintech", *PACKS))
     assert rows["coding-agent"]["ran"] is ("coding-agent" in PACKS)
     assert rows["coding-agent"]["substrate"] == "Git" and rows["saas"]["substrate"] == "SQLite"
@@ -404,7 +406,8 @@ def test_one_pack_alone_and_what_the_command_refuses(tmp_path: Path) -> None:
         assert cli.main(["demo", "--domain", "sre", "--gateway", "builtin", "--out", str(out)]) == 0
     assert "Scenario 7  Offline audit, and the cluster's own audit log" in printed.getvalue()
     embedded = (out / "demo.json").read_text()
-    assert json.loads(embedded)["overview"]["industries"][2]["ran"]
+    rows = {r["key"]: r for r in json.loads(embedded)["overview"]["industries"]}
+    assert rows["sre"]["ran"]
     assert "domains" not in json.loads(embedded)
     with pytest.raises(ValueError, match="domain is one of"):
         run(tmp_path / "y", domain="retail")
@@ -561,7 +564,8 @@ def test_a_live_model_works_each_packs_signature_act(key: str, tmp_path: Path) -
     for name in ("before", "after"):
         scanned = audit["verdicts"][name]["scan"]
         assert scanned["planted"]["prompts"] >= 4 and scanned["found"]["prompts"] == 0
-    assert outcome.payload["overview"]["industries"][list(PACKS).index(key)]["mode"] == "live"
+    rows = {r["key"]: r for r in outcome.payload["overview"]["industries"]}
+    assert rows[key]["mode"] == "live"
 
 
 def test_a_live_pack_act_stops_at_its_cost_cap(tmp_path: Path) -> None:

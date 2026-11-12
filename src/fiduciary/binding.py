@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 from agentgov.exceptions import AgentGovError
 from interlock.anchor import LedgerAnchor
 from interlock.chain import EscrowChain
-from interlock.engine import EscrowEngine, StageResult
+from interlock.engine import EscrowEngine, OpenStage, StageResult
 from interlock.exceptions import CompensatedError
 from interlock.sensors import Sensor
 from interlock.types import EffectPlan
@@ -40,7 +40,7 @@ from interlock.types import EffectPlan
 from fiduciary import fidu1
 from fiduciary.authority import Authority, Decide
 from fiduciary.checkers import admits_scope
-from fiduciary.compiler import CompiledMandate, Deployment, compile
+from fiduciary.compiler import ALWAYS_ENFORCED, CompiledMandate, Deployment, compile
 from fiduciary.documents import Mandate, Record
 from fiduciary.exceptions import AuthorityError, FiduciaryError
 from fiduciary.log import Log
@@ -131,6 +131,9 @@ class MandateEngine:
             # The deployment's analyzers see every diff; a mandate that needs
             # one's word says so with a SensorAttestation (data.sensors).
             sensors=self._sensors,
+            # A shadow mandate's engine watches and does not refuse (1.14.0).
+            observe_only=compiled.shadow,
+            always_enforce=ALWAYS_ENFORCED if compiled.shadow else (),
         )
 
     @property
@@ -187,6 +190,41 @@ class MandateEngine:
                 if self._closed and not self._staging:
                     self._chain.close()  # closed during this plan: it has finished now
 
+    def stage(self, scope: str, *, trajectory: str | None = None, intent: str = "") -> MandateStage:
+        """Open a stage before its plan is whole (interlock's ``EscrowEngine.stage``,
+        1.14.0): for code in this process that reads, decides and writes. The plan
+        its effects make is judged by the version bound when the stage opened.
+
+        :raises BindingError: As :meth:`execute`.
+        """
+        with self._lock:
+            if self._closed:
+                raise BindingError(f"mandate {self._mandate.mandate_id} is no longer bound")
+            now = self._clock()
+            if not self._mandate.not_before <= now < self._mandate.not_after:
+                raise BindingError(
+                    f"mandate {self._mandate.mandate_id} version {self._mandate.version} is "
+                    f"outside its term at {fidu1.format_instant(now)}"
+                )
+            engine = self._engine
+            self._staging += 1
+        try:
+            opened = engine.stage(scope, trajectory_id=trajectory, intent=intent)
+        except BaseException:
+            self._finished()
+            raise
+        return MandateStage(self, opened)
+
+    def _finished(self) -> None:
+        with self._lock:
+            self._staging -= 1
+            if self._closed and not self._staging:
+                self._chain.close()
+
+    def _observed(self, result: StageResult) -> None:
+        for observer in list(self._observers):
+            observer(result)
+
     def observe(self, observer: Callable[[StageResult], None]) -> None:
         """Hand ``observer`` every result this engine returns from now on,
         committed or refused, before its caller sees it: the operator's view,
@@ -210,6 +248,52 @@ class MandateEngine:
                 self._closed = True
                 if not self._staging:  # else the plan in flight closes it as it ends
                     self._chain.close()
+
+
+class MandateStage:
+    """A stage a :class:`MandateEngine` opened (:meth:`MandateEngine.stage`). Its
+    engine's observers see the result of :meth:`settle`, as they see every plan's."""
+
+    __slots__ = ("_done", "_engine", "_opened")
+
+    def __init__(self, engine: MandateEngine, opened: OpenStage) -> None:
+        self._engine = engine
+        self._opened = opened
+        self._done = False
+
+    @property
+    def opened(self) -> OpenStage:
+        """Interlock's stage: add effects to it, and read in it."""
+        return self._opened
+
+    def settle(self) -> StageResult | None:
+        """The plan the stage's effects make, judged and committed or refused;
+        ``None`` when no effect was added (nothing is recorded)."""
+        if self._done:
+            raise BindingError("this stage is settled or discarded")
+        self._done = True
+        try:
+            try:
+                result = self._opened.settle()
+            except CompensatedError as exc:
+                if isinstance(exc.result, StageResult):
+                    self._engine._observed(exc.result)
+                raise
+            if result is not None:
+                self._engine._observed(result)
+            return result
+        finally:
+            self._engine._finished()
+
+    def discard(self) -> None:
+        """Give the stage back: nothing it did is kept, and nothing is recorded."""
+        if self._done:
+            return
+        self._done = True
+        try:
+            self._opened.discard()
+        finally:
+            self._engine._finished()
 
 
 class Binder:

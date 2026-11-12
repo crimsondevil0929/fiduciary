@@ -1,5 +1,95 @@
 # Put it in front of your agent in 30 minutes
 
+## First, one tool in shadow mode (60 seconds)
+
+The quickest way to see what the stack would do is to wrap one tool you already have and let
+it watch. In shadow mode every call goes through as it does today, and the stack records
+which calls it would have refused, and why. Nothing is blocked until you say so.
+
+```bash
+pip install interlock-fiduciary
+```
+
+A project with a SQLite database of three open tickets:
+
+<!-- quickstart: run -->
+```bash
+mkdir helpdesk && cd helpdesk
+python3 -c "
+import sqlite3
+conn = sqlite3.connect('app.db')
+conn.executescript('''CREATE TABLE tickets (id INTEGER PRIMARY KEY, status TEXT NOT NULL);
+INSERT INTO tickets VALUES (1, 'open'), (2, 'open'), (3, 'open');''')
+conn.commit()"
+fiduciary init --solo --shadow --substrate sqlite --database app.db
+```
+
+`--solo` writes a deployment of one principal, you, into `.fiduciary/` (its `.gitignore`
+keeps it all out of version control). `--shadow` issues its mandate in shadow mode. The
+starter mandate lets one call change one row.
+
+Two tools, written as you would write them, with a handle in place of a connection. Save
+them as `tools.py`:
+
+<!-- quickstart: file tools.py -->
+```python
+import fiduciary
+
+gov = fiduciary.open()
+
+
+@gov.tool
+def close_ticket(db: fiduciary.Sql, ticket_id: int) -> str:
+    """Close one ticket."""
+    db.execute("UPDATE tickets SET status = 'closed' WHERE id = :id", {"id": ticket_id})
+    return f"ticket {ticket_id} closed"
+
+
+@gov.tool
+def close_all(db: fiduciary.Sql) -> str:
+    """Close every open ticket."""
+    db.execute("UPDATE tickets SET status = 'closed' WHERE status = 'open'")
+    return "all closed"
+
+
+print(close_ticket(ticket_id=1))
+print(close_all())
+```
+
+<!-- quickstart: run -->
+```bash
+python3 tools.py
+fiduciary shadow report
+```
+
+Both calls went through, and the report names the one the mandate would have refused:
+
+```
+  2 plans staged: 2 committed, 0 refused, 0 put back.
+  1 of them would have been refused if the mandate were enforced:
+    blast_radius: 1 plan, from close_all (1)
+```
+
+When the report shows only what you meant to refuse, enforce the same bounds. From then on
+`close_all` raises `fiduciary.Refused` with nothing changed, and its text, written for the
+agent, says why:
+
+<!-- quickstart: run -->
+```bash
+fiduciary solo enforce
+cd ..
+```
+
+Each call runs in a stage: the function's writes through its handle land there, and when it
+returns they are measured and checked as one plan. Only what goes through the handle is
+staged. A tool that opens its own connection writes outside the stage, where nothing
+measures it. `fiduciary.adapters` hands the same tools to MCP, the Claude Agent SDK, the
+OpenAI Agents SDK and LangGraph, and `fiduciary solo add-principals` grows the deployment
+to three principals, two of whom must agree to grant more.
+
+The rest of this guide is the full deployment: three principals, an agent over MCP, an
+exception two of three approve, and the audit bundle.
+
 This guide takes you from `pip install` to an agent whose writes are measured before they
 commit, an exception two of three people approve, and an audit bundle anyone can verify
 offline. It uses a small SQLite database so every step runs on a laptop. The same steps

@@ -1,6 +1,6 @@
-"""The console's overview: the same engine in eight workflows of six families (on SQL, Git, a
-directory, Kubernetes, a FHIR server and a REST API), the measurement ladder, and the live
-acceptance matrix Interlock recorded.
+"""The console's overview: the same engine in eight workflows on six kinds of system (a
+directory, Git, Kubernetes, a FHIR server, a REST API, and SQL), the measurement ladder, and
+the live acceptance matrix Interlock recorded.
 
 :func:`overview` reads the payloads of the industries a run played and counts,
 from what each one measured, which check refused a plan, which warrants formed,
@@ -18,9 +18,11 @@ from typing import Any, Final
 __all__ = ["ACCEPTANCE", "INDUSTRIES", "LADDER", "overview"]
 
 INDUSTRIES: Final = (
+    {"key": "workspace", "family": "Files", "workflow": "Workspace agent", "class": "T",
+     "substrate": "a directory"},
     {
         "key": "coding-agent",
-        "family": "Coding & repo agents",
+        "family": "Git",
         "workflow": "Coding agent",
         "industry": "Coding agents",
         "title": "A maintainer agent on a Git repository",
@@ -37,30 +39,21 @@ INDUSTRIES: Final = (
             "verifier": "the security team, a SOC 2 auditor",
         },
     },
-    {
-        "key": "workspace",
-        "family": "Coding & repo agents",
-        "workflow": "Workspace agent",
-        "class": "T",
-        "substrate": "Files",
-    },
-    {"key": "sre", "family": "Cloud & infrastructure", "workflow": "Cloud SRE", "class": "P",
+    {"key": "sre", "family": "Kubernetes", "workflow": "Cloud SRE", "class": "P",
      "substrate": "Kubernetes"},
-    {"key": "healthcare", "family": "Clinical & regulated", "workflow": "Clinical EHR",
-     "class": "V", "substrate": "FHIR R4"},
-    {"key": "service-desk", "family": "SaaS, ticketing & CRM", "workflow": "Service desk & CRM",
+    {"key": "healthcare", "family": "FHIR", "workflow": "Clinical EHR", "class": "V",
+     "substrate": "FHIR R4"},
+    {"key": "service-desk", "family": "REST API", "workflow": "Service desk & CRM",
      "class": "V", "substrate": "REST API"},
-    {"key": "saas", "family": "SaaS, ticketing & CRM", "workflow": "SaaS admin", "class": "T"},
-    {"key": "supply-chain", "family": "Supply chain & ERP", "workflow": "Supply chain ERP",
-     "class": "T"},
     {
         "key": "fintech",
-        "family": "Fintech & payments",
+        "family": "SQL",
         "workflow": "Refunds & payments",
         "industry": "Fintech",
         "title": "Support refunds and order adjustments",
         "frameworks": ["soc2", "owasp-asi-2026", "eu-ai-act"],
         "class": "T",
+        "substrate": "SQLite",
         "nouns": {
             "measure": "rows of orders and refunds",
             "hidden": "a cascading settlement trigger",
@@ -71,10 +64,15 @@ INDUSTRIES: Final = (
             "verifier": "auditor, insurer",
         },
     },
+    {"key": "saas", "family": "SQL", "workflow": "SaaS admin", "class": "T",
+     "substrate": "SQLite"},
+    {"key": "supply-chain", "family": "SQL", "workflow": "Supply chain ERP", "class": "T",
+     "substrate": "SQLite"},
 )  # fmt: skip
-"""Every workflow the overview shows, in the order the workbench lists them, each in its
-family. The packs' own entries come from their profiles; these fill in fintech, the coding
-agent's nouns, and what each runs on."""
+"""Every workflow the overview shows, in the order the workbench lists them, each under the
+kind of system it stages on (1.14.0: the three SQL workflows sit together, after the five
+systems that are not databases). The packs' own entries come from their profiles; these
+fill in fintech, the coding agent's nouns, and what each runs on."""
 
 LADDER: Final = (
     {

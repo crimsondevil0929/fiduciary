@@ -475,6 +475,9 @@ def _budgets(check: _Check, child: Mandate, parent: Mandate) -> None:
 def _tools(check: _Check, child: Mandate, parent: Mandate) -> None:
     if parent.tools.statements == "bound" and child.tools.statements != "bound":
         check.fail("tools.statements", "admits any statement, and the parent's only bound ones")
+    if child.shadow and not parent.shadow:
+        # 1.14.0: a shadow mandate commits what its bounds would refuse
+        check.fail("enforcement", "is shadow, and the parent's bounds are enforced")
     pinned = {(b.name, b.digest) for b in parent.tools.bindings}
     for binding in child.tools.bindings:
         if (binding.name, binding.digest) not in pinned:

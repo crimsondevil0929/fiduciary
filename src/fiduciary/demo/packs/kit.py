@@ -129,7 +129,8 @@ class Pack:
     scope: str
     funding: str
     label: str
-    principals: tuple[str, str, str]
+    principals: tuple[str, ...]
+    """Three, of whom two issue a mandate; or one, who decides alone (solo, 1.14.0)."""
     operator: str
     """The break-glass key's holder, declared in the charter."""
     tenants: tuple[str, ...]
@@ -189,6 +190,16 @@ class Pack:
     outbox: str | None = None
     """Where the executor's outbox is, when not in the back office (a PostgreSQL
     connection string, for ``fiduciary init --substrate postgres``)."""
+    enforcement: str = "enforce"
+    """``"shadow"`` for a root mandate that watches and does not refuse (1.14.0)."""
+    statements: str = "bound"
+    """``"any"`` when plans are built by code in this process (the SDK, 1.14.0),
+    whose statements no binding pins: the mandate's bounds on what a plan
+    changes judge them all the same."""
+    term_days: int = 30
+    """How long the root mandate is in force."""
+    governance: Mapping[str, Any] | None = None
+    """The root mandate's ``governance``, when not the demo's."""
     vendor_log: tuple[str, str, str] | None = None
     """For a pack whose writes go to an outside vendor: the sink, the format
     the vendor exports its log in, and the actor it records for the relay
@@ -465,16 +476,22 @@ def mandate_json(world: PackWorld, *, envelope: str = "25.00000000") -> dict[str
         "subject": {"scope": pack.scope, "funded_from": pack.funding, "label": pack.label},
         "term": {
             "not_before": fidu1.format_instant(now - timedelta(hours=1)),
-            "not_after": fidu1.format_instant(now + timedelta(days=30)),
+            "not_after": fidu1.format_instant(now + timedelta(days=pack.term_days)),
         },
-        "roster": {"principals": sorted(pack.principals), "quorums": dict(pack.quorums)},
+        "roster": {
+            "principals": sorted(pack.principals),
+            # no quorum is larger than the roster: one principal decides alone
+            "quorums": {c: min(q, len(pack.principals)) for c, q in pack.quorums.items()},
+        },
         "budget": {
             "envelope": envelope,
             "per_call": "0.50000000",
             "models": sorted(PRICING),
             "max_output_tokens": 4096,
         },
-        "governance": {
+        "governance": dict(pack.governance)
+        if pack.governance is not None
+        else {
             "max_calls": 600,
             "seconds": 60,
             "fleet_velocity": True,
@@ -494,7 +511,7 @@ def mandate_json(world: PackWorld, *, envelope: str = "25.00000000") -> dict[str
         "outbound": pack.outbound(),
         "windows": pack.windows(),
         "tools": {
-            "statements": "bound",
+            "statements": pack.statements,
             "bindings": sorted(
                 ({"name": t.name, "digest": t.digest} for t in world.tools.values()),
                 key=lambda pin: str(pin["name"]),
@@ -528,6 +545,7 @@ def mandate_json(world: PackWorld, *, envelope: str = "25.00000000") -> dict[str
         "escalation": {"max_open": 5, "ttl_seconds": 3600, "auto": []},
         "delegation": dict(pack.delegation) if pack.delegation is not None else None,
         "issued_at": fidu1.format_instant(now),
+        **({"enforcement": "shadow"} if pack.enforcement == "shadow" else {}),
     }
 
 
@@ -863,7 +881,13 @@ def build(root: Path, pack: Pack) -> PackWorld:
                 {"name": n, "key": key_spec(signers[n].public_key())}
                 for n in sorted(pack.principals)
             ],
-            "quorums": {"charter": 3, "issue": 2, "revoke": 1},
+            # three principals: all adopt a charter, two issue a mandate, one
+            # suspends a key. One principal (solo, 1.14.0) decides each alone.
+            "quorums": {
+                "charter": len(pack.principals),
+                "issue": min(2, len(pack.principals)),
+                "revoke": 1,
+            },
             "break_glass": [str(signers[pack.operator].public_key().key_id)],
             "issued_at": fidu1.format_instant(datetime.now(UTC)),
         },
@@ -952,7 +976,7 @@ def build(root: Path, pack: Pack) -> PackWorld:
         signer = signers[pack.principals[0]]
         mandate = Mandate.from_json(mandate_json(world), signed=False).signed(signer)
         authority.propose(mandate)
-        for principal in pack.principals[:2]:
+        for principal in pack.principals[: min(2, len(pack.principals))]:
             world.approve(principal, "mandate", mandate.digest)
         binder.issue(mandate.digest)
         binder.bind(mandate.digest)

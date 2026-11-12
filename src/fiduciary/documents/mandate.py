@@ -68,6 +68,7 @@ __all__ = [
     "Tools",
     "UnitBudget",
     "Window",
+    "in_vocabulary",
 ]
 
 GRANTING: Final = (
@@ -356,6 +357,12 @@ class Governance:
 # rows
 # --------------------------------------------------------------------------
 
+SQL: Final = "sql"
+RESOURCE: Final = "resource"
+_DATA_WORDS: Final = {SQL: ("tables", "max_rows"), RESOURCE: ("kinds", "max_changes")}
+"""What a mandate calls the kinds of thing its plans may change, and how many
+changes one plan may make, in each vocabulary (amended in 1.14.0)."""
+
 
 @dataclass(frozen=True, slots=True)
 class Drawdown:
@@ -545,6 +552,26 @@ class Data:
     acknowledge_unknown: tuple[str, ...] = ()
     """``<table>.<column>`` names whose values a plan-bound substrate knows
     only after the apply, accepted unmeasured (1.5.0). Written only when set."""
+    vocabulary: str = SQL
+    """The words the mandate was written in (amended in 1.14.0). ``"sql"``:
+    ``tables`` and ``max_rows``, and its plans are judged by the checkers
+    Interlock names for SQL (``table_allowlist``, ``blast_radius``,
+    ``tenant_isolation``, ``column_value_guard``). ``"resource"``: ``kinds``
+    and ``max_changes``, judged by the same checks under their names for
+    every system (``kind_allowlist``, ``change_limit``,
+    ``partition_isolation``, ``value_guard``). The bounds are the same
+    bounds; a mandate is written in one of the two, and its digest covers
+    which."""
+
+    @property
+    def kinds(self) -> Mapping[str, tuple[str, ...]]:
+        """:attr:`tables`, under its name for every system."""
+        return self.tables
+
+    @property
+    def max_changes(self) -> int:
+        """:attr:`max_rows`, under its name for every system."""
+        return self.max_rows
 
     def to_json(self) -> dict[str, Any]:
         found = self._json()
@@ -561,11 +588,12 @@ class Data:
         return found
 
     def _json(self) -> dict[str, Any]:
+        kinds, limit = _DATA_WORDS[self.vocabulary]
         return {
-            "tables": {t: list(ops) for t, ops in sorted(self.tables.items())},
+            kinds: {t: list(ops) for t, ops in sorted(self.tables.items())},
             "tenants": "*" if self.tenants is None else list(self.tenants),
             "declared_tenants": self.declared_tenants,
-            "max_rows": self.max_rows,
+            limit: self.max_rows,
             "max_tenants": self.max_tenants,
             "drawdown": [d.to_json() for d in self.drawdown],
             "stated_footprint": None
@@ -949,6 +977,10 @@ class Delegation:
 # --------------------------------------------------------------------------
 
 
+ENFORCE: Final = "enforce"
+SHADOW: Final = "shadow"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Mandate(Document):
     """One version of a mandate (F4-7 to F4-12)."""
@@ -976,7 +1008,7 @@ class Mandate(Document):
         "delegation",
         "issued_at",
     )
-    OPTIONAL: ClassVar[tuple[str, ...]] = ("budgets",)
+    OPTIONAL: ClassVar[tuple[str, ...]] = ("budgets", "enforcement")
 
     mandate_id: str
     version: int
@@ -1002,7 +1034,17 @@ class Mandate(Document):
     budgets: Mapping[str, UnitBudget] = field(default_factory=dict)
     """Budgets in units other than the model spend's, by unit (amended in
     1.4.0): written only when set."""
+    enforcement: str = ENFORCE
+    """``"enforce"``, or ``"shadow"`` (amended in 1.14.0): under a shadow
+    mandate every plan is staged, measured and judged against these bounds,
+    and commits; a bound it breaks is recorded as observed, never refused.
+    Written only when ``"shadow"``, so every mandate issued before keeps its
+    encoding. Enforcement begins with the version that leaves it out."""
     signature: Signature | None = None
+
+    @property
+    def shadow(self) -> bool:
+        return self.enforcement == SHADOW
 
     @property
     def ref(self) -> MandateRef:
@@ -1038,6 +1080,7 @@ class Mandate(Document):
                 if self.budgets
                 else {}
             ),
+            **({"enforcement": SHADOW} if self.enforcement == SHADOW else {}),
         }
 
     # -- reading ------------------------------------------------------------------
@@ -1073,9 +1116,10 @@ class Mandate(Document):
             "data": _read_data(
                 fields.object(
                     "data",
-                    _DATA_FIELDS,
+                    _data_fields(vocabulary := _vocabulary(fields)),
                     ("partitions", "receipt_tenants", "sensors", "checkers", "acknowledge_unknown"),
-                )
+                ),
+                vocabulary,
             ),
             "outbound": _read_outbound(fields.object("outbound", _OUTBOUND_FIELDS)),
             "windows": _read_windows(fields),
@@ -1100,6 +1144,10 @@ class Mandate(Document):
             ),
             "issued_at": fields.instant("issued_at"),
             "budgets": _read_budgets(fields) if fields.has("budgets") else {},
+            # the default is never written: one mandate has one encoding
+            "enforcement": fields.choice("enforcement", (SHADOW,))
+            if fields.has("enforcement")
+            else ENFORCE,
         }
 
     def _agree(self) -> None:
@@ -1208,17 +1256,43 @@ class Mandate(Document):
 # readers
 # --------------------------------------------------------------------------
 
-_DATA_FIELDS: Final = (
-    "tables",
-    "tenants",
-    "declared_tenants",
-    "max_rows",
-    "max_tenants",
-    "drawdown",
-    "stated_footprint",
-    "agreements",
-    "facts",
-)
+
+def in_vocabulary(data: Mapping[str, Any], vocabulary: str) -> dict[str, Any]:
+    """A mandate's ``data`` object, as JSON, in ``vocabulary``'s words: the
+    same bounds, with ``tables`` and ``max_rows`` renamed ``kinds`` and
+    ``max_changes`` for :data:`RESOURCE`, or back for :data:`SQL`. Every other
+    member is kept as it is."""
+    renamed = dict(
+        zip(_DATA_WORDS[SQL] + _DATA_WORDS[RESOURCE], _DATA_WORDS[vocabulary] * 2, strict=True)
+    )
+    return {renamed.get(name, name): value for name, value in data.items()}
+
+
+def _data_fields(vocabulary: str) -> tuple[str, ...]:
+    kinds, limit = _DATA_WORDS[vocabulary]
+    return (
+        kinds,
+        "tenants",
+        "declared_tenants",
+        limit,
+        "max_tenants",
+        "drawdown",
+        "stated_footprint",
+        "agreements",
+        "facts",
+    )
+
+
+def _vocabulary(fields: Fields) -> str:
+    """Which words ``data`` is written in: ``kinds`` and ``max_changes``, or
+    ``tables`` and ``max_rows``. One or the other, never a mix: the object's
+    required members are then the one vocabulary's, so a stray word of the
+    other is refused as an unknown member."""
+    raw = fields.raw("data") if fields.has("data") else None
+    return RESOURCE if isinstance(raw, dict) and "kinds" in raw else SQL
+
+
+_DATA_FIELDS: Final = _data_fields(SQL)
 _OUTBOUND_FIELDS: Final = ("sinks", "max_per_plan", "per_sink", "caps", "recipients", "tenants")
 _RECOVERY_FIELDS: Final = (
     "reserve",
@@ -1261,14 +1335,21 @@ def _read_governance(fields: Fields) -> Governance:
     )
 
 
-def _read_data(fields: Fields) -> Data:
+def _read_data(fields: Fields, vocabulary: str = SQL) -> Data:
+    kinds_key, limit_key = _DATA_WORDS[vocabulary]
     tables: dict[str, tuple[str, ...]] = {}
-    for table, path, ops in fields.mapping("tables", IDENTIFIER):
+    for table, path, ops in fields.mapping(kinds_key, IDENTIFIER):
         operations = check_strings(
             ops, path, fidu1.one_of(OPERATIONS), "apply, insert, update or delete"
         )
         if not operations:
-            raise MalformedError("agreement", path, "allows no operation: leave the table out")
+            raise MalformedError(
+                "agreement",
+                path,
+                "allows no operation: leave the "
+                + ("table" if vocabulary == SQL else "kind")
+                + " out",
+            )
         tables[table] = operations
     # An empty map allows no table at all: every row a plan writes is refused
     # (TableAllowlist). The mandate of an agent whose tools write nothing but
@@ -1401,7 +1482,7 @@ def _read_data(fields: Fields) -> Data:
         tables=tables,
         tenants=tenants,
         declared_tenants=fields.boolean("declared_tenants"),
-        max_rows=fields.integer("max_rows", 1),
+        max_rows=fields.integer(limit_key, 1),
         max_tenants=fields.integer("max_tenants", 1, 1_000_000),
         drawdown=sorted_by(drawdown, lambda d: d.identity, fields.path("drawdown")),
         stated_footprint=footprint,
@@ -1412,6 +1493,7 @@ def _read_data(fields: Fields) -> Data:
         sensors=sorted_by(sensors, lambda r: r.identity, fields.path("sensors")),
         checkers=sorted_by(checkers, lambda c: c.identity, fields.path("checkers")),
         acknowledge_unknown=acknowledged,
+        vocabulary=vocabulary,
     )
 
 

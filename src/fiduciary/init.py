@@ -264,10 +264,11 @@ def _binding(tool: Mapping[str, Any], mode: str) -> dict[str, Any]:
 
 def _pack(
     name: str,
-    principals: tuple[str, str, str],
+    principals: tuple[str, ...],
     tools: list[dict[str, Any]],
     modes: dict[str, str],
     schemas: dict[str, dict[str, Any]],
+    options: Mapping[str, Any],
 ) -> Any:
     from interlock.mcp import mcp_sink
 
@@ -376,14 +377,22 @@ def _pack(
         interlock=lambda root, database: (
             f'substrate = "sqlite"\ndatabase = {json.dumps(str(database))}\ntables = []\n'
         ),
+        **options,
     )
 
 
-def _starter_pack(name: str, principals: tuple[str, str, str], st: Starter) -> Any:
+def _starter_pack(
+    name: str, principals: tuple[str, ...], st: Starter, options: Mapping[str, Any]
+) -> Any:
     """A :class:`~fiduciary.demo.packs.kit.Pack` for a starter (:mod:`fiduciary.starters`)."""
     from fiduciary.demo.packs.kit import Pack
+    from fiduciary.documents.mandate import RESOURCE, SQL, in_vocabulary
 
     tools = st.tools
+    # A system that is not a database is bounded in its own words (1.14.0): kinds of
+    # thing and a number of changes, judged by kind_allowlist and change_limit.
+    words = SQL if st.nouns["substrate"] in ("sqlite", "postgres") else RESOURCE
+    starter_data = in_vocabulary(st.data, words)
     return Pack(
         key=name,
         industry=name,
@@ -401,7 +410,7 @@ def _starter_pack(name: str, principals: tuple[str, str, str], st: Starter) -> A
         tables=tuple(st.tables),
         sinks=(),
         tools=lambda: [copy.deepcopy(t) for t in tools],
-        data=lambda: copy.deepcopy(st.data),
+        data=lambda: copy.deepcopy(starter_data),
         outbound=lambda: {
             "sinks": {},
             "max_per_plan": 0,
@@ -423,6 +432,7 @@ def _starter_pack(name: str, principals: tuple[str, str, str], st: Starter) -> A
         interlock=st.interlock,
         back_office=st.back_office,
         outbox=st.outbox,
+        **options,
     )
 
 
@@ -431,9 +441,11 @@ def init(
     command: Sequence[str] | None = None,
     *,
     name: str | None = None,
-    principals: Sequence[str] = ("approver-1", "approver-2", "approver-3"),
+    principals: Sequence[str] = ("approver-1", "approver-2", "approver-3"),  # DEFAULT_PRINCIPALS
     discovered: Sequence[Mapping[str, Any]] | None = None,
     target: Target | None = None,
+    solo: bool = False,
+    shadow: bool = False,
 ) -> InitReport:
     """Write the deployment into ``root`` (new or empty).
 
@@ -442,19 +454,36 @@ def init(
     :param target: A system the agent changes directly (1.9.0): a database, a
         repository, a cluster, a Terraform configuration or a FHIR server. Its
         starter tools come from :func:`fiduciary.starters.starter`.
+    :param solo: One principal, who decides alone (1.14.0): ``principals`` names one,
+        ``owner`` by default. Plans may be built by code in this process (the SDK), and
+        the mandate is in force for a year. :mod:`fiduciary.solo` grows it to three.
+    :param shadow: Issue the mandate in shadow mode (1.14.0): every plan is judged and
+        commits; what would have been refused is recorded, not refused.
     :raises ValueError: On a name, principals or a directory init cannot use,
         or a target it cannot read.
     """
     from fiduciary.demo.packs import kit
 
-    label = name or re.sub(r"[^a-z0-9_]", "_", root.name.lower()).strip("_") or "agent"
+    # .fiduciary is named for the project it sits in
+    named = root.resolve().parent.name if root.name.startswith(".") else root.name
+    label = name or re.sub(r"[^a-z0-9_]", "_", named.lower()).strip("_") or "agent"
     if not _NAME.fullmatch(label):
         raise ValueError(f"the deployment's name {label!r} is not a lowercase identifier")
-    if len(principals) != 3 or len(set(principals)) != 3:
+    if solo:
+        if tuple(principals) == DEFAULT_PRINCIPALS:
+            principals = (SOLO_PRINCIPAL,)
+        if len(principals) != 1:
+            raise ValueError("a solo deployment has one principal")
+    elif len(principals) != 3 or len(set(principals)) != 3:
         raise ValueError("a charter here names three principals: give three distinct names")
     if root.exists() and any(root.iterdir()):
         raise ValueError(f"{root} is not empty: init writes a fresh deployment")
-    trio = (principals[0], principals[1], principals[2])
+    trio = tuple(principals)
+    options: dict[str, Any] = {}
+    if shadow:
+        options["enforcement"] = "shadow"
+    if solo:
+        options.update(statements="any", term_days=SOLO_TERM_DAYS)
     if target is not None:
         if command:
             raise ValueError("init takes --mcp or --substrate, not both")
@@ -474,7 +503,7 @@ def init(
             notes=list(st.notes),
             cautions=list(st.cautions),
         )
-        world = kit.build(root, _starter_pack(label, trio, st))
+        world = kit.build(root, _starter_pack(label, trio, st, options))
         try:
             if target.substrate == "postgres":
                 # init staged nothing: the outbox it made to stand the world up is not
@@ -487,10 +516,11 @@ def init(
             for name, text in st.files.items():
                 (root / name).write_text(text, encoding="utf-8")
             _bridge(root, report.scope)
-            _write_report(root, report, None, target)
+            _write_report(root, report, None, target, solo=solo, shadow=shadow)
         finally:
             world.close()
         _write_pins(root)
+        _private(root, solo)
         return report
     listed = list(discovered) if discovered is not None else (discover(command) if command else [])
     report = InitReport(root=root.resolve(), scope=f"{label}-agent", principals=tuple(principals))
@@ -514,17 +544,33 @@ def init(
         modes[tool_name] = mode
         schemas[tool_name] = binding["input"]
         report.tools.append({"name": tool_name, "mode": mode, "why": why})
-    pack = _pack(label, trio, bindings, modes, schemas)
+    pack = _pack(label, trio, bindings, modes, schemas, options)
     world = kit.build(root, pack)
     try:
         if command and any(m != READ for m in modes.values()):
             with (root / "interlock.toml").open("a", encoding="utf-8") as config:
                 config.write(_relay_toml(root, command))
-        _write_report(root, report, command, None)
+        _write_report(root, report, command, None, solo=solo, shadow=shadow)
     finally:
         world.close()
     _write_pins(root)
+    _private(root, solo)
     return report
+
+
+DEFAULT_PRINCIPALS: Final = ("approver-1", "approver-2", "approver-3")
+SOLO_PRINCIPAL: Final = "owner"
+SOLO_TERM_DAYS: Final = 365
+
+
+def _private(root: Path, solo: bool) -> None:
+    """A solo deployment sits inside a project, often a repository: everything in it
+    stays out of version control, the owner's key first among it."""
+    if solo:
+        (root / ".gitignore").write_text(
+            "# Written by fiduciary init --solo: keys, the store and the ledger are here.\n*\n",
+            encoding="utf-8",
+        )
 
 
 BRIDGE: Final = "127.0.0.1:8765"
@@ -633,9 +679,20 @@ def _write_pins(root: Path) -> None:
 
 
 def _write_report(
-    root: Path, report: InitReport, command: Sequence[str] | None, target: Target | None
+    root: Path,
+    report: InitReport,
+    command: Sequence[str] | None,
+    target: Target | None,
+    *,
+    solo: bool = False,
+    shadow: bool = False,
 ) -> None:
-    readme = _readme(report, command) if target is None else _substrate_readme(report, target)
+    if solo:
+        readme = _solo_readme(report, target, shadow=shadow)
+    elif target is None:
+        readme = _readme(report, command)
+    else:
+        readme = _substrate_readme(report, target)
     (root / "README.md").write_text(readme, encoding="utf-8")
     (root / "init.json").write_text(
         json.dumps(
@@ -750,6 +807,115 @@ _SETUP: Final = {
     "other records, and undone if the API changed anything the plan didn't predict. Name the "
     "fields the API writes itself under `managed` in `interlock.toml`.",
 }
+
+
+_SDK_EXAMPLE: Final = {
+    "sql": '''@gov.tool
+def close_ticket(db: fiduciary.Sql, ticket_id: int) -> str:
+    """Close one ticket."""
+    db.execute("UPDATE tickets SET status = 'closed' WHERE id = :id", {"id": ticket_id})
+    return f"ticket {ticket_id} closed"''',
+    "filesystem": '''@gov.tool
+def add_note(ws: fiduciary.Workspace, path: str, line: str) -> str:
+    """Add one line to a notes file."""
+    ws.append(path, line + "\\n")
+    return f"noted in {path}"''',
+    "rest": '''@gov.tool
+def assign(api: fiduciary.Rest, ticket_id: str, owner: str) -> str:
+    """Assign one ticket."""
+    api.patch("tickets", ticket_id, {"assignee": owner})
+    return f"{ticket_id} assigned to {owner}"''',
+}
+"""What a governed tool looks like on each system the SDK stages."""
+
+
+def _solo_readme(report: InitReport, target: Target | None, *, shadow: bool) -> str:
+    """The README of a solo deployment (1.14.0)."""
+    (owner,) = report.principals
+    config = report.root / "fiduciary.toml"
+    system = None if target is None else target.substrate
+    kind = "sql" if system in ("sqlite", "postgres") else system
+    example = _SDK_EXAMPLE.get(kind or "")
+    rows = "\n".join(f"| `{t['name']}` | {t['mode']} | {t['why']} |" for t in report.tools)
+    flags = " --shadow" if shadow else ""
+    parts = [
+        f"""# {report.scope}
+
+Written by `fiduciary init --solo{flags}`. One principal, `{owner}`, adopted the charter and
+issued the mandate alone, and decides every change to it. Nothing in this directory belongs in
+version control, and its `.gitignore` keeps it all out: `keys/` holds every private key.
+"""
+    ]
+    if shadow:
+        parts.append(
+            f"""
+## Shadow mode
+
+The mandate is in shadow mode. Every plan is staged, measured and checked against it, and
+then commits. What would have refused it is recorded on the escrow chain, and the agent is
+not told, so it works as it would with no governor. To see what the mandate would have
+refused:
+
+```
+fiduciary --config {config} shadow report
+```
+
+When the report shows only what you meant to refuse, enforce the same bounds:
+
+```
+fiduciary --config {config} solo enforce
+```
+"""
+        )
+    if example is not None:
+        parts.append(
+            f"""
+## Govern a tool in your own code
+
+```python
+import fiduciary
+
+gov = fiduciary.open()  # finds this directory from the project or any folder below it
+
+{example}
+```
+
+Each call runs in a stage: the function's writes through its handle land there, and when it
+returns they are measured and checked as one plan, then committed, or refused with nothing
+changed (`fiduciary.Refused`, whose text is written for the agent). Only what goes through the
+handle is staged. `fiduciary.adapters` hands the tools to MCP, the Claude Agent SDK, the
+OpenAI Agents SDK or LangGraph.
+"""
+        )
+    if rows:
+        parts.append(
+            f"""
+## Or serve the starter tools over MCP
+
+| Tool | Governed as | Why |
+|---|---|---|
+{rows}
+
+```
+fiduciary --config {config} mcp serve --mandate {report.scope}
+```
+"""
+        )
+    parts.append(
+        f"""
+## Add two principals
+
+```
+fiduciary --config {config} solo add-principals <name> <name>
+```
+
+This writes a key for each, adopts a second version of the charter naming the three of you,
+and issues the next version of the mandate. From then on two of the three approve a change
+that grants more, and any one can revoke. Give each their key and delete it here.
+
+{_audit(report.root)}"""
+    )
+    return "".join(parts)
 
 
 def _left_out(skipped: str) -> str:

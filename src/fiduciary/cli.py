@@ -1530,9 +1530,14 @@ def _init(args: argparse.Namespace) -> int:
         _fail("give the MCP server's command after --mcp --")
     if command and not args.mcp:
         _fail("a command is the MCP server's: pass --mcp")
-    principals = (
-        tuple(args.principal) if args.principal else ("approver-1", "approver-2", "approver-3")
-    )
+    from fiduciary.init import DEFAULT_PRINCIPALS
+    from fiduciary.sdk import STATE_DIRECTORY
+
+    principals = tuple(args.principal) if args.principal else DEFAULT_PRINCIPALS
+    if args.out is None:
+        if not args.solo:
+            _fail("give --out: the directory to write (with --solo, .fiduciary by default)")
+        args.out = STATE_DIRECTORY
     target = None
     if args.substrate:
         target = Target(
@@ -1555,7 +1560,13 @@ def _init(args: argparse.Namespace) -> int:
         )
     try:
         report = init(
-            Path(args.out), command or None, name=args.name, principals=principals, target=target
+            Path(args.out),
+            command or None,
+            name=args.name,
+            principals=principals,
+            target=target,
+            solo=args.solo,
+            shadow=args.shadow,
         )
     except (ValueError, OSError, McpError) as exc:
         _fail(str(exc))
@@ -1593,6 +1604,12 @@ def _init(args: argparse.Namespace) -> int:
             _out(f"relay       interlock relay --config {relay} --relay-id relay-a")
     else:
         _out(f"serve       fiduciary --config {config} mcp serve --mandate {report.scope}")
+    if args.solo:
+        if args.shadow:
+            _out(f"shadow      fiduciary --config {config} shadow report")
+            _out(f"enforce     fiduciary --config {config} solo enforce")
+        _out("sdk         import fiduciary; gov = fiduciary.open()  (README.md shows a tool)")
+        _out(f"grow        fiduciary --config {config} solo add-principals <name> <name>")
     _out(f"approve     fiduciary console --dir {root} --accept-approvals --open")
     _out(
         f"audit       fiduciary verify-bundle <bundle> --charter $(cat {root / 'charter.digest'}) "
@@ -1605,6 +1622,73 @@ def _init(args: argparse.Namespace) -> int:
         "agent.token with the agent alone. pinned-keys.json and charter.digest are "
         "public: hand them to your auditor once, apart from any bundle"
     )
+    return OK
+
+
+def _deployment_config(args: argparse.Namespace) -> Path:
+    """``--config``, or, when it is left at its default and there is no such file, the
+    solo deployment in ``.fiduciary`` here or above (1.14.0)."""
+    from fiduciary.sdk import find_config
+
+    path = Path(args.config)
+    if path.exists() or args.config != "fiduciary.toml":
+        if not path.exists():
+            _fail(f"{path}: no such configuration (give --config)")
+        return path
+    try:
+        return find_config()
+    except FileNotFoundError as exc:
+        _fail(f"{exc}; or give --config")
+
+
+def _solo(args: argparse.Namespace) -> int:
+    """``fiduciary solo enforce`` and ``fiduciary solo add-principals`` (1.14.0)."""
+    from fiduciary import solo
+    from fiduciary.bridge import Fiduciary
+    from fiduciary.config import ConfigError
+
+    path = _deployment_config(args)
+    try:
+        fid = _opened(Fiduciary.from_config(path))
+        if args.solo_command == "enforce":
+            grown = solo.enforce(fid, path.parent, mandate=args.mandate)
+        else:
+            grown = solo.add_principals(
+                fid, path.parent, args.names, mandate=args.mandate, enforce=args.enforce
+            )
+    except (ConfigError, OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc), REFUSED)
+    _out(
+        f"issued      mandate {grown.mandate_id} version {grown.version} ({grown.digest}), "
+        f"under charter version {grown.charter_version}"
+    )
+    for key in grown.keys:
+        _out(f"key         {key}: give it to its principal, then delete it here")
+    return OK
+
+
+def _shadow_report(args: argparse.Namespace) -> int:
+    """``fiduciary shadow report`` (1.14.0)."""
+    from interlock.exceptions import InterlockError
+
+    from fiduciary.config import ConfigError, load_config
+    from fiduciary.shadow import render, report
+
+    path = _deployment_config(args)
+    try:
+        config = load_config(path)
+    except ConfigError as exc:
+        _fail(str(exc))
+    if config.chains is None:
+        _fail(f"{path} keeps no escrow chains ([binding] chains): there is nothing to report")
+    try:
+        lineages = report(config.chains, args.mandate)
+    except (OSError, InterlockError) as exc:
+        _fail(str(exc))
+    if args.json:
+        _out(json.dumps([lineage.to_json(args.top) for lineage in lineages], indent=2))
+    else:
+        sys.stdout.write(render(lineages, top=args.top))
     return OK
 
 
@@ -2003,13 +2087,28 @@ def _parser() -> argparse.ArgumentParser:
         "database, repository, workspace directory, cluster, Terraform configuration, "
         "FHIR server, or REST API (--substrate)",
     )
-    init.add_argument("--out", required=True, help="the directory to write (new or empty)")
+    init.add_argument(
+        "--out", help="the directory to write (new or empty; with --solo, .fiduciary by default)"
+    )
+    init.add_argument(
+        "--solo",
+        action="store_true",
+        help="one principal, who decides alone; tools may be Python functions in your own "
+        "process (fiduciary.open); the mandate is in force for a year",
+    )
+    init.add_argument(
+        "--shadow",
+        action="store_true",
+        help="issue the mandate in shadow mode: every plan is judged and commits, and what "
+        "would have been refused is recorded (fiduciary shadow report)",
+    )
     init.add_argument("--name", help="the deployment's name (the directory's, by default)")
     init.add_argument(
         "--principal",
         action="append",
         metavar="NAME",
-        help="a principal of the charter (three, in order; approver-1..3 by default)",
+        help="a principal of the charter (three, in order; approver-1..3 by default; with "
+        "--solo, one: owner by default)",
     )
     init.add_argument(
         "--mcp", action="store_true", help="govern an MCP server's tools: its command after --"
@@ -2078,6 +2177,35 @@ def _parser() -> argparse.ArgumentParser:
         help="rest: a field the API writes itself (repeat; updated_at, updated_by, version)",
     )
     init.add_argument("command", nargs=argparse.REMAINDER, help="-- the MCP server's command")
+
+    solo = commands.add_parser(
+        "solo", help="change a deployment of one principal (fiduciary init --solo)"
+    ).add_subparsers(dest="solo_command", required=True, metavar="COMMAND")
+    enforce = solo.add_parser("enforce", help="issue the shadow mandate's next version, enforced")
+    enforce.add_argument("--mandate", help="the lineage (the one bound, by default)")
+    enforce.set_defaults(handler=_solo)
+    grow = solo.add_parser(
+        "add-principals",
+        help="name two principals beside the owner; from then on two of three approve",
+    )
+    grow.add_argument("names", nargs=2, metavar="NAME")
+    grow.add_argument("--mandate", help="the lineage (the one bound, by default)")
+    grow.add_argument(
+        "--enforce", action="store_true", help="and end shadow mode in the same version"
+    )
+    grow.set_defaults(handler=_solo)
+
+    shadow = commands.add_parser("shadow", help="what a shadow mandate let through").add_subparsers(
+        dest="shadow_command", required=True, metavar="COMMAND"
+    )
+    shadow_report = shadow.add_parser(
+        "report",
+        help="the plans staged, what would have refused them, and the largest changes",
+    )
+    shadow_report.add_argument("--mandate", help="one lineage (every lineage, by default)")
+    shadow_report.add_argument("--top", type=int, default=5, help="largest changes to list (5)")
+    shadow_report.add_argument("--json", action="store_true", help="print JSON")
+    shadow_report.set_defaults(handler=_shadow_report)
     init.set_defaults(handler=_init)
 
     notify = commands.add_parser(

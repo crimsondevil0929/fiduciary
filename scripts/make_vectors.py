@@ -83,7 +83,19 @@ def valid() -> list[dict[str, Any]]:
         _valid("ticket, extension", e.ticket(), e.SERVICE.public_key().spec()),
         _valid("warrant, quorum", e.warrant(), e.SERVICE.public_key().spec()),
         *_horizontal(),
+        _valid("mandate, root, shadow, in resource words (1.14)", _shadow(), e.key("head-ops")),
     ]
+
+
+def _shadow() -> Mandate:
+    """1.14's choices: a mandate in shadow mode, its data in words for every system
+    (``kinds``, ``max_changes``)."""
+    from fiduciary.documents.mandate import RESOURCE, in_vocabulary
+
+    raw = e.mandate_json()
+    raw["data"] = in_vocabulary(raw["data"], RESOURCE)
+    raw["enforcement"] = "shadow"
+    return Mandate.from_json(raw, signed=False).signed(e.signer("head-ops"))
 
 
 def _horizontal() -> list[dict[str, Any]]:
@@ -412,6 +424,13 @@ def invalid() -> list[dict[str, Any]]:
             {**mandate, "issuance": "derived"},
             "malformed:agreement",
             "$.issuance",
+        ),
+        _bad(
+            "enforcement written with its default (1.14)",
+            Mandate,
+            {**mandate, "enforcement": "enforce"},
+            "malformed:format",
+            "$.enforcement",
         ),
         _bad(
             "stopping harder than starting",

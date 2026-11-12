@@ -990,7 +990,9 @@ class Session:
                 else feedback_for_error(plan, exc)
             )
             return CallResult(name, "error", feedback.render())
-        rendered = _lines(result.feedback.render() if result.feedback is not None else "")
+        # Under a shadow mandate the agent is not told what was only observed (1.14.0):
+        # it works as it would with no governor, and the chain keeps the record.
+        rendered = _lines(_unobserved(result.feedback).render() if result.feedback else "")
         if result.committed:
             plan_id = str(plan.plan_id)
             with self._lock:
@@ -1408,6 +1410,16 @@ class Session:
         with self._lock:
             if scope not in self._billed:
                 self._billed.append(scope)
+
+
+def _unobserved(feedback: AgentFeedback) -> AgentFeedback:
+    """``feedback`` without the constraints a shadow mandate only observed."""
+    kept = tuple(c for c in feedback.constraints if not c.observed)
+    return (
+        feedback
+        if len(kept) == len(feedback.constraints)
+        else dataclasses.replace(feedback, constraints=kept)
+    )
 
 
 def _lines(text: str) -> str:

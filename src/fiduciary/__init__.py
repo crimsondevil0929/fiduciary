@@ -15,18 +15,38 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-__version__ = "1.13.2"
+__version__ = "1.14.0"
 
-__all__ = ["Fiduciary", "Session", "Tool", "__version__"]
+__all__ = [
+    "Fiduciary",
+    "GovernedTool",
+    "Governor",
+    "Refused",
+    "Rest",
+    "Session",
+    "Sql",
+    "Tool",
+    "Workspace",
+    "__version__",
+    "open",
+]
+
+_SDK = frozenset({"GovernedTool", "Governor", "Refused", "Rest", "Sql", "Workspace", "open"})
 
 if TYPE_CHECKING:
     from fiduciary.bridge import Fiduciary, Session
+    from fiduciary.sdk import GovernedTool, Governor, Refused, Rest, Sql, Workspace, open
     from fiduciary.tools import Tool
 
 
 def __getattr__(name: str) -> Any:
-    """``Fiduciary``, ``Session`` and ``Tool``, imported when first named: the
-    command line's ``--version`` loads neither interlock nor AgentGov."""
+    """``Fiduciary``, ``Session``, ``Tool`` and the SDK (``open``, ``Sql``, ...),
+    imported when first named: the command line's ``--version`` loads neither
+    interlock nor AgentGov."""
+    if name in _SDK:
+        from fiduciary import sdk
+
+        return getattr(sdk, name)
     if name in ("Fiduciary", "Session"):
         from fiduciary import bridge
 

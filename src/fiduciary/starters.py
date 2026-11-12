@@ -1080,7 +1080,10 @@ def _filesystem(target: Target) -> Starter:
     ]
 
     def head(root: Path, control: Path) -> str:
-        ignore = '[".git/**", "node_modules/**", ".venv/**", "__pycache__/**"]'
+        ignore = (
+            '[".git/**", ".fiduciary/**", ".interlock/**", "node_modules/**", ".venv/**", '
+            '"__pycache__/**"]'
+        )
         return (
             f'substrate = "filesystem"\ndatabase = {_toml(str(control))}\n'
             f"[filesystem]\nroot = {_toml(str(directory))}\n"

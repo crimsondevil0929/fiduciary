@@ -49,7 +49,9 @@ def test_compile_gives_one_digest_and_records_under_every_hash_seed() -> None:
         assert found["child"] == first["child"], f"PYTHONHASHSEED={seed}: another child digest"
         assert found["canonical"] == first["canonical"]
     set_bearing = {name for name, cls in first["classes"].items() if cls in SET_BEARING}
-    assert {first["classes"][n] for n in set_bearing} == set(SET_BEARING)
+    # KindAllowlist is compiled from a mandate written in resource words (1.14.0); this one
+    # is written in SQL's. Interlock's own test digests it under every hash seed.
+    assert {first["classes"][n] for n in set_bearing} == set(SET_BEARING) - {"KindAllowlist"}
     for name in first["records"]:
         values = {found["records"][name] for found in runs.values()}
         if first["canonical"] or name not in set_bearing:

@@ -90,6 +90,9 @@ _RESERVE: Final = re.compile(r"recovery reserve for (\S+?)(?:, carved out)?")
 _RETURNED: Final = re.compile(r"unused recovery reserve for (\S+) returned")
 _STEP: Final = re.compile(r"recovery step (\d+)(?:: \S+| settled)")
 _TOOL: Final = re.compile(r"(?:repair of plan-[0-9a-f]+: )?FIDU1 tool (\S+) ([0-9a-f]{16})")
+_CODE: Final = re.compile(r"fiduciary sdk ([a-z][a-z0-9_]{0,47}) ([0-9a-f]{16})")
+"""A plan an in-process tool made (``fiduciary.sdk``, 1.14.0): its name, and the first 16
+hex of its source's SHA-256."""
 _UNNAMED: Final = re.compile(r"FIDU1 tool (\S+) ([0-9a-f]{16})")
 _NAMED_RECEIPT: Final = re.compile(r"; receipt ([0-9a-f-]{36})")
 """The action receipt an escrow record names, as Interlock writes it into the
@@ -1451,6 +1454,9 @@ class _Explained:
         """Every plan admitted on the lineage's chain was a pinned tool's call,
         and every settled plan on the chain was admitted first."""
         pinned: set[str] = set()
+        unbound: set[str] = set()
+        """Lineages a version of which admits statements no binding pins (F4-11): there,
+        a plan an in-process tool made is the mandate's (amended in 1.14.0)."""
         for mandate_id in self.c.lineages:
             for _, digest, _, _ in self.state.lineages.get(mandate_id, ()):
                 found = self.c.b.docs.get(digest)
@@ -1458,11 +1464,18 @@ class _Explained:
                     mandate = documents.loads(found[1])
                     assert isinstance(mandate, Mandate)
                     pinned.update(pin.digest[:16] for pin in mandate.tools.bindings)
+                    if mandate.tools.statements == "any":
+                        unbound.add(mandate_id)
+        in_process: dict[str, set[str]] = {}
         for lineage, records in sorted(self.c.escrow.items()):
             admitted: set[str] = set()
             for record in records:
                 if record.record_type is RecordType.PLAN_ADMITTED:
                     admitted.add(str(record.plan_id))
+                    code = _CODE.fullmatch(record.note)
+                    if code is not None and lineage in unbound:
+                        in_process.setdefault(f"{code[1]} ({code[2]})", set()).add(lineage)
+                        continue
                     tool = _TOOL.fullmatch(record.note)
                     if tool is None or tool[2] not in pinned:
                         self.c.add(
@@ -1481,6 +1494,12 @@ class _Explained:
                         f"plan {record.plan_id} on {lineage}'s chain settled as "
                         f"{record.record_type.value} without being admitted on the chain",
                     )
+        if in_process:
+            self.c.r.notes.append(
+                "in-process tools made plans the mandate admits without a pinned binding "
+                "(tools.statements any), each judged by its checks; the code is named by its "
+                "source's digest, which no principal reviewed: " + ", ".join(sorted(in_process))
+            )
 
     def operators(self) -> None:
         for record in self.c.b.operators:
