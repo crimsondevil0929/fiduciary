@@ -2,8 +2,8 @@
 
 Fiduciary adds signed authorization and offline audit to AI agents that change real data.
 It works with [AgentGov](https://github.com/crimsondevil0929/agentgov) (spend limits) and
-[Interlock](https://github.com/crimsondevil0929/interlock) (transactional checks on what
-an agent's database writes actually changed). An MCP or policy gateway decides whether an
+[Interlock](https://github.com/crimsondevil0929/interlock) (checks on what an agent's
+write actually changed, before it commits). An MCP or policy gateway decides whether an
 agent may call a tool. This stack decides whether the result of that call may commit, and
 produces evidence that an auditor can verify without trusting the agent or the operator.
 

@@ -1,12 +1,12 @@
-"""Runtime narration and scenario copy for recorded console runs (1.9.0).
+"""The words a console shows around a recorded run (1.9.0).
 
-A recorded benchmark stores the raw execution facts: tool calls, measured
-footprints, model transcripts, and signed bundles. Around those facts, the
-console displays human-readable titles, scenario ledes, and domain metadata.
-:func:`retell` overlays the latest copy onto recorded runs, so dashboards
-re-rendered via ``fiduciary demo --replay`` reflect current descriptions
-without re-running live models. No recorded facts change: tool arguments,
-measured database rows, and model outputs remain strictly untouched.
+A run records what happened: each scenario's calls, what the stack measured, a
+live model's transcript, the bundles. Around those facts the console shows
+words written in the code: each scenario's title and lede, and each industry's
+title and nouns. :func:`retell` puts today's words around a recorded run, so a
+dashboard re-rendered with ``scripts/stack_dashboard.py --keep`` reads like a
+fresh one without the run being played again. Nothing else in the record
+changes: not a call, not a measured row, not a word a model saw or wrote.
 """
 
 from __future__ import annotations

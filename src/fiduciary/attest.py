@@ -40,28 +40,27 @@ __all__ = ["CONTROLS", "DISCLAIMER", "FRAMEWORKS", "MAPPINGS", "PROVES", "SCHEMA
 SCHEMA: Final = "fiduciary-attestation/1"
 
 PROVES: Final[Mapping[str, str]] = {
-    "V1": "Every file in the bundle matches its SHA-256 digest in the manifest, with no extra or "
-    "duplicate entries.",
-    "V2": "The charter matches the digest pinned by the auditor, and every principal key belongs "
-    "to that charter.",
-    "V3": "Every root mandate was signed by its required quorum, and every derived mandate stays "
-    "within its parent's limits.",
-    "V4": "Every receipt uses the exact checkers, outbound sinks, and rate windows compiled "
-    "from its mandate.",
-    "V5": "Every adjudicated plan and outbound delivery has a signed receipt included in the "
-    "receipt log's checkpoint.",
-    "V6": "Every ledger entry touched by the lineage is included in the signed ledger checkpoint, "
-    "and all balances reconcile.",
-    "V7": "Every ledger entry, staged plan, and outbox action traces to an active mandate or "
-    "signed warrant; any unmediated action is flagged.",
-    "V8": "Every warrant was signed by a quorum of distinct principals before expiry and executed "
-    "once against the approved state.",
-    "V9": "The operational log is signed by the service key and forms an unbroken SHA-256 hash "
-    "chain.",
-    "V10": "Every log record in the bundle's range is anchored in the ledger in sequential order.",
-    "V11": "No plan committed and no outbound message was delivered after the lineage was paused, "
-    "revoked, or expired.",
-    "V12": "Service timestamps match the sequential order of their ledger anchors.",
+    "V1": "The bundle is well formed: every member is listed in the manifest with a matching "
+    "SHA-256, and there are no extra members.",
+    "V2": "The charter matches the digest the auditor pinned, and every principal key comes "
+    "from that charter.",
+    "V3": "Every mandate was issued by its required quorum, and every derived mandate is "
+    "equal to or narrower than its parent.",
+    "V4": "Every receipt lists the checkers, sinks and rate windows its mandate compiles to, "
+    "so the policy that ran is the policy that was approved.",
+    "V5": "Every adjudicated plan has a signed receipt, included in the receipt log's signed "
+    "checkpoint.",
+    "V6": "Every ledger entry the lineage touched is included in the ledger's signed "
+    "checkpoint, and the entries balance.",
+    "V7": "Every act on the lineage's ledger scopes, plans and outbox messages traces to a "
+    "mandate or warrant; anything else is reported.",
+    "V8": "Every warrant was formed by a quorum of distinct principals before its deadline, "
+    "and executed once against the exact ledger and outbox state the principals approved.",
+    "V9": "The log is signed by the service key, hash-linked, and has no gaps.",
+    "V10": "Every log record in range is anchored in the ledger, in order.",
+    "V11": "Nothing committed or was delivered after the lineage was revoked, suspended or "
+    "expired.",
+    "V12": "Every timestamp the service wrote agrees with the ledger order of its anchor.",
 }
 
 MAPPINGS: Final = frameworks.packs()

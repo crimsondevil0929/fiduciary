@@ -140,11 +140,12 @@ jobs:
           enable-cache: true
       - run: uv python install 3.12
       - run: uv sync --frozen --python 3.12
-      - name: Install interlock and AgentGov from main
-        run: >-
-          uv pip install --python .venv/bin/python
-          "interlock-agentgov @ git+https://github.com/crimsondevil0929/agentgov@main"
-          "interlock-escrow @ git+https://github.com/crimsondevil0929/interlock@main"
+      # Upstream main, or the commit pyproject.toml pins while a change there is unreleased.
+      - name: Install interlock and AgentGov from upstream
+        run: |
+          python3 scripts/upstream_pins.py --or-main > "${{ runner.temp }}/upstream.txt"
+          cat "${{ runner.temp }}/upstream.txt"
+          uv pip install --python .venv/bin/python -r "${{ runner.temp }}/upstream.txt"
       - name: Type-check the package against them (mypy --strict)
         run: uv run --no-sync mypy src/
       - name: Tests, both stores
@@ -160,6 +161,11 @@ jobs:
       - name: Install the wheel into a bare environment
         run: |
           uv venv "${{ runner.temp }}/bare" --python 3.12
+          # An upstream commit pinned in pyproject.toml is not on PyPI yet: install it first.
+          python3 scripts/upstream_pins.py > "${{ runner.temp }}/pins.txt"
+          if [ -s "${{ runner.temp }}/pins.txt" ]; then
+            uv pip install --python "${{ runner.temp }}/bare/bin/python" -r "${{ runner.temp }}/pins.txt"
+          fi
           uv pip install --python "${{ runner.temp }}/bare/bin/python" "${{ runner.temp }}"/dist/*.whl
           "${{ runner.temp }}/bare/bin/fiduciary" --version
           "${{ runner.temp }}/bare/bin/python" -W error -c "import fiduciary.cli, fiduciary.postgres, fiduciary.verify"

@@ -8,19 +8,19 @@ hospital's EHR, behind its FHIR R4 API, and every write to it is staged as
 class V (:mod:`interlock.fhir`): each order is read live with its version,
 the patient's whole chart with it; the change is predicted and judged before
 the EHR sees it; the undo is written down first; the write carries
-``If-Match`` on the version read; and the post-write chart state is read
-back and verified against the prediction.
+``If-Match`` on the version read; and the chart is read back and held to the
+prediction.
 
 The EHR comes with what EHRs come with:
 
 - ``encounter-stop``, a rule on the server: stopping one order of an
   encounter stops every other active order of it, cancels all their scheduled
   administrations, and opens a pharmacy task. No dry run shows it: the
-  read-back catches it after the write, and unpredicted side effects are
-  rolled back via compensating writes, the task marked ``entered-in-error``;
-- a bed identifies a patient only through the encounter at that location: an
-  order for "the patient in bed 4B" is resolved by a search, at prediction
-  time, and judged as the chart it resolves to;
+  read-back catches it after the write, and everything the write changed is
+  put back, the task the rule opened marked ``entered-in-error``;
+- a bed names a patient only through the encounter at that location: an order
+  for "the patient in bed 4B" is resolved by a search, at prediction time, and
+  judged as the chart it resolves to;
 - nurses at the bedside, whose edits land whenever they land: a write on a
   version that has moved answers ``412 Precondition Failed``.
 
@@ -696,9 +696,9 @@ def _entities() -> dict[str, str]:
 
 TITLES: Final = {
     "queue": "Draft one acetaminophen order for bed 4A",
-    "cascade": f"Discontinue order {first_order(3)}; an EHR rule stops the whole encounter",
-    "injected": "Injected note: an opioid for the next bed, and a fake verification",
-    "fleet": "Three sub-agents on one chart, and a nurse's edit mid-write",
+    "cascade": "Stop one order, and an EHR rule stops the encounter",
+    "injected": "An injected note: an opioid for the next bed",
+    "fleet": "Three sub-agents on one chart, and a nurse's edit",
     "quorum": "Schedule II dispense held for 2 of 3 approvers",
     "break-glass": "After-hours EHR admin releases a dispense by hand",
     "audit": "Offline audit with no PHI, and the EHR's audit log",
@@ -1024,7 +1024,7 @@ LEDES: Final = {
         "The chart lineage is exported before and after the administrator's actions. An auditor "
         "verifies both bundles with networking off, using only the charter digest and public "
         "keys, and searches them for every name, MRN and order on the EHR. The EHR's own "
-        "AuditEvent log is then reconciled against receipts to identify unattested modifications."
+        "AuditEvent log is then matched against the receipts."
     ),
 }
 """What the console says each scenario is (1.9.0): kept beside the titles, so a

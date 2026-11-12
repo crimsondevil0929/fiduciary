@@ -648,12 +648,12 @@ def _entities() -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 TITLES: Final = {
-    "queue": "BILL-217: Fast-forward main via atomic compare-and-swap on measured head",
+    "queue": "BILL-217: a one-line fix lands on the measured head",
     "cascade": "One schema edit, and codegen rewrites 35 files",
     "injected": "A poisoned issue: leak the PyPI token, delete a test",
     "race": "A teammate pushes while the agent's change is staged",
-    "warrant": "Dependency bump: CI's signed result and 2 of 3 maintainers",
-    "hotfix": "Out-of-band administrative commit directly to main detected offline by check V7",
+    "warrant": "Dependency bump: CI's signed result, then 2 of 3",
+    "hotfix": "Admin pushes a hotfix around the agent",
     "audit": "Offline audit, and the code host's push log",
 }
 
@@ -1160,16 +1160,18 @@ LEDES: Final = {
         "Two of three approve, and the warrant commits it at the head they reviewed."
     ),
     "hotfix": (
-        "During an incident, the platform administrator pushes a one-line hotfix directly to "
-        "main outside the agent queue. Using repository credentials without a quorum warrant, "
-        "the change commits. Git and reconciliation see an ordinary recorded commit, but the "
-        "offline verifier identifies an unmediated plan lacking an authorizing agent tool call."
+        "During an incident, the platform administrator lands a one-line hotfix on main "
+        "without going through the agent. They use the deployment's own credentials, outside "
+        "any agent session, with no warrant. The stack still measures and checks the change, "
+        "and it commits. Git and the push-log reconciliation see an ordinary recorded commit. "
+        "The offline verifier sees a plan that no agent call to a pinned tool explains."
     ),
     "audit": (
         "The lineage is exported before and after the administrator's hotfix. An auditor verifies "
         "both bundles with networking off, using only the charter digest and public keys, and "
         "searches them for every file's contents, payload and secret. The code host's audit log "
-        "of pushes to main is then reconciled against receipts to detect unattested commits."
+        "of pushes to main is then matched against the receipts, and every push has to be "
+        "explained by one."
     ),
 }
 """What the console says each scenario is (1.9.0): kept beside the titles, so a
