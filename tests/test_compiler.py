@@ -11,7 +11,17 @@ from typing import Any
 
 import pytest
 from agentgov.receipts import CheckerRecord
-from interlock.invariants import BUILT_IN_CHECKERS
+from interlock.invariants import (
+    BUILT_IN_CHECKERS,
+    BlastRadius,
+    ChangeLimit,
+    ColumnValueGuard,
+    KindAllowlist,
+    PartitionIsolation,
+    TableAllowlist,
+    TenantIsolation,
+    ValueGuard,
+)
 from interlock.outbound import OperationSpec, SinkRegistry, SinkSpec
 from interlock.recovery import Channel, TripKind
 from interlock.types import Severity
@@ -27,6 +37,7 @@ from fiduciary.compiler import (
     window_name,
 )
 from fiduciary.documents import Mandate
+from fiduciary.documents.mandate import RESOURCE, in_vocabulary
 from tests import deploy
 from tests import examples as e
 from tests.test_refines import universe
@@ -73,11 +84,21 @@ def _compile(raw: dict[str, Any] | Mandate, **deployment: Any) -> CompiledMandat
     return compile([mandate], deployment=deploy.deployment(**deployment))
 
 
+NEUTRAL = {ChangeLimit, KindAllowlist, PartitionIsolation, ValueGuard}
+SQL_NAMED = {BlastRadius, TableAllowlist, TenantIsolation, ColumnValueGuard}
+
+
 def test_a_mandate_compiles_to_every_checker_type() -> None:
+    """In SQL's words, every built-in checker but the four that only a mandate written in
+    resource words compiles to; in those words, those four in place of their SQL twins."""
     compiled = _compile(full())
     types = {type(c) for c in compiled.engine_checkers()}
-    assert types >= set(BUILT_IN_CHECKERS)
+    assert types >= set(BUILT_IN_CHECKERS) - NEUTRAL and not types & NEUTRAL
     assert {MandateScope, TenantAllowlist, BoundStatements} <= types
+    raw = full()
+    raw["data"] = in_vocabulary(raw["data"], RESOURCE)
+    resource = {type(c) for c in _compile(raw).engine_checkers()}
+    assert resource >= set(BUILT_IN_CHECKERS) - SQL_NAMED and not resource & SQL_NAMED
     assert len(compiled.digest) == 64
     assert compiled.issuer == f"fiduciary:{e.MANDATE_ID}" and compiled.policy_epoch == 1
 

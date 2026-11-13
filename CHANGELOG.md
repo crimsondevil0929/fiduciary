@@ -6,7 +6,67 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.13.2] - 2026-11-11
+## [1.14.0] - 2026-11-12
+
+Reach: the stack can now watch one tool in your own code before it governs anything, and a
+deployment can start with one person. Requires interlock-escrow 1.6.0. Nothing to change in
+an existing deployment: every mandate, compiled policy, vector and bundle written before is
+unchanged.
+
+### Added
+
+- **Governed tools in your own process** (`fiduciary.sdk`). `gov = fiduciary.open()` opens a
+  deployment, and `@gov.tool` wraps a Python function. Each call checks its arguments against
+  a schema read from the signature, opens a stage, and hands the function a handle on it:
+  `fiduciary.Sql` (SQLite, PostgreSQL), `fiduciary.Workspace` (a directory) or
+  `fiduciary.Rest` (a JSON REST API). A read through the handle sees the stage's own writes.
+  When the function returns, the plan its writes make is measured and judged by the mandate,
+  then committed, or refused with nothing changed (`fiduciary.Refused`, whose text is written
+  for the agent). If the function raises, the stage is discarded. Only what goes through the
+  handle is staged: a tool that opens its own connection writes outside the stage. Each plan
+  names its tool and the SHA-256 of the tool's source on the escrow chain.
+- **Framework adapters** (`fiduciary.adapters`): the same tools served over MCP (stdio, on
+  fiduciary's own server), and as the Claude Agent SDK's in-process MCP tools, OpenAI Agents
+  SDK `FunctionTool`s, and LangChain `StructuredTool`s for LangGraph. A refusal reaches the
+  model as the tool's error. The frameworks are not dependencies; each adapter imports its
+  own.
+- **Shadow mode.** `fiduciary init --shadow` issues the mandate with `enforcement =
+  "shadow"` (F4-12c). Every plan is staged, measured and judged, and commits; a bound it
+  breaks is recorded as observed on the verdict and the escrow chain (interlock 1.6.0's
+  `observe_only`), and the agent is not told. `fiduciary shadow report` reads the chains: the
+  plans staged, each check that would have refused a plan and the tools whose plans they
+  were, and the largest changes measured. A shadow child of an enforced parent is refused.
+- **Solo deployments.** `fiduciary init --solo` writes a deployment of one principal into
+  `.fiduciary/`, with a `.gitignore` that keeps it out of version control, a mandate that
+  admits plans built in the process (`tools.statements` `any`) and is in force for a year.
+  `fiduciary solo enforce` issues the shadow mandate's next version enforced, and `fiduciary
+  solo add-principals NAME NAME` adopts a second charter version with two more principals and
+  issues a mandate version whose roster is the three, two of three to grant.
+- **Each system's own words in a mandate.** A mandate may write `data.kinds` and
+  `data.max_changes` in place of `data.tables` and `data.max_rows` (F4-12c). It then compiles
+  to interlock's checkers under the names they have for every system (`kind_allowlist`,
+  `change_limit`, `partition_isolation:<dimension>`, `value_guard:<kind>.<field>`), and an
+  agent is refused in those names. `fiduciary init` writes its starter mandate for Git, a
+  directory, Kubernetes, FHIR and REST in these words.
+- New vectors: a shadow mandate in resource words (valid), and one that writes `enforcement`
+  with its default (malformed).
+
+### Changed
+
+- **The quickstart and the README start with one tool in shadow mode**, run in the first
+  minute of `docs/QUICKSTART.md` by its test.
+- **The workbench is grouped by the system each workflow stages on**: Files, Git,
+  Kubernetes, FHIR, REST API, and SQL, where the three SQL workflows (refunds and payments,
+  SaaS admin, supply chain) now sit together.
+- **V7 explains a plan an in-process tool made** under a mandate version whose
+  `tools.statements` is `any`, and says so in a note naming each tool and its source digest.
+  Under `bound`, such a plan is still ambient authority.
+- The MCP bridge leaves out of what it tells an agent any constraint a shadow mandate only
+  observed.
+- A directory's starter configuration leaves `.fiduciary/` and `.interlock/` out of the
+  workspace, so a stage never copies the deployment's keys.
+
+## [1.13.2] - 2026-11-12
 
 The console's copy is plain English again and a test now keeps it that way, and the workbench
 fits a laptop screen and a phone. Requires interlock-escrow 1.5.2, which fixes how a commit on

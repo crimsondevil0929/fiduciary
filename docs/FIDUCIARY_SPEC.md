@@ -592,6 +592,14 @@ version 1, as interlock's configuration pins `[operators.keys]`.
     `bound_statements`);
   - `"any"` admits statements the agent authors, adjudicated by the checkers as interlock
     does today.
+
+  *Amended in 1.14.0:* under `"any"`, code in the deployment's own process may build a
+  plan (`fiduciary.sdk`, `@gov.tool`): the plan names itself `fiduciary sdk <tool>
+  <digest>` on the escrow chain, the digest being the first 16 hex of the SHA-256 of the
+  tool's source. It is judged by the version's checks as every plan is. Such a plan is
+  explained by the mandate (V7), and the verifier says so in a note naming each tool and
+  its digest. No principal reviewed that code, as one reviews a pinned binding, so `"bound"`
+  remains the stronger setting.
 - **F4-12.** The canonical document is at most 65,536 bytes. The bound caps parsing work.
   It is not a signing constraint (F3-6).
 - **F4-12a.** *Amended in 1.4.0.* A mandate may use seven members that 1.4.0 adds. Each is
@@ -634,6 +642,23 @@ version 1, as interlock's configuration pins `[operators.keys]`.
 
   A child keeps every parent sensor, signed by a subset of the parent's keys; every parent
   checker, as pinned; and acknowledges no value its parent does not.
+- **F4-12c.** *Added in 1.14.0.* Two choices a mandate may make, each leaving every
+  mandate written before as it was:
+  - `enforcement`: `"shadow"`, written only when shadow (writing `"enforce"` is
+    malformed). Under a shadow version every plan is staged, measured and judged against
+    its bounds, and commits; a bound it breaks is recorded on the verdict as observed
+    (interlock 1.6.0's `observe_only`), named on the escrow chain, and not refused. The
+    check that a plan is the mandate's own (`fiduciary_mandate`) still refuses. The agent
+    is not told what was only observed. Enforcement begins with the version that leaves the
+    member out. A child of an enforced parent is enforced (§5.3).
+  - `data.kinds` and `data.max_changes` in place of `data.tables` and `data.max_rows`: the
+    same bounds in words for every system (a directory's path classes, a cluster's kinds,
+    an API's resource types). A mandate written in them compiles to interlock's checkers
+    under the same names (`kind_allowlist`, `change_limit`,
+    `partition_isolation:<dimension>`, `value_guard:<kind>.<field>`); one written in SQL's
+    compiles to the names it always has. A mandate is written in one or the other, never a
+    mix. `fiduciary init` writes a mandate for a system that is not a database in these
+    words.
 
 ## 4.3 Tool binding
 
@@ -1829,7 +1854,9 @@ For V7, an act is explained when it traces to one of:
 - a plan's settlement, traced to its receipt;
 - a session's metered call;
 - a recovery or extension record;
-- a warrant's step.
+- a warrant's step;
+- *(added in 1.14.0)* a plan an in-process tool made, under a version whose
+  `tools.statements` is `"any"` (F4-11), listed in a note.
 
 The other exit codes:
 
@@ -2096,7 +2123,9 @@ of them.
 | `fiduciary mcp serve`, `proxy` | Run the MCP bridge: one session per process, over stdio, or Streamable HTTP with `--http HOST:PORT` (`--token-file`, `--tls-cert`, `--tls-key`). The process also judges the intake and executes the warrants formed, since it holds the quotes and proposals they name (F7-14). |
 | `fiduciary export-bundle`, `verify-bundle`, `verify` | §9, and live verification of the store. `verify-bundle --json` and `--report` write the attestation (F9-4). |
 | `fiduciary reconcile-actions <bundle> <export> --charter D [--keys F] [--format F]` | Match a system of record's own log against the receipts a bundle carries (F9-9). *(Added in 1.10.0.)* |
-| `fiduciary init --out DIR [--name N] [--principal NAME]... [--mcp -- COMMAND]` | Write a deployment ready to run, governing an MCP server's tools by their annotations (§10.10). *(Added in 1.8.0.)* |
+| `fiduciary init --out DIR [--name N] [--principal NAME]... [--mcp -- COMMAND]` | Write a deployment ready to run, governing an MCP server's tools by their annotations (§10.10). *(Added in 1.8.0.)* `--solo` writes one of one principal (`owner`), who adopts the charter and issues the mandate alone, into `.fiduciary/` unless `--out` names another directory, with a `.gitignore` that keeps it all out of version control; its mandate admits plans built by code in the process (`tools.statements` `"any"`, F4-11) and is in force for a year. `--shadow` issues the mandate in shadow mode (F4-12c). *(Amended in 1.14.0.)* |
+| `fiduciary solo enforce`, `solo add-principals NAME NAME [--enforce]` | Change a solo deployment with the owner's key alone: issue the next mandate version enforced; or adopt a second charter version naming the owner and two more principals (keys written for them), and issue the next mandate version with the three as its roster, two of three to grant and one to take away. After that, neither applies. *(Added in 1.14.0.)* |
+| `fiduciary shadow report [--mandate ID] [--top N] [--json]` | Read each lineage's escrow chain, verified as it loads: the plans staged, committed and refused, each check that would have refused a plan with the tools whose plans they were, and the largest changes measured. *(Added in 1.14.0.)* |
 | `fiduciary notify [--once] [--test WEBHOOK]` | Deliver each `[notify]` webhook's notices from its cursor, or send one test notice (§10.9). *(Added in 1.8.0.)* |
 | `fiduciary console [--dir DIR] [--deployment FILE] [--listen HOST:PORT] [--accept-approvals] [--sandbox]` | Serve the console on loopback (§10.8): the approvals desk, votes the principal signs in the browser, the bundle verifier and, with `--sandbox`, the demo industries in scratch. `fiduciary demo --serve` serves the same console over the run, its deployments read and never written. *(Added in 1.7.0.)* |
 | `fiduciary demo [--out DIR] [--report DIR\|FILE] [--serve [HOST:PORT]] [--open] [--live]` | Stand up a deployment of its own in a new directory and play seven acts against it and against an input gateway of Cedar policies (`cedarpy` with the `cedar` extra; otherwise a built-in evaluator of the same policies, which says so): a discount whose trigger collapses an order's total, a dispute flag whose trigger reaches four tenants, fifty sub-agent sessions against one lineage's window and a child wider than its parent, a relay killed between the vendor's answer and its record, a held message released on a 2-of-3 warrant, a break-glass release outside any warrant, and both bundles verified with sockets refused and scanned for every row, payload, prompt and secret the deployment holds. Writes the console (`dashboard.html`), both bundles, the attestation and a `fiduciary.toml` the other commands open. Exit 0 when the bundle before the break-glass act verifies, the one after it exits 7, and nothing planted is found; 1 otherwise; 2 on a usage error. `--live` puts a Claude model in front of the first act, reading `BENCHMARK_API_KEY` only, metered and stopped at `--max-cost`. *(Added in 1.1.0.)* `--domain` picks the industry: `fintech` (the default, the acts above), `healthcare`, `sre`, `supply-chain` or `saas`, each a deployment of its own on the same engine with its own schema, triggers, mandate, principals and break-glass key, playing the same arc in seven acts; or `all`, fintech in the directory and each pack in a subdirectory named for it, behind one console that switches between them. Every console opens on an overview: the industries, which ran, what in the engine refused what (counted from the measured plans), the measurement classes, and the acceptance matrix interlock recorded. The exit code covers every industry run. `--live` puts the model in front of fintech's first act and each pack's second (its hidden cascade), each act stopped at `--max-cost`; the other acts replay. *(Amended in 1.2.0.)* `--domain coding-agent` stages on Git, not SQL: a bare repository with a code-generator hook, staged and committed by interlock's Git substrate (`interlock.git_substrate`, interlock 1.1.0), with the deployment's SQLite file as its control database (outbox, inbox, windows). Its acts are a fix committed as one commit at the measured head; one edit that the hook turns into 36 files; an injected workflow edit and a deleted test; a teammate's push while a change is staged, which leaves the change uncommitted and is named by reconciliation; a dependency bump that commits only with CI's signed result for its exact bytes (F8-2), and only the part that passes, on a 2-of-3 `accept_repair` warrant at the head the maintainers reviewed; and an administrator's hotfix through the deployment's own engine, outside any session, which V7 names offline. The pack runs where the installed interlock has the Git substrate and is left out where it does not. Its `interlock.toml` names `substrate = "git"`, and its `fiduciary.toml` opens the deployment as every other's does. A live act's model calls never take it past `--max-cost`: each turn may write only the output tokens that what is left of the cap buys after the turn's input tokens, which the API counts (or the request's size bounds, where it cannot count them). *(Amended in 1.3.0.)* Each deployment's relays settle what they delivered, so the outbox holds a delivery receipt (interlock's ARC1-delivery) for each request. In fintech, supply chain and SaaS, whose effects are requests only, the vendor keeps its own log (Stripe's Events API, an EDI partner's records, SendGrid's Event Webhook), written to `audit/`. The break-glass act adds a change made in the vendor's own tools, and the audit act reconciles the log against the delivery receipts with `agentgov reconcile-actions` (interlock-agentgov 1.3.0). It matches every request the deployment made and names the one it did not. `--keep` with a recorded run rewrites the scenario titles and the console from their current wording and leaves the recorded model calls as they were. *(Amended in 1.9.0.)* `--replay [RECORDING]` plays every scenario again on the installed engine, fresh, and where a recorded model worked a scenario, its recorded turns choose the calls (`fiduciary.demo.replay`): a stand-in client returns each recorded turn, the session meters it from its recorded usage, and nothing is sent anywhere. RECORDING is a `fiduciary-recording/1` file, or a run `--live` wrote; with none, the claude-opus-5-5 recording that ships with fiduciary. A recorded call to a tool the engine no longer offers, with arguments its schema no longer takes, or whose outcome differs from the recorded one, stops the replay (exit 2): the model's later turns no longer follow. Each replayed act records when its turns were recorded, the ids the engine minted afresh, and every tool result the engine words differently with the same outcome. A live run records each turn's usage, so it is a recording itself. The audit act reconciles each system's log against `after.fidb` alone (F9-9), and `--domain coding-agent` is accepted. *(Amended in 1.10.0.)* `--domain workspace` stages on a directory with interlock's filesystem substrate (`interlock.filesystem`, interlock 1.5.0) in `swap` mode: a config edit swapped in as one new version, a renderer hook that turns one edit into 25 files (refused), a token appended to `.env` and a deleted script (refused by path class), an engineer's hand edit to the live version that refuses the commit, a production rollout held for 2 of 3, and a staging rollout released with the break-glass key. `--domain service-desk` stages on a JSON REST API with interlock's REST substrate (`interlock.rest`, on `interlock.sim.rest`): a ticket triaged on its ETag, an escalation whose automation the read-back undoes (`compensated`), another account's ticket and an oversized credit refused, a human's edit in the desk that refuses the write, a goodwill credit held for 2 of 3, and a credit preview released with the break-glass key. Both play scripted calls: the shipped recording has no take of them, so `--replay` costs nothing there too. The console is a workbench: one workflow at a time, picked from eight in six families, its scenarios in a rail beside the one open, and its mandate and lineage, its warrants and operator log, and its offline proof each on a tab; the overview, the measurement ladder and what each check refused are on a view of their own (`#/how`). Every view has a route (`#/run/<workflow>/<tab>/<scenario>`). *(Amended in 1.12.0.)* |
@@ -2678,6 +2707,9 @@ document, compiled description, vector and bundle is unchanged.
 *Amended in 1.6.0.* And for 1.6.0's one member, an effect's `compensation` (F4-14): written
 only when used, so every earlier binding, mandate, vector and bundle is unchanged. A bundle
 whose receipts include a `compensated` one (ARC1 1.4) verifies with agentgov 1.2.0 or later.
+*Amended in 1.14.0.* And for 1.14.0's two choices (F4-12c): `enforcement` is written only
+when shadow, and `data.kinds` and `data.max_changes` only by a mandate written in those
+words, so every earlier document, compiled description, vector and bundle is unchanged.
 
 **The upstream gaps (§12).** Each is released: U-1 (crimsondevil0929/interlock#20), U-2,
 U-3, U-4 and U-6 (crimsondevil0929/interlock#21) in interlock 1.0.3, and U-5

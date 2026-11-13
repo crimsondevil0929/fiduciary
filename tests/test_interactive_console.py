@@ -406,14 +406,14 @@ def test_each_substrate_measures_its_presets(
 def test_the_sandbox_describes_every_industry(console: tuple[_Client, Console]) -> None:
     described = console[1].sandbox.describe()["domains"]
     assert [d["key"] for d in described] == [
-        "coding-agent",
         "workspace",
+        "coding-agent",
         "sre",
         "healthcare",
         "service-desk",
+        "fintech",
         "saas",
         "supply-chain",
-        "fintech",
     ]
     assert {d["rung"] for d in described} == {"T", "P", "V"}
     assert all(len(d["presets"]) == 3 for d in described)

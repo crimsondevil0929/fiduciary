@@ -846,6 +846,12 @@ WIDENINGS: list[Widening] = [
         lambda r: r["tools"].update(statements="any"),
     ),
     (
+        # 1.14.0: shadow mode commits what the bounds would refuse
+        "enforcement",
+        lambda r: "enforcement" not in r,
+        lambda r: r.update(enforcement="shadow"),
+    ),
+    (
         "tools.bindings",
         lambda r: True,
         lambda r: r["tools"].update(

@@ -197,7 +197,7 @@ def test_a_git_repository_gets_file_tools(tmp_path: Path, serve: list[Serve]) ->
     text, error = mcp.tool("replace_in_file", {"path": "src/app.py", "old": "hello", "new": "hi"})
     assert not error, text
     text, error = mcp.tool("write_file", {"path": ".github/workflows/ci.yml", "text": "on: push\n"})
-    assert error and "table_allowlist" in text, "a write to CI is outside the mandate"
+    assert error and "kind_allowlist" in text, "a write to CI is outside the mandate"
     shown = _git("show", "main:src/app.py", cwd=bare)
     assert shown == "print('hi')"
     with pytest.raises(subprocess.CalledProcessError):
@@ -292,7 +292,7 @@ def test_a_directory_gets_file_tools(tmp_path: Path, serve: list[Serve]) -> None
     )
     assert not error, text
     text, error = mcp.tool("write_file", {"path": ".env", "text": "TOKEN=sk_live_" + "x" * 24})
-    assert error and "table_allowlist" in text, "a write to .env is outside the mandate"
+    assert error and "kind_allowlist" in text, "a write to .env is outside the mandate"
     assert (workspace / "config" / "app.toml").read_text() == "timeout_ms = 4000\n"
     assert (workspace / ".env").read_text() == "TOKEN=placeholder\n"
     with pytest.raises(ValueError, match="no directory"):
@@ -658,3 +658,28 @@ def test_kubernetes_starter_includes_token_file_when_provided(tmp_path: Path) ->
     assert st.interlock is not None
     head_toml = st.interlock(tmp_path / "root", tmp_path / "control.db")
     assert f'token_file = "{token.resolve()}"' in head_toml
+
+
+def test_a_shadow_mandate_lets_the_agent_through_and_tells_it_nothing(
+    tmp_path: Path, serve: list[Serve]
+) -> None:
+    """1.14.0: the same call the test above sees refused (the trigger's audit row makes it
+    two rows) commits under a shadow mandate. The agent's text does not mention the bound,
+    and the shadow report names it."""
+    database = tmp_path / "shop.db"
+    _shop(database)
+    init(tmp_path / "desk", target=Target("sqlite", database=str(database)), shadow=True)
+    mcp = _open(serve, tmp_path / "desk", "desk-agent")
+    arguments = {"customer_id": None, "status": "shipped", "total": None, "paid": None, "at": None}
+    text, error = mcp.tool("update_orders", {"id": 1, **arguments})
+    assert not error and text.startswith("Committed"), text
+    assert "blast_radius" not in text and "Observed" not in text
+    with closing(sqlite3.connect(database)) as conn:
+        assert conn.execute("SELECT status FROM orders WHERE id = 1").fetchone() == ("shipped",)
+        assert conn.execute("SELECT count(*) FROM audit").fetchone() == (1,)
+    from fiduciary.shadow import report
+
+    (lineage,) = report(tmp_path / "desk" / "chains")
+    (plan,) = lineage.observed
+    assert plan.tool == "update_orders" and plan.would_refuse == ("blast_radius",)
+    assert plan.changes == 2 and plan.outcome == "committed"

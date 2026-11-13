@@ -1094,7 +1094,7 @@
             h("i", { class: "dot", style: "background:var(" + (r.after.exit_code === 7 ? "--held" : r.after.exit_code === 0 ? "--accent" : "--refuse") + ")" })) : null;
           return h("button", { class: "wf", "aria-pressed": on ? "true" : "false", disabled: i < 0 ? true : null, title: r.title, onclick: i < 0 ? null : function () { selectWorkflow(i); } },
             h("span", { class: "wf-name" }, r.workflow || r.industry),
-            h("span", { class: "wf-sub" }, h("span", { class: "rung", title: (RUNG_NAMES[r["class"]] || "") + " measurement" }, r["class"]), h("span", null, r.substrate || ""), dots));
+            h("span", { class: "wf-sub" }, h("span", { class: "rung", title: (RUNG_NAMES[r["class"]] || "") + " measurement" }, r["class"]), h("span", null, r.industry || r.substrate || ""), dots));
         })));
     }));
   }
