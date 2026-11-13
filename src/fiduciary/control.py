@@ -16,7 +16,7 @@ It does three things:
   ``accept_approvals``. The deployment's own writer (``fiduciary serve``)
   records it, forms the warrant at quorum and releases at the heads it pins.
 - **The bundle verifier.** Any ``.fidb`` (``fidb/1``, or sealed ``fidb/2``),
-  verified in process, offline, V1 to V12, against a charter digest and keys
+  verified in process, offline, V1 to V13, against a charter digest and keys
   pinned from outside the bundle, with the nine control-framework mappings.
 
 What it never does: hold a principal's key, write a deployment's log, or serve
@@ -906,7 +906,7 @@ def discover(root: Path) -> list[Path]:
 
 
 def verify(data: bytes, pins: Pins) -> dict[str, Any]:
-    """V1 to V12 over ``data``, offline, and its attestation (``verify-bundle --json``)."""
+    """V1 to V13 over ``data``, offline, and its attestation (``verify-bundle --json``)."""
     from fiduciary.attest import attest
     from fiduciary.bundle import BundleError, TrustedKeys, verify_bundle
 

@@ -76,7 +76,7 @@ from agentgov.interceptor import (
     default_usage_extractor,
     pricing_for,
 )
-from interlock.builder import PlanBuilder
+from interlock.builder import PlanBuilder, new_plan_id
 from interlock.exceptions import (
     CompensatedError,
     InterlockError,
@@ -91,7 +91,13 @@ from interlock.feedback import AgentFeedback, feedback_for_error
 from interlock.outbound import schema_problems
 from interlock.recovery import RecoveryRuntime, RecoveryStep, Trip, TripKind
 from interlock.text import tally
-from interlock.types import Compensation, EffectId, EffectKind, EffectPlan, OutboundRequest
+from interlock.types import (
+    Compensation,
+    EffectId,
+    EffectKind,
+    EffectPlan,
+    OutboundRequest,
+)
 
 from fiduciary import fidu1
 from fiduciary._upstream import RECOVERY_REOPENS
@@ -335,6 +341,7 @@ def build_plan(
     scope: str,
     trajectory: str,
     tenant: str | None,
+    provenance: Sequence[str] = (),
 ) -> EffectPlan:
     """The plan a ``plan`` binding builds from validated ``arguments`` (F8-2):
     its statements, tables, sinks and operations the binding's, every
@@ -347,7 +354,10 @@ def build_plan(
         raise PlanError(f"tool {binding.name} is a passthrough: it builds no plan")
     stamped = tenant if binding.tenant == "session" else None
     builder = PlanBuilder(
-        scope, trajectory_id=trajectory, intent=f"FIDU1 tool {binding.name} {binding.digest[:16]}"
+        scope,
+        trajectory_id=trajectory,
+        intent=f"FIDU1 tool {binding.name} {binding.digest[:16]}",
+        provenance=provenance,
     )
     for effect in binding.effects:
         builder.add(
@@ -389,6 +399,21 @@ def build_plan(
             partitions=_labels(request.partitions, arguments),
         )
     return builder.build()
+
+
+def reader_problem(fid: Fiduciary, scope: str) -> str | None:
+    """Why the lineage whose subject is ``scope`` is no reader (1.16.0): it must exist, be
+    bound, and grant no write and no outbound request. ``None`` when it is one."""
+    state = fid.log.state()
+    found = [m for m in state.lineages if state.status(m) == "bound"]
+    for mandate_id in found:
+        head = fid._authority.decide.head_mandate(state, mandate_id)
+        if head.subject.scope != scope:
+            continue
+        if any(head.data.tables.values()) or head.outbound.sinks:
+            return f"reader {scope} may write or send: its result is not quarantined"
+        return None
+    return f"no bound lineage reads as {scope}"
 
 
 def _labels(partitions: Mapping[str, str], arguments: Mapping[str, Any]) -> dict[str, str]:
@@ -722,6 +747,7 @@ class Session:
         "_committed",
         "_fid",
         "_granted",
+        "_labels",
         "_lock",
         "_opened",
         "_pending",
@@ -739,6 +765,8 @@ class Session:
         self._granted: set[str] = set()
         self._committed: set[str] = set()
         self._pending: RecoveryStep | None = None
+        self._labels: tuple[str, ...] = ()
+        """What the session has read, as provenance labels (1.16.0): only ever joined."""
         engine = fid.binder.engine(self.mandate_id)
         self._breaker = CognitiveBreaker(policy=engine.compiled.cognitive, manager=fid.governor)
 
@@ -760,6 +788,28 @@ class Session:
     @property
     def trajectory(self) -> str:
         return str(self._opened["trajectory"])
+
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """Every provenance label the session holds (1.16.0)."""
+        with self._lock:
+            return self._labels
+
+    def _label(self, tool: str, labels: Sequence[str]) -> tuple[str, ...]:
+        """Join ``labels`` (what ``tool``'s result brought) into the session's, and record
+        ``session.labeled`` when that adds one (1.16.0). The labels it holds after."""
+        with self._lock:
+            if set(labels) <= set(self._labels):
+                return self._labels
+            log = self._fid.log
+            with log.store.transaction():
+                now = log.now()
+                body = self._fid._authority.decide.label_session(
+                    log.state(), self.session_id, tool, labels
+                )
+                log.append("session.labeled", body, issued_at=now)
+            self._labels = tuple(body["labels"])
+            return self._labels
 
     @property
     def billing_scope(self) -> str:
@@ -950,6 +1000,7 @@ class Session:
                 scope=self.billing_scope,
                 trajectory=self.trajectory,
                 tenant=self.tenant,
+                provenance=self.labels,
             )
         except PlanError as exc:
             return CallResult(name, "error", feedback_for_error(_empty_plan(self), exc).render())
@@ -1010,6 +1061,8 @@ class Session:
                 _committed(binding, plan_id, rendered, held=held),
                 value={"plan_id": plan_id, **({"held": held} if held else {})},
             )
+        if "provenance_gate" in result.blocked_by:
+            return self._held_for_provenance(name, engine, plan, result, rendered)
         try:
             repair = engine.engine.repair(plan)
         except InterlockError:
@@ -1055,6 +1108,56 @@ class Session:
             ticket=self._note(ticket),
             repaired=repaired,
         )
+
+    def _held_for_provenance(
+        self, name: str, engine: MandateEngine, plan: EffectPlan, result: Any, rendered: str
+    ) -> CallResult:
+        """A plan the provenance gate refused (1.16.0): sent to the principals when the
+        mandate holds such plans, as the same plan labeled ``cleared``; refused otherwise."""
+        rules = engine.mandate.provenance
+        if rules is None or rules.on != "hold" or result.receipt is None:
+            return CallResult(name, "refused", rendered)
+        broken = sorted(
+            {
+                str(v.evidence.get("rule"))
+                for v in result.verdict.blocking
+                if v.invariant == "provenance_gate"
+            }
+        )
+        if set(result.blocked_by) != {"provenance_gate"}:
+            # It breaks another bound too: no approval of what was read makes it pass.
+            return CallResult(name, "refused", rendered)
+        state = self._fid.log.state()
+        introduced = [
+            seq for event, _, seq in state.sessions.get(self.session_id, ()) if event == "labeled"
+        ]
+        cleared = dataclasses.replace(
+            plan, plan_id=new_plan_id(), provenance=(*plan.provenance, "cleared")
+        )
+        try:
+            ticket, _rule = self._fid.escalation.raise_provenance(
+                self.mandate_id,
+                cleared,
+                receipt=result.receipt,
+                session=self.session_id,
+                introduced=introduced,
+                rules=broken,
+            )
+        except (EscalationError, FiduciaryError):
+            return CallResult(name, "refused", rendered)
+        if ticket is None:
+            self._reject(name, "max_open", "")
+            return CallResult(
+                name,
+                "refused",
+                rendered + "\nNot escalated: this mandate has as many open tickets as it allows.",
+            )
+        advice = (
+            "Held for the principals: this call was sent to them as a ticket, because of what "
+            "this session read before it. If a quorum approves it, it runs exactly as you made "
+            "it. Do not make the call again."
+        )
+        return CallResult(name, "refused", rendered, repair=advice, ticket=self._note(ticket))
 
     def _with_facts(
         self, engine: MandateEngine, binding: ToolBinding, plan: EffectPlan
@@ -1108,7 +1211,24 @@ class Session:
             return CallResult(name, "error", "The tool failed; nothing was charged.")
         if held is not None:
             self._capture(held, binding.price, f"FIDU1 session {self.session_id} tool {name}")
+        brought = binding.labels(self.tenant)
+        if binding.quarantine is not None:
+            problem = self._quarantine_problem(binding, value)
+            if problem is not None:
+                # Not a typed result from a reader that cannot write: it is what it read.
+                logger.warning("tool %s: %s; its result counts as untrusted", name, problem)
+                brought = ("untrusted",)
+        if brought:
+            self._label(name, brought)
         return CallResult(name, "served", "", value=value)
+
+    def _quarantine_problem(self, binding: ToolBinding, value: Any) -> str | None:
+        """Why a reader's result does not cross as a typed value (1.16.0), or ``None``."""
+        assert binding.quarantine is not None
+        problems = check_arguments(binding.quarantine.output, value)
+        if problems:
+            return "the reader's result is not of its declared shape: " + "; ".join(problems)
+        return reader_problem(self._fid, binding.quarantine.reader)
 
     def _hold(self, amount: Decimal, memo: str) -> Authorization:
         """Hold ``amount`` on the billing scope: through the recovery runtime

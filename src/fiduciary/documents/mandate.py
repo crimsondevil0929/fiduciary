@@ -86,7 +86,7 @@ REDUCING: Final = ("reduce", "revoke")
 """Quorum classes whose resolutions only take authority away."""
 QUORUM_CLASSES: Final = tuple(sorted((*GRANTING, *REDUCING, "accept_repair")))
 
-TICKET_CLASSES: Final = ("amend", "dead", "extension", "held", "refused", "undo")
+TICKET_CLASSES: Final = ("amend", "dead", "extension", "held", "provenance", "refused", "undo")
 AUTO_RESOLUTIONS: Final[Mapping[str, tuple[str, ...]]] = {
     # §7.2: which resolutions of each class a mandated rule may take. The ones
     # marked "never" there (reset_safety, compensate_late, amend) appear nowhere.
@@ -96,6 +96,9 @@ AUTO_RESOLUTIONS: Final[Mapping[str, tuple[str, ...]]] = {
     "undo": ("reject",),
     "extension": ("decline", "grant"),
     "amend": ("reject",),
+    # 1.16.0: a rule may turn a provenance ticket down, never approve one: what it asks
+    # is a person's judgment of what the session read.
+    "provenance": ("reject",),
 }
 WHEN: Final[Mapping[str, tuple[str, ...]]] = {
     # F7-9: the closed vocabulary a rule's predicate is written in, per class.
@@ -981,6 +984,77 @@ ENFORCE: Final = "enforce"
 SHADOW: Final = "shadow"
 
 
+PROVENANCE_ON: Final = ("hold", "refuse")
+PROVENANCE_LABEL: Final = re.compile(
+    r"secret|partition:\*|partition:[a-z][a-z0-9_]{0,31}=[^\s]{1,63}"
+)
+"""A label ``provenance.egress`` may clear sinks for (1.16.0)."""
+
+
+@dataclass(frozen=True, slots=True)
+class Provenance:
+    """``provenance`` (1.16.0): what a plan may do after its session read something.
+
+    - ``untrusted``: after input labeled ``untrusted`` (a tool binding's ``trust``), a plan
+      may not change ``kinds`` nor send to ``sinks`` (``*``: any);
+    - ``egress``: after data labeled ``secret`` or a partition's label, a plan may send only
+      to the sinks listed for that label (``partition:*`` for every partition label);
+    - ``rule_of_two``: untrusted input, sensitive data and a change or request, any two in
+      one session; the third needs the principals;
+    - ``on``: ``hold`` (the plan goes to the principals as a ``provenance`` ticket, and runs
+      when a quorum approves it) or ``refuse``.
+
+    Written only when used, so every mandate issued before keeps its encoding.
+    """
+
+    untrusted_kinds: tuple[str, ...] = ()
+    untrusted_sinks: tuple[str, ...] = ()
+    egress: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    rule_of_two: bool = False
+    on: str = "hold"
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "untrusted": {"kinds": list(self.untrusted_kinds), "sinks": list(self.untrusted_sinks)},
+            "egress": {label: list(sinks) for label, sinks in self.egress},
+            "rule_of_two": self.rule_of_two,
+            "on": self.on,
+        }
+
+    def checker(self) -> Any:
+        """Interlock's :class:`~interlock.invariants.ProvenanceGate` for these rules."""
+        from interlock.invariants import ProvenanceGate
+
+        return ProvenanceGate(
+            untrusted_kinds=self.untrusted_kinds,
+            untrusted_sinks=self.untrusted_sinks,
+            egress=dict(self.egress),
+            rule_of_two=self.rule_of_two,
+        )
+
+
+def _read_provenance(fields: Fields) -> Provenance:
+    section = fields.object("provenance", ("untrusted", "egress", "rule_of_two", "on"))
+    untrusted = section.object("untrusted", ("kinds", "sinks"))
+    any_name = re.compile(r"\*|[A-Za-z][A-Za-z0-9_]{0,62}")
+    any_sink = re.compile(r"\*|[a-z][a-z0-9_-]{0,63}")
+    egress = tuple(
+        (label, _sinks_at(value, path, SINK_NAME, "a sink"))
+        for label, path, value in section.mapping("egress", PROVENANCE_LABEL)
+    )
+    return Provenance(
+        untrusted_kinds=untrusted.strings("kinds", any_name, "a kind or *"),
+        untrusted_sinks=untrusted.strings("sinks", any_sink, "a sink or *"),
+        egress=egress,
+        rule_of_two=section.boolean("rule_of_two"),
+        on=section.choice("on", PROVENANCE_ON),
+    )
+
+
+def _sinks_at(value: object, path: str, pattern: re.Pattern[str], what: str) -> tuple[str, ...]:
+    return fidu1.check_strings(value, path, pattern, what, 64)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Mandate(Document):
     """One version of a mandate (F4-7 to F4-12)."""
@@ -1008,7 +1082,7 @@ class Mandate(Document):
         "delegation",
         "issued_at",
     )
-    OPTIONAL: ClassVar[tuple[str, ...]] = ("budgets", "enforcement")
+    OPTIONAL: ClassVar[tuple[str, ...]] = ("budgets", "enforcement", "provenance")
 
     mandate_id: str
     version: int
@@ -1040,6 +1114,9 @@ class Mandate(Document):
     and commits; a bound it breaks is recorded as observed, never refused.
     Written only when ``"shadow"``, so every mandate issued before keeps its
     encoding. Enforcement begins with the version that leaves it out."""
+    provenance: Provenance | None = None
+    """What a plan may do after its session read untrusted input or labeled data
+    (1.16.0): written only when set."""
     signature: Signature | None = None
 
     @property
@@ -1081,6 +1158,7 @@ class Mandate(Document):
                 else {}
             ),
             **({"enforcement": SHADOW} if self.enforcement == SHADOW else {}),
+            **({"provenance": self.provenance.to_json()} if self.provenance is not None else {}),
         }
 
     # -- reading ------------------------------------------------------------------
@@ -1148,6 +1226,7 @@ class Mandate(Document):
             "enforcement": fields.choice("enforcement", (SHADOW,))
             if fields.has("enforcement")
             else ENFORCE,
+            "provenance": _read_provenance(fields) if fields.has("provenance") else None,
         }
 
     def _agree(self) -> None:

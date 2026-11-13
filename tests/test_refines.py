@@ -1215,3 +1215,18 @@ def test_shapes_that_cannot_compare_are_named() -> None:
     assert any(
         p.path == "data.stated_footprint" for p in refines(parse(footprint_dropped), parse(raw))
     )
+
+
+def test_a_child_that_changes_no_guarded_table_keeps_no_guard_on_it() -> None:
+    """1.16.0: a drawdown guard on a table the child may not change binds nothing (as a cap
+    on an operation it may not send), so a reader lineage needs none; a child that still
+    changes the table keeps the guard."""
+    raw = universe()
+    reader = copy.deepcopy(raw)
+    del reader["data"]["tables"]["orders"]
+    reader["data"]["drawdown"] = []
+    assert not [p for p in refines(parse(reader), parse(raw)) if "drawdown" in str(p)]
+    writer = copy.deepcopy(raw)
+    writer["data"]["drawdown"] = []
+    (problem,) = [p for p in refines(parse(writer), parse(raw)) if "drawdown" in str(p)]
+    assert "is dropped" in str(problem)

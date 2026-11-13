@@ -7,7 +7,7 @@ every other member, its type and its SHA-256.
 
 A check's findings carry the class of failure §9.3 names, and each class its
 exit code. A run's exit code is the code of the first check, in the order V1
-to V12, that found anything.
+to V13, that found anything.
 """
 
 from __future__ import annotations
@@ -49,6 +49,7 @@ CHECKS: Final = (
     ("V10", "anchors"),
     ("V11", "revocation"),
     ("V12", "ordering"),
+    ("V13", "provenance"),
 )
 EXIT: Final = {
     "malformed": 3,
@@ -60,6 +61,7 @@ EXIT: Final = {
     "evidence": 8,
     "revocation": 9,
     "time": 9,
+    "provenance": 6,
 }
 """Each class of failure, and its exit code. 0 passes; 1 is a usage error; 2 a
 bundle the verifier could not read."""

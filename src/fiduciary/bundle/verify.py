@@ -1,6 +1,6 @@
 """Verifying a bundle offline (``docs/FIDUCIARY_SPEC.md`` §9.3, §9.4).
 
-:func:`verify_bundle` runs V1 to V12 over a bundle's bytes with no database
+:func:`verify_bundle` runs V1 to V13 over a bundle's bytes with no database
 and no network (F9-3), and reports every finding of every check. It trusts
 two things from outside the bundle: the charter's pinned digest, and,
 optionally, the auditor's keys (``--keys``: the service, ledger checkpoint,
@@ -67,7 +67,8 @@ from fiduciary.compiler import (
     receipt_problems,
     sets_canonical,
 )
-from fiduciary.documents import Charter, Mandate, Record, ToolBinding
+from fiduciary.documents import Charter, Mandate, Record, Ticket, ToolBinding, Warrant
+from fiduciary.documents.ticket import ProvenanceEvidence
 from fiduciary.exceptions import FiduciaryError
 from fiduciary.log import LOG_ID, check_anchors, memo_seal, parse_memo
 from fiduciary.seals import BundleKeys, line_key, tag
@@ -495,7 +496,7 @@ def verify_bundle(
     witness: Verifier | None = None,
     skew_seconds: int = 5,
 ) -> BundleReport:
-    """Run V1 to V12 over a bundle (module docstring).
+    """Run V1 to V13 over a bundle (module docstring).
 
     :param charter: Charter version 1's digest, pinned from outside the bundle.
     :param keys: The auditor's keys; without them, the bundle's own, noted.
@@ -527,7 +528,7 @@ def verify_bundle(
 
 
 class _Checks:
-    """V2 to V12 over what V1 let through."""
+    """V2 to V13 over what V1 let through."""
 
     def __init__(
         self,
@@ -588,6 +589,7 @@ class _Checks:
         self._v8_evidence()
         self._v11()
         self._v12()
+        self._v13()
 
     # -- V9 records --------------------------------------------------------------------
 
@@ -1228,6 +1230,177 @@ class _Checks:
                         "revocation",
                         f"receipt {name} delivers after the lineage was halted at {trip}",
                     )
+
+    # -- V13 provenance (1.16.0) --------------------------------------------------------
+
+    def _v13(self) -> None:
+        """Every plan committed after its session read something its mandate's provenance
+        rules cover satisfied them, or ran as the plan a warrant approved after the label
+        entered the session. Read from the signed session records, the escrow chains, the
+        action receipts and the tool bindings: not from what the engine said."""
+        from types import SimpleNamespace
+
+        from interlock.types import OUTBOX_TARGET
+
+        sessions: dict[str, dict[str, Any]] = {}
+        for record in self.b.records:
+            body = record.content
+            if record.kind == "session.opened":
+                sessions[str(body["session"])] = {
+                    "trajectory": body["trajectory"],
+                    "mandate": body["mandate"],
+                    "mandate_id": body["mandate_id"],
+                    "labels": [],
+                }
+            elif record.kind == "session.labeled" and str(body["session"]) in sessions:
+                sessions[str(body["session"])]["labels"].append(
+                    (record.seq, record.issued_at, tuple(body["introduced"]), str(body["tool"]))
+                )
+        if not any(s["labels"] for s in sessions.values()):
+            return
+        self._v13_readers(sessions)
+        approved = self._v13_approved()
+        actions = {
+            name: b.receipt
+            for name, b in self.b.receipts.items()
+            if isinstance(b.receipt, ActionReceipt)
+        }
+        tools = {
+            digest[:16]: ToolBinding.loads(raw)
+            for digest, (kind, raw) in self.b.docs.items()
+            if kind == "tool"
+        }
+        held = cleared = 0
+        for lineage, records in sorted(self.escrow.items()):
+            admitted = {
+                str(r.plan_id): r for r in records if r.record_type is RecordType.PLAN_ADMITTED
+            }
+            for entry in records:
+                if entry.record_type is not RecordType.COMMITTED:
+                    continue
+                named = _NAMED_RECEIPT.search(entry.note)
+                start = admitted.get(str(entry.plan_id))
+                receipt = actions.get(named[1]) if named else None
+                if start is None or receipt is None:
+                    continue  # V5 and V7 report what is missing
+                trajectory = receipt.authority.trajectory_id
+                labels: set[str] = set()
+                entered: dict[str, tuple[int, datetime]] = {}
+                rules = None
+                for session in sessions.values():
+                    if session["trajectory"] != trajectory or session["mandate_id"] != lineage:
+                        continue
+                    found = self.b.docs.get(str(session["mandate"]))
+                    version = documents.loads(found[1]) if found is not None else None
+                    if isinstance(version, Mandate):
+                        rules = version.provenance
+                    for seq, at, introduced, _ in session["labels"]:
+                        if at <= start.timestamp:
+                            for label in introduced:
+                                labels.add(label)
+                                entered.setdefault(label, (seq, at))
+                if not labels or rules is None:
+                    continue
+                kinds = set(receipt.effect.summary.tables) - {OUTBOX_TARGET}
+                sinks: set[str] = set()
+                tool = _TOOL.fullmatch(start.note)
+                if tool is not None and tool[2] in tools:
+                    sinks = {r.sink for r in tools[tool[2]].requests}
+                plan = SimpleNamespace(provenance=tuple(sorted(labels)))
+                diff = SimpleNamespace(
+                    kinds_touched=frozenset(kinds),
+                    outbound=tuple(SimpleNamespace(sink=s) for s in sorted(sinks)),
+                )
+                broken = rules.checker().check(plan, diff)
+                if not broken:
+                    continue
+                held += 1
+                latest = max(at for _, at in entered.values())
+                when = approved.get(start.payload_hash)
+                if when is not None and when >= latest:
+                    cleared += 1
+                    continue
+                why = "; ".join(v.message for v in broken)
+                first = min(seq for seq, _ in entered.values())
+                self.add(
+                    "V13",
+                    "provenance",
+                    f"plan {entry.plan_id} on {lineage}'s chain committed after its session "
+                    f"read {', '.join(sorted(labels))} (record {first} on), with no warrant "
+                    f"approving it after: {why}",
+                )
+        if held:
+            self.r.notes.append(
+                f"provenance: {held} committed "
+                f"{'plan was' if held == 1 else 'plans were'} made after the session read "
+                f"something the mandate's provenance rules cover; {cleared} ran as the plan a "
+                f"warrant approved after the label entered the session"
+            )
+
+    def _v13_approved(self) -> dict[str, datetime]:
+        """Each provenance ticket's proposal, and when an ``accept_repair`` warrant on it
+        was formed."""
+        tickets: dict[str, str] = {}
+        for digest, (kind, raw) in self.b.docs.items():
+            if kind == "ticket":
+                ticket = documents.loads(raw)
+                if isinstance(ticket, Ticket) and isinstance(ticket.evidence, ProvenanceEvidence):
+                    tickets[digest] = ticket.evidence.proposal
+        found: dict[str, datetime] = {}
+        for _, (kind, raw) in self.b.docs.items():
+            if kind != "warrant":
+                continue
+            warrant = documents.loads(raw)
+            if not isinstance(warrant, Warrant) or warrant.resolution.action != "accept_repair":
+                continue
+            proposal = tickets.get(warrant.ticket.digest)
+            if proposal is not None and proposal == warrant.resolution.proposal:
+                found[proposal] = min(found.get(proposal, warrant.formed_at), warrant.formed_at)
+        return found
+
+    def _v13_readers(self, sessions: Mapping[str, Mapping[str, Any]]) -> None:
+        """A ``quarantined:<tool>`` label crossed from a reader that could not write."""
+        mandates = [
+            m
+            for kind, raw in self.b.docs.values()
+            if kind == "mandate" and isinstance(m := documents.loads(raw), Mandate)
+        ]
+        bindings = [
+            b
+            for kind, raw in self.b.docs.values()
+            if kind == "tool" and isinstance(b := documents.loads(raw), ToolBinding)
+        ]
+        for session in sessions.values():
+            for seq, _, introduced, tool in session["labels"]:
+                for label in introduced:
+                    if not label.startswith("quarantined:"):
+                        continue
+                    binding = next(
+                        (b for b in bindings if b.name == tool and b.quarantine is not None), None
+                    )
+                    if binding is None or binding.quarantine is None:
+                        self.add(
+                            "V13",
+                            "provenance",
+                            f"record {seq}: {tool}'s result crossed as {label}, and no binding "
+                            f"of that name in the bundle is a reader's",
+                        )
+                        continue
+                    readers = [m for m in mandates if m.subject.scope == binding.quarantine.reader]
+                    if not readers:
+                        self.add(
+                            "V13",
+                            "provenance",
+                            f"record {seq}: {tool}'s reader {binding.quarantine.reader} is "
+                            f"not in the bundle, so what it may write cannot be checked",
+                        )
+                    elif any(any(m.data.tables.values()) or m.outbound.sinks for m in readers):
+                        self.add(
+                            "V13",
+                            "provenance",
+                            f"record {seq}: {tool}'s reader {binding.quarantine.reader} may "
+                            f"write or send, so its result is not quarantined",
+                        )
 
     # -- V12 ordering ------------------------------------------------------------------
 

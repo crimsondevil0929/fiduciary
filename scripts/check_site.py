@@ -8,6 +8,12 @@ customer bundles): its SHA-256 is the one the page shows; ``verify_bundle``, off
 against the ``charter.digest`` and ``pinned-keys.json`` beside it, exits as the page says;
 and ``report/verify.js``, run by Node with those pinned keys, fails no check on a bundle
 that verifies.
+
+And what a reader that runs no script gets (1.16.0): the front page is in the HTML (the
+headline, the three packages, the ``@gov.tool`` example and every workflow the run
+recorded); the head has a description, the canonical address, Open Graph and Twitter card
+tags and structured data that parses; ``favicon.svg``, ``social-card.png`` (1200 by 630),
+``sitemap.xml`` and ``robots.txt`` are there; and ``SHA256SUMS`` lists every file.
 """
 
 from __future__ import annotations
@@ -20,10 +26,13 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 from fiduciary.bundle import TrustedKeys, verify_bundle
+from fiduciary.report import site as public
 
 HARNESS = Path(__file__).resolve().parent.parent / "tests" / "js" / "verify_vectors.cjs"
 
@@ -69,8 +78,111 @@ def _expected(site: Path) -> list[dict[str, Any]]:
     return out
 
 
-def check(site: Path) -> list[str]:
+class _Page(HTMLParser):
+    """The text inside ``<div id="app">``, the head's meta tags and links, and its JSON-LD."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.app: list[str] = []
+        self.meta: dict[str, str] = {}
+        self.links: dict[str, str] = {}
+        self.structured: list[str] = []
+        self._depth = 0
+        self._ld = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        a = {k: v or "" for k, v in attrs}
+        if tag == "div" and a.get("id") == "app" and not self._depth:
+            self._depth = 1
+        elif self._depth and tag not in ("br", "img", "input", "meta", "link"):
+            self._depth += 1
+        if tag == "meta" and ("name" in a or "property" in a):
+            self.meta[a.get("name") or a["property"]] = a.get("content", "")
+        if tag == "link" and "rel" in a:
+            self.links[a["rel"]] = a.get("href", "")
+        self._ld = tag == "script" and a.get("type") == "application/ld+json"
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._depth and tag not in ("br", "img", "input", "meta", "link"):
+            self._depth -= 1
+        self._ld = False
+
+    def handle_data(self, data: str) -> None:
+        if self._depth:
+            self.app.append(data)
+        if self._ld:
+            self.structured.append(data)
+
+
+def _readable(site: Path, data: dict[str, Any]) -> list[str]:
+    """What a crawler, ``curl`` or a link preview reads, with no script run."""
     problems: list[str] = []
+    page = _Page()
+    page.feed((site / "index.html").read_text(encoding="utf-8"))
+    text = " ".join("".join(page.app).split())
+    wanted = [public.COPY["headline"], "@gov.tool", "def close_all(db: fiduciary.Sql) -> str:"]
+    for pkg in public.COPY["packages"]:
+        wanted += [pkg["name"], pkg["role"], f"pip install {pkg['dist']}"]
+    for row in (data.get("overview") or {}).get("industries", []):
+        if row.get("ran"):
+            wanted.append(row.get("workflow") or row["industry"])
+    problems += [
+        f"index.html: the HTML before any script runs lacks {w!r}" for w in wanted if w not in text
+    ]
+    for name in ("description", "og:title", "og:description", "og:url", "og:image", "twitter:card"):
+        if not page.meta.get(name):
+            problems.append(f"index.html: no {name} meta tag")
+    if page.meta.get("og:url") != public.SITE_URL or page.links.get("canonical") != public.SITE_URL:
+        problems.append("index.html: og:url and the canonical link are not the site's address")
+    if page.meta.get("og:image") != public.SITE_URL + public.CARD:
+        problems.append("index.html: og:image is not the card beside the page")
+    if page.links.get("icon") != "favicon.svg":
+        problems.append("index.html: no favicon link")
+    try:
+        graph = json.loads("".join(page.structured))["@graph"]
+        types = sorted(node["@type"] for node in graph)
+    except (ValueError, KeyError, TypeError):
+        problems.append("index.html: the structured data does not parse")
+    else:
+        if types.count("SoftwareSourceCode") != 3 or "SoftwareApplication" not in types:
+            problems.append(f"index.html: the structured data has {types}")
+    card = (site / public.CARD).read_bytes()
+    if card[:8] != b"\x89PNG\r\n\x1a\n" or card[16:24] != (1200).to_bytes(4, "big") + (
+        630
+    ).to_bytes(4, "big"):
+        problems.append(f"{public.CARD}: not a 1200 by 630 PNG")
+    ElementTree.fromstring((site / "favicon.svg").read_bytes())  # noqa: S314 - built here
+    found = [
+        loc.text
+        for loc in ElementTree.fromstring((site / "sitemap.xml").read_bytes()).iter(  # noqa: S314
+            "{http://www.sitemaps.org/schemas/sitemap/0.9}loc"
+        )
+    ]
+    if found != [public.SITE_URL]:
+        problems.append(f"sitemap.xml lists {found}")
+    if f"Sitemap: {public.SITE_URL}sitemap.xml" not in (site / "robots.txt").read_text(
+        encoding="utf-8"
+    ):
+        problems.append("robots.txt does not point at the sitemap")
+    listed = {
+        line.split("  ", 1)[1]
+        for line in (site / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
+        if "  " in line
+    }
+    files = {
+        p.relative_to(site).as_posix()
+        for p in site.rglob("*")
+        if p.is_file() and p.name not in (".nojekyll", "SHA256SUMS")
+    }
+    if files != listed:
+        problems.append(
+            f"SHA256SUMS does not list exactly the site's files: {sorted(files ^ listed)}"
+        )
+    return problems
+
+
+def check(site: Path) -> list[str]:
+    problems: list[str] = _readable(site, _payload(site / "index.html"))
     browser: list[dict[str, Any]] = []
     expected = _expected(site)
     for item in expected:

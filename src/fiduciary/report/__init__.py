@@ -60,10 +60,23 @@ def _marks() -> str:
     return _script_json({name: brand.inline(name, "{id}") for name in brand.NAMES})
 
 
+_NOSCRIPT: Final = (
+    '<noscript><div class="wrap" style="padding:40px 24px">This console renders with its own '
+    "inline script, offline. The attestation it renders is in the JSON block at the end of this "
+    "file; <code>fiduciary verify-bundle --json</code> prints the same.</div></noscript>"
+)
+
+
 def html(data: Mapping[str, Any], *, site: bool = False) -> str:
-    """The console, one file (module docstring)."""
+    """The console, one file (module docstring). For the site (1.16.0) the head also carries
+    what search engines and link previews read, and the front page is written into the page
+    as HTML, which the script replaces when it runs (:mod:`fiduciary.report.site`)."""
+    head, app = "", _NOSCRIPT
     if site:
-        data = {**data, "site": {"home": True}}
+        from fiduciary.report import site as public
+
+        head, app = public.page_parts(data)
+        data = {**data, "site": {"home": True, "copy": public.COPY}}
     page = (_ASSETS / "console.html").read_text(encoding="utf-8")
     style = (_ASSETS / "console.css").read_text(encoding="utf-8")
     script = (_ASSETS / "console.js").read_text(encoding="utf-8")
@@ -77,6 +90,8 @@ def html(data: Mapping[str, Any], *, site: bool = False) -> str:
         .replace("/*SCRIPT*/", script)
         .replace("/*DATA*/", _script_json(data))
         .replace("/*MARKS*/", _marks())
+        .replace("<!--HEAD-->", head)
+        .replace("<!--APP-->", app)
         .replace(
             "{{TITLE}}",
             "Fiduciary: agents change real systems, under signed limits"
@@ -105,6 +120,8 @@ def console_html(title: str = "Fiduciary console", *, served: bool = False) -> s
         .replace("/*SCRIPT*/", script)
         .replace("/*DATA*/", _script_json(data))
         .replace("/*MARKS*/", _marks())
+        .replace("<!--HEAD-->", "")
+        .replace("<!--APP-->", _NOSCRIPT)
         .replace("{{TITLE}}", title)
     )
 

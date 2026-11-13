@@ -57,6 +57,7 @@ __all__ = [
     "Observed",
     "ProgressEvidence",
     "ProposedMandate",
+    "ProvenanceEvidence",
     "QuoteEvidence",
     "ReceiptCheckpoint",
     "ReceiptRef",
@@ -82,6 +83,7 @@ ACTIONS_BY_CLASS: Final[Mapping[str, tuple[str, ...]]] = {
     "undo": ("compensate", "compensate_late", "reject"),
     "extension": ("grant", "decline"),
     "amend": ("amend", "reject"),
+    "provenance": ("accept_repair", "reject"),
 }
 """The resolution actions each ticket class admits, in the order ``options``
 lists them (§7.1)."""
@@ -192,6 +194,71 @@ class DroppedItem:
 
     def to_json(self) -> dict[str, Any]:
         return {"id": self.effect_id, "cause": self.cause}
+
+
+LABEL: Final = re.compile(r"[a-z][a-z0-9_.:=-]{0,95}")
+"""A provenance label (1.16.0, interlock's ``PROVENANCE_LABEL``)."""
+
+
+@dataclass(frozen=True, slots=True)
+class ProvenanceEvidence:
+    """Evidence for a ``provenance`` ticket (1.16.0): a plan refused for what its session
+    had read before it, the labels and the records that brought them, and the same plan,
+    labeled ``cleared``, as the proposal the principals approve or not."""
+
+    receipt: ReceiptRef
+    session: str
+    labels: tuple[str, ...]
+    introduced: tuple[int, ...]
+    """The seqs of the ``session.labeled`` records that brought ``labels``."""
+    rules: tuple[str, ...]
+    """What the plan broke: ``untrusted``, ``egress``, ``rule_of_two``."""
+    proposal: str
+
+    @property
+    def blocked_by(self) -> tuple[str, ...]:
+        return ("provenance_gate",)
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "receipt": self.receipt.to_json(),
+            "session": self.session,
+            "labels": list(self.labels),
+            "introduced": list(self.introduced),
+            "rules": list(self.rules),
+            "proposal": self.proposal,
+        }
+
+    @classmethod
+    def read(cls, raw: object, path: str) -> ProvenanceEvidence:
+        fields = Fields(
+            raw, path, ("receipt", "session", "labels", "introduced", "rules", "proposal")
+        )
+        receipt = fields.object("receipt", ("id", "digest"))
+        labels = fields.strings("labels", LABEL, "a provenance label")
+        if not labels:
+            raise MalformedError("range", fields.path("labels"), "names at least one label")
+        rules = fields.strings("rules", fidu1.one_of(PROVENANCE_RULES), "a provenance rule")
+        if not rules:
+            raise MalformedError("range", fields.path("rules"), "names at least one rule")
+        introduced = []
+        for item_path, item in fields.array("introduced", 256):
+            if not isinstance(item, int) or isinstance(item, bool) or item < 1:
+                raise MalformedError("type", item_path, "is a record's seq")
+            introduced.append(item)
+        if introduced != sorted(set(introduced)):
+            raise MalformedError("order", fields.path("introduced"), "is sorted, each once")
+        return cls(
+            receipt=ReceiptRef(receipt.text("id", fidu1.TEXT), receipt.hash("digest")),
+            session=fields.uuid("session"),
+            labels=labels,
+            introduced=tuple(introduced),
+            rules=rules,
+            proposal=fields.hash("proposal"),
+        )
+
+
+PROVENANCE_RULES: Final = ("egress", "rule_of_two", "untrusted")
 
 
 @dataclass(frozen=True, slots=True)
@@ -588,7 +655,13 @@ class AmendEvidence:
 
 
 Evidence = (
-    RefusedEvidence | HeldEvidence | DeadEvidence | UndoEvidence | ExtensionEvidence | AmendEvidence
+    RefusedEvidence
+    | HeldEvidence
+    | DeadEvidence
+    | UndoEvidence
+    | ExtensionEvidence
+    | AmendEvidence
+    | ProvenanceEvidence
 )
 
 
@@ -603,6 +676,8 @@ def _read_evidence(ticket_class: str, raw: object, path: str) -> Evidence:
         return UndoEvidence.read(raw, path)
     if ticket_class == "extension":
         return ExtensionEvidence.read(raw, path)
+    if ticket_class == "provenance":
+        return ProvenanceEvidence.read(raw, path)
     return AmendEvidence.read(raw, path)
 
 
@@ -949,7 +1024,7 @@ class Ticket(Document):
                 raise MalformedError(
                     "agreement", f"{path}.amount", "the option offers the quote's requested amount"
                 )
-        elif isinstance(ev, RefusedEvidence):
+        elif isinstance(ev, RefusedEvidence | ProvenanceEvidence):
             if res.proposal != ev.proposal:
                 raise MalformedError("agreement", f"{path}.proposal", "names another proposal")
         elif isinstance(ev, HeldEvidence):

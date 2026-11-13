@@ -116,6 +116,18 @@
    "receipts": "pass",
    "signatures": "pass"
   },
+  "v13-tainted-commit": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "provenance": "fail",
+   "receipts": "pass",
+   "signatures": "pass"
+  },
   "v2-wrong-pinned-charter": {
    "anchors": "pass",
    "chain": "pass",
@@ -423,6 +435,18 @@
    "ledger": "pass",
    "manifest": "pass",
    "members": "pass",
+   "receipts": "pass",
+   "signatures": "pass"
+  },
+  "valid-provenance-held": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "provenance": "pass",
    "receipts": "pass",
    "signatures": "pass"
   },
@@ -566,6 +590,19 @@
    "receipts": "pass",
    "signatures": "pass"
   },
+  "v13-tainted-commit": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "provenance": "fail",
+   "receipts": "pass",
+   "signatures": "pass"
+  },
   "v2-wrong-pinned-charter": {
    "anchors": "pass",
    "chain": "pass",
@@ -901,6 +938,19 @@
    "manifest": "pass",
    "members": "pass",
    "pins": "pass",
+   "receipts": "pass",
+   "signatures": "pass"
+  },
+  "valid-provenance-held": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "provenance": "pass",
    "receipts": "pass",
    "signatures": "pass"
   },

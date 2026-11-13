@@ -89,6 +89,8 @@ POLICIES: Final = (
         "Loyalty discounts: the agent's own tenant, at most 15%.",
     ),
     Policy("dispute", "flag_dispute", (_OWN,), "Disputes: the agent's own tenant."),
+    # 1.16.0: after the others, so each keeps its policy id
+    Policy("email", "read_email", (), "Agents may read customers' emails about orders."),
 )
 
 

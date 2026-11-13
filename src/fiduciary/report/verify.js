@@ -26,6 +26,11 @@
 //                            signed by a receipt key, included in its signed checkpoint,
 //                            attested by a relay key, and bound to an action receipt the
 //                            bundle holds, by id, place and leaf hash
+//   provenance  V13          (when a session in the bundle read anything labeled, 1.16.0)
+//                            every plan committed after the session read untrusted input or
+//                            labeled data met the mandate's provenance rules, or ran as the
+//                            plan a warrant approved after the label entered; and a reader's
+//                            typed result came from a reader that can write nothing
 //
 // Without pinned keys, the keys are the bundle's own (keys.json). The ledger's cosignatures
 // and the entries no anchor is read from (the rest of V6), replay (V3, V7, V8, V11, V12), the charter (V2), the
@@ -229,7 +234,7 @@
           });
         });
       }).catch(function () { ed.ok = false; add("manifest", "The manifest's signature, by the service key", "V9", "skip", "no Ed25519 in this Web Crypto"); });
-    }).then(function () { return logChecks(); }).then(function () { receiptChecks(); return deliveryChecks(); }).then(function () { return out; });
+    }).then(function () { return logChecks(); }).then(function () { receiptChecks(); provenanceChecks(); return deliveryChecks(); }).then(function () { return out; });
 
     function receiptChecks() {
       // The record a plan settles on names its action receipt before the receipt is issued, so
@@ -253,6 +258,118 @@
       add("receipts", NAME, "V5", missing.length ? "fail" : "pass",
         missing.length ? missing.slice(0, 3).join("; ") + (missing.length > 3 ? "; and " + (missing.length - 3) + " more" : "")
           : named + " receipt" + (named === 1 ? "" : "s") + " named by " + chains.length + " chain" + (chains.length === 1 ? "" : "s") + ", each held");
+    }
+
+    // V13 (1.16.0): what a session read, from its signed records, against what its plans did,
+    // from the chains, the receipts and the tool bindings. The same rules as interlock's
+    // ProvenanceGate: after "untrusted", the kinds and sinks the mandate lists; after a
+    // labeled read, only the sinks cleared for that label; the rule of two.
+    function provenanceChecks() {
+      var NAME = "Every plan made after a labeled read met the mandate's provenance rules, or a warrant approved it after";
+      function json(name) { try { return by[name] ? JSON.parse(dec.decode(by[name])) : null; } catch (e) { return null; } }
+      function instant(t) {
+        var m = /^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d{1,9}))?(Z|[+-]00:00)?$/.exec(String(t || ""));
+        return m ? m[1] + "." + ((m[2] || "") + "000000").slice(0, 6) : "";
+      }
+      var records = []; dec.decode(by["log.jsonl"] || new Uint8Array(0)).split("\n").forEach(function (l) { if (l) { try { records.push(JSON.parse(l)); } catch (e) { /* the chain check names it */ } } });
+      var sessions = {};
+      records.forEach(function (r) {
+        var b = r && r.body || {};
+        if (r.kind === "session.opened") sessions[b.session] = { trajectory: b.trajectory, mandate: b.mandate, lineage: b.mandate_id, labels: [] };
+        else if (r.kind === "session.labeled" && sessions[b.session]) sessions[b.session].labels.push({ seq: r.seq, at: instant(r.issued_at), introduced: b.introduced || [], tool: b.tool });
+      });
+      var any = Object.keys(sessions).some(function (k) { return sessions[k].labels.length; });
+      if (!any) return;
+      var docs = { tool: [], ticket: [], warrant: [], mandate: [] };
+      Object.keys(by).forEach(function (n) {
+        var m = /^(tools|tickets|warrants|mandates)\/([0-9a-f]{64})\.json$/.exec(n);
+        if (!m) return;
+        var d = json(n); if (!d) return;
+        d.__digest = m[2];
+        docs[{ tools: "tool", tickets: "ticket", warrants: "warrant", mandates: "mandate" }[m[1]]].push(d);
+      });
+      var problems = [], held = 0, cleared = 0;
+      // a reader's typed result came from a reader that can write nothing
+      Object.keys(sessions).forEach(function (k) {
+        sessions[k].labels.forEach(function (l) {
+          l.introduced.forEach(function (label) {
+            if (label.indexOf("quarantined:") !== 0) return;
+            var b = docs.tool.filter(function (t) { return t.name === l.tool && t.quarantine; })[0];
+            if (!b) return problems.push("record " + l.seq + ": " + l.tool + "'s result crossed as " + label + ", and no binding of that name is a reader's");
+            var readers = docs.mandate.filter(function (m) { return m.subject && m.subject.scope === b.quarantine.reader; });
+            if (!readers.length) return problems.push("record " + l.seq + ": " + l.tool + "'s reader " + b.quarantine.reader + " is not in the bundle");
+            if (readers.some(function (m) { var t = (m.data && (m.data.tables || m.data.kinds)) || {}; return Object.keys(t).some(function (x) { return (t[x] || []).length; }) || Object.keys((m.outbound && m.outbound.sinks) || {}).length; }))
+              problems.push("record " + l.seq + ": " + l.tool + "'s reader " + b.quarantine.reader + " may write or send");
+          });
+        });
+      });
+      // approvals: each provenance ticket's proposal, and the earliest accept_repair warrant on it
+      var proposals = {}, approved = {};
+      docs.ticket.forEach(function (t) { if (t["class"] === "provenance" && t.evidence) proposals[t.__digest] = t.evidence.proposal; });
+      docs.warrant.forEach(function (w) {
+        var p = proposals[w.ticket && w.ticket.digest];
+        if (!p || !w.resolution || w.resolution.action !== "accept_repair" || w.resolution.proposal !== p) return;
+        var at = instant(w.formed_at);
+        if (!approved[p] || at < approved[p]) approved[p] = at;
+      });
+      function gate(rules, labels, kinds, sinks) {
+        var found = [], has = function (x) { return labels.indexOf(x) >= 0; };
+        if (has("cleared")) return found;
+        var u = rules.untrusted || {}, uk = u.kinds || [], us = u.sinks || [];
+        if (has("untrusted")) {
+          var hk = kinds.filter(function (k) { return uk.indexOf("*") >= 0 || uk.indexOf(k) >= 0; });
+          var hs = sinks.filter(function (x) { return us.indexOf("*") >= 0 || us.indexOf(x) >= 0; });
+          if (hk.length || hs.length) found.push("after untrusted input: " + hk.concat(hs).join(", "));
+        }
+        var egress = rules.egress || {};
+        labels.forEach(function (label) {
+          var allowed = egress[label] || (label.indexOf("partition:") === 0 ? egress["partition:*"] : null);
+          if (!allowed) return;
+          var stray = sinks.filter(function (x) { return allowed.indexOf(x) < 0; });
+          if (stray.length) found.push(label + " sent to " + stray.join(", "));
+        });
+        var sensitive = labels.some(function (x) { return x === "secret" || x.indexOf("partition:") === 0; });
+        if (rules.rule_of_two && has("untrusted") && sensitive && (kinds.length || sinks.length)) found.push("the rule of two");
+        return found;
+      }
+      Object.keys(by).filter(function (n) { return /^escrow\/[^/]+\.chain$/.test(n); }).sort().forEach(function (n) {
+        var lineage = n.slice(7, -6), lines = [];
+        dec.decode(by[n]).split("\n").forEach(function (l) { if (l) { try { lines.push(JSON.parse(l)); } catch (e) { /* named by the receipts check */ } } });
+        var admitted = {};
+        lines.forEach(function (r) { if (r.record_type === "plan_admitted") admitted[r.plan_id] = r; });
+        lines.forEach(function (r) {
+          if (r.record_type !== "committed") return;
+          var m = /; receipt ([0-9a-f-]{36})/.exec(r.note || ""), start = admitted[r.plan_id];
+          var rcpt = m ? json("receipts/" + m[1] + ".json") : null;
+          if (!start || !rcpt || !rcpt.receipt) return;
+          var trajectory = rcpt.receipt.authority && rcpt.receipt.authority.trajectory_id, at = instant(start.timestamp);
+          var labels = [], latest = "", first = null, rules = null;
+          Object.keys(sessions).forEach(function (k) {
+            var s = sessions[k];
+            if (s.trajectory !== trajectory || s.lineage !== lineage) return;
+            var version = json("mandates/" + s.mandate + ".json");
+            if (version && version.provenance) rules = version.provenance;
+            s.labels.forEach(function (l) {
+              if (l.at > at) return;
+              l.introduced.forEach(function (x) { if (labels.indexOf(x) < 0) labels.push(x); });
+              if (l.at > latest) latest = l.at;
+              if (first === null || l.seq < first) first = l.seq;
+            });
+          });
+          if (!labels.length || !rules) return;
+          var kinds = ((rcpt.receipt.effect && rcpt.receipt.effect.summary && rcpt.receipt.effect.summary.tables) || []).filter(function (t) { return t !== "outbox"; });
+          var sinks = [], tool = /FIDU1 tool (\S+) ([0-9a-f]{16})$/.exec(start.note || "");
+          if (tool) docs.tool.forEach(function (t) { if (t.__digest.slice(0, 16) === tool[2]) (t.requests || []).forEach(function (q) { if (sinks.indexOf(q.sink) < 0) sinks.push(q.sink); }); });
+          var broken = gate(rules, labels.sort(), kinds, sinks);
+          if (!broken.length) return;
+          held++;
+          if (approved[start.payload_hash] && approved[start.payload_hash] >= latest) { cleared++; return; }
+          problems.push("plan " + r.plan_id + " committed after its session read " + labels.join(", ") + " (record " + first + " on), with no warrant approving it after: " + broken.join("; "));
+        });
+      });
+      add("provenance", NAME, "V13", problems.length ? "fail" : "pass",
+        problems.length ? problems.slice(0, 3).join("; ") + (problems.length > 3 ? "; and " + (problems.length - 3) + " more" : "")
+          : held + " plan" + (held === 1 ? "" : "s") + " made after a labeled read, " + cleared + " approved by warrant after it");
     }
 
     function deliveryChecks() {

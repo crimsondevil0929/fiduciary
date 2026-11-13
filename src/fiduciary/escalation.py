@@ -75,6 +75,7 @@ from fiduciary.documents.ticket import (
     Observed,
     ProgressEvidence,
     ProposedMandate,
+    ProvenanceEvidence,
     QuoteEvidence,
     ReceiptCheckpoint,
     ReceiptRef,
@@ -414,6 +415,46 @@ class Escalation:
             resolutions,
             statement=statement,
             ticket_id=ticket_id,
+        )
+
+    def raise_provenance(
+        self,
+        mandate_id: str,
+        cleared: EffectPlan,
+        *,
+        receipt: ActionReceipt,
+        session: str,
+        introduced: Sequence[int],
+        rules: Sequence[str],
+        statement: str | None = None,
+    ) -> tuple[Ticket | None, Warrant | None]:
+        """Raise a ``provenance`` ticket (1.16.0): a plan refused for what its session had
+        read before it, held for the principals. ``cleared`` is the same plan labeled
+        ``cleared``, which an ``accept_repair`` warrant executes as it stands."""
+        if "cleared" not in cleared.provenance:
+            raise EscalationError("a provenance proposal is the plan labeled cleared")
+        labels = tuple(label for label in cleared.provenance if label != "cleared")
+        if not labels or not rules:
+            raise EscalationError("a provenance ticket names the labels and the rules broken")
+        proposal = cleared.content_hash()
+        self.proposals[proposal] = cleared
+        evidence = ProvenanceEvidence(
+            receipt=ReceiptRef(
+                receipt_id=receipt.receipt_id,
+                digest=hashlib.sha256(receipt.canonical()).hexdigest(),
+            ),
+            session=session,
+            labels=labels,
+            introduced=tuple(sorted(set(introduced))),
+            rules=tuple(sorted(set(rules))),
+            proposal=proposal,
+        )
+        resolutions = (
+            Resolution(action="accept_repair", proposal=proposal),
+            Resolution(action="reject", proposal=proposal),
+        )
+        return self.raise_ticket(
+            mandate_id, "provenance", evidence, resolutions, statement=statement
         )
 
     def raise_held(

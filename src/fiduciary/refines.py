@@ -265,6 +265,10 @@ def _data(check: _Check, child: Mandate, parent: Mandate) -> None:
         lambda d: d.identity,
         lambda d: ".".join(d.identity),
         lambda path, c, p: _drawdown(check, path, c, p),
+        # 1.16.0: as with caps, a guard on a table the child may not change binds nothing,
+        # and a mandate may not guard a table it does not allow: a reader lineage that
+        # changes nothing could otherwise never be derived from a parent with a guard.
+        lambda d: d.table in mine.tables,
     )
     if theirs.receipt_tenants == "declared" and mine.receipt_tenants != "declared":
         check.fail("data.receipt_tenants", "names tenants the parent's receipts do not")
@@ -478,6 +482,7 @@ def _tools(check: _Check, child: Mandate, parent: Mandate) -> None:
     if child.shadow and not parent.shadow:
         # 1.14.0: a shadow mandate commits what its bounds would refuse
         check.fail("enforcement", "is shadow, and the parent's bounds are enforced")
+    _provenance(check, child, parent)
     pinned = {(b.name, b.digest) for b in parent.tools.bindings}
     for binding in child.tools.bindings:
         if (binding.name, binding.digest) not in pinned:
@@ -485,6 +490,33 @@ def _tools(check: _Check, child: Mandate, parent: Mandate) -> None:
                 f"tools.bindings[{binding.name}]",
                 "is a binding the parent does not pin, by name and digest",
             )
+
+
+def _provenance(check: _Check, child: Mandate, parent: Mandate) -> None:
+    """1.16.0: a child keeps its parent's provenance rules, or stricter ones: every kind and
+    sink the parent guards after untrusted input, no sink the parent does not clear for a
+    label, the rule of two when the parent has it, and ``refuse`` where it ``holds``."""
+    theirs = parent.provenance
+    if theirs is None:
+        return
+    mine = child.provenance
+    if mine is None:
+        check.fail("provenance", "is dropped, and the parent judges plans by what was read")
+        return
+    for what, guarded, kept in (
+        ("kinds", theirs.untrusted_kinds, mine.untrusted_kinds),
+        ("sinks", theirs.untrusted_sinks, mine.untrusted_sinks),
+    ):
+        if "*" not in kept and not set(guarded) <= set(kept):
+            check.fail(f"provenance.untrusted.{what}", "guards less than the parent")
+    cleared = dict(mine.egress)
+    for label, sinks in theirs.egress:
+        if label not in cleared or not set(cleared[label]) <= set(sinks):
+            check.fail(f"provenance.egress.{label}", "clears a sink the parent does not")
+    if theirs.rule_of_two and not mine.rule_of_two:
+        check.fail("provenance.rule_of_two", "is off, and the parent's is on")
+    if theirs.on == "refuse" and mine.on != "refuse":
+        check.fail("provenance.on", "holds what the parent refuses")
 
 
 def _recovery(check: _Check, child: Mandate, parent: Mandate) -> None:

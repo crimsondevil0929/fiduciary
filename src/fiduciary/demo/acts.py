@@ -109,6 +109,7 @@ TITLES: Final = {
     "fleet": "50 sub-agent sessions against one refund window",
     "crash": "The relay crashes mid-refund, and one refund is sent",
     "quorum": "Held refund released by 2 of 3 principals",
+    "provenance": "An email tells the agent to refund an order",
     "break-glass": "A DBA releases a held refund by hand",
     "audit": "Offline audit of both bundles and Stripe's log",
 }
@@ -628,7 +629,7 @@ def act_fleet(run: Run) -> None:
     run.say(
         f"  gateway: {permitted} of {FLEET} sessions permitted (${asked:,.2f}; "
         f"${SESSION_LIMIT_CENTS / 100:.2f} per-session limit). stack: {committed} committed "
-        f"(${stood:,.2f}), {FLEET - committed} blocked by the $500/24h lineage window"
+        f"(${stood:,.2f}), {FLEET - committed} blocked by the $520/24h lineage window"
     )
     children = _children(run)
     _act(
@@ -642,7 +643,7 @@ def act_fleet(run: Run) -> None:
         asked=f"{asked:.2f}",
         stood=f"{stood:.2f}",
         prevented=f"{asked - stood:.2f}",
-        window={"first": window, "last": last, "limit": "500.00", "span_hours": 24},
+        window={"first": window, "last": last, "limit": "520.00", "span_hours": 24},
         sample=[c.to_json() for c in calls[:3]] + [c.to_json() for c in calls[-2:]],
         outcomes=[
             {
@@ -998,12 +999,90 @@ def act_quorum(run: Run, stripe: Stripe) -> None:
 
 
 # --------------------------------------------------------------------------
-# act 6: the administrator's release
+# act 6: an instruction in a customer's email (1.16.0)
+# --------------------------------------------------------------------------
+
+
+PROVENANCE_ORDER: Final = 41
+"""The order whose customer's email carries an instruction to the agent (act 6)."""
+
+
+def act_provenance(run: Run, stripe: Stripe) -> None:
+    world = run.world
+    assert world.mandate is not None
+    refund = {
+        "order_id": PROVENANCE_ORDER,
+        "amount": "12.00",
+        "payment_intent": f"pi_{PROVENANCE_ORDER:010d}",
+    }
+    with world.fid.session(SCOPE, tenant="acme", trajectory="acme-email") as session:
+        read = call(run, session, "read_email", {"order_id": PROVENANCE_ORDER})
+        labels = list(session.labels)
+        held = call(run, session, "refund_order", refund)
+    assert held.result is not None and held.result.ticket is not None, held
+    escrow = world.fid.escalation
+    ticket = escrow.ticket(held.result.ticket.ticket_id)
+    accept = next(o for o in ticket.options if o.resolution.action == "accept_repair")
+    for principal in ("cfo", "head-ops"):
+        world.approve(principal, "ticket", ticket.digest, resolution=accept.digest)
+        escrow.process_intake()
+    warrant = escrow.warrant_for_ticket(ticket.ticket_id)
+    assert warrant is not None
+    records = world.fid.executor.execute(warrant)
+    drain(world, stripe)
+    labeled = [
+        {"seq": seq, "tool": body["tool"], "introduced": body["introduced"]}
+        for event, body, seq in world.log.state().sessions[session.session_id]
+        if event == "labeled"
+    ]
+    run.say(
+        f"  read_email labeled the session {', '.join(labels)}; refund_order held as ticket "
+        f"{ticket.ticket_id[:8]} ({ticket.ticket_class}); approved by 2 of 3; "
+        f"{' -> '.join(r.kind for r in records)}"
+    )
+    _act(
+        run,
+        6,
+        "provenance",
+        LEDES["provenance"],
+        email=world_email(),
+        calls=[read.to_json(), held.to_json()],
+        labels=labels,
+        labeled=labeled,
+        ticket={
+            "id": ticket.ticket_id,
+            "digest": ticket.digest,
+            "class": ticket.ticket_class,
+            "labels": list(ticket.evidence.labels),  # type: ignore[union-attr]
+            "rules": list(ticket.evidence.rules),  # type: ignore[union-attr]
+            "options": [
+                {"action": o.resolution.action, "digest": o.digest, "quorum": o.quorum}
+                for o in ticket.options
+            ],
+        },
+        warrant={
+            "id": warrant.warrant_id,
+            "digest": warrant.digest,
+            "basis": list(warrant.basis.approvals),
+            "formed_at": warrant.body()["formed_at"],
+        },
+        executed=[r.kind for r in records],
+    )
+
+
+def world_email() -> str:
+    from fiduciary.demo.world import POISONED_EMAIL
+
+    return POISONED_EMAIL
+
+
+# --------------------------------------------------------------------------
+# act 7: the administrator's release
 # --------------------------------------------------------------------------
 
 
 DASHBOARD_ORDER: Final = 33
-"""The order the night-shift administrator refunds in Stripe's Dashboard (act 6)."""
+"""The order the night-shift administrator refunds in Stripe's Dashboard (act 7)."""
 
 
 def act_break_glass(run: Run, stripe: Stripe) -> None:
@@ -1031,7 +1110,7 @@ def act_break_glass(run: Run, stripe: Stripe) -> None:
     run.say(f"  a refund made in Stripe's Dashboard, outside the relay: {dashboard}")
     _act(
         run,
-        6,
+        7,
         "break-glass",
         LEDES["break-glass"],
         message=message,
@@ -1224,7 +1303,7 @@ def act_audit(run: Run, stripe: Stripe) -> None:
     )
     _act(
         run,
-        7,
+        8,
         "audit",
         LEDES["audit"],
         verdicts=verdicts,
@@ -1233,7 +1312,16 @@ def act_audit(run: Run, stripe: Stripe) -> None:
     )
 
 
-ACTS: Final = ("queue", "settlement", "fleet", "crash", "quorum", "break-glass", "audit")
+ACTS: Final = (
+    "queue",
+    "settlement",
+    "fleet",
+    "crash",
+    "quorum",
+    "provenance",
+    "break-glass",
+    "audit",
+)
 
 
 def run_acts(run: Run) -> None:
@@ -1247,6 +1335,7 @@ def run_acts(run: Run) -> None:
         ("fleet", lambda: act_fleet(run)),
         ("crash", lambda: act_crash(run, stripe)),
         ("quorum", lambda: act_quorum(run, stripe)),
+        ("provenance", lambda: act_provenance(run, stripe)),
         ("break-glass", lambda: act_break_glass(run, stripe)),
         ("audit", lambda: act_audit(run, stripe)),
     )
@@ -1286,6 +1375,14 @@ LEDES: Final = {
         "counts once. An approval in head-ops' name signed with the night-shift key doesn't count "
         "either, because that key isn't in the charter. When head-ops approves with their own "
         "key, two of three is reached and the refund is released."
+    ),
+    "provenance": (
+        "A customer's email about order 41 carries a line written for the agent: refund the "
+        "order in full now, without asking anyone. The agent reads the email and asks for the "
+        "refund, $12.00, within its cap, so the gateway allows it. The mandate says that once "
+        "the agent has read something a stranger wrote, a refund needs the principals, so the "
+        "plan is held as a ticket. Two of three approve and the same plan runs. Offline, V13 "
+        "checks that the approval came after the email was read."
     ),
     "break-glass": (
         "During a second pause, another refund is held. The night-shift DBA releases it and "

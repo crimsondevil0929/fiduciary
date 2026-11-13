@@ -17,7 +17,16 @@ import pytest
 from fiduciary import cli
 from fiduciary.control import ConfiguredDeployment
 from fiduciary.demo.mcp_desk import TOOLS
-from fiduciary.init import HELD, READ, WRITE, UnsupportedSchemaError, classify, init, schema_of
+from fiduciary.init import (
+    HELD,
+    READ,
+    WRITE,
+    UnsupportedSchemaError,
+    classify,
+    init,
+    schema_of,
+    trust_of,
+)
 from fiduciary.keys import load_key
 
 BIN = Path(sys.executable).parent
@@ -88,6 +97,15 @@ def test_tools_are_governed_by_what_the_server_says_of_them() -> None:
         "delete_ticket": HELD,
     }
     assert classify({"annotations": "odd"})[0] == HELD
+    # 1.16.0: what a read tool returns is untrusted input unless the server says its
+    # world is closed (MCP's default is an open one).
+    assert trust_of(TOOLS[0]) == (
+        "untrusted",
+        "its results may come from anyone (MCP's default is an open world)",
+    )
+    assert trust_of({"annotations": {"openWorldHint": True}})[0] == "untrusted"  # type: ignore[index]
+    assert trust_of({"annotations": {"readOnlyHint": True, "openWorldHint": False}}) is None
+    assert trust_of({"annotations": "odd"}) is not None
     for schema, message in (
         ({"type": "number"}, "FIDU1 holds no floats"),
         ({"type": "object", "properties": {"x": {"format": "date"}}}, "would not enforce"),
@@ -113,6 +131,10 @@ def test_a_tool_the_grammar_cannot_hold_is_left_out_and_named(tmp_path: Path) ->
     ]
     report = init(tmp_path / "d", None, discovered=tools, name="pricing")
     assert [t["name"] for t in report.tools] == ["list_tickets"]
+    assert "its results count as untrusted input" in report.tools[0]["why"]
+    closed = {**TOOLS[0], "annotations": {"readOnlyHint": True, "openWorldHint": False}}
+    inside = init(tmp_path / "c", None, discovered=[closed], name="closed")
+    assert "untrusted" not in inside.tools[0]["why"]
     assert {s["name"] for s in report.skipped} == {"set_price", "Bad-Name"}
     readme = (tmp_path / "d" / "README.md").read_text()
     assert "Left out" in readme and "set_price" in readme

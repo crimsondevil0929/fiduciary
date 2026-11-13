@@ -351,9 +351,10 @@ fiduciary verify-bundle desk.fidb \
   --charter "$(cat desk/charter.digest)" --keys desk/pinned-keys.json
 ```
 
-The verifier checks V1 to V12: the container, the charter you pinned, the delegation, the
+The verifier checks V1 to V13: the container, the charter you pinned, the delegation, the
 compiled policy, every receipt, the ledger, that every act traces to a mandate or a warrant,
-that the warrant had its quorum, and the ordering in time. It ends `PASS`. Drop
+that the warrant had its quorum, the ordering in time, and that no plan made after the agent
+read untrusted input skipped the approval its mandate asked for. It ends `PASS`. Drop
 `desk.fidb` on the console's **Verify a bundle** page to check it in a browser too.
 
 `--charter` and `--keys` are what make the check mean something. A bundle carries its own

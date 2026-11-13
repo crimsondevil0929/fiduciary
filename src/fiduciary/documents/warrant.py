@@ -16,6 +16,7 @@ from fiduciary.documents.ticket import (
     ExtensionEvidence,
     HeldEvidence,
     MessageTarget,
+    ProvenanceEvidence,
     RefusedEvidence,
     Resolution,
     Ticket,
@@ -219,7 +220,7 @@ def execution_steps(warrant: Warrant, ticket: Ticket) -> list[dict[str, Any]]:
         steps.append({"step": len(steps), "kind": kind, **fields})
 
     if action == "accept_repair":
-        assert isinstance(ev, RefusedEvidence) and res.proposal is not None
+        assert isinstance(ev, RefusedEvidence | ProvenanceEvidence) and res.proposal is not None
         add("accept_repair", proposal=res.proposal, receipt=ev.receipt.receipt_id)
     elif action in ("release", "reset"):
         scope = res.reset if action == "release" else res.scope

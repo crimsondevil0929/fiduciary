@@ -68,7 +68,7 @@ def test_the_site_marks_its_page_and_carries_the_marks() -> None:
     data = _run()
     site = report.html(data, site=True)
     console = report.html(data)
-    assert '"site":{"home":true}' in site and '"site"' not in console
+    assert '"home":true' in site and '"site"' not in console
     for page in (site, console, report.console_html()):
         start = page.index('id="marks">') + len('id="marks">')
         marks = json.loads(page[start : page.index("</script>", start)])

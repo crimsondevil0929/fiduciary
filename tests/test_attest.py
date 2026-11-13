@@ -120,9 +120,11 @@ def test_the_html_embeds_its_payload_safely() -> None:
     attested = attest(data, found, charter=case["charter"])
     attested["notes"].append("</script><script>alert(1)</script> & more")
     page = report.html(report.payload({"bundle": attested}))
-    # the payload, the packages' marks (1.15.0), the bundle checks, the page (1.8.0)
-    assert page.count("</script>") == 4
+    # the payload, the packages' marks (1.15.0), the bundle checks, the page (1.8.0), and the
+    # saved theme, set in the head before the first paint (1.16.0)
+    assert page.count("</script>") == 5
     assert "{{TITLE}}" not in page and "/*DATA*/" not in page and "/*MARKS*/" not in page
+    assert "<!--HEAD-->" not in page and "<!--APP-->" not in page
     start = page.index('id="payload">') + len('id="payload">')
     embedded = json.loads(page[start : page.index("</script>", start)])
     assert embedded["attestations"]["bundle"]["notes"][-1].startswith("</script>")
