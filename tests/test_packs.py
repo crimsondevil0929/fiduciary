@@ -362,6 +362,8 @@ def test_the_overview_counts_only_what_ran(stack: Outcome) -> None:
     assert {rows[k]["class"] for k in ("fintech", *PACKS)} == {"T", "P", "V"}
     engine = {k: rows[k]["engine"] for k in ("fintech", *PACKS)}
     assert engine["fintech"]["rate_window"] == 45  # every fan-out session, not the sample
+    assert engine["fintech"]["provenance_gate"] == 1  # the poisoned email's refund (1.16.0)
+    assert all(engine[k]["provenance_gate"] == 0 for k in PACKS)
     assert engine["healthcare"]["fact_agreement"] == 1
     assert (engine["healthcare"]["read_back"], engine["healthcare"]["stale_head"]) == (1, 1)
     assert engine["sre"]["no_delete"] == 1

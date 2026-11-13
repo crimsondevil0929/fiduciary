@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.16.0] - Unreleased
+## [1.16.0] - 2026-11-13
 
 What the agent read before it asked. A refund within the agent's cap is still the wrong
 refund when the agent asked for it because a stranger's email said to. A session now records
@@ -56,6 +56,16 @@ before keeps its bytes and its verdict.
   version adds them.
 - **The demo's eighth fintech act**: a poisoned customer email, an in-cap refund held for the
   principals, approved 2 of 3, run as approved, and V13's note in both bundles.
+- **The public site reads without its script** (`fiduciary.report.site`): a crawler, `curl`
+  and a chat app's link preview used to get an empty `<div id="app">`. The front page is now
+  written into the HTML with the classes the script uses, and the script replaces it when
+  it runs; its words are in one place, `site.COPY`, which the script reads from the payload.
+  The head has a description, the canonical address, Open Graph and Twitter card tags, a
+  favicon (Fiduciary's mark, light or dark) and structured data (`SoftwareApplication`, and
+  `SoftwareSourceCode` for each package). `scripts/build_site.py` writes `favicon.svg`,
+  `social-card.png` (1200 by 630, drawn by `scripts/make_social_card.py`), `sitemap.xml` and
+  `robots.txt` beside the page, and `scripts/check_site.py` checks all of it, and that
+  `SHA256SUMS` lists every file.
 
 ### Changed
 
@@ -64,6 +74,16 @@ before keeps its bytes and its verdict.
   guard a table it does not allow, so no reader lineage could otherwise be derived from a
   parent with a guard.
 - The landing page's loop and the docs say V1 to V13.
+- **Each system's own words in the workbench.** The Kubernetes workflow says objects, kinds
+  and the cluster where it said rows, tables and the database. On the five workflows that
+  are not SQL, a finding shows the neutral name interlock gives the check (`change_limit`
+  for `blast_radius`, `partition_value_guard` for `tenant_drawdown_guard`, and so on), with
+  the recorded name on hover, and its message says files, objects or records and the
+  workflow's own partition. "Which check stopped which plan" labels its rows in plain words,
+  and has a row for the plans held after untrusted input.
+- Copy: the front page's badge, the Fiduciary card, the Check and Prove steps, and the
+  footers. "This page makes no network requests" is gone, because the hosted page fetches
+  the bundles beside it when you verify one: the page now says it sends nothing anywhere.
 
 ### Limits, stated
 

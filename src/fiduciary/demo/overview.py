@@ -138,14 +138,17 @@ ACCEPTANCE: Final = {
 }
 
 ENGINE: Final = (
-    ("tenant_isolation", "TenantIsolation(declared=True)", "plans refused"),
-    ("blast_radius", "BlastRadius", "plans refused"),
-    ("tenant_drawdown_guard", "TenantDrawdownGuard", "plans refused"),
-    ("cross_effect_agreement", "CrossEffectAgreement", "plans refused"),
-    ("fact_agreement", "FactAgreement", "plans refused"),
-    ("table_allowlist", "TableAllowlist", "plans refused"),
-    ("no_delete", "NoDelete", "plans refused"),
-    ("rate_window", "RateWindow", "plans refused"),
+    # Keyed by the name a check is recorded under; labeled in words that fit every system
+    # (1.16.0), since a workspace has no tables and a cluster no tenants.
+    ("tenant_isolation", "Stays inside its partition", "plans refused"),
+    ("blast_radius", "Change limit", "plans refused"),
+    ("tenant_drawdown_guard", "Value guard, per partition", "plans refused"),
+    ("cross_effect_agreement", "Requests match the change", "plans refused"),
+    ("fact_agreement", "Claims backed by a signed event", "plans refused"),
+    ("table_allowlist", "Only the kinds the mandate allows", "plans refused"),
+    ("no_delete", "No deletes without a grant", "plans refused"),
+    ("rate_window", "Rate window", "plans refused"),
+    ("provenance_gate", "After untrusted input", "plans held for approval"),
     ("stale_head", "Commit only on the version measured", "plans refused"),
     ("read_back", "Read back, undo if different", "writes undone"),
     ("warrant", "Quorum warrant", "formed"),

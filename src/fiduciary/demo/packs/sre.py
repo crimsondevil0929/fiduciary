@@ -739,6 +739,10 @@ PACK: Final = Pack(
         "approvers": "on-call SRE, service owner, security",
         "vendor": "a cloud security-group change",
         "verifier": "FedRAMP assessor, SOC 2 auditor",
+        # What the console calls a change here (1.16.0), so no card says rows or tables.
+        "substrate": "Kubernetes",
+        "rows": "objects",
+        "tables": "kinds",
     },
     budgets=_budgets,
     substrate=_system,

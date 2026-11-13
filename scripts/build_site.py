@@ -14,6 +14,10 @@ Then it writes into the output directory:
 - each industry's ``before.fidb`` and ``after.fidb`` (and SaaS's sealed customer bundles),
   at the paths the page links them by, with the ``pinned-keys.json`` and
   ``charter.digest`` to verify them with ``fiduciary verify-bundle``;
+- for search engines and link previews (1.16.0): ``favicon.svg``, ``social-card.png`` (from
+  ``docs/``, drawn by ``scripts/make_social_card.py``), ``sitemap.xml`` and ``robots.txt``.
+  The page's head carries its description, Open Graph tags and structured data, and its
+  front page is written into it as HTML (``fiduciary.report.site``);
 - ``SHA256SUMS``: the SHA-256 of every other file, so a reader can pin the page and the
   bundles to this build (``sha256sum -c SHA256SUMS``).
 
@@ -30,8 +34,10 @@ import tempfile
 from pathlib import Path
 
 from fiduciary import cli, report
+from fiduciary.report import site
 
 PUBLIC = ("before.fidb", "after.fidb", "pinned-keys.json", "charter.digest", "report.md")
+CARD = Path(__file__).resolve().parent.parent / "docs" / site.CARD
 
 
 def build(out: Path) -> list[Path]:
@@ -53,6 +59,10 @@ def build(out: Path) -> list[Path]:
             for name in names:
                 if (directory / name).is_file():
                     shutil.copyfile(directory / name, target / name)
+        (out / "sitemap.xml").write_text(site.sitemap(data), encoding="utf-8")
+    (out / "robots.txt").write_text(site.robots(), encoding="utf-8")
+    (out / "favicon.svg").write_text(site.favicon(), encoding="utf-8")
+    shutil.copyfile(CARD, out / site.CARD)
     (out / ".nojekyll").write_text("")
     files = sorted(p for p in out.rglob("*") if p.is_file() and p.name not in (".nojekyll",))
     lines = [

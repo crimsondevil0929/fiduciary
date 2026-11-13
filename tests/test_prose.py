@@ -46,6 +46,8 @@ MODULES = (
     # 1.15.0: what a coding session's setup says
     "coding.py",
     "starters.py",
+    # 1.16.0: the site's front page, written once for the script and for the HTML
+    "report/site.py",
 )
 """Where the demo's, the reports' and the SDK's words are written."""
 
