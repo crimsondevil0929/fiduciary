@@ -123,3 +123,11 @@ def test_the_files_beside_the_page() -> None:
     card = (ROOT / "docs" / site.CARD).read_bytes()
     assert card[:8] == b"\x89PNG\r\n\x1a\n"
     assert card[16:24] == (1200).to_bytes(4, "big") + (630).to_bytes(4, "big")
+
+
+def test_how_it_works_says_the_five_steps_as_the_front_page_does() -> None:
+    """The workbench's "How it works" view draws the loop's steps itself, outside the site:
+    each step's text is the front page's, word for word (1.16.1)."""
+    script = CONSOLE.read_text(encoding="utf-8")
+    for title, text in site.COPY["loop"]["steps"]:
+        assert f'"{title}", "{text}"' in script, title

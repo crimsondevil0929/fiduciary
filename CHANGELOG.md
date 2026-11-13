@@ -6,6 +6,22 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.16.1] - 2026-11-13
+
+Copy only: no change to what is checked, recorded or verified.
+
+### Fixed
+
+- Two ranges the console wrote with a tight en dash now say "to": the verifier's "V1 to V13,
+  as the verifier ran them", and a bundle's "records 1 to 137". The copy gate
+  (`tests/test_prose.py`) now refuses an en dash set between two words or numbers, as it
+  already refused an em dash.
+- The loop's Check step says "which tables, files, objects or records it touched and how
+  many", where it said "what kinds of thing it touched", on the front page and in "How it
+  works"; a test holds the two views' steps to the same words.
+- The front page's shadow-report example keeps `blast_radius`: run again on 1.16.1, the SQLite
+  starter's mandate is written with tables, so the check is recorded under its SQL name.
+
 ## [1.16.0] - 2026-11-13
 
 What the agent read before it asked. A refund within the agent's cap is still the wrong
