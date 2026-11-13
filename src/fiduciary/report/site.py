@@ -72,8 +72,9 @@ COPY: Final[dict[str, Any]] = {
         "    db.execute(\"UPDATE tickets SET status = 'closed'\")",
         '    return "all closed"',
     ],
-    # What `fiduciary shadow report` printed for this example, run on 1.14.0 (the mandate's id
-    # shortened).
+    # The first lines `fiduciary shadow report` printed for this example (the mandate's id
+    # shortened). Run again on 1.16.1: the SQLite starter's mandate is written with tables, so
+    # the check is recorded under its SQL name, blast_radius, not change_limit.
     "report": [
         ["cmd", "fiduciary shadow report"],
         ["", "Mandate fcc02e85"],
@@ -178,9 +179,10 @@ COPY: Final[dict[str, Any]] = {
             ],
             [
                 "Check",
-                "The measured change is held against the mandate: what kinds of thing it touched "
-                "and how many, whose data it reached, how far any guarded value moved, the rate "
-                "windows and budgets, and what the agent had read before it asked.",
+                "The measured change is compared with the mandate: which tables, files, objects "
+                "or records it touched and how many, whose data it reached, how far any guarded "
+                "value moved, the rate windows and budgets, and what the agent had read before it "
+                "asked.",
             ],
             [
                 "Commit or undo",
