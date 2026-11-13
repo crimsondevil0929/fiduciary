@@ -37,6 +37,7 @@ from fiduciary.documents.ticket import (
     DeadEvidence,
     ExtensionEvidence,
     HeldEvidence,
+    ProvenanceEvidence,
     RefusedEvidence,
     UndoEvidence,
 )
@@ -819,6 +820,13 @@ def render_ticket(ticket: Ticket) -> str:
         for d in ev.dropped:
             lines.append(f"  dropped effect:  {d.effect_id} ({d.cause})")
         lines.append(f"  exhaustive:      {ev.exhaustive} (trials: {ev.trials})")
+    elif isinstance(ev, ProvenanceEvidence):
+        lines.append(f"  refused receipt: {ev.receipt.receipt_id} ({ev.receipt.digest[:16]})")
+        lines.append(f"  session:         {ev.session}")
+        lines.append(f"  it had read:     {', '.join(ev.labels)}")
+        lines.append(f"  labeled at:      {', '.join(f'log #{seq}' for seq in ev.introduced)}")
+        lines.append(f"  rules it broke:  {', '.join(ev.rules)}")
+        lines.append(f"  proposal hash:   {ev.proposal} (the same plan, labeled cleared)")
     elif isinstance(ev, HeldEvidence):
         if ev.halt is not None:
             lines.append(
@@ -2063,7 +2071,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     export.set_defaults(handler=_export_bundle)
 
-    check = commands.add_parser("verify-bundle", help="verify a bundle offline, V1 to V12")
+    check = commands.add_parser("verify-bundle", help="verify a bundle offline, V1 to V13")
     check.add_argument("bundle")
     check.add_argument("--charter", required=True, help="the pinned digest of charter version 1")
     check.add_argument("--keys", help="the public keys to pin, in keys.json format")

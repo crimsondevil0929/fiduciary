@@ -214,7 +214,8 @@ def ledes() -> list[tuple[str, str, str]]:
 
 def test_every_scenario_has_a_short_title_and_a_lede() -> None:
     found = titles()
-    assert len(found) == 56 and {(w, k) for w, k, _ in found} == {(w, k) for w, k, _ in ledes()}
+    # 1.16.0: the fintech workflow has an eighth scenario, an email that asks for a refund
+    assert len(found) == 57 and {(w, k) for w, k, _ in found} == {(w, k) for w, k, _ in ledes()}
     long = [f"{w}/{k} ({len(t)}): {t}" for w, k, t in found if len(t) > TITLE_LIMIT]
     assert not long, f"titles over {TITLE_LIMIT} characters:\n" + "\n".join(long)
     shouting = [f"{w}/{k}: {t}" for w, k, t in found if t.endswith(".") or "  " in t]

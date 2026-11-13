@@ -18,7 +18,7 @@ from typing import Any, ClassVar, Final
 from interlock.text import noun
 
 from fiduciary import fidu1
-from fiduciary.documents._base import IDENTIFIER, Document
+from fiduciary.documents._base import IDENTIFIER, SCOPE, Document
 from fiduciary.documents.mandate import OPERATION, SINK_NAME, TOOL
 from fiduciary.exceptions import MalformedError
 from fiduciary.fidu1 import Fields, Signature
@@ -229,6 +229,83 @@ class Request:
         return found
 
 
+SYSTEM: Final = "system"
+UNTRUSTED: Final = "untrusted"
+TRUST: Final = ("principal", SYSTEM, UNTRUSTED)
+CONFIDENTIALITY: Final = ("secret", "tenant")
+_OUTPUT_TYPES: Final = frozenset({"integer", "number", "boolean"})
+
+
+def constrained(schema: object, path: str = "$.quarantine.output") -> None:
+    """Refuse an output schema that lets free text through (1.16.0).
+
+    A reader sub-agent's result may be read by a session that read nothing untrusted. So it
+    holds only what cannot carry an instruction: integers, numbers and booleans; strings
+    with an ``enum``, or a ``pattern`` and a ``maxLength`` of at most 64; and arrays of
+    those, at most 16 items. An object's every property is listed and required, and
+    ``additionalProperties`` is false.
+    """
+    if not isinstance(schema, dict):
+        raise MalformedError("type", path, "must be an object schema")
+    kind = schema.get("type")
+    if kind == "object":
+        properties = schema.get("properties")
+        if not isinstance(properties, dict) or not properties:
+            raise MalformedError("agreement", path, "an object lists its properties")
+        if schema.get("additionalProperties") is not False:
+            raise MalformedError("agreement", path, "an object takes no other property")
+        if sorted(schema.get("required", ())) != sorted(properties):
+            raise MalformedError("agreement", path, "an object requires every property")
+        for name, sub in properties.items():
+            constrained(sub, f"{path}.properties.{name}")
+        return
+    if kind == "array":
+        if not isinstance(schema.get("maxItems"), int) or schema["maxItems"] > 16:
+            raise MalformedError("agreement", path, "an array holds at most 16 items")
+        constrained(schema.get("items"), f"{path}.items")
+        return
+    if kind in _OUTPUT_TYPES:
+        return
+    if kind == "string":
+        if isinstance(schema.get("enum"), list) and schema["enum"]:
+            return
+        length = schema.get("maxLength")
+        if isinstance(schema.get("pattern"), str) and isinstance(length, int) and length <= 64:
+            return
+        raise MalformedError(
+            "agreement",
+            path,
+            "a string is an enum, or a pattern of at most 64 characters: free text could carry "
+            "an instruction from what the reader read",
+        )
+    raise MalformedError("agreement", path, f"{kind!r} is not a type a reader's result holds")
+
+
+@dataclass(frozen=True, slots=True)
+class Quarantine:
+    """A reader sub-agent behind a passthrough tool (1.16.0).
+
+    The reader works under its own lineage, ``reader`` (a subject scope), whose mandate
+    grants no write and no outbound request: it may read untrusted input and change
+    nothing. What it returns to the calling session must match ``output``, a schema with no
+    free text (:func:`constrained`). The calling session is labeled ``quarantined:<tool>``,
+    not ``untrusted``: what crossed is a typed value, recorded as such.
+    """
+
+    reader: str
+    output: Mapping[str, Any]
+
+    def to_json(self) -> dict[str, Any]:
+        return {"reader": self.reader, "output": dict(self.output)}
+
+    @classmethod
+    def read(cls, fields: Fields) -> Quarantine:
+        output = fields.raw("output")
+        check_schema(output, fields.path("output"))
+        constrained(output, fields.path("output"))
+        return cls(reader=fields.text("reader", SCOPE, "a lineage's subject scope"), output=output)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ToolBinding(Document):
     """A tool binding (F4-13 to F4-16)."""
@@ -244,6 +321,7 @@ class ToolBinding(Document):
         "requests",
         "price",
     )
+    OPTIONAL: ClassVar[tuple[str, ...]] = ("trust", "confidentiality", "quarantine")
 
     name: str
     description: str
@@ -255,7 +333,28 @@ class ToolBinding(Document):
     effects: tuple[Effect, ...]
     requests: tuple[Request, ...]
     price: Decimal
+    trust: str = SYSTEM
+    """What the tool's result is (1.16.0): ``principal`` (written by a principal),
+    ``system`` (the deployment's own records, the default), or ``untrusted`` (anyone's:
+    an email, a web page, a ticket a customer wrote). Written only when not ``system``."""
+    confidentiality: str | None = None
+    """``secret``, or ``tenant`` (the session's tenant's data), or ``None`` (1.16.0)."""
+    quarantine: Quarantine | None = None
+    """A reader sub-agent's typed result (1.16.0): see :class:`Quarantine`."""
     signature: Signature | None = None
+
+    def labels(self, tenant: str | None) -> tuple[str, ...]:
+        """The provenance labels the tool's result brings into a session (1.16.0)."""
+        if self.quarantine is not None:
+            return (f"quarantined:{self.name}",)
+        found = []
+        if self.trust == UNTRUSTED:
+            found.append(UNTRUSTED)
+        if self.confidentiality == "secret":
+            found.append("secret")
+        elif self.confidentiality == "tenant":
+            found.append(f"partition:tenant={tenant or '-'}")
+        return tuple(sorted(found))
 
     def _body(self) -> dict[str, Any]:
         return {
@@ -267,6 +366,9 @@ class ToolBinding(Document):
             "effects": [e.to_json() for e in self.effects],
             "requests": [r.to_json() for r in self.requests],
             "price": format(self.price, "f"),
+            **({"trust": self.trust} if self.trust != SYSTEM else {}),
+            **({"confidentiality": self.confidentiality} if self.confidentiality else {}),
+            **({"quarantine": self.quarantine.to_json()} if self.quarantine else {}),
         }
 
     @classmethod
@@ -351,6 +453,16 @@ class ToolBinding(Document):
             "effects": tuple(effects),
             "requests": tuple(requests),
             "price": fields.money("price"),
+            # the default is never written: one binding has one encoding
+            "trust": fields.choice("trust", ("principal", UNTRUSTED))
+            if fields.has("trust")
+            else SYSTEM,
+            "confidentiality": fields.choice("confidentiality", CONFIDENTIALITY)
+            if fields.has("confidentiality")
+            else None,
+            "quarantine": Quarantine.read(fields.object("quarantine", ("reader", "output")))
+            if fields.has("quarantine")
+            else None,
         }
 
     def _agree(self) -> None:
@@ -363,6 +475,10 @@ class ToolBinding(Document):
                 "refuses the call",
             )
         arguments = set(schema.get("properties", {}))
+        if self.quarantine is not None and self.kind != "passthrough":
+            raise MalformedError(
+                "agreement", "$.quarantine", "a reader's result comes from a passthrough tool"
+            )
         if self.kind == "passthrough":
             if self.effects or self.requests:
                 raise MalformedError(

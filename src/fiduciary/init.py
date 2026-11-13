@@ -18,9 +18,14 @@ anything else                          the same, its operation held (``hold = tr
 =====================================  ========================================================
 
 MCP's own default for a write is ``destructiveHint: true``, so a tool that says nothing is
-held. A tool whose input the binding grammar cannot hold whole (a number, which FIDU1 keeps
-as a decimal string; a keyword it would not enforce) is left out and named: nothing is
-governed by a schema that says less than the server's.
+held. A read-only tool's results count as untrusted input (its binding says ``trust:
+"untrusted"``) unless the server marks it ``openWorldHint: false``: MCP's default is an open
+world, where what the tool returns may come from anyone. The session records each label it
+gains, and a mandate's ``provenance`` rules decide what that changes (1.16.0).
+
+A tool whose input the binding grammar cannot hold whole (a number, which FIDU1 keeps as a
+decimal string; a keyword it would not enforce) is left out and named: nothing is governed
+by a schema that says less than the server's.
 
 What it writes (the demo's builder, :func:`fiduciary.demo.packs.kit.build`, the one every
 demo industry is stood up with): keys, an AgentGov ledger, a store, a charter its three
@@ -48,7 +53,7 @@ from typing import Any, Final
 
 from fiduciary.starters import Starter, Target, coding, starter
 
-__all__ = ["InitReport", "Target", "classify", "discover", "init", "schema_of"]
+__all__ = ["InitReport", "Target", "classify", "discover", "init", "schema_of", "trust_of"]
 
 SINK: Final = "upstream"
 READ: Final = "read"
@@ -185,6 +190,19 @@ def classify(tool: Mapping[str, Any]) -> tuple[str, str]:
     if hints.get("destructiveHint") is True:
         return HELD, "the server marks it destructive (destructiveHint)"
     return HELD, "a write with no destructiveHint, which MCP treats as destructive"
+
+
+def trust_of(tool: Mapping[str, Any]) -> tuple[str, str] | None:
+    """Whether a read tool's results count as untrusted input, and why (1.16.0); ``None``
+    for a tool the server says reads only its own closed world."""
+    hints = tool.get("annotations") or {}
+    if not isinstance(hints, Mapping):
+        hints = {}
+    if hints.get("openWorldHint") is False:
+        return None
+    if hints.get("openWorldHint") is True:
+        return "untrusted", "the server says it reaches outside systems (openWorldHint)"
+    return "untrusted", "its results may come from anyone (MCP's default is an open world)"
 
 
 def schema_of(schema: object, path: str = "inputSchema") -> dict[str, Any]:
@@ -548,6 +566,10 @@ def init(
         except UnsupportedSchemaError as exc:
             report.skipped.append({"name": tool_name, "why": str(exc)})
             continue
+        trust = trust_of(tool) if mode == READ else None
+        if trust is not None:
+            binding["trust"], said = trust
+            why = f"{why}; its results count as untrusted input: {said}"
         bindings.append(binding)
         modes[tool_name] = mode
         schemas[tool_name] = binding["input"]
@@ -626,7 +648,7 @@ fiduciary verify-bundle lineage.fidb --charter {charter} --keys pinned-keys.json
 `verify-bundle` needs no database and no network. `pinned-keys.json` holds this
 deployment's public keys and `charter.digest` the charter's digest, so the bundle is
 checked against them and not against the keys it carries. Neither holds a secret: hand them
-to an auditor once, apart from any bundle, and then each bundle alone. It checks V1 to V12 and
+to an auditor once, apart from any bundle, and then each bundle alone. It checks V1 to V13 and
 exits 0 when the bundle passes. Drop the bundle on the console's Verify page to check it in
 a browser. A system that keeps its own log of writes (Stripe, SendGrid, Kubernetes, FHIR,
 GitHub) can be matched against the bundle with `fiduciary reconcile-actions lineage.fidb

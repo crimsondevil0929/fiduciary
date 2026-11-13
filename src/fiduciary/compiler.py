@@ -46,6 +46,7 @@ from interlock.invariants import (
     NoDelete,
     NoSchemaChange,
     PartitionIsolation,
+    ProvenanceGate,
     StatedFootprint,
     TableAllowlist,
     TenantDrawdownGuard,
@@ -517,6 +518,10 @@ def _describe(
         checkers.append(["RecipientAllowlist", recipients.to_json()])
     if outbound.tenants is not None:
         checkers.append(["OutboundTenantIsolation", outbound.tenants.to_json()])
+    # What a plan may do after its session read something (1.16.0): compiled only when the
+    # mandate has rules, so every policy compiled before keeps its description.
+    if mandate.provenance is not None:
+        checkers.append(["ProvenanceGate", mandate.provenance.to_json()])
 
     # -- what is not a checker ---------------------------------------------------
     sinks = []
@@ -606,6 +611,12 @@ _BUILT: Final[Mapping[str, Callable[[Mapping[str, Any]], InvariantChecker]]] = {
     ),
     "TableAllowlist": lambda a: TableAllowlist(a["tables"]),
     "KindAllowlist": lambda a: KindAllowlist(a["kinds"]),
+    "ProvenanceGate": lambda a: ProvenanceGate(
+        untrusted_kinds=a["untrusted"]["kinds"],
+        untrusted_sinks=a["untrusted"]["sinks"],
+        egress=a["egress"],
+        rule_of_two=a["rule_of_two"],
+    ),
     "NoDelete": lambda a: NoDelete(a["granted"]),
     "StatedFootprint": lambda a: StatedFootprint(
         tolerance=float(Decimal(a["tolerance"])),

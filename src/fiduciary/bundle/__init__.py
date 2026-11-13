@@ -1,7 +1,7 @@
 """Audit bundles (``docs/FIDUCIARY_SPEC.md`` §9, ``docs/BUNDLE_FORMAT.md``).
 
 :func:`export_bundle` writes a lineage's bundle; :func:`verify_bundle` checks
-one offline, V1 to V12, needing no database and no network (F9-3).
+one offline, V1 to V13, needing no database and no network (F9-3).
 """
 
 from __future__ import annotations

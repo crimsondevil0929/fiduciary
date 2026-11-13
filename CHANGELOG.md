@@ -6,6 +6,72 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.16.0] - Unreleased
+
+What the agent read before it asked. A refund within the agent's cap is still the wrong
+refund when the agent asked for it because a stranger's email said to. A session now records
+what it was shown, its plans carry it, a mandate decides by it, and V13 checks it offline.
+Requires interlock-escrow 1.8.0. Every mandate, binding, compiled policy and bundle written
+before keeps its bytes and its verdict.
+
+### Added
+
+- **Provenance labels on tool bindings** (F4-16b): `trust` (`principal`, or `untrusted` for
+  anything someone outside the deployment wrote), `confidentiality` (`secret`, or `tenant`
+  for the session's tenant's data) and `quarantine`, a reader sub-agent's typed result. Each
+  is written only when used, so every binding keeps its digest.
+- **Signed session records of what was read** (`session.labeled`, F8-13): the first time a
+  result brings a label the session does not hold, the session records the tool, the labels
+  it brought and every label it holds after, before the agent sees the result. Every plan the
+  session makes after that carries its labels, so they are in the plan's hash and so in the
+  verdict's and the receipt's. A session's labels are readable, never writable
+  (`session.labels`; F8-1 amended).
+- **The mandate's `provenance` rules** (F4-12e), compiled to interlock's `ProvenanceGate`:
+  after untrusted input, the kinds and sinks it lists need the principals; data labeled
+  `secret` or with a partition label leaves only by the sinks cleared for it; and the rule
+  of two refuses a plan that would make a session have read untrusted input, read sensitive
+  data and changed something. `on: "hold"` sends the plan to the principals; `on: "refuse"`
+  refuses it.
+- **`provenance` tickets** (§7.1, F7-1a): the refused plan, labeled `cleared`, as the
+  proposal. Two of three approve it with `accept_repair`, and the executor runs exactly that
+  plan, checked again from scratch. A rule may reject one, never accept it. `fiduciary
+  tickets show` prints what the session had read, the records that labeled it and the rules
+  the plan broke.
+- **Reader sub-agents** (`quarantine`): a passthrough tool whose reader works under a lineage
+  of its own that allows no table and no sink, returning only values that cannot carry an
+  instruction (enums, short patterns, numbers, booleans). The session is labeled
+  `quarantined:<tool>`, which counts as none of the rules. A result outside its schema, or
+  a reader that could write, labels the session `untrusted` instead.
+- **V13, provenance** (exit 6): every plan committed after its session read what its
+  mandate's rules cover either met the rules or ran as the plan a `provenance` warrant
+  approved after the last label. Read from the signed session records, the escrow chains,
+  the receipts and the bindings, in Python and in the browser (`verify.js`), with two new
+  golden bundles (`valid-provenance-held`, `v13-tainted-commit`). OWASP ASI01, ASI06 and
+  ASI07 and the EU AI Act's Article 14 map to it.
+- **In your own code**: `@gov.tool(trust=, confidentiality=)`, and `gov.read(source, value,
+  trust=...)` for something your application fetched itself; `gov.labels`.
+- **`fiduciary init --mcp`** marks each read-only tool's binding `trust: "untrusted"` unless
+  the server says `openWorldHint: false` (MCP's default is an open world). The starter
+  mandate has no `provenance` rules, so the labels are recorded and decide nothing until a
+  version adds them.
+- **The demo's eighth fintech act**: a poisoned customer email, an in-cap refund held for the
+  principals, approved 2 of 3, run as approved, and V13's note in both bundles.
+
+### Changed
+
+- A child may leave out a parent's drawdown guard on a table the child does not allow, as it
+  already could a cap on an operation it does not send (§5.2 amended). A mandate may not
+  guard a table it does not allow, so no reader lineage could otherwise be derived from a
+  parent with a guard.
+- The landing page's loop and the docs say V1 to V13.
+
+### Limits, stated
+
+Labels say what the agent was shown, not what the model made of it: a refund after an
+unrelated email is held too. They are as declared by each binding and each `trust=`, and a
+read nothing labels is not seen, by the gate or by V13. A refusal in your own process
+(`fiduciary.open`) is raised to your code, not held as a ticket.
+
 ## [1.15.0] - 2026-11-13
 
 A public site that says what the stack is before it shows the console, one family of marks

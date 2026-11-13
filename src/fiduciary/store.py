@@ -225,12 +225,14 @@ def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
                 (body["warrant"], exec_event, exec_detail, record.seq),
             )
         ]
-    if kind in ("session.opened", "session.refused", "session.closed"):
+    if kind in ("session.opened", "session.refused", "session.closed", "session.labeled"):
         session_event = kind.split(".")[1]
         if session_event == "opened":
             session_detail = str(body["mandate"])
         elif session_event == "refused":
             session_detail = str(body["code"])
+        elif session_event == "labeled":
+            session_detail = " ".join(str(label) for label in body["labels"])
         else:
             session_detail = " ".join(str(s) for s in body["scopes"])
         return [

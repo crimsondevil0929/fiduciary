@@ -160,6 +160,15 @@ SCENARIOS = {
         "test_a_forged_attestation_is_named",
         "a delivery receipt re-signed by the receipt log's key, its relay attestation forged",
     ),
+    # 1.16.0: what a session read, and what its plans did after
+    "valid-provenance-held": (
+        "test_a_refund_after_an_untrusted_email_is_held_and_runs_on_two_approvals",
+        "a refund after an untrusted email, held as a provenance ticket and run on two approvals",
+    ),
+    "v13-tainted-commit": (
+        "test_a_tainted_refund_that_committed_without_a_warrant_fails_v13",
+        "a refund after an untrusted email, committed by a service whose gate let it through",
+    ),
 }
 
 
@@ -179,6 +188,7 @@ def _record(captured: Path, names: set[str]) -> dict[str, Any]:
             "tests/test_bundle_checks.py",
             "tests/test_sealed_bundles.py",
             "tests/test_bundle_deliveries.py",
+            "tests/test_provenance.py",
             "-k",
             " or ".join(tests),
         ],

@@ -113,7 +113,14 @@ def test_the_surface_is_five_methods(world: bound.World) -> None:
     public = {n for n in dir(Session) if not n.startswith("_")}
     methods = {n for n in public if callable(getattr(Session, n))}
     assert methods == {"call", "govern", "tool_definitions", "tickets", "close"}
-    assert public - methods == {"session_id", "mandate_id", "tenant", "trajectory", "billing_scope"}
+    assert public - methods == {
+        "session_id",
+        "mandate_id",
+        "tenant",
+        "trajectory",
+        "billing_scope",
+        "labels",  # 1.16.0: what the session has read, read-only
+    }
     world.issue_and_bind(kit.mandate(world))
     session = kit.fiduciary(world).session(bound.SCOPE, tenant="acme")
     assert not hasattr(session, "__dict__")  # slotted: nothing hangs off it

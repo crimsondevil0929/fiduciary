@@ -309,6 +309,33 @@
     "witness": null
   },
   {
+    "about": "a refund after an untrusted email, committed by a service whose gate let it through",
+    "charter": "5b85614fbe3a5428cde5e65c435da1a8c6f4c0c74b031e26551e6ef4a362c0d8",
+    "checks": [
+      "V13"
+    ],
+    "exit_code": 6,
+    "file": "v13-tainted-commit.fidb",
+    "findings": [
+      "V13 provenance: plan plan-e3ebb0642a02 on 2d0b5f7e-8a43-4c2b-b1a4-0c4e2f9a7d31's chain committed after its session read untrusted (record 10 on), with no warrant approving it after: the session read untrusted input before this plan, and after that changing refunds takes the principals' approval"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v13-tainted-commit",
+    "sha256": "87798e9c0a3751897112ad0761311db29b8f002bc77f8185d6644fdef5d4444c",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "a charter digest the bundle does not hold",
     "charter": "0000000000000000000000000000000000000000000000000000000000000000",
     "checks": [
@@ -1133,6 +1160,29 @@
     },
     "name": "valid-phase-4-lifecycle",
     "sha256": "0f23a82a4f327708e9cd0e784df085e5b702a9f40e8d59e189e741196943e80a",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a refund after an untrusted email, held as a provenance ticket and run on two approvals",
+    "charter": "6198c459ef4745c00900dcf4e9f2d727601c448b83be2ae740f86a2fae3bf90a",
+    "checks": [],
+    "exit_code": 0,
+    "file": "valid-provenance-held.fidb",
+    "findings": [],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "valid-provenance-held",
+    "sha256": "4530540cd6e19b61a8061cf7802cbacc1726cb1fbed358f36cf54aa27b7dcb65",
     "skew_seconds": 5,
     "witness": null
   },

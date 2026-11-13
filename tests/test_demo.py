@@ -36,7 +36,7 @@ def _act(outcome: Outcome, key: str) -> dict[str, Any]:
 
 def test_the_demo_holds(demo: Outcome) -> None:
     assert demo.held
-    assert [a["n"] for a in demo.payload["demo"]["acts"]] == [1, 2, 3, 4, 5, 6, 7]
+    assert [a["n"] for a in demo.payload["demo"]["acts"]] == [1, 2, 3, 4, 5, 6, 7, 8]
     for name in ("dashboard.html", "demo.json", "before.fidb", "after.fidb", "report.md"):
         assert (demo.root / name).is_file(), name
 
@@ -321,7 +321,7 @@ def test_the_command_runs_the_demo_and_writes_reports(tmp_path: Path) -> None:
         )
     assert status == 0
     text = printed.getvalue()
-    assert f"Scenario 7  {TITLES['audit']}" in text
+    assert f"Scenario 8  {TITLES['audit']}" in text
     assert "dashboard" in text
     assert (tmp_path / "r.md").read_text().startswith("# Bundle `after`: BREAK-GLASS DETECTED")
 

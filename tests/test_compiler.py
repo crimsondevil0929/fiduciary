@@ -61,6 +61,13 @@ def full() -> dict[str, Any]:
         {"table": "orders", "column": "total", "per": "tenant", "max_drop": "0.9"},
     ]
     raw["tools"]["statements"] = "bound"
+    # 1.16.0: what a plan may do after its session read something
+    raw["provenance"] = {
+        "untrusted": {"kinds": ["refunds"], "sinks": ["stripe"]},
+        "egress": {"secret": ["stripe"]},
+        "rule_of_two": True,
+        "on": "hold",
+    }
     # 1.4: a budget in another unit compiles to a meter, whose check is built in.
     raw["budgets"] = {
         "mme": {

@@ -291,6 +291,15 @@ Three claims, stated so they can be falsified:
   anything.
 - **Privacy from principals.** A ticket shows principals the evidence they decide on,
   including tenant identifiers and amounts. Principals are trusted readers.
+- **What a model did with what it read** *(added in 1.16.0)*. A session's provenance labels
+  (F8-13) say what the agent had been shown before a plan, not what it made of it: a plan
+  after an untrusted email is held whether or not the email had anything to do with it.
+  The labels are what the bindings, the SDK's `trust` and `confidentiality`, and its
+  `read` say; Fiduciary trusts those declarations as it trusts a passthrough binding's.
+  A read nothing labels (a tool marked `system` that returns a stranger's text, a document
+  the agent's own framework fetched) is not seen, and V13 cannot see it either. A refusal
+  in the deployment's own process (`fiduciary.sdk`) is raised to the caller, never held as
+  a ticket.
 
 ---
 
@@ -673,6 +682,28 @@ version 1, as interlock's configuration pins `[operators.keys]`.
     compiles to the names it always has. A mandate is written in one or the other, never a
     mix. `fiduciary init` writes a mandate for a system that is not a database in these
     words.
+- **F4-12e.** *Added in 1.16.0.* `provenance`: what a plan may do after its session read
+  something (F8-13). Written only when used, so every mandate written before keeps its
+  bytes and its digest.
+
+  ```json
+  "provenance": {"untrusted": {"kinds": ["refunds"], "sinks": ["stripe"]},
+                 "egress": {"secret": ["vault"]},
+                 "rule_of_two": false, "on": "hold"}
+  ```
+
+  - `untrusted.kinds` and `untrusted.sinks`: after input labeled `untrusted`, a plan that
+    changes one of these kinds (a table, a path class, a resource type) or sends to one of
+    these sinks needs the principals (`*` stands for any).
+  - `egress.<label>`: after data labeled `secret`, `partition:<dimension>=<value>`, or any
+    partition label (`partition:*`), a plan may send only to these sinks.
+  - `rule_of_two`: a session may have read untrusted input, read sensitive data (`secret`
+    or a partition label), and changed or sent something, any two of the three. A plan that
+    would make it all three needs the principals.
+  - `on`: `hold` raises a `provenance` ticket (§7.1) whose proposal is the same plan with
+    the label `cleared`; `refuse` refuses the plan and raises nothing.
+
+  It compiles to interlock's `ProvenanceGate` (§6.2; interlock 1.8.0, ESCROW_SPEC §4.9).
 
 ## 4.3 Tool binding
 
@@ -762,6 +793,22 @@ parameters only; the statements are the developer's.
   verifier's replay of the policy (V4), refuses otherwise, naming the pack and whether it is
   missing, another version, or not the code pinned. A change to a pack's code is a change of
   authority.
+- **F4-16b.** *Added in 1.16.0.* Three members say what a tool's result is, and so what a
+  session holds once the agent has seen it (F8-13). Each is written only when used, so
+  every binding written before keeps its digest.
+  - `trust`: `principal` or `untrusted`. The default, `system` (the deployment's own
+    records), is never written. `untrusted` brings the label `untrusted`.
+  - `confidentiality`: `secret` brings `secret`; `tenant` brings
+    `partition:tenant=<the session's tenant>`.
+  - `quarantine`: `{"reader": <scope>, "output": <schema>}`, on a passthrough binding
+    behind which a reader sub-agent works under its own lineage, `reader`. `output` holds
+    no free text: integers, numbers and booleans; strings with an `enum`, or a `pattern`
+    and a `maxLength` of at most 64; arrays of at most 16 of those; objects whose every
+    property is listed and required, with no other. Such a result brings
+    `quarantined:<tool>` in place of the binding's other labels: what crossed is a typed
+    value. A result outside `output`, or a `reader` whose lineage is not bound, or whose
+    version in force allows a table or a sink, brings `untrusted` instead, and the bridge
+    logs why.
 
 ## 4.4 Ticket
 
@@ -909,6 +956,7 @@ Fiduciary's own acts are records in a hash-chained, signed log. It is built as I
 | `execution.applied`, `execution.refused`, `execution.abandoned` | the intent; and per step what it reached: ILOK1 intent and outcome hashes, ledger entry ids, plan hashes and receipt ids |
 | `session.opened`, `session.closed` | a bridge session: its mandate version, tenant, trajectory and billing scope; at its close, every scope it billed, in order |
 | `session.refused` | a call the session refused before anything was built or metered: the refusal's code, and the tool only when a version the session runs pins it, or it is a built-in |
+| `session.labeled` | *(added in 1.16.0)* a call whose result brought a provenance label the session did not hold: the session, its lineage, the tool (or the SDK's source), the labels it brought, and every label the session holds after |
 
 - **F4-26.** Hashing and anchoring follow ILOK1:
   - A record's hash is the SHA-256 of the canonical bytes of the whole signed record.
@@ -997,7 +1045,7 @@ when `child ⊑ parent`.
 | `data.declared_tenants` | `TenantIsolation(declared=…)` | true if the parent's is |
 | `data.max_rows` | `BlastRadius` | ≤ |
 | `data.max_tenants` | `TenantIsolation` | ≤ |
-| `data.drawdown` | `ColumnValueGuard`, `TenantDrawdownGuard` | every parent guard `(table, column, per)` is kept, with `max_drop ≤` and `max_rise ≤` (a bound the parent sets is kept) |
+| `data.drawdown` | `ColumnValueGuard`, `TenantDrawdownGuard` | every parent guard `(table, column, per)` on a table the child allows is kept, with `max_drop ≤` and `max_rise ≤` (a bound the parent sets is kept). *Amended in 1.16.0:* a guard on a table the child does not allow was required too, and a mandate may not guard a table it does not allow, so no child that changes none of a parent's guarded tables (a reader, F4-16b) could be derived; as with `outbound.caps`, such a guard binds nothing and is no longer required |
 | `data.partitions` | `TenantIsolation(dimension=…)` | *amended in 1.4.0:* every parent dimension is kept, `max ≤`, declared if the parent's is |
 | `data.receipt_tenants` | the `ReceiptIssuer`'s `tenants` | *amended in 1.4.0:* `"declared"` if the parent's is |
 | `budgets` | an Interlock `Meter` per unit | *amended in 1.4.0:* every parent unit is kept, with the same `places` and `measure`; `envelope ≤`, `per_plan ≤` |
@@ -1035,6 +1083,16 @@ every one of these holds:
 - `margin ≤`, `ttl_seconds ≤`;
 - `auto` is null, or the parent's `auto` is not null and each of the child's bounds ≤ the
   parent's.
+
+*Added in 1.16.0.* A child of a parent with `provenance` keeps it, or a stricter one:
+
+- `untrusted.kinds` and `untrusted.sinks` ⊇ the parent's (or `*`);
+- each parent `egress` label is in the child's, clearing a subset of the parent's sinks;
+- `rule_of_two` is on if the parent's is;
+- `on` is `refuse` if the parent's is.
+
+A reader sub-agent's lineage (F4-16b) is an ordinary child, derived with no table and no
+sink: it may read untrusted input and change nothing.
 
 ## 5.3 Aggregates
 
@@ -1195,6 +1253,7 @@ fiduciary adds three checkers of its own (§6.3).
 | `RecipientAllowlist(sink, operation, fields=, domains=, addresses=, tenant_domains=, subdomains=, kind=)` | `outbound.recipients` | per rule |
 | `OutboundTenantIsolation(fields=, max_tenants=, require_tenant=)` | `outbound.tenants` | when present |
 | `RateWindow(name, span, limit, measure, per)`; the engine adds its `RateWindowCheck` | every window of the lineage, namespaced (F5-5) | per window |
+| `ProvenanceGate(untrusted_kinds=, untrusted_sinks=, egress=, rule_of_two=)` | `provenance` (1.16.0; interlock 1.8.0) | when present |
 | `fiduciary_mandate` | §6.3 | always |
 | `tenant_allowlist` | §6.3 | unless `data.tenants` is `"*"` |
 | `bound_statements` | §6.3 | unless `tools.statements` is `"any"` |
@@ -1353,6 +1412,7 @@ The surface consumed:
 | `undo` | the agent asks to undo a committed plan (`fiduciary_request`), or a principal opens one | `compensables(plan_id)` | the plan id; each delivered original's id, head, deadline and compensation operation; whether any of them is late | `compensate`, `compensate_late`, `reject` |
 | `extension` | `BudgetGuard.authorize` returns an `ExtensionRequest`, directly or through `RecoveryRuntime.hold` or `RecoveryExhaustedError` | the quote, and its ILOK1 `extension.quoted` record | the quote's id and record hash; `needed`, `requested`, the spend, the estimate method, and `expires_at`; the receipt-log checkpoint its proof of work names | `grant`, `decline` |
 | `amend` | the agent asks for a bound it lacks (`fiduciary_request`), or a principal proposes a version | the proposed mandate | its digest; `refines(proposed, current)` read both ways, as the diff a principal reviews | `amend`, `reject` |
+| `provenance` *(1.16.0)* | a session's plan is refused by `provenance_gate` alone, under `provenance.on: "hold"` (F4-12e) | `StageResult`; the session's `session.labeled` records | the refused receipt's id and digest; the session; the labels it held; the seqs of the records that brought them; the rules broken; the proposal's plan hash: the same plan, with a new id and the label `cleared` | `accept_repair`, `reject` |
 
 - **F7-1.** One ticket per distinct evidence. A trigger whose typed evidence equals an open
   ticket's is folded into that ticket. It is never raised again.
@@ -1363,6 +1423,13 @@ The surface consumed:
   - its quote stays unanswered.
 
   A ticket storm costs the agent its own progress, and costs principals nothing (A7).
+- **F7-1a.** *Added in 1.16.0.* A `provenance` ticket asks what only a person can judge:
+  whether the plan is still right, given what the agent had read. A rule may `reject` one,
+  never accept it. `accept_repair` takes `roster.quorums.accept_repair`, and the warrant's
+  execution runs the cleared plan, judged again from scratch: a plan labeled `cleared`
+  passes the provenance gate and every other bound as before. A plan the gate refuses
+  that breaks another bound too is refused, and raises nothing: no approval of what was
+  read would make it pass.
 
 ## 7.2 Classes of resolution
 
@@ -1567,6 +1634,8 @@ billing scope. It is recorded (`session.opened`) before its first call.
 
 - **F8-1.** A session never exposes the engine, the substrate, the governor, the outbox or
   any signer. Its methods are `call`, `govern`, `tool_definitions`, `tickets` and `close`.
+  *(Amended in 1.16.0:* and one read-only property, `labels`, every provenance label the
+  session holds.)
 - **F8-2.** `session.call(name, arguments)` works in four steps:
   1. The binding must be one the version pins.
   2. The arguments must validate against its schema.
@@ -1610,6 +1679,16 @@ billing scope. It is recorded (`session.opened`) before its first call.
   The record holds no agent text: a tool name is recorded only when a version the session
   runs pins it. A plan the engine refuses is recorded by interlock instead, in its ARC1
   receipt and its escrow chain.
+- **F8-13.** *Added in 1.16.0.* A session's labels only join. When a call's result brings a
+  label the session does not hold (F4-16b), the session records `session.labeled` before
+  it returns the result, naming the tool, the labels it brought and every label held after.
+  Every plan the session builds after that carries its labels (`EffectPlan.provenance`), so
+  they are in the plan's hash, and so in the verdict's and the receipt's. In the
+  deployment's own process (`fiduciary.sdk`), `@gov.tool(trust=, confidentiality=)` labels a
+  tool's result, and `gov.read(source, value, trust=, confidentiality=)` labels something
+  the application fetched itself; the SDK opens a session for its records the first time
+  it labels one, and its plans carry the labels as a session's do. A version whose
+  `tools.statements` is `"bound"` admits labels only from a tool it pins.
 
 ## 8.2 MCP
 
@@ -1861,6 +1940,7 @@ verified under `keys.json`'s key, and the report says it is the exporter's state
 | V10 anchors | every FIDU1 record in range is anchored, and every anchor names a record the log holds with that hash | `evidence` | 8 |
 | V11 revocation | no receipt of the lineage commits, and no delivery is made, after its revocation's trip sequence. Plans in flight at the trip, by `STAGE_OPENED` order, must show no commit. | `revocation` | 9 |
 | V12 ordering | every instant the service wrote agrees with the ledger order of its anchor, within the configured skew | `time` | 9 |
+| V13 provenance *(1.16.0)* | every committed plan whose session had read what its version's `provenance` rules name either satisfies them, or ran as the plan a `provenance` warrant approved after the last label entered the session (see below) | `provenance` | 6 |
 
 For V7, an act is explained when it traces to one of:
 
@@ -1881,8 +1961,20 @@ The other exit codes:
 - exit 1 is a usage error;
 - exit 2 is a bundle the verifier could not read.
 
+For V13 *(added in 1.16.0)*, the verifier reads what the session had read from the signed
+records, never from the engine's word: for each plan an action receipt shows committed, it
+finds the session by the receipt's `authority.trajectory_id` and `session.opened`, takes
+every label that session's `session.labeled` records gave it at or before the plan's
+admission, takes the kinds the receipt measured and the sinks its tool binding sends to,
+and runs the version's own `ProvenanceGate` over them. A plan the gate would refuse must
+be the proposal of a `provenance` ticket (by the plan hash its admission recorded) with an
+`accept_repair` warrant formed at or after the latest label. A `quarantined:<tool>` label
+must come from a binding whose reader's lineage, in the bundle, allows no table and no
+sink. The note says how many committed plans were made after a labeled read, and how many
+of those ran as approved.
+
 A failing run prints every check, not only the first that fails. It exits with the code of
-the first failing check in the order V1 to V12.
+the first failing check in the order V1 to V13.
 
 - **F9-4. Reports.** `--json` prints, in place of the text, an attestation
   (`fiduciary-attestation/1`, `fiduciary.attest`): the verdict, exit code and every
@@ -2273,7 +2365,7 @@ demo --serve`, a scratch deployment of each demo industry (`fiduciary.control`,
   chunked one; serves only its page, bundles, reports and public pins (`pinned-keys.json`,
   `charter.digest`, `attestation.json`), never keys, configurations or databases; and
   answers a failure without its cause.
-- **F10-23. The verifier.** A bundle is verified in process, offline, V1 to V12 (§9.3),
+- **F10-23. The verifier.** A bundle is verified in process, offline, V1 to V13 (§9.3),
   against a charter digest pinned from outside it: a deployment's configured digest and
   its `pinned-keys.json`, or a digest, keys and a witness given with the request; never
   the bundle's own. The page also checks, with the browser's Web Crypto alone, what it can
@@ -2344,6 +2436,11 @@ run (`fiduciary.init`), using the builder that stands up each demo industry.
     through an `mcp` sink, at most once.
   - Anything else makes the same binding, with its operation held (`hold = true`), so each
     call waits for a warrant. MCP's own default for a write is destructive.
+  - *(Added in 1.16.0.)* A read-only tool's binding says `trust: "untrusted"` (F4-16b)
+    unless the server marks it `openWorldHint: false`: MCP's default is an open world,
+    where what a tool returns may come from anyone. The written mandate has no
+    `provenance` rules, so the labels are recorded and decide nothing until a version adds
+    them.
 
   A tool whose input the binding grammar cannot hold whole is left out, and named. Such a
   tool has a number (FIDU1 holds no floats) or a keyword the grammar would not enforce.
@@ -2854,3 +2951,4 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-31 to F10-33: `fiduciary init --substrate` | 1.9.0 | each of the six substrates written and served through `fiduciary mcp serve`: an allowed write committed, a wider one refused before anything changed; a keyless SQLite table by `rowid`; PostgreSQL's stage role, `grants.sql` and a signed install; Terraform's marker added; the missing-argument refusals | Implemented (1.9.0), SQLite; PostgreSQL where the test DSN is set; Terraform where `tofu` or `terraform` is installed. `test_init_substrates.py` |
 | F10-20 (1.9.0): delivery receipts in the desk | 1.9.0 | a sandbox's receipts include the relay's delivery receipts, shown request-only on their sink | Implemented (1.9.0). `test_interactive_console.py` |
 | F10-18: upgrades in place | 6 | stores each 0.x release wrote, on both stores | Implemented. `test_upgrade.py` |
+| F4-12e, F4-16b, F7-1a, F8-13, V13: provenance | 1.16.0 | a refund after an untrusted email held, approved 2 of 3 and run as the cleared plan, V13 passing with its note; `on: "refuse"` raising nothing; a refund the gate let through committed without a warrant, V13 failing with exit 6 while V4 passes; a reader that may write counted as untrusted; the SDK's tool and `read` labels; `init --mcp`'s open-world default; the golden bundles `valid-provenance-held` and `v13-tainted-commit` in Python and in the browser; the demo's eighth act | Implemented (1.16.0), both stores. `test_provenance.py`, `test_init.py`, `test_bundle_vectors.py`, `test_browser_verifier.py`, `test_demo.py` |

@@ -29,6 +29,7 @@ latest decision recorded on the subject.
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
 import uuid
 from collections import OrderedDict
@@ -77,6 +78,9 @@ __all__ = ["BUILTIN_TOOLS", "REFUSAL_CODES", "Authority", "Decide", "replay", "r
 
 BUILTIN_TOOLS: Final = ("fiduciary_request", "fiduciary_ticket_status")
 """The two tools every session lists beside its pinned bindings (F8-4)."""
+PROVENANCE_LABEL: Final = re.compile(r"[a-z][a-z0-9_.:=-]{0,95}")
+"""A provenance label a session record may hold (1.16.0)."""
+TOOL_NAME: Final = re.compile(r"[a-z][a-z0-9_-]{0,63}")
 REFUSAL_CODES: Final = (
     "arguments",  # outside the binding's schema, or the canonical domain (F4-13)
     "max_open",  # the lineage's open tickets are at escalation.max_open (F7-2)
@@ -1078,6 +1082,36 @@ class Decide:
             "code": code,
         }
 
+    def label_session(
+        self, state: State, session_id: str, tool: str, introduced: Sequence[str]
+    ) -> dict[str, Any]:
+        """The ``session.labeled`` body (1.16.0): what a tool's result brought into the
+        session, and every label the session holds now. Labels only join: one record per
+        tool call that brought a label the session did not hold."""
+        opened = self._open_session(state, session_id)
+        mandate: Mandate = self.load(str(opened["mandate"]), Mandate)
+        pinned = {pin.name for pin in mandate.tools.bindings}
+        # A tool in the deployment's own process (fiduciary.sdk) is pinned by no binding: a
+        # version that admits statements no binding pins admits its labels too.
+        if tool not in pinned and mandate.tools.statements != "any":
+            raise AuthorityError(f"tool {tool!r} is pinned by no version this session runs")
+        if not TOOL_NAME.fullmatch(tool):
+            raise AuthorityError(f"{tool!r} is no tool name")
+        held = set(session_labels(state, session_id))
+        new = sorted(set(introduced) - held)
+        if not new:
+            raise AuthorityError(f"session {session_id} holds every label {tool} brings")
+        for label in new:
+            if not PROVENANCE_LABEL.fullmatch(label):
+                raise AuthorityError(f"{label!r} is no provenance label")
+        return {
+            "session": session_id,
+            "mandate_id": opened["mandate_id"],
+            "tool": tool,
+            "introduced": new,
+            "labels": sorted(held | set(new)),
+        }
+
     def close_session(self, state: State, session_id: str, scopes: Sequence[str]) -> dict[str, Any]:
         """The ``session.closed`` body: every scope the session billed, in
         order, each its subject's or a satellite's (F8-8)."""
@@ -1399,7 +1433,20 @@ def _expected(
         )
     if kind == "session.closed":
         return decide.close_session(state, str(body["session"]), list(body["scopes"]))
+    if kind == "session.labeled":
+        return decide.label_session(
+            state, str(body["session"]), str(body["tool"]), list(body["introduced"])
+        )
     raise AuthorityError(f"no rule writes a {kind} record")
+
+
+def session_labels(state: State, session_id: str) -> tuple[str, ...]:
+    """Every provenance label session ``session_id`` holds (1.16.0)."""
+    found: set[str] = set()
+    for event, body, _ in state.sessions.get(session_id, ()):
+        if event == "labeled":
+            found.update(str(label) for label in body.get("labels", ()))
+    return tuple(sorted(found))
 
 
 def _with_trips(expected: dict[str, Any], body: Mapping[str, Any]) -> dict[str, Any]:

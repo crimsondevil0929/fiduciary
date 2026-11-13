@@ -191,7 +191,14 @@ class MandateEngine:
                 if self._closed and not self._staging:
                     self._chain.close()  # closed during this plan: it has finished now
 
-    def stage(self, scope: str, *, trajectory: str | None = None, intent: str = "") -> MandateStage:
+    def stage(
+        self,
+        scope: str,
+        *,
+        trajectory: str | None = None,
+        intent: str = "",
+        provenance: Sequence[str] = (),
+    ) -> MandateStage:
         """Open a stage before its plan is whole (interlock's ``EscrowEngine.stage``,
         1.14.0): for code in this process that reads, decides and writes. The plan
         its effects make is judged by the version bound when the stage opened.
@@ -210,7 +217,9 @@ class MandateEngine:
             engine = self._engine
             self._staging += 1
         try:
-            opened = engine.stage(scope, trajectory_id=trajectory, intent=intent)
+            opened = engine.stage(
+                scope, trajectory_id=trajectory, intent=intent, provenance=provenance
+            )
         except BaseException:
             self._finished()
             raise

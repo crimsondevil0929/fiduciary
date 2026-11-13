@@ -384,6 +384,7 @@ def input_schema(function: Callable[..., Any]) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 F = TypeVar("F", bound=Callable[..., Any])
+T = TypeVar("T")
 
 
 class GovernedTool:
@@ -398,8 +399,12 @@ class GovernedTool:
         name: str,
         description: str,
         schema: Mapping[str, Any],
+        labels: Sequence[str] = (),
     ) -> None:
         self._governor = governor
+        self.labels = tuple(sorted(set(labels)))
+        """What the tool's result brings into the session (1.16.0): ``untrusted``,
+        ``secret``, a partition's label."""
         self._function = function
         self.name = name
         self.description = description
@@ -442,6 +447,7 @@ class Governor:
         self._mandate_id = mandate_id
         self.config = config
         self.trajectory = f"fiduciary-sdk-{uuid.uuid4()}"
+        self._session: Any = None
         self.tools: dict[str, GovernedTool] = {}
         self.observed: list[Observation] = []
         """What a shadow mandate let through in this process, call by call."""
@@ -480,6 +486,8 @@ class Governor:
         name: str | None = None,
         description: str | None = None,
         input_schema: Mapping[str, Any] | None = None,
+        trust: str = "system",
+        confidentiality: str | None = None,
     ) -> Callable[[F], GovernedTool]: ...
 
     def tool(
@@ -490,8 +498,16 @@ class Governor:
         name: str | None = None,
         description: str | None = None,
         input_schema: Mapping[str, Any] | None = None,
+        trust: str = "system",
+        confidentiality: str | None = None,
     ) -> GovernedTool | Callable[[F], GovernedTool]:
         """Govern ``function``: ``@gov.tool``, or ``@gov.tool(name=..., ...)``.
+
+        ``trust`` and ``confidentiality`` (1.16.0) say what the function's result is, as a
+        tool binding's do: ``trust="untrusted"`` for anything someone outside the deployment
+        wrote (an email, a web page), ``confidentiality="secret"``. Once the agent has seen
+        such a result, the session's later plans carry its label, and the mandate's
+        ``provenance`` rules judge them.
 
         The function's first parameter is the handle; the others are the tool's
         arguments. Its name and docstring are the tool's unless given.
@@ -507,7 +523,10 @@ class Governor:
             if not text:
                 raise ValueError(f"{tool_name}: give it a docstring or a description")
             schema = dict(input_schema) if input_schema is not None else _input(found)
-            governed = GovernedTool(self, found, name=tool_name, description=text, schema=schema)
+            labels = _labels_for(trust, confidentiality)
+            governed = GovernedTool(
+                self, found, name=tool_name, description=text, schema=schema, labels=labels
+            )
             self.tools[tool_name] = governed
             return governed
 
@@ -527,6 +546,7 @@ class Governor:
             engine.compiled.subject,
             trajectory=self.trajectory,
             intent=f"{INTENT}{tool.name} {tool.code_digest[:16]}",
+            provenance=self.labels,
         )
         opened = stage.opened
         handle_type = _HANDLES.get(opened.substrate.substrate_id)
@@ -552,11 +572,13 @@ class Governor:
         except InterlockError as exc:
             raise Refused(_told(exc), outcome="error") from exc
         if result is None:
+            self._label(tool)
             return value  # it wrote nothing: nothing to judge, and nothing recorded
         if not result.committed:
             raise Refused(_shown(result.feedback), outcome="refused", result=result)
         if result.would_refuse:
             self._observe(tool, result)
+        self._label(tool)
         return value
 
     def _observe(self, tool: GovernedTool, result: StageResult) -> None:
@@ -578,7 +600,49 @@ class Governor:
             "; ".join(messages),
         )
 
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """Every provenance label this process's agent has seen (1.16.0)."""
+        return self._session.labels if self._session is not None else ()
+
+    def read(
+        self,
+        source: str,
+        value: T,
+        /,
+        *,
+        trust: str = "untrusted",
+        confidentiality: str | None = None,
+    ) -> T:
+        """Say that the agent is about to see ``value``, which your code fetched itself from
+        ``source`` (an inbox, a web page), and hand it back (1.16.0).
+
+            email = gov.read("inbox", fetch_latest_email(), trust="untrusted")
+
+        The session records the labels as it does for a tool's result, so later plans carry
+        them. Nothing is checked about ``value``: what it is, is yours to say.
+        """
+        if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", source):
+            raise ValueError(f"{source!r}: a source's name is a lowercase identifier")
+        self._record(source, _labels_for(trust, confidentiality))
+        return value
+
+    def _label(self, tool: GovernedTool) -> None:
+        self._record(tool.name, tool.labels)
+
+    def _record(self, source: str, labels: Sequence[str]) -> None:
+        """Record what ``source`` brought, in a session opened for it the first time a
+        result is labeled: its records are what V13 reads offline."""
+        if not labels:
+            return
+        if self._session is None:
+            self._session = self._fiduciary.session(self._mandate_id, trajectory=self.trajectory)
+        self._session._label(source, tuple(labels))
+
     def close(self) -> None:
+        if self._session is not None:
+            self._session.close()
+            self._session = None
         self._fiduciary.close()
 
     def __enter__(self) -> Governor:
@@ -596,6 +660,18 @@ def _code_digest(function: Callable[..., Any]) -> str:
     except (OSError, TypeError):
         source = f"{function.__module__}.{function.__qualname__}"
     return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _labels_for(trust: str, confidentiality: str | None) -> list[str]:
+    """The labels a result brings, as a tool binding's ``trust`` and ``confidentiality``
+    say (1.16.0)."""
+    if trust not in ("principal", "system", "untrusted"):
+        raise ValueError(f"trust is principal, system or untrusted, not {trust!r}")
+    if confidentiality not in (None, "secret"):
+        raise ValueError(f"confidentiality is secret or None, not {confidentiality!r}")
+    return (["untrusted"] if trust == "untrusted" else []) + (
+        ["secret"] if confidentiality == "secret" else []
+    )
 
 
 def _input(function: Callable[..., Any]) -> dict[str, Any]:

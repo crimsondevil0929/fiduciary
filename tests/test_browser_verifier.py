@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 VECTORS = ROOT / "vectors" / "fidu1" / "bundles"
 HARNESS = Path(__file__).resolve().parent / "js" / "verify_vectors.cjs"
 SNAPSHOT = Path(__file__).resolve().parent / "js" / "browser_vectors.json"
-COVERED = frozenset({"V1", "V9", "V10"})
+COVERED = frozenset({"V1", "V9", "V10", "V13"})
 """The checks the browser runs part of."""
 
 
