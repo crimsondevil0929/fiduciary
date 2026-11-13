@@ -1526,6 +1526,20 @@ def _init(args: argparse.Namespace) -> int:
         command = command[1:]
     if args.mcp and args.substrate:
         _fail("pass --mcp or --substrate, not both")
+    sessions = None
+    if args.claude_code:
+        if args.mcp or args.substrate:
+            _fail("--claude-code sets up the Git repository you are in: no --mcp or --substrate")
+        from fiduciary.coding import repository_of
+
+        try:
+            sessions = repository_of(Path(args.repository or "."))
+        except ValueError as exc:
+            _fail(str(exc))
+        if not args.principal:
+            args.solo = True
+        if args.out is None:
+            args.out = str(sessions[0] / ".fiduciary")
     if args.mcp and not command:
         _fail("give the MCP server's command after --mcp --")
     if command and not args.mcp:
@@ -1539,6 +1553,8 @@ def _init(args: argparse.Namespace) -> int:
             _fail("give --out: the directory to write (with --solo, .fiduciary by default)")
         args.out = STATE_DIRECTORY
     target = None
+    if sessions is not None:
+        target = Target("git", repository=sessions[0], branch=args.branch or sessions[1])
     if args.substrate:
         target = Target(
             args.substrate,
@@ -1546,7 +1562,7 @@ def _init(args: argparse.Namespace) -> int:
             schema=args.schema,
             tables=tuple(args.table),
             repository=args.repository,
-            branch=args.branch,
+            branch=args.branch or "main",
             server=args.server,
             token_file=args.token_file,
             ca_file=args.ca_file,
@@ -1567,7 +1583,12 @@ def _init(args: argparse.Namespace) -> int:
             target=target,
             solo=args.solo,
             shadow=args.shadow,
+            sessions=sessions is not None,
         )
+        if sessions is not None:
+            from fiduciary.coding import install
+
+            report.notes.extend(install(sessions[0], Path(args.out), sessions[2]))
     except (ValueError, OSError, McpError) as exc:
         _fail(str(exc))
     for tool in report.tools:
@@ -1583,6 +1604,19 @@ def _init(args: argparse.Namespace) -> int:
     root = Path(report.root).resolve()
     _out(f"wrote       {root} (mandate {report.scope}; see README.md)")
     config = root / "fiduciary.toml"
+    if sessions is not None:
+        branch = args.branch or sessions[1]
+        _out(f"start       cd {sessions[0]} && claude --worktree")
+        _out(
+            f"session     each session works in its own worktree; when it ends, everything it "
+            f"changed is checked against the mandate and committed to {branch} once, or kept "
+            f"for the agent to fix"
+        )
+        _out(f"sessions    interlock stage list --config {root / 'interlock.toml'}")
+        if args.shadow:
+            _out(f"shadow      fiduciary --config {config} shadow report")
+            _out(f"enforce     fiduciary --config {config} solo enforce")
+        return OK
     if (root / "grants.sql").is_file():
         _out(f"first       run {root / 'grants.sql'} as the schema's owner")
     # As README.md and docs/QUICKSTART.md say it (1.11.0).
@@ -1623,6 +1657,20 @@ def _init(args: argparse.Namespace) -> int:
         "public: hand them to your auditor once, apart from any bundle"
     )
     return OK
+
+
+def _hook(args: argparse.Namespace) -> int:
+    """``fiduciary hook claude-code`` (1.15.0)."""
+    from fiduciary.coding import hook
+
+    path = _deployment_config(args)
+    try:
+        payload = json.load(sys.stdin)
+    except ValueError as exc:
+        _fail(f"the hook's input is not JSON: {exc}")
+    if not isinstance(payload, dict):
+        _fail("the hook's input is not a JSON object")
+    return hook(payload, path, sys.stdout, sys.stderr)
 
 
 def _deployment_config(args: argparse.Namespace) -> Path:
@@ -2091,6 +2139,13 @@ def _parser() -> argparse.ArgumentParser:
         "--out", help="the directory to write (new or empty; with --solo, .fiduciary by default)"
     )
     init.add_argument(
+        "--claude-code",
+        action="store_true",
+        help="coding sessions for Claude Code on the Git repository you are in (1.15.0): each "
+        "session works in a sandboxed worktree and is promoted when it ends; solo unless "
+        "three --principal are given",
+    )
+    init.add_argument(
         "--solo",
         action="store_true",
         help="one principal, who decides alone; tools may be Python functions in your own "
@@ -2134,7 +2189,9 @@ def _parser() -> argparse.ArgumentParser:
         "--table", action="append", default=[], help="sql: only this table (repeat for each)"
     )
     target.add_argument("--repository", type=Path, help="git: the repository")
-    target.add_argument("--branch", default="main", help="git: the branch (main)")
+    target.add_argument(
+        "--branch", help="git: the branch (main; with --claude-code, the one checked out)"
+    )
     target.add_argument("--server", help="kubernetes: the API server; fhir, rest: the base URL")
     target.add_argument("--token-file", type=Path, help="kubernetes, fhir, rest: the bearer token")
     target.add_argument("--ca-file", type=Path, help="kubernetes, fhir, rest: the CA bundle")
@@ -2207,6 +2264,16 @@ def _parser() -> argparse.ArgumentParser:
     shadow_report.add_argument("--json", action="store_true", help="print JSON")
     shadow_report.set_defaults(handler=_shadow_report)
     init.set_defaults(handler=_init)
+
+    hook = commands.add_parser(
+        "hook",
+        help="answer a coding agent's hook (Claude Code), the event as JSON on stdin",
+        description="Answer one of Claude Code's hook events for this deployment (1.15.0): "
+        "WorktreeCreate opens a staged session, Stop checks it against the mandate, and "
+        "SessionEnd and WorktreeRemove promote it. fiduciary init --claude-code writes them.",
+    )
+    hook.add_argument("agent", choices=("claude-code",))
+    hook.set_defaults(handler=_hook)
 
     notify = commands.add_parser(
         "notify",

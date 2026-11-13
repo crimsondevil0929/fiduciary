@@ -642,6 +642,20 @@ version 1, as interlock's configuration pins `[operators.keys]`.
 
   A child keeps every parent sensor, signed by a subset of the parent's keys; every parent
   checker, as pinned; and acknowledges no value its parent does not.
+- **F4-12d.** *Added in 1.15.0.* A coding session (interlock 1.7.0) is a stage on the
+  deployment's Git branch that lasts as long as an agent's work: a worktree with its HEAD
+  detached at the branch's head. When it ends, everything it changed is one plan, judged by
+  the lineage's version bound at that moment, recorded on the lineage's escrow chain as any
+  plan is, and committed on the session's base or refused (the session then keeps its
+  worktree). Its plan names no tool binding, so a lineage admits it only under
+  `tools.statements` `"any"` (F4-11), and V7 explains it there and lists it. The
+  promotion's own receipt (`ILPR1`: input and output trees, the command log's digest, each
+  command's exit code and sandbox profile digest, the diff and verdict hashes and the
+  commit) is signed with the deployment's receipts key and kept with the session; the
+  bundle carries the plan, not the commands. `fiduciary init --claude-code` writes such a
+  deployment, and the Claude Code hooks that open, check and promote a session
+  (`fiduciary hook claude-code`).
+
 - **F4-12c.** *Added in 1.14.0.* Two choices a mandate may make, each leaving every
   mandate written before as it was:
   - `enforcement`: `"shadow"`, written only when shadow (writing `"enforce"` is
@@ -1856,7 +1870,10 @@ For V7, an act is explained when it traces to one of:
 - a recovery or extension record;
 - a warrant's step;
 - *(added in 1.14.0)* a plan an in-process tool made, under a version whose
-  `tools.statements` is `"any"` (F4-11), listed in a note.
+  `tools.statements` is `"any"` (F4-11), listed in a note;
+- *(added in 1.15.0)* a coding session's promotion (interlock 1.7.0, `interlock promote
+  <session>` on the escrow chain), under a version whose `tools.statements` is `"any"`,
+  listed in a note with the session's name (F4-12d).
 
 The other exit codes:
 
@@ -2124,6 +2141,8 @@ of them.
 | `fiduciary export-bundle`, `verify-bundle`, `verify` | §9, and live verification of the store. `verify-bundle --json` and `--report` write the attestation (F9-4). |
 | `fiduciary reconcile-actions <bundle> <export> --charter D [--keys F] [--format F]` | Match a system of record's own log against the receipts a bundle carries (F9-9). *(Added in 1.10.0.)* |
 | `fiduciary init --out DIR [--name N] [--principal NAME]... [--mcp -- COMMAND]` | Write a deployment ready to run, governing an MCP server's tools by their annotations (§10.10). *(Added in 1.8.0.)* `--solo` writes one of one principal (`owner`), who adopts the charter and issues the mandate alone, into `.fiduciary/` unless `--out` names another directory, with a `.gitignore` that keeps it all out of version control; its mandate admits plans built by code in the process (`tools.statements` `"any"`, F4-11) and is in force for a year. `--shadow` issues the mandate in shadow mode (F4-12c). *(Amended in 1.14.0.)* |
+| `fiduciary init --claude-code [--shadow] [--principal NAME]...` | Write a deployment for coding sessions on the Git repository the command runs in (F4-12d): its current branch, moved by fast-forwarding the developer's checkout; a mandate that admits a session's plan (`tools.statements` `"any"`) and lets it create, change and delete files in the `docs`, `other`, `src` and `tests` path classes, at most 200 at once; Claude Code's hooks and sandbox in `.claude/settings.local.json`; and `.fiduciary/` and that file in `.git/info/exclude`. Solo unless three principals are given. *(Added in 1.15.0.)* |
+| `fiduciary hook claude-code` | Answer one Claude Code hook event, read as JSON on stdin: `WorktreeCreate` opens a session and prints its worktree, `SessionStart` says how it ends, `PreToolUse` refuses an edit outside it, `Stop` judges it against the mandate and keeps the agent working when it would be refused, `SessionEnd` and `WorktreeRemove` promote it. *(Added in 1.15.0.)* |
 | `fiduciary solo enforce`, `solo add-principals NAME NAME [--enforce]` | Change a solo deployment with the owner's key alone: issue the next mandate version enforced; or adopt a second charter version naming the owner and two more principals (keys written for them), and issue the next mandate version with the three as its roster, two of three to grant and one to take away. After that, neither applies. *(Added in 1.14.0.)* |
 | `fiduciary shadow report [--mandate ID] [--top N] [--json]` | Read each lineage's escrow chain, verified as it loads: the plans staged, committed and refused, each check that would have refused a plan with the tools whose plans they were, and the largest changes measured. *(Added in 1.14.0.)* |
 | `fiduciary notify [--once] [--test WEBHOOK]` | Deliver each `[notify]` webhook's notices from its cursor, or send one test notice (§10.9). *(Added in 1.8.0.)* |

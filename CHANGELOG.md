@@ -6,6 +6,50 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-11-13
+
+A public site that says what the stack is before it shows the console, one family of marks
+for the three packages, and coding sessions for Claude Code under a signed mandate. Requires
+interlock-escrow 1.7.0. Every mandate, compiled policy, vector and bundle written before is
+unchanged.
+
+### Added
+
+- **`fiduciary init --claude-code`**: a deployment for coding sessions on the Git repository
+  you are in. Each session works in its own worktree (Claude Code's `--worktree`, or its
+  EnterWorktree tool), its commands run in Claude Code's sandbox (writes only in the
+  worktree, no network, the deployment's keys unreadable), and when it ends everything it
+  changed is one plan, judged by the mandate and committed to your branch once, by
+  fast-forwarding your checkout, or kept for the agent to fix. The starter mandate lets a
+  session change files in `docs`, `other`, `src` and `tests`, at most 200 at once; CI
+  workflows, dependencies, governance files and infrastructure need a version of the
+  mandate that grants them. Solo unless three `--principal` are given; `--shadow` watches
+  first.
+- **`fiduciary hook claude-code`**: the one command the hooks run. `WorktreeCreate` opens a
+  session, `SessionStart` tells the agent how it ends, `PreToolUse` refuses an edit outside
+  the worktree, `Stop` judges the session against the mandate and, when it would be refused,
+  keeps the agent working with the reason, and `SessionEnd` and `WorktreeRemove` promote it.
+  No tool call's input is rewritten. Each promotion's receipt is signed with the
+  deployment's receipts key.
+- **`MandateEngine.promote`**: a session's whole change judged by the version bound now.
+- **V7** explains a session's promotion under `tools.statements` `"any"`, and lists each
+  session in a note (F4-12d).
+- **The public site opens on a front page** (`scripts/build_site.py`, `report.html(...,
+  site=True)`): what the three packages do and how to install each, a tool wrapped in
+  shadow mode with the report it leads to, the loop every change goes through, the
+  measurement ladder, and the counts from the run the page was built from. The workbench is
+  its "Interactive demo", opening on the eight workflows. `fiduciary console` and a demo's
+  dashboard open on the workbench as before.
+- **Marks for AgentGov, Interlock and Fiduciary** (`fiduciary.brand`): a circle, a square
+  and a triangle drawn on one grid, in one weight, where a faint or dashed part is not final
+  and the package's color is what is. `scripts/make_logos.py` writes each repository's
+  `docs/logo.svg` and `docs/logo-dark.svg`; the console draws them inline.
+
+### Changed
+
+- The workbench's workflow picker shows each workflow's measurement rung and verdicts; its
+  industry is in the button's title.
+
 ## [1.14.0] - 2026-11-12
 
 Reach: the stack can now watch one tool in your own code before it governs anything, and a

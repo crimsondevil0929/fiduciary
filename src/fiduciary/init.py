@@ -46,7 +46,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final
 
-from fiduciary.starters import Starter, Target, starter
+from fiduciary.starters import Starter, Target, coding, starter
 
 __all__ = ["InitReport", "Target", "classify", "discover", "init", "schema_of"]
 
@@ -446,6 +446,7 @@ def init(
     target: Target | None = None,
     solo: bool = False,
     shadow: bool = False,
+    sessions: bool = False,
 ) -> InitReport:
     """Write the deployment into ``root`` (new or empty).
 
@@ -459,6 +460,9 @@ def init(
         the mandate is in force for a year. :mod:`fiduciary.solo` grows it to three.
     :param shadow: Issue the mandate in shadow mode (1.14.0): every plan is judged and
         commits; what would have been refused is recorded, not refused.
+    :param sessions: For coding sessions on a Git ``target`` (1.15.0,
+        :func:`fiduciary.starters.coding`): a session's whole change is one plan, which no
+        tool binding pins, so the mandate admits statements none pins.
     :raises ValueError: On a name, principals or a directory init cannot use,
         or a target it cannot read.
     """
@@ -484,6 +488,10 @@ def init(
         options["enforcement"] = "shadow"
     if solo:
         options.update(statements="any", term_days=SOLO_TERM_DAYS)
+    if sessions:
+        if target is None or target.substrate != "git":
+            raise ValueError("coding sessions are on a Git repository: --substrate git")
+        options["statements"] = "any"
     if target is not None:
         if command:
             raise ValueError("init takes --mcp or --substrate, not both")
@@ -492,7 +500,7 @@ def init(
             if target.substrate == "sqlite" and target.database is not None
             else None
         )
-        st = starter(target)
+        st = coding(target) if sessions else starter(target)
         report = InitReport(
             root=root.resolve(),
             scope=f"{label}-agent",

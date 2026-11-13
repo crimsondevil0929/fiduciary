@@ -7,8 +7,10 @@ on the installed engine, with claude-opus-5-5's recorded turns choosing the call
 signature scenario (the recording that ships with fiduciary), offline and at no cost.
 Then it writes into the output directory:
 
-- ``index.html``: the console, rendered from the run, with no console behind it. It shows
-  what the run recorded and checks a bundle in the browser (``report/verify.js``).
+- ``index.html``: the console, rendered from the run, with no console behind it. It opens on
+  a front page (1.15.0) that says what the three packages do, and holds the workbench of
+  what the run recorded and a verifier that checks a bundle in the browser
+  (``report/verify.js``).
 - each industry's ``before.fidb`` and ``after.fidb`` (and SaaS's sealed customer bundles),
   at the paths the page links them by, with the ``pinned-keys.json`` and
   ``charter.digest`` to verify them with ``fiduciary verify-bundle``;
@@ -43,7 +45,7 @@ def build(out: Path) -> list[Path]:
         if status != 0:
             raise SystemExit(f"fiduciary demo exited {status}")
         data = json.loads((run / "demo.json").read_text(encoding="utf-8"))
-        (out / "index.html").write_text(report.html(data), encoding="utf-8")
+        (out / "index.html").write_text(report.html(data, site=True), encoding="utf-8")
         for directory in [run, *sorted(p for p in run.iterdir() if (p / "demo.json").is_file())]:
             target = out / directory.relative_to(run)
             target.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 32 32" role="img" aria-label="Fiduciary">
+<title>Fiduciary</title>
+<style>
+.i{fill:#121212}.o{fill:none;stroke:#121212}.f{fill:#121212;fill-opacity:.2}.a{fill:#087a57}
+</style>
+<mask id="fm" maskUnits="userSpaceOnUse" x="0" y="0" width="32" height="32"><rect width="32" height="32" fill="#fff"/><path d="M16 0L16 19.33M-0.75 29L16 19.33M32.75 29L16 19.33" stroke="#000" stroke-width="1.7"/></mask><g mask="url(#fm)"><path class="i" d="M16 3L1.85 27.5L7.34 24.33L16 9.33Z"/><path class="i" d="M1.85 27.5L30.15 27.5L24.66 24.33L7.34 24.33Z"/><path class="f" d="M30.15 27.5L16 3L16 9.33L24.66 24.33Z"/></g><path class="a" d="M16 12.73L10.28 22.63L21.72 22.63Z"/>
+</svg>
