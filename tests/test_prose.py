@@ -164,6 +164,13 @@ def test_no_dash_joins_two_words() -> None:
     assert not found, "\n".join(found)
 
 
+def test_no_en_dash_joins_two_words_or_numbers() -> None:
+    """A range is written with "to" (V1 to V13, records 1 to 137), as the rest of the copy
+    writes it, not with an en dash set tight between its ends."""
+    found = offenders(re.compile(r"\w\s?\u2013|\u2013\s?\w"))
+    assert not found, "\n".join(found)
+
+
 def test_no_count_is_written_with_a_bracketed_s() -> None:
     found = offenders(re.compile(r"\w\(s\)"))
     assert not found, "\n".join(found)

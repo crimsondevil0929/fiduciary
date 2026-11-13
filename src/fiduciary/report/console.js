@@ -233,7 +233,7 @@
       h("dl", { class: "facts" },
         h("dt", null, "SHA-256"), h("dd", null, hash(b.sha256)),
         h("dt", null, "Lineage"), h("dd", null, h("span", { class: "mono" }, b.lineage), h("span", { class: "muted" }, "  " + b.subjects.join(" · "))),
-        h("dt", null, "Range"), h("dd", { class: "tnum" }, "records " + b.range.from + "–" + b.range.to + " · ledger cut " + b.ledger.cut + " · " + num(b.members) + " members · " + num(b.bytes) + " bytes"),
+        h("dt", null, "Range"), h("dd", { class: "tnum" }, "records " + b.range.from + " to " + b.range.to + " · ledger cut " + b.ledger.cut + " · " + num(b.members) + " members · " + num(b.bytes) + " bytes"),
         h("dt", null, "Pinned"), h("dd", null, "charter ", hash(a.inputs.charter, 16), h("span", { class: "muted" }, " · keys: " + (a.inputs.pinned_keys.join(", ") || "none"))),
         h("dt", null, "Checked"), h("dd", null, "offline, no database" + (sockets ? ", " + sockets.sockets + " network calls" : "") + " · exit " + v.exit_code + " · " + (b.signed ? "manifest signed" : "manifest unsigned"))),
       seg);
@@ -2329,7 +2329,7 @@
         c[0] + " " + c[1] + ": " + word + (full && full.findings.length ? " · " + many(full.findings.length, "finding") : ""));
     });
     return h("div", null, h("div", { class: "vgrid" }, cells),
-      h("div", { class: "vgrid-note" }, att ? "V1–V13, as the verifier ran them" : "What this browser could check on its own. The full verdict needs fiduciary verify-bundle."));
+      h("div", { class: "vgrid-note" }, att ? "V1 to V13, as the verifier ran them" : "What this browser could check on its own. The full verdict needs fiduciary verify-bundle."));
   }
   function mappingSource() {
     return RUNS.length ? RUNS[0].attestations[RUNS[0].primary] : null;

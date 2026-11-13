@@ -6,6 +6,13 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+### Fixed
+
+- Two ranges the console wrote with a tight en dash now say "to": the verifier's "V1 to V13,
+  as the verifier ran them", and a bundle's "records 1 to 137". The copy gate
+  (`tests/test_prose.py`) now refuses an en dash set between two words or numbers, as it
+  already refused an em dash.
+
 ## [1.16.0] - 2026-11-13
 
 What the agent read before it asked. A refund within the agent's cap is still the wrong
