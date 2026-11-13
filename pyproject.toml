@@ -119,8 +119,3 @@ packages = ["src/fiduciary"]
 [tool.hatch.build.targets.sdist]
 # Working notes for whoever builds the next phase: untracked, and not part of a release.
 exclude = ["/HANDOFF.md", "/AGENTS.md", "/CLAUDE.md", "/STRATEGY_AND_MOAT.md", "/.env.benchmark", "/live-run", "/soak"]
-
-# Temporary, until interlock-escrow 1.7.0 is on PyPI: the commit of the interlock PR. Remove this
-# table and relock before tagging (scripts/upstream_pins.py tells CI's pip steps about it).
-[tool.uv.sources]
-interlock-escrow = { git = "https://github.com/crimsondevil0929/interlock", rev = "6b9c05a4985262a55a1970b8117f31cd9cfaba47" }
