@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from agentgov import BudgetManager
     from agentgov.receipts import ReceiptLog
     from interlock.records import Keyring
+    from interlock.session import Promotion, Session
     from interlock.substrate import ShadowSubstrate
 
 __all__ = ["Binder", "BindingError", "MandateEngine"]
@@ -214,6 +215,36 @@ class MandateEngine:
             self._finished()
             raise
         return MandateStage(self, opened)
+
+    def promote(
+        self, session: Session, *, check: bool = False, signer: Any | None = None
+    ) -> Promotion:
+        """Promote a coding session (interlock 1.7.0): everything it changed, measured as one
+        plan and judged by the version bound now, committed or refused; with ``check``, judged
+        only. The plan is the mandate's subject's, like every plan its engine runs.
+
+        :raises BindingError: As :meth:`execute`.
+        """
+        from interlock.session import promote
+
+        with self._lock:
+            if self._closed:
+                raise BindingError(f"mandate {self._mandate.mandate_id} is no longer bound")
+            now = self._clock()
+            if not self._mandate.not_before <= now < self._mandate.not_after:
+                raise BindingError(
+                    f"mandate {self._mandate.mandate_id} version {self._mandate.version} is "
+                    f"outside its term at {fidu1.format_instant(now)}"
+                )
+            engine, subject = self._engine, self._compiled.subject
+            self._staging += 1
+        try:
+            done = promote(engine, session, scope_id=subject, check=check, signer=signer)
+            if done.result is not None and not check:
+                self._observed(done.result)
+            return done
+        finally:
+            self._finished()
 
     def _finished(self) -> None:
         with self._lock:

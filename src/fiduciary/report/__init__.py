@@ -14,6 +14,9 @@ it ran more than one industry, ``domains``: a payload like this one for each.
 
 :func:`console_html` writes the same page with no attestation in it, for
 ``fiduciary console``: what it shows comes from the console's own endpoints.
+
+With ``site=True`` (``scripts/build_site.py``, 1.15.0) the page opens on a front page that says
+what the stack is, and the workbench is one of its views.
 """
 
 from __future__ import annotations
@@ -50,8 +53,17 @@ def _script_json(data: Any) -> str:
     return text.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-def html(data: Mapping[str, Any]) -> str:
+def _marks() -> str:
+    """The three packages' marks, for the page's script to draw (:mod:`fiduciary.brand`)."""
+    from fiduciary import brand
+
+    return _script_json({name: brand.inline(name, "{id}") for name in brand.NAMES})
+
+
+def html(data: Mapping[str, Any], *, site: bool = False) -> str:
     """The console, one file (module docstring)."""
+    if site:
+        data = {**data, "site": {"home": True}}
     page = (_ASSETS / "console.html").read_text(encoding="utf-8")
     style = (_ASSETS / "console.css").read_text(encoding="utf-8")
     script = (_ASSETS / "console.js").read_text(encoding="utf-8")
@@ -64,7 +76,13 @@ def html(data: Mapping[str, Any]) -> str:
         .replace("/*VERIFY*/", checks)
         .replace("/*SCRIPT*/", script)
         .replace("/*DATA*/", _script_json(data))
-        .replace("{{TITLE}}", f"{title}: {status.title()}")
+        .replace("/*MARKS*/", _marks())
+        .replace(
+            "{{TITLE}}",
+            "Fiduciary: agents change real systems, under signed limits"
+            if site
+            else f"{title}: {status.title()}",
+        )
     )
 
 
@@ -86,6 +104,7 @@ def console_html(title: str = "Fiduciary console", *, served: bool = False) -> s
         .replace("/*VERIFY*/", checks)
         .replace("/*SCRIPT*/", script)
         .replace("/*DATA*/", _script_json(data))
+        .replace("/*MARKS*/", _marks())
         .replace("{{TITLE}}", title)
     )
 

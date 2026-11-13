@@ -91,6 +91,9 @@ _RETURNED: Final = re.compile(r"unused recovery reserve for (\S+) returned")
 _STEP: Final = re.compile(r"recovery step (\d+)(?:: \S+| settled)")
 _TOOL: Final = re.compile(r"(?:repair of plan-[0-9a-f]+: )?FIDU1 tool (\S+) ([0-9a-f]{16})")
 _CODE: Final = re.compile(r"fiduciary sdk ([a-z][a-z0-9_]{0,47}) ([0-9a-f]{16})")
+_PROMOTION: Final = re.compile(r"interlock promote ([a-z0-9][a-z0-9._-]{0,63})(?::.*)?", re.S)
+"""A plan a coding session's promotion made (interlock 1.7.0, fiduciary 1.15.0): the
+session's name. Its record's note is the plan's intent, cut at 80 characters."""
 """A plan an in-process tool made (``fiduciary.sdk``, 1.14.0): its name, and the first 16
 hex of its source's SHA-256."""
 _UNNAMED: Final = re.compile(r"FIDU1 tool (\S+) ([0-9a-f]{16})")
@@ -1467,6 +1470,7 @@ class _Explained:
                     if mandate.tools.statements == "any":
                         unbound.add(mandate_id)
         in_process: dict[str, set[str]] = {}
+        sessions: dict[str, set[str]] = {}
         for lineage, records in sorted(self.c.escrow.items()):
             admitted: set[str] = set()
             for record in records:
@@ -1475,6 +1479,10 @@ class _Explained:
                     code = _CODE.fullmatch(record.note)
                     if code is not None and lineage in unbound:
                         in_process.setdefault(f"{code[1]} ({code[2]})", set()).add(lineage)
+                        continue
+                    promoted = _PROMOTION.fullmatch(record.note)
+                    if promoted is not None and lineage in unbound:
+                        sessions.setdefault(promoted[1], set()).add(lineage)
                         continue
                     tool = _TOOL.fullmatch(record.note)
                     if tool is None or tool[2] not in pinned:
@@ -1499,6 +1507,13 @@ class _Explained:
                 "in-process tools made plans the mandate admits without a pinned binding "
                 "(tools.statements any), each judged by its checks; the code is named by its "
                 "source's digest, which no principal reviewed: " + ", ".join(sorted(in_process))
+            )
+        if sessions:
+            self.c.r.notes.append(
+                "coding sessions were promoted as plans the mandate admits without a pinned "
+                "binding (tools.statements any): each session's whole change, measured from its "
+                "worktree and judged by the mandate's checks; the commands that made it are in "
+                "the session's own receipt, not in this bundle: " + ", ".join(sorted(sessions))
             )
 
     def operators(self) -> None:

@@ -11,6 +11,11 @@
   var app = document.getElementById("app");
   var tip = document.getElementById("tip");
   var NS = "http://www.w3.org/2000/svg";
+  // The public site (1.15.0): scripts/build_site.py marks its page, which opens on a front
+  // page; the console and a demo's dashboard open on the workbench as before.
+  var SITE = ROOT.site || null;
+  var MARKS = {};
+  try { MARKS = JSON.parse((document.getElementById("marks") || {}).textContent || "{}"); } catch (e) { MARKS = {}; }
 
   // -- small helpers -----------------------------------------------------------------
   function many(n, one, more) {
@@ -125,7 +130,9 @@
       sun: "M8 4.5a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7ZM7.3 0h1.4v2.5H7.3V0Zm0 13.5h1.4V16H7.3v-2.5ZM0 7.3h2.5v1.4H0V7.3Zm13.5 0H16v1.4h-2.5V7.3Z",
       print: "M4 1h8v3H4V1ZM2 5h12a1 1 0 0 1 1 1v5h-3v4H4v-4H1V6a1 1 0 0 1 1-1Zm3 6v3h6v-3H5Z",
       down: "M7.3 1h1.4v8.2l2.8-2.8 1 1L8 11.9 3.5 7.4l1-1 2.8 2.8V1ZM2 13h12v1.5H2V13Z",
-      key: "M10.5 1a4.5 4.5 0 0 0-4.3 5.8L1 12v3h3v-1.5h1.5V12H7l1.2-1.2A4.5 4.5 0 1 0 10.5 1Zm1 2.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z"
+      key: "M10.5 1a4.5 4.5 0 0 0-4.3 5.8L1 12v3h3v-1.5h1.5V12H7l1.2-1.2A4.5 4.5 0 1 0 10.5 1Zm1 2.5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z",
+      copy: "M5 1h8a1 1 0 0 1 1 1v9h-1.5V2.5H5V1ZM2 4h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm.5 1.5v8h7v-8h-7Z",
+      ext: "M9 2h5v5h-1.5V4.6L7.1 10 6 8.9l5.4-5.4H9V2ZM2 4h5v1.5H3.5v7h7V9H12v5H2V4Z"
     };
     return s("svg", { width: z, height: z, viewBox: "0 0 16 16", "aria-hidden": "true" }, s("path", { d: paths[name], fill: "currentColor" }));
   }
@@ -169,10 +176,7 @@
   // -- top bar -----------------------------------------------------------------------------
   function topbar() {
     var v = hasRun() ? A().verifier : null;
-    var logo = s("svg", { width: 20, height: 20, viewBox: "0 0 20 20", "aria-hidden": "true" },
-      s("rect", { x: 0.5, y: 0.5, width: 19, height: 19, fill: "none", stroke: "currentColor" }),
-      s("rect", { x: 5.5, y: 5.5, width: 9, height: 9, fill: "var(--accent)" }),
-      s("path", { d: "M0.5 10H5.5M14.5 10H19.5", stroke: "currentColor", fill: "none" }));
+    var logo = mark("fiduciary", 22);
     var layers = v ? [["agentgov", v.agentgov, "spend and rate ledgers"], ["interlock", v.interlock, "stages, measures and commits each change"], ["fiduciary", v.fiduciary, "mandates, warrants and offline proof"]]
       : LIVE.status ? [["fiduciary", LIVE.status.version, "mandates, warrants and offline proof"]] : [];
     var mode = LIVE.on ? tipOn(h("span", { class: "mode live" }, h("i"), h("span", null, "live · " + location.host)), "Served by the console. Approvals, the verifier and the sandbox run against it.")
@@ -182,13 +186,19 @@
       return h("a", { href: "#/" + x[0], "aria-current": x[0] === view ? "page" : null, onclick: function (ev) { ev.preventDefault(); go(x[0]); } }, x[1],
         x[0] === "desk" && LIVE.on ? (function () { var n = LIVE.status.deployments.reduce(function (t, d) { return t + (d.open || 0); }, 0); return n ? h("span", { class: "count", title: n + " open" }, String(n)) : null; })() : null);
     }));
-    return h("header", { class: "top" },
+    var brandEl = SITE ? h("a", { class: "brand", href: "#/home", onclick: function (ev) { ev.preventDefault(); go("home"); } }, logo, h("span", null, "Fiduciary"))
+      : h("div", { class: "brand" }, logo, h("span", null, "Fiduciary"), ROOT.console ? h("small", null, "console") : null);
+    var outside = SITE ? h("div", { class: "top-links noprint" },
+      h("a", { href: "https://github.com/crimsondevil0929/fiduciary", rel: "noopener" }, "GitHub", icon("ext", 12)),
+      h("a", { href: "https://pypi.org/project/interlock-fiduciary/", rel: "noopener" }, "PyPI", icon("ext", 12))) : null;
+    return h("header", { class: "top" + (SITE ? " site" : "") },
       h("div", { class: "wrap" },
-        h("div", { class: "brand" }, logo, h("span", null, "Fiduciary"), ROOT.console ? h("small", null, "console") : null),
+        brandEl,
         nav,
         h("div", { class: "spacer" }),
-        h("div", { class: "layers" }, layers.map(function (l) { return h("span", { class: "layer", title: l[2] }, l[0] + " ", h("b", null, l[1])); })),
-        mode,
+        SITE ? null : h("div", { class: "layers" }, layers.map(function (l) { return h("span", { class: "layer", title: l[2] }, l[0] + " ", h("b", null, l[1])); })),
+        SITE ? null : mode,
+        outside,
         h("button", { class: "btn icon noprint", title: "Light or dark", "aria-label": "Switch theme", onclick: function () { setTheme(dark() ? "light" : "dark"); render(); } }, icon("sun")),
         view === "run" ? h("button", { class: "btn icon noprint", title: "Print this view, or save it as a PDF", "aria-label": "Print", onclick: function () { window.print(); } }, icon("print")) : null));
   }
@@ -1077,6 +1087,14 @@
         h("a", { class: "how", href: "#/how", onclick: function (ev) { ev.preventDefault(); go("how"); } }, "How it works →")),
       h("div", { class: "intro-stats" }, stats.map(function (st) { return tipOn(h("div", { class: "istat" }, h("b", { class: "tnum" }, st[0]), h("span", null, st[1])), st[0] + " " + st[1] + ": " + st[2]); })));
   }
+  function demoIntro() {
+    // The site's demo opens on the picker: its front page says what the stack is.
+    var tt = totals();
+    return h("div", { class: "intro demo-intro" },
+      h("div", { class: "intro-text" }, h("h1", null, "Interactive demo"),
+        h("span", { class: "small ink2" }, tt.ran.length + " workflows on " + tt.substrates.length + " kinds of system. Pick one, then step through its scenarios.")),
+      h("a", { class: "how", href: "#/how", onclick: function (ev) { ev.preventDefault(); go("how"); } }, "Which check stopped which plan →"));
+  }
   function workflowPicker() {
     if (!OVERVIEW || PAGES.length < 2) return null;
     var fams = [], byFam = {};
@@ -1092,9 +1110,9 @@
           var dots = r.ran ? h("span", { class: "wf-dots", "aria-hidden": "true" },
             h("i", { class: "dot", style: "background:var(" + (r.before.passed ? "--accent" : "--refuse") + ")" }),
             h("i", { class: "dot", style: "background:var(" + (r.after.exit_code === 7 ? "--held" : r.after.exit_code === 0 ? "--accent" : "--refuse") + ")" })) : null;
-          return h("button", { class: "wf", "aria-pressed": on ? "true" : "false", disabled: i < 0 ? true : null, title: r.title, onclick: i < 0 ? null : function () { selectWorkflow(i); } },
+          return h("button", { class: "wf", "aria-pressed": on ? "true" : "false", disabled: i < 0 ? true : null, title: (r.industry ? r.industry + ": " : "") + r.title, onclick: i < 0 ? null : function () { selectWorkflow(i); } },
             h("span", { class: "wf-name" }, r.workflow || r.industry),
-            h("span", { class: "wf-sub" }, h("span", { class: "rung", title: (RUNG_NAMES[r["class"]] || "") + " measurement" }, r["class"]), h("span", null, r.industry || r.substrate || ""), dots));
+            h("span", { class: "wf-sub" }, h("span", { class: "rung", title: (RUNG_NAMES[r["class"]] || "") + " measurement" }, r["class"]), dots));
         })));
     }));
   }
@@ -1135,7 +1153,7 @@
     }));
     var body = TAB === "scenarios" ? scenariosTab() : TAB === "lineage" ? lineageTab() : TAB === "warrants" ? warrantsTab() : proofTab();
     return h("main", { id: "workbench" }, h("div", { class: "wrap" },
-      OVERVIEW ? intro() : null,
+      OVERVIEW ? (SITE ? demoIntro() : intro()) : null,
       workflowPicker(),
       h("section", { id: "frame", class: "frame" }, workflowHead(), bar, h("div", { class: "tab-body", role: "tabpanel" }, body))));
   }
@@ -1201,6 +1219,204 @@
       h("p", { class: "small" }, "For each workflow: how many plans each check refused, which warrants were formed, and whether both bundles verified offline."),
       h("div", { class: "card pad" }, grid),
       matrixCard));
+  }
+  // -- the public site's front page (1.15.0) ---------------------------------------------
+  // Built only into the page scripts/build_site.py writes (ROOT.site). Everything it counts
+  // comes from the run the page carries; nothing is fetched.
+  var REPO = "https://github.com/crimsondevil0929/";
+  var PYPI = "https://pypi.org/project/";
+  var PACKAGES = [
+    { key: "agentgov", name: "AgentGov", dist: "interlock-agentgov", layer: "Layer 1 · spend",
+      role: "Spend and rate limits for agents",
+      text: "A ledger for every scope in a delegation tree. A plan is held against its budget before it runs and settled after, so a sub-agent cannot spend more than its parent gave it.",
+      points: ["Budgets, rate windows and circuit breakers", "ARC1 receipts: what each action was allowed, did and cost", "Reconciles a system's own log against the ledger"] },
+    { key: "interlock", name: "Interlock", dist: "interlock-escrow", layer: "Layer 2 · change",
+      role: "Checks on what a write actually changed",
+      text: "Each change is staged where nothing is final yet, measured, and checked. It commits once, on the exact state that was measured, or not at all.",
+      points: ["SQL, Git, directories, Kubernetes, FHIR and REST APIs", "Every row, file or object a change touched, triggers and hooks included", "Outbound calls delivered once, after the commit"] },
+    { key: "fiduciary", name: "Fiduciary", dist: "interlock-fiduciary", layer: "Layer 3 · authority",
+      role: "Who may do what, and the proof",
+      text: "Limits are signed mandates. An exception needs two of three named principals. Every decision is a signed record, exported as a bundle anyone can verify offline.",
+      points: ["Governed tools in your own code, or over MCP", "Shadow mode first: see what would have been refused", "Installs the other two"] }
+  ];
+  var HERO_CODE = [
+    "import fiduciary",
+    "",
+    "gov = fiduciary.open()  # the deployment fiduciary init wrote",
+    "",
+    "",
+    "@gov.tool",
+    "def close_all(db: fiduciary.Sql) -> str:",
+    "    \"\"\"Close every ticket.\"\"\"",
+    "    db.execute(\"UPDATE tickets SET status = 'closed'\")",
+    "    return \"all closed\""
+  ];
+  // What `fiduciary shadow report` printed for this example, run on 1.14.0 (the mandate's
+  // id shortened).
+  var HERO_REPORT = [
+    ["cmd", "fiduciary shadow report"],
+    ["", "Mandate fcc02e85"],
+    ["", "  3 plans staged: 3 committed, 0 refused, 0 put back."],
+    ["", "  1 of them would have been refused if the mandate were enforced:"],
+    ["hit", "    blast_radius: 1 plan, from close_all (1)"]
+  ];
+  var MARK_IDS = 0;
+  function mark(name, size) {
+    var holder = h("span", { class: "mk-wrap", style: "width:" + size + "px;height:" + size + "px" });
+    var drawn = MARKS[name];
+    if (drawn) holder.innerHTML = drawn.split("{id}").join("mk" + (++MARK_IDS) + "-");
+    return holder;
+  }
+  function versionOf(key) {
+    var v = hasRun() ? ROOT.attestations[ROOT.primary].verifier : null;
+    return v ? v[key] : null;
+  }
+  function pyLine(text) {
+    var out = [], re = /(#.*$)|("""[^"]*"""|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(@[\w.]+)|\b(import|from|def|return|class|with|as|None|True|False)\b|\b(str|int|bool)\b/g;
+    var at = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > at) out.push(text.slice(at, m.index));
+      var cls = m[1] ? "c" : m[2] ? "s" : m[3] ? "d" : m[4] ? "k" : "b";
+      out.push(h("span", { class: "py-" + cls }, m[0]));
+      at = m.index + m[0].length;
+    }
+    if (at < text.length) out.push(text.slice(at));
+    return out;
+  }
+  function copyChip(command, label) {
+    return h("button", { class: "lp-copy", title: "Copy: " + command, "aria-label": label || "Copy " + command, onclick: function () { copy(command); } },
+      h("span", { class: "lp-prompt", "aria-hidden": "true" }, "$"), h("code", null, command), icon("copy"));
+  }
+  function codeWindow() {
+    var lines = HERO_CODE.map(function (line, i) { return h("div", { class: "cl" }, h("span", { class: "ln", "aria-hidden": "true" }, String(i + 1)), h("span", null, pyLine(line))); });
+    var report = HERO_REPORT.map(function (r) {
+      return r[0] === "cmd" ? h("div", { class: "tl" }, h("span", { class: "lp-prompt" }, "$"), " " + r[1]) : h("div", { class: "tl" + (r[0] === "hit" ? " hit" : "") }, r[1]);
+    });
+    return h("figure", { class: "lp-code", "aria-label": "A tool wrapped in shadow mode, and the report it leads to" },
+      h("div", { class: "lp-code-bar" }, h("i"), h("i"), h("i"), h("span", { class: "mono" }, "tools.py"), h("span", { class: "spacer" }), h("span", { class: "lp-tag" }, "shadow mode")),
+      h("pre", { class: "lp-src" }, h("div", { class: "tl lp-init" }, h("span", { class: "lp-prompt" }, "$"), " fiduciary init --solo --shadow --substrate sqlite --database app.db"), lines),
+      h("div", { class: "lp-term" }, report),
+      h("figcaption", null, "Every call commits in shadow mode. The report lists the calls the mandate would have refused, here one that closed 38 tickets at once."));
+  }
+  function systemsStrip() {
+    if (!OVERVIEW) return null;
+    var seen = {}, chips = [];
+    OVERVIEW.industries.forEach(function (r) {
+      if (!r.ran || !r.substrate || seen[r.substrate]) return;
+      seen[r.substrate] = true;
+      chips.push(h("span", { class: "lp-sys" }, rungChip(r["class"]), r.substrate));
+    });
+    return h("div", { class: "lp-systems" }, h("span", { class: "lp-sys-label" }, "One engine, measured on"), chips);
+  }
+  function hero() {
+    var tt = totals();
+    return h("section", { class: "lp-hero" }, h("div", { class: "wrap" },
+      h("div", { class: "lp-hero-grid" },
+        h("div", { class: "lp-hero-copy" },
+          h("a", { class: "lp-badge", href: REPO + "fiduciary/blob/main/CHANGELOG.md", rel: "noopener" }, h("b", null, "1.15"), "Coding agents work in a sandboxed stage, promoted at session end", h("span", { "aria-hidden": "true" }, "→")),
+          h("h1", null, "Let AI agents change real systems. Keep only the changes you approved."),
+          h("p", { class: "lp-lede" }, "Fiduciary stages every change an agent makes, measures what it actually did, and checks that against limits your team signed. A change inside the limits commits once. A change outside them is refused before it is final, unless two of three named people approve it. Every decision is a signed record anyone can check offline."),
+          h("div", { class: "lp-cta" },
+            h("a", { class: "lp-btn primary", href: "#/run", onclick: function (ev) { ev.preventDefault(); openDemo(); } }, "Open the interactive demo", h("span", { class: "lp-count" }, tt.ran.length + " workflows")),
+            copyChip("pip install interlock-fiduciary")),
+          h("p", { class: "lp-fine" }, "Apache-2.0 · Python 3.11 to 3.14 · this page makes no network requests")),
+        codeWindow()),
+      systemsStrip()));
+  }
+  function stackSection() {
+    var cards = PACKAGES.map(function (p) {
+      var v = versionOf(p.key);
+      return h("article", { class: "lp-card lp-pkg lp-" + p.key },
+        h("div", { class: "lp-pkg-head" }, mark(p.key, 44), h("div", null, h("div", { class: "lp-layer" }, p.layer), h("h3", null, p.name)), v ? h("span", { class: "lp-ver mono" }, "v" + v) : null),
+        h("p", { class: "lp-role" }, p.role),
+        h("p", { class: "lp-text" }, p.text),
+        h("ul", { class: "lp-points" }, p.points.map(function (x) { return h("li", null, x); })),
+        h("div", { class: "lp-pkg-foot" }, copyChip("pip install " + p.dist),
+          h("div", { class: "lp-links" }, h("a", { href: REPO + p.key, rel: "noopener" }, "GitHub"), h("a", { href: PYPI + p.dist + "/", rel: "noopener" }, "PyPI"))));
+    });
+    return h("section", { class: "lp-sec", id: "stack" }, h("div", { class: "wrap" },
+      h("header", { class: "lp-head" }, h("span", { class: "lp-kicker" }, "The stack"), h("h2", null, "Three packages. Use one, or all three."),
+        h("p", null, "A gateway decides whether an agent may call a tool. These decide whether what the call changed may be kept, and leave evidence for someone who trusts neither the agent nor the operator. Each installs and runs on its own.")),
+      h("div", { class: "lp-cards" }, cards),
+      h("div", { class: "lp-flow", "aria-hidden": "true" },
+        h("span", null, "agent tool call"), h("i"), h("span", { class: "lp-fiduciary" }, mark("fiduciary", 16), "mandate"), h("i"), h("span", { class: "lp-interlock" }, mark("interlock", 16), "stage, measure, check"), h("i"), h("span", { class: "lp-agentgov" }, mark("agentgov", 16), "charge"), h("i"), h("span", null, "commit once, or refuse"))));
+  }
+  var STEP_ICONS = ["layers", "gate", "shield", "check", "key"];
+  function loopSection() {
+    var steps = [
+      ["Stage", "The tool call becomes a plan and runs where nothing is final yet: a SQL transaction, a Git worktree, a private copy of a directory, a Kubernetes dry run, or a prediction for an API."],
+      ["Measure", "The stage records what the change actually did, including whatever triggers, hooks, renderers and admission webhooks did on top: every row, file, object or record."],
+      ["Check", "The mandate checks the measured change: which tables or path classes it touches, how many tenants and rows, value guards, rate windows and budgets."],
+      ["Commit or undo", "A change that passes commits once, on the exact version that was measured. A change that fails never commits. If an API changes more than predicted, the write is undone."],
+      ["Prove", "Every decision is a signed record. An auditor verifies the bundle offline against keys pinned outside it, without access to your systems."]
+    ];
+    return h("section", { class: "lp-sec lp-alt", id: "loop" }, h("div", { class: "wrap" },
+      h("header", { class: "lp-head" }, h("span", { class: "lp-kicker" }, "How it works"), h("h2", null, "One loop, on every system"),
+        h("p", null, "The same five steps run whether the agent edits a table, a repository, a cluster or a patient's chart. Only the way a change is measured differs.")),
+      h("ol", { class: "lp-steps" }, steps.map(function (st, i) {
+        return h("li", { class: "lp-step" + (i === 4 ? " end" : "") },
+          h("div", { class: "lp-node" }, h("span", null, String(i + 1))),
+          h("div", { class: "lp-step-body" }, h("div", { class: "lp-step-icon" }, icon(STEP_ICONS[i], 18)), h("h3", null, st[0]), h("p", null, st[1]),
+            i === 2 ? h("div", { class: "lp-fork" }, h("b", null, "Outside the mandate?"), " It can still go ahead if two of three named principals sign a warrant for that exact change.") : null));
+      }))));
+  }
+  function ladderSection() {
+    if (!OVERVIEW) return null;
+    var strength = { T: 4, P: 3, V: 2, R: 1 };
+    return h("section", { class: "lp-sec", id: "ladder" }, h("div", { class: "wrap" },
+      h("header", { class: "lp-head" }, h("span", { class: "lp-kicker" }, "The measurement ladder"), h("h2", null, "How much is known before a change is final"),
+        h("p", null, "A database transaction shows every row before commit. An API can only be predicted, then read back. Each system is placed on the highest rung it supports, and every receipt says which rung measured it.")),
+      h("div", { class: "lp-rungs" }, OVERVIEW.ladder.map(function (rung) {
+        var k = strength[rung["class"]] || 0;
+        var here = OVERVIEW.industries.filter(function (r) { return r["class"] === rung["class"] && r.ran; });
+        return h("article", { class: "lp-card lp-rung" },
+          h("div", { class: "lp-rung-head" }, h("span", { class: "lp-letter" }, rung["class"]), h("div", null, h("h3", null, rung.name.charAt(0).toUpperCase() + rung.name.slice(1)), h("div", { class: "lp-meter", title: k + " of 4" }, [1, 2, 3, 4].map(function (i) { return h("i", { class: i <= k ? "on" : "" }); })))),
+          h("p", null, rung.promise),
+          h("p", { class: "lp-where" }, rung.where),
+          h("div", { class: "lp-here" }, rung["class"] === "R" ? h("span", null, "Every workflow, for its outbound requests") : here.length ? here.map(function (r) {
+            return h("a", { href: "#/run/" + r.key, onclick: function (ev) { ev.preventDefault(); openPage(r.key); } }, r.workflow || r.industry);
+          }) : h("span", { class: "muted" }, "Not in this run")));
+      }))));
+  }
+  function numbersSection() {
+    if (!OVERVIEW) return null;
+    var tt = totals(), acc = OVERVIEW.acceptance;
+    var stats = [
+      [String(tt.ran.length), "workflows", "on " + tt.substrates.length + " kinds of system, in one run"],
+      [String(tt.refused), "plans refused", "each one allowed by the gateway first"],
+      [String(tt.ran.length * 2), "bundles verified offline", tt.named + " report an action taken outside a warrant"],
+      [acc.passed + " of " + acc.cases, "acceptance cases", "live models on " + acc.domains.length + " unrelated domains"]
+    ];
+    return h("section", { class: "lp-sec lp-numbers" }, h("div", { class: "wrap" },
+      h("div", { class: "lp-stats" }, stats.map(function (st) { return h("div", { class: "lp-stat" }, h("b", { class: "tnum" }, st[0]), h("span", null, st[1]), h("small", null, st[2])); })),
+      h("p", { class: "lp-stats-note" }, "Counted from the run this page was built from: " + modeShort() + ". ",
+        h("a", { href: "#/how", onclick: function (ev) { ev.preventDefault(); go("how"); } }, "Which check stopped which plan →"))));
+  }
+  function closingSection() {
+    return h("section", { class: "lp-close" }, h("div", { class: "wrap" }, h("div", { class: "lp-close-card" },
+      h("div", { class: "lp-close-marks", "aria-hidden": "true" }, mark("agentgov", 40), mark("interlock", 40), mark("fiduciary", 40)),
+      h("h2", null, "Watch it refuse a change. Then check the proof yourself."),
+      h("p", null, "The demo replays a real model's recorded session on this release. Each workflow ends with two audit bundles, and this page verifies them in your browser."),
+      h("div", { class: "lp-cta center" },
+        h("a", { class: "lp-btn primary", href: "#/run", onclick: function (ev) { ev.preventDefault(); openDemo(); } }, "Open the interactive demo"),
+        h("a", { class: "lp-btn", href: "#/verify", onclick: function (ev) { ev.preventDefault(); go("verify"); } }, "Verify a bundle")))));
+  }
+  function openDemo() {
+    view = "run"; use(firstWorkflow()); TAB = null; setRoute(); render(); window.scrollTo(0, 0);
+  }
+  function home() {
+    return h("main", { id: "home", class: "lp" }, hero(), stackSection(), loopSection(), ladderSection(), numbersSection(), closingSection());
+  }
+  function siteFooter() {
+    function col(title, links) { return h("div", { class: "lp-fcol" }, h("b", null, title), links.map(function (l) { return h("a", { href: l[1], rel: "noopener" }, l[0]); })); }
+    return h("footer", { class: "lp-foot" }, h("div", { class: "wrap" },
+      h("div", { class: "lp-foot-grid" },
+        h("div", { class: "lp-foot-brand" }, h("div", { class: "lp-foot-marks" }, mark("agentgov", 22), mark("interlock", 22), mark("fiduciary", 22)),
+          h("p", null, "Open source, Apache-2.0. This page is built from the repository by fiduciary demo --replay, and SHA256SUMS pins it and every bundle it links.")),
+        col("Source", PACKAGES.map(function (p) { return [p.name, REPO + p.key]; })),
+        col("Install", PACKAGES.map(function (p) { return [p.dist, PYPI + p.dist + "/"]; })),
+        col("Read", [["Quickstart", REPO + "fiduciary/blob/main/docs/QUICKSTART.md"], ["Threat model", REPO + "fiduciary/blob/main/docs/THREAT_MODEL.md"], ["Specification", REPO + "fiduciary/blob/main/docs/FIDUCIARY_SPEC.md"], ["Changelog", REPO + "fiduciary/blob/main/CHANGELOG.md"]])),
+      h("p", { class: "lp-foot-note" }, "Signed records make tampering visible. They do not prevent it.")));
   }
   // -- the lineage tree --------------------------------------------------------------------
   function tree() {
@@ -1491,6 +1707,12 @@
   function hasRun() { return !!(ROOT.primary && ROOT.attestations && ROOT.attestations[ROOT.primary]); }
   function views() {
     var out = [];
+    if (SITE && hasRun()) {
+      out.push(["home", "Overview"], ["run", "Interactive demo"]);
+      if (DEMO) out.push(["sandbox", "Live sandbox"]);
+      out.push(["verify", "Verify a bundle"]);
+      return out;
+    }
     if (hasRun()) out.push(["run", DEMO ? "Workbench" : "Attestation"]);
     if (OVERVIEW && hasRun()) out.push(["how", "How it works"]);
     out.push(["desk", "Approvals"]);
@@ -1513,6 +1735,7 @@
     if (r.name === "desk" && r.query.d) { DESK_ROUTE.dep = r.query.d; DESK_ROUTE.tid = r.query.t || null; }
     if (r.name === "desk" || r.name === "verify" || r.name === "sandbox") return r.name;
     if (!hasRun()) return "desk";
+    if (SITE && (r.name === "home" || (!r.name && !LEGACY[location.hash.slice(1)]))) return "home";
     var anchor = LEGACY[location.hash.slice(1)];
     if (r.name === "how" || anchor === "how") return OVERVIEW ? "how" : "run";
     applyRoute(r.name === "run" ? r.parts : [null, anchor || null]);
@@ -1525,9 +1748,10 @@
     var r = routed(), hv = location.hash.slice(0, 2) === "#/" ? r.name : null;
     if (hv === "desk" && r.query.d) { DESK.dep = r.query.d; DESK.tid = r.query.t || null; DESK.list = null; DESK.listFor = null; DESK.ticket = null; DESK.ticketFor = null; }
     if (hv === "run" && hasRun()) { applyRoute(r.parts); view = "run"; render(); window.scrollTo(0, 0); }
-    else if (hv && (hv !== view || r.query.d) && views().some(function (x) { return x[0] === hv; })) { view = hv; render(); window.scrollTo(0, 0); }
+    else if (hv && (hv !== view || r.query.d) && (views().some(function (x) { return x[0] === hv; }) || (hv === "how" && OVERVIEW))) { view = hv; render(); window.scrollTo(0, 0); }
     else if (!hv && hasRun()) {
       var anchor = LEGACY[location.hash.slice(1)];
+      if (SITE && !anchor) { view = "home"; render(); window.scrollTo(0, 0); return; }
       if (anchor === "how" && OVERVIEW) { view = "how"; render(); return; }
       view = "run"; TAB = anchor || TAB; render();
     }
@@ -2264,7 +2488,10 @@
     document.documentElement.setAttribute("data-view", view);
     app.textContent = "";
     add(app, topbar());
-    if (view === "run" && hasRun()) {
+    if (view === "home" && SITE && hasRun()) {
+      add(app, home());
+      add(app, siteFooter());
+    } else if (view === "run" && hasRun()) {
       add(app, workbench());
       add(app, footer());
     } else if (view === "how" && OVERVIEW && hasRun()) {

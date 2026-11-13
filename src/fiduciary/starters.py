@@ -711,6 +711,45 @@ def _git(target: Target) -> Starter:
     )
 
 
+CODING_CLASSES: Final = ("docs", "other", "src", "tests")
+"""The path classes of a repository a coding session may change under the starter mandate
+(1.15.0): dependencies, CI workflows, governance files (CODEOWNERS, the license) and
+infrastructure need a version of the mandate that grants them."""
+CODING_MAX_FILES: Final = 200
+CODING_LIFETIME_HOURS: Final = 24
+
+
+def coding(target: Target) -> Starter:
+    """The starter for coding sessions on a Git repository (``fiduciary init --claude-code``,
+    1.15.0): the repository's branch, moved by fast-forwarding the developer's checkout
+    (``checked_out = "follow"``), and a mandate that lets a session create, change and delete
+    files in :data:`CODING_CLASSES`, at most :data:`CODING_MAX_FILES` at once."""
+    st = _git(target)
+    plain = st.interlock
+
+    def head(root: Path, control: Path) -> str:
+        return plain(root, control) + (
+            'checked_out = "follow"\n'
+            f'[sessions]\nlifetime_hours = {CODING_LIFETIME_HOURS}\nsandbox = "auto"\n'
+            f"hidden = [{_toml(str((root / 'keys').resolve()))}]\n"
+        )
+
+    st.interlock = head
+    st.data = _data(
+        {c: ["delete", "insert", "update"] for c in CODING_CLASSES}, max_rows=CODING_MAX_FILES
+    )
+    st.report = [
+        {
+            "name": "sessions",
+            "mode": WRITE,
+            "why": f"a coding session's whole change, promoted at its end: files in "
+            f"{', '.join(CODING_CLASSES)}, at most {CODING_MAX_FILES} at once",
+        }
+    ]
+    st.skipped = []
+    return st
+
+
 _DNS: Final = {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"}
 _IMAGE: Final = {"type": "string", "maxLength": 512, "pattern": r"^[A-Za-z0-9./:@_-]+$"}
 

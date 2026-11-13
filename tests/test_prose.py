@@ -43,6 +43,9 @@ MODULES = (
     "shadow.py",
     "adapters.py",
     "init.py",
+    # 1.15.0: what a coding session's setup says
+    "coding.py",
+    "starters.py",
 )
 """Where the demo's, the reports' and the SDK's words are written."""
 

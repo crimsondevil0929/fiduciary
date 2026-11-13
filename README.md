@@ -1,4 +1,14 @@
-# Fiduciary
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <img src="docs/logo.svg" width="72" height="72" alt="">
+  </picture>
+</p>
+
+<h1 align="center">Fiduciary</h1>
+
+<p align="center">Signed limits for AI agents that change real systems, and proof anyone can check offline.<br>
+Built on <a href="https://github.com/crimsondevil0929/interlock">Interlock</a> and <a href="https://github.com/crimsondevil0929/agentgov">AgentGov</a>. <a href="https://crimsondevil0929.github.io/fiduciary/">See it working</a>.</p>
 
 Fiduciary adds signed authorization and offline audit to AI agents that change real data.
 It works with [AgentGov](https://github.com/crimsondevil0929/agentgov) (spend limits) and
@@ -53,6 +63,27 @@ changes, and the text says why in words written for the agent.
 The [quickstart](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/QUICKSTART.md)
 runs this in its first minute, then builds the full deployment: an agent over MCP, an
 exception two of three approve, and an audit bundle anyone can verify offline.
+
+## Claude Code, in a sandboxed session
+
+```bash
+cd your-repository
+fiduciary init --claude-code     # add --shadow to watch before it refuses anything
+claude --worktree
+```
+
+Each Claude Code session then works in a worktree of its own, with its own Edit and Bash
+tools: nothing rewrites a tool call. Its commands run in Claude Code's sandbox, which lets
+them write only in the worktree and reach no network. When the session ends, everything it
+changed is measured as one plan and checked against the mandate. A change that passes is
+committed to your branch once, by fast-forwarding your checkout. One that does not is kept in
+the worktree, and before the agent stops it is told why, in the mandate's words. The starter
+mandate lets a session change source, tests, docs and other files, at most 200 at once; a
+change to CI workflows, dependencies or `CODEOWNERS` needs a mandate version that grants it.
+Each promotion leaves a signed receipt with the session's input and output trees.
+
+Interlock's `interlock stage open / run / promote` does the same for any agent from the
+command line, with Seatbelt or bubblewrap confining each command.
 
 ## Start here
 
