@@ -123,4 +123,4 @@ exclude = ["/HANDOFF.md", "/AGENTS.md", "/CLAUDE.md", "/STRATEGY_AND_MOAT.md", "
 # Temporary, until interlock-escrow 1.9.0 is on PyPI: the commit of interlock#41. Remove this
 # table and relock before tagging (scripts/upstream_pins.py tells CI's pip steps about it).
 [tool.uv.sources]
-interlock-escrow = { git = "https://github.com/crimsondevil0929/interlock", rev = "70c3b526122c5c7835f43853edc2e5a00b93bd8b" }
+interlock-escrow = { git = "https://github.com/crimsondevil0929/interlock", rev = "b1b07af9b5caa047ed0eb30ce00739ada949cf5f" }

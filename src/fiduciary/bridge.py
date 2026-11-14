@@ -47,7 +47,6 @@ process instead (:mod:`fiduciary.mcp`).
 from __future__ import annotations
 
 import copy
-
 import dataclasses
 import logging
 import re

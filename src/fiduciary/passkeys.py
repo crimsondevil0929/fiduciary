@@ -22,7 +22,6 @@ The console (``fiduciary console``) approves tickets with a passkey on its own p
 from __future__ import annotations
 
 import base64
-import contextlib
 import http.server
 import json
 import os
@@ -318,7 +317,7 @@ class BrowserPasskey:
     :param opener: How the page is opened: the default browser, or a test's driver.
     """
 
-    alg: Final = webauthn.ALG
+    alg: str = webauthn.ALG
 
     def __init__(
         self,
@@ -431,14 +430,18 @@ def _one_shot(
     """Serve the passkey page on ``localhost:port`` until it posts an answer."""
     done = threading.Event()
     answer: dict[str, Any] = {}
-    page = _PAGE.replace("__REQUEST__", json.dumps(dict(request)).replace("</", "<\\/"))
+    page = _page().replace("__REQUEST__", json.dumps(dict(request)).replace("</", "<\\/"))
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *args: object) -> None:
             return None
 
+        def _port(self) -> int:
+            address = self.server.server_address
+            return int(address[1]) if isinstance(address, tuple) else 0
+
         def _host_ok(self) -> bool:
-            return self.headers.get("Host", "") == f"localhost:{self.server.server_address[1]}"
+            return self.headers.get("Host", "") == f"localhost:{self._port()}"
 
         def do_GET(self) -> None:
             if not self._host_ok():
@@ -455,7 +458,7 @@ def _one_shot(
 
         def do_POST(self) -> None:
             origin = self.headers.get("Origin", "")
-            if not self._host_ok() or origin != f"http://localhost:{self.server.server_address[1]}":
+            if not self._host_ok() or origin != f"http://localhost:{self._port()}":
                 self.send_error(403, "cross-origin answers are refused")
                 return
             length = int(self.headers.get("Content-Length") or 0)
@@ -487,53 +490,9 @@ def _one_shot(
     return answer
 
 
-_PAGE: Final = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Fiduciary passkey</title>
-<style>
-:root{--bg:#fbfaf7;--fg:#1d1d1b;--muted:#5f5e58;--line:#e2e0d8;--accent:#087a57}
-@media (prefers-color-scheme:dark){:root{--bg:#151514;--fg:#ecebe6;--muted:#a5a39b;--line:#2e2d2a;--accent:#4cc79a}}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,sans-serif}
-main{max-width:34rem;margin:14vh auto 0;padding:0 16px}
-h1{font-size:1.35rem;margin:0 0 .5rem}p{color:var(--muted)}
-button{font:inherit;padding:.6rem 1rem;border-radius:8px;border:1px solid var(--accent);
-background:var(--accent);color:#fff;cursor:pointer}
-#status{margin-top:1rem}
-</style></head><body><main>
-<h1 id="title"></h1><p id="what"></p>
-<button id="go">Use my passkey</button><p id="status"></p>
-</main><script>
-var R = __REQUEST__;
-function b(s){s=s.replace(/-/g,"+").replace(/_/g,"/");while(s.length%4)s+="=";
- var r=atob(s),u=new Uint8Array(r.length);for(var i=0;i<r.length;i++)u[i]=r.charCodeAt(i);return u;}
-function hex(buf){var u=new Uint8Array(buf),s="";for(var i=0;i<u.length;i++)s+=(u[i]<16?"0":"")+u[i].toString(16);return s;}
-function b64(buf){var u=new Uint8Array(buf),s="";for(var i=0;i<u.length;i++)s+=String.fromCharCode(u[i]);
- return btoa(s).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/,"");}
-function say(t){document.getElementById("status").textContent=t;}
-function send(o){return fetch("/",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o)});}
-document.getElementById("title").textContent=(R.mode==="create"?"Make a passkey for ":"Sign as ")+R.principal;
-document.getElementById("what").textContent=R.mode==="create"
- ?"Your device will ask for your fingerprint, face or PIN. The passkey's private key stays on the device; Fiduciary records its public key in the charter."
- :"You are signing "+R.what+". Your device will ask for your fingerprint, face or PIN.";
-document.getElementById("go").onclick=function(){
- say("Waiting for your device.");
- var p;
- if(R.mode==="create"){
-  p=navigator.credentials.create({publicKey:{challenge:b(R.challenge),rp:{id:R.rp_id,name:"Fiduciary"},
-   user:{id:b(R.user),name:R.principal,displayName:R.principal},pubKeyCredParams:[{type:"public-key",alg:-7}],
-   authenticatorSelection:{userVerification:"required",residentKey:"preferred"},timeout:120000}})
-  .then(function(c){var spki=new Uint8Array(c.response.getPublicKey());var pt=spki.slice(spki.length-65);
-   if(pt[0]!==4)throw new Error("the passkey is not P-256");
-   return send({point:hex(pt.slice(1)),credential:b64(c.rawId),origin:location.origin});});
- } else {
-  var opts={challenge:b(R.challenge),rpId:R.rp_id,userVerification:"required",timeout:120000};
-  if(R.credential)opts.allowCredentials=[{type:"public-key",id:b(R.credential)}];
-  p=navigator.credentials.get({publicKey:opts}).then(function(a){
-   return send({authenticator_data:hex(a.response.authenticatorData),client_data_json:hex(a.response.clientDataJSON),
-    signature:hex(a.response.signature)});});
- }
- p.then(function(){say("Done. You can close this tab.");},function(e){say("No passkey answered: "+e.message);send({error:String(e.message||e)});});
-};
-</script></body></html>
-"""
+def _page() -> str:
+    """The one-shot page (``report/passkey.html``): it asks the browser for the passkey,
+    and posts what it answered back to this process."""
+    from importlib.resources import files
+
+    return (files("fiduciary.report") / "passkey.html").read_text(encoding="utf-8")

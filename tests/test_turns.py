@@ -27,7 +27,7 @@ import fiduciary
 from fiduciary import cli, turns
 from fiduciary.exceptions import FiduciaryError
 from fiduciary.init import init
-from fiduciary.sdk import Turn
+from fiduciary.sdk import Governor, Turn
 
 TOOLS = [
     {
@@ -60,7 +60,7 @@ def _states(root: Path) -> dict[str, str]:
         }
 
 
-def _govern(gov: Any) -> Any:
+def _govern(gov: Governor) -> Any:
     @gov.tool
     def note(db: fiduciary.Sql, title: str) -> str:
         """Ask the notes server to create a note."""

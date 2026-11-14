@@ -42,8 +42,8 @@ DESCRIPTION: Final = (
 
 COPY: Final[dict[str, Any]] = {
     "badge": {
-        "version": "1.16",
-        "text": "A write the agent asks for after reading untrusted input waits for approval",
+        "version": "1.17",
+        "text": "Pins for the MCP servers your desktop client runs, and approvals by passkey",
         "href": REPO + "fiduciary/blob/main/CHANGELOG.md",
     },
     "headline": "Let AI agents change real systems. Keep only the changes you approved.",
@@ -147,6 +147,8 @@ COPY: Final[dict[str, Any]] = {
                 "Governed tools in your own code, or over MCP",
                 "Shadow mode first: see what it would have refused",
                 "Holds a write the agent asks for after reading untrusted input",
+                "Approvals signed with a passkey, which an agent cannot read",
+                "Pins the MCP servers Claude Desktop and Cursor run: fiduciary protect",
             ],
         },
     ],

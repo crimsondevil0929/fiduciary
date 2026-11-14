@@ -13,7 +13,7 @@ from agentgov.receipts.signing import Signer, Verifier
 from fiduciary import fidu1
 from fiduciary.exceptions import MalformedError
 from fiduciary.fidu1 import Fields, Signature
-from fiduciary.webauthn import PasskeySigner
+from fiduciary.webauthn import PasskeyKey, PasskeySigner
 
 __all__ = ["IDENTIFIER", "SCOPE", "Document", "sorted_by"]
 
@@ -127,7 +127,7 @@ class Document:
             raise ValueError(f"the {self.TYPE} is not signed")
         return fidu1.signing_input(self.TYPE, self.body(), self.signature.header())
 
-    def verify(self, key: Verifier) -> None:
+    def verify(self, key: Verifier | PasskeyKey) -> None:
         """Check the signature under ``key``, pinned for the signer (F3-4).
 
         :raises SignatureError: When unsigned, signed by another key, or altered.

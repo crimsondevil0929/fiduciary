@@ -1,9 +1,9 @@
 """The charter: a deployment's root of authority (``docs/FIDUCIARY_SPEC.md`` §4.1).
 
-Configuration pins version 1's digest. Each principal is a name and one
-public key, Ed25519 or (1.17.0) a passkey's with its relying-party policy; the quorums say how many of them adopt the next version,
-issue a root mandate, and revoke. ``deployment.ledger`` binds everything under
-the charter to one AgentGov ledger, by the hash of its first entry.
+Configuration pins version 1's digest. Each principal is a name and one public key,
+Ed25519 or (1.17.0) a passkey's with its relying-party policy; the quorums say how many
+of them adopt the next version, issue a root mandate, and revoke. ``deployment.ledger``
+binds everything under the charter to one AgentGov ledger, by the hash of its first entry.
 """
 
 from __future__ import annotations

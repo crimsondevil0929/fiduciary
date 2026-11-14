@@ -33,10 +33,9 @@ from fiduciary.exceptions import FiduciaryError
 if TYPE_CHECKING:
     from agentgov.receipts.signing import Signer
 
-    from fiduciary.webauthn import PasskeySigner
-
     from fiduciary.bridge import Fiduciary
     from fiduciary.documents import Charter, Mandate
+    from fiduciary.webauthn import PasskeySigner
 
 __all__ = ["Grown", "add_principals", "enforce"]
 

@@ -247,7 +247,7 @@ def resolve(ecosystem: str, package: str) -> str:
             version = json.loads(done.stdout)
         else:
             url = f"https://pypi.org/pypi/{package}/json"
-            with urllib.request.urlopen(url, timeout=30) as answer:  # noqa: S310 - a fixed host
+            with urllib.request.urlopen(url, timeout=30) as answer:
                 version = json.loads(answer.read())["info"]["version"]
     except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
         raise ProtectError(
@@ -751,7 +751,9 @@ def plan_messages(root: Path, plan_id: str) -> list[Any]:
         sqlite3.connect(f"{(root / 'back_office.db').as_uri()}?mode=ro", uri=True)
     ) as conn:
         rows = conn.execute(
-            f"SELECT message_id FROM {OUTBOX} WHERE plan_id = ? ORDER BY seq", (plan_id,)
+            # the outbox's own table name, a module constant; the plan id is a parameter
+            f"SELECT message_id FROM {OUTBOX} WHERE plan_id = ? ORDER BY seq",  # noqa: S608
+            (plan_id,),
         ).fetchall()
     return [uuid.UUID(str(r[0])) for r in rows]
 

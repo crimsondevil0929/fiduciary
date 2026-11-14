@@ -9,6 +9,7 @@ audit bundle verifies offline, in Python and in the browser's checks alike.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -24,7 +25,7 @@ from typing import Any
 import pytest
 
 import fiduciary
-from fiduciary import cli, passkeys, solo, webauthn
+from fiduciary import cli, passkeys, solo
 from fiduciary.bridge import Fiduciary
 from fiduciary.documents import Charter
 from fiduciary.init import Target, init
@@ -65,7 +66,7 @@ def _browser(passkey: SoftPasskey, origin: str = ORIGIN) -> Any:
     def open_page(url: str) -> bool:
         page = urllib.request.urlopen(url, timeout=5).read().decode("utf-8")  # noqa: S310
         request = json.loads(re.search(r"var R = (\{.*?\});", page).group(1))  # type: ignore[union-attr]
-        challenge = webauthn.base64.urlsafe_b64decode(request["challenge"] + "==")
+        challenge = base64.urlsafe_b64decode(request["challenge"] + "==")
         if request["mode"] == "create":
             body = {
                 "point": passkey.point.hex(),
@@ -287,3 +288,47 @@ def test_the_console_registers_a_passkey_and_takes_its_approval(tmp_path: Path) 
     view = desk.ticket(ticket)
     assert [v["principal"] for v in view["votes"]] == ["cfo"]
     desk.close()
+
+
+def test_registration_refuses_what_it_cannot_make_a_principals_key(project: Path) -> None:
+    root = project / ".fiduciary"
+    passkey, other = SoftPasskey(seed=51), SoftPasskey(seed=52)
+    policy = Policy("localhost", ("http://localhost:8745",))
+    fid = _fid(project)
+    try:
+        with pytest.raises(PasskeyError, match="no principal"):
+            passkeys.draft_charter(fid, "mallory", passkey.point, policy)
+        with pytest.raises(PasskeyError, match="not the one it names"):
+            passkeys.register(
+                fid, root, "owner", passkey.point, policy, passkey=other.signer(policy)
+            )
+        draft = passkeys.draft_charter(fid, "owner", passkey.point, policy)
+        unnamed = draft.signed(passkey.signer(policy))
+        with pytest.raises(PasskeyError, match="makes no passkey"):
+            passkeys.complete(fid, root, "mallory", unnamed)
+        with pytest.raises(PasskeyError, match="no principal"):
+            passkeys.signer_for(fid, root, "mallory")
+        (root / "keys" / "owner.key").rename(root / "keys" / "elsewhere.key")
+        with pytest.raises(PasskeyError, match="is not at"):
+            passkeys.signer_for(fid, root, "owner")
+        (root / "keys" / "owner.key").write_text("0" * 64)
+        with pytest.raises(PasskeyError, match="not the key the charter holds"):
+            passkeys.signer_for(fid, root, "owner")
+        (root / "keys" / "owner.key").unlink()
+        (root / "keys" / "elsewhere.key").rename(root / "keys" / "owner.key")
+        done = passkeys.register(
+            fid, root, "owner", passkey.point, policy, passkey=passkey.signer(policy)
+        )
+        assert done.adopted
+        found = passkeys.signer_for(fid, root, "owner")
+        assert isinstance(found, BrowserPasskey) and found.key_id == passkey.key_id
+        with pytest.raises(PasskeyError, match="not the one the charter holds"):
+            passkeys.signer_for(fid, root, "owner", passkey=other.signer(policy))
+        with pytest.raises(PasskeyError, match=r"another principal's key|already"):
+            passkeys.draft_charter(fid, "owner", passkey.point, policy)
+    finally:
+        fid.close()
+    with pytest.raises(PasskeyError, match="its policy"):
+        BrowserPasskey("owner", PasskeyKey(passkey.point))
+    with pytest.raises(PasskeyError):
+        policy_for("http://localhost:*")

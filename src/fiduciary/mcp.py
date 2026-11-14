@@ -844,7 +844,7 @@ class Upstream:
 
         try:
             return self._exchange(method, params, seconds, raw=True)
-        except _Refused as exc:
+        except _RefusedError as exc:
             raise McpRefusedError(exc.text, code=exc.code, data=exc.data) from exc
         except McpError as exc:
             raise McpCallError(str(exc), sent=self._process.poll() is None) from exc
@@ -867,7 +867,7 @@ class Upstream:
                 self.era.params(params, {"name": "fiduciary-proxy", "version": __version__}),
                 self._timeout,
             )
-        except _Refused as exc:
+        except _RefusedError as exc:
             raise McpError(INVALID_REQUEST, f"the upstream refused {method}") from exc
 
     def _exchange(
@@ -898,7 +898,7 @@ class Upstream:
                 if "error" in message:
                     error = message["error"] if isinstance(message["error"], dict) else {}
                     code = error.get("code")
-                    raise _Refused(
+                    raise _RefusedError(
                         str(error.get("message") or "an error")[:200],
                         code if isinstance(code, int) else None,
                         error.get("data"),
@@ -938,7 +938,7 @@ class Upstream:
                 ),
                 timeout,
             )
-        except _Refused as exc:
+        except _RefusedError as exc:
             raise McpRefusedError(exc.text, code=exc.code, data=exc.data) from exc
         except McpError as exc:
             raise McpCallError(str(exc), sent=True) from exc
@@ -972,7 +972,7 @@ class Upstream:
             self._process.stdout.close()
 
 
-class _Refused(Exception):
+class _RefusedError(Exception):
     """An upstream's JSON-RPC error, with its code and data."""
 
     def __init__(self, text: str, code: int | None, data: Any) -> None:

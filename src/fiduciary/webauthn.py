@@ -110,7 +110,9 @@ class Policy:
     credential: str | None = None
 
     def __post_init__(self) -> None:
-        if not RP_ID.fullmatch(self.rp_id):
+        if not RP_ID.fullmatch(self.rp_id) or self.rp_id.rsplit(".", 1)[-1].isdigit():
+            # WebAuthn takes a host name: never an address (192.168.0.1, whose last label
+            # is all digits, is one).
             raise ValueError(f"{self.rp_id!r} is no relying-party id: a host name, no IP")
         if not self.origins or len(self.origins) > 16:
             raise ValueError("a passkey admits 1 to 16 origins")
@@ -172,7 +174,7 @@ class PasskeyKey:
 
     __slots__ = ("_point", "key_id", "policy")
 
-    alg: Final = ALG
+    alg: str = ALG
 
     def __init__(self, point: bytes, policy: Policy | None = None) -> None:
         if len(point) != 64:
@@ -354,7 +356,7 @@ class SoftPasskey:
 class SoftSigner:
     """A :class:`SoftPasskey` that signs FIDU1 documents (:class:`PasskeySigner`)."""
 
-    alg: Final = ALG
+    alg: str = ALG
 
     def __init__(self, passkey: SoftPasskey, policy: Policy, origin: str) -> None:
         self._passkey = passkey

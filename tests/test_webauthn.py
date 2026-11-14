@@ -166,7 +166,7 @@ def test_a_charter_holds_a_passkey_with_its_policy_and_keeps_older_bytes() -> No
         "type": "charter",
         **common,
         "principals": [{"name": "owner", "key": ed.public_key().spec()}],
-    }  # type: ignore[attr-defined]
+    }
     assert "webauthn" not in json.dumps(Charter.from_json(plain, signed=False).to_json())
     with_passkey = {
         **plain,
@@ -179,8 +179,48 @@ def test_a_charter_holds_a_passkey_with_its_policy_and_keeps_older_bytes() -> No
     assert Charter.from_json(charter.to_json(), signed=False) == charter
     for broken in (
         [{"name": "owner", "key": passkey.spec}],
-        [{"name": "owner", "key": ed.public_key().spec(), "webauthn": policy.to_json()}],  # type: ignore[attr-defined]
+        [{"name": "owner", "key": ed.public_key().spec(), "webauthn": policy.to_json()}],
         [{"name": "owner", "key": passkey.spec, "webauthn": {"rp_id": "localhost", "origins": []}}],
     ):
         with pytest.raises(MalformedError):
             Charter.from_json({**plain, "principals": broken}, signed=False)
+
+
+def test_every_malformed_key_policy_and_assertion_is_refused_in_words() -> None:
+    from fiduciary.webauthn import Assertion, check_origin
+
+    assert check_origin("http://localhost:8740", "example.com") is not None
+    assert check_origin("ftp://x", "x") is not None
+    for bad in (
+        ("192.168.0.1", ("https://192.168.0.1",)),
+        ("localhost", ("http://localhost:8740",), "short"),
+    ):
+        with pytest.raises(ValueError):
+            Policy(*bad)
+    for raw in (
+        "not an object",
+        {"rp_id": "a.b", "origins": "https://a.b"},
+        {"rp_id": 3, "origins": ["https://a.b"]},
+        {"origins": ["https://a.b"]},
+    ):
+        with pytest.raises(ValueError):
+            Policy.from_json(raw)
+    with pytest.raises(ValueError, match="64 bytes"):
+        PasskeyKey(b"\x00" * 10)
+    with pytest.raises(ValueError, match="webauthn-es256"):
+        PasskeyKey.parse("ed25519:" + "0" * 64)
+    passkey = SoftPasskey(seed=41)
+    key = PasskeyKey(passkey.point, Policy("localhost", ("http://localhost:8740",)))
+    assert key.point == passkey.point and key.spec() == passkey.spec
+    message = b"FIDU1/approval/v1\n" + b"\x02" * 64
+    good = passkey.assert_(message, "http://localhost:8740")
+    long_data = Assertion(
+        good.authenticator_data + b"\x00" * 1100, good.client_data_json, good.signature
+    )
+    assert key.check(message, long_data) == "authenticatorData is too long"
+    long_client = Assertion(good.authenticator_data, b" " * 5000, good.signature)
+    assert key.check(message, long_client) == "clientDataJSON is too long"
+    array = passkey.assert_(message, "http://localhost:8740", client_data=b"[1, 2]")
+    assert key.check(message, array) == "clientDataJSON is no JSON object"
+    garbled = Assertion(good.authenticator_data, good.client_data_json, b"\x30\x00")
+    assert key.check(message, garbled) == "the ECDSA signature does not verify"

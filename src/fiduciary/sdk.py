@@ -50,7 +50,6 @@ To hand the tools to an agent framework, see :mod:`fiduciary.adapters`.
 from __future__ import annotations
 
 import contextlib
-
 import hashlib
 import inspect
 import json

@@ -22,6 +22,9 @@ session, over MCP or in process.
 | **A prompt-injected or careless agent** calls a tool it was given, with arguments that look fine. A trigger, cascade, webhook, hook or rule then does far more. | The change is measured before it commits: the rows a trigger wrote, the files a hook generated, the replicas a webhook multiplied. A change beyond the mandate's bounds (tables, tenants, rows, totals, windows, budgets) is refused, and nothing lands. | V4 (each receipt was judged by the mandated checkers) and V5 (the receipts) |
 | **An agent that tries to widen its own authority**, by calling a tool it was not given, writing outside its tables or tenants, raising its own budget, or approving its own request. | It has no credential to do any of it. An exception is a ticket that principals decide. The agent's own text is shown to them apart, as an unverified claim. | V3 (delegation), V7, V8 |
 | **One approver, or a minority**, acting alone. | An authority-granting decision takes k of n distinct principals' signatures over the exact bytes they were shown: 2 of 3 by default. | V8 (every warrant had its quorum) |
+| **An agent that signs its own approval** with a principal's key file it can read: a solo owner's `keys/owner.key` is readable by any program the owner runs, an agent's tools included. | A principal's key can be a passkey (1.17.0): it signs only when its owner touches it, and its private key never leaves the device. Each signature says the user was present and verified, on an origin the charter admits. | V2 (the charter holds the passkey), V8; the browser's `passkeys` check |
+| **An MCP server that changes after it was approved** ("rug pull"): an `npx` package updated overnight, a tool's description rewritten, or a read-only tool turned into a write. | A protected server's tools are pinned whole in their signed bindings and its package version is pinned. A tool whose definition moved is withheld before its next call, and the change is shown field by field (1.17.0). | `drift.json`; the bindings' `pin` |
+| **A turn that sends an email and then fails**: the agent refunds, emails the customer, and its next call is refused. | Within a turn, every request waits, held, and is made only if every call of the turn committed; otherwise it is cancelled (1.17.0). | V7 (each release and cancel cites its `turn.closed` record) |
 | **A replayed approval, ticket or warrant**, in another context or after its state moved. | Each is bound to its ticket, deployment, the heads it was decided on, and an expiry. | V8, V12 |
 | **The database owner or a compromised service** editing, deleting, reordering or forging records, or acting with no warrant. A break-glass release or a by-hand reset is one example. | Not prevented. Every such act is detected: the logs are hash-chained, signed, and anchored in a ledger whose checkpoint is signed. | V1 to V12. V7 names each act with no mandate or warrant behind it, labelled `[break-glass]` when the charter declared that key |
 | **A vendor or system that says one thing and does another**, or a change made around the agent with the same account. | The system's own log is matched against the receipts in a bundle. Each action is explained by a receipt, or named as a phantom. | `fiduciary reconcile-actions` |
@@ -50,7 +53,18 @@ session, over MCP or in process.
 - **A purpose the mandate allows but the business does not want.** The stack bounds
   consequences, not intent.
 - **A principal who signs without reading.** The ticket shows the evidence and quarantines
-  the agent's text, but cannot make anyone read it.
+  the agent's text, but cannot make anyone read it. A passkey proves that a verified person
+  touched it on an admitted origin; WebAuthn does not show what is being signed, so it
+  cannot prove they read the page.
+- **A protected MCP server's own side of the call.** Pins catch a changed definition, and the
+  version pin catches a changed package. A server that changes what a tool does behind an
+  unchanged definition and version is not caught, and what the server does with a call is
+  its own. An agent that can edit the client's file can unwrap a server; `fiduciary protect`
+  shows which entries are protected, and nothing prevents the edit. Remote (HTTP) servers are
+  not wrapped yet.
+- **What a turn's committed calls changed.** A refused call cancels the turn's requests; the
+  rows and files its earlier calls changed stay changed. Claude Desktop and Cursor give a
+  server no turn boundary, so turns there are not available.
 
 ## The four measurement classes
 
@@ -68,7 +82,7 @@ bundle holds.
 
 | Key | Held by | If it is stolen |
 |---|---|---|
-| Each principal's key | that principal, on their own machine or in a KMS. `init` writes all three locally, so move them. | It is one vote. With k of them, an attacker is the authority, and every act is still recorded. |
+| Each principal's key | that principal, on their own machine or in a KMS. `init` writes all three locally, so move them. A passkey (1.17.0) stays on its owner's device (or their synced keychain), and `fiduciary passkey add` moves the old key file to `keys/retired/`. | It is one vote. With k of them, an attacker is the authority, and every act is still recorded. A passkey cannot be copied off the device; it signs for whoever its owner lets touch it. |
 | Service key (signs the log and the manifest) | the service | The attacker can write records the service would write. Acts with no warrant are still named by V7 and V8, and past records stay anchored. |
 | Ledger checkpoint key | the service | Checkpoints can be signed, but every entry stays hash-chained, and a witness's cosignature (`--witness`) pins each checkpoint. |
 | Receipt key, relay keys | the service and each relay | Receipts and attestations can be forged going forward. A bundle names its keys, and an auditor pins them (`--keys`). |
