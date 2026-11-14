@@ -694,7 +694,10 @@ def held(roots: Sequence[Path], *, wait: float = ASIDE_WAIT) -> Iterator[None]:
     asked: list[Path] = []
     try:
         for root in roots:
-            if (root / STATE).is_file() and not _free(root):
+            # Asked whether or not a proxy holds it now: one that let go a moment ago (the
+            # end of another block) opens it again only once no ask is there, so it cannot
+            # come back between this check and this block's own open.
+            if (root / STATE).is_file():
                 (root / ASIDE).write_text(
                     json.dumps({"pid": os.getpid(), "asked_at": datetime.now(UTC).isoformat()}),
                     encoding="utf-8",

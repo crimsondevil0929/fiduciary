@@ -36,6 +36,13 @@ and an auditor checks every undo offline (V14). Requires interlock-escrow 1.10.0
   `turn.closed` `undone` and `kept`. Each written only when used: every document written before
   keeps its bytes and its digest.
 
+### Fixed
+
+- A command that changed protected servers twice in a row (the console registering the owner's
+  passkey drafts, then registers) could open a deployment in the moment its proxy, released by
+  the first step, opened it again, and fail with `ConcurrentGovernorError`. A protected
+  deployment is now asked to step aside for the whole of each command, held or not.
+
 ### Limits
 
 - An undo puts back what Interlock measured: a deleted row comes back with the columns a table's
