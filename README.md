@@ -133,7 +133,7 @@ it; it cannot prove they read the page.
 ```python
 with gov.turn():
     refund(order_id=7)
-    email_customer(order_id=7)   # db.request("mail", "send", {...}) inside the tool
+    email_customer(order_id=7)  # db.request("mail", "send", {...}) inside the tool
     update_ticket(ticket_id=12)
 ```
 
