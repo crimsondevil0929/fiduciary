@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from fiduciary.webauthn import UP, UV, SoftPasskey, b64url
+from fiduciary.webauthn import UP, UV, Assertion, SoftPasskey, b64url, batch_paths
 
 OUT = Path(__file__).resolve().parent.parent / "vectors" / "fidu1" / "webauthn.json"
 LOCAL = "http://localhost:8740"
@@ -56,6 +56,7 @@ def main() -> None:
                     "signature": assertion.signature.hex(),
                     "authenticator_data": assertion.authenticator_data.hex(),
                     "client_data_json": assertion.client_data_json.hex(),
+                    **({"batch": list(assertion.batch)} if assertion.batch else {}),
                 },
                 "expect": expect,
             }
@@ -146,6 +147,79 @@ def main() -> None:
         exact,
         type(short)(short.authenticator_data[:36], short.client_data_json, short.signature),
         "shorter than 37",
+    )
+    # One touch for many documents: a batch of three, its root signed once.
+    docs = [message(f"charter of protected server {n}") for n in range(3)]
+    root, paths = batch_paths(docs)
+    once = owner.assert_(root, LOCAL)
+
+    def batched(made: Assertion, path: tuple[str, ...]) -> Assertion:
+        return Assertion(made.authenticator_data, made.client_data_json, made.signature, path)
+
+    case(
+        "valid in a batch of three: the first document",
+        owner,
+        exact,
+        batched(once, paths[0]),
+        None,
+        docs[0],
+    )
+    case(
+        "valid in a batch of three: the last, carried up a level",
+        owner,
+        exact,
+        batched(once, paths[2]),
+        None,
+        docs[2],
+    )
+    case(
+        "a document outside the batch, with a member's path",
+        owner,
+        exact,
+        batched(once, paths[0]),
+        "root of this document's batch",
+        message("a charter no one put in the batch"),
+    )
+    first = paths[1][0]
+    case(
+        "a batch path with a side flipped",
+        owner,
+        exact,
+        batched(once, (("r" if first[0] == "l" else "l") + first[1:], *paths[1][1:])),
+        "root of this document's batch",
+        docs[1],
+    )
+    case(
+        "a batch path whose sibling was changed",
+        owner,
+        exact,
+        batched(once, (first[0] + "0" * 64, *paths[1][1:])),
+        "root of this document's batch",
+        docs[1],
+    )
+    case(
+        "a malformed batch path",
+        owner,
+        exact,
+        batched(once, ("x" + "0" * 64,)),
+        "the batch path is malformed",
+        docs[0],
+    )
+    case(
+        "one document's own signature, with a batch path added",
+        owner,
+        exact,
+        batched(owner.assert_(docs[0], LOCAL), paths[0]),
+        "root of this document's batch",
+        docs[0],
+    )
+    case(
+        "a batch's signature without the document's path",
+        owner,
+        exact,
+        once,
+        "not this document's signing input",
+        docs[0],
     )
     OUT.write_text(json.dumps({"cases": cases}, indent=1) + "\n")
     print(f"wrote {len(cases)} cases to {OUT}")

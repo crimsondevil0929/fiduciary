@@ -14,7 +14,11 @@ and its private key never leaves the authenticator.
   ``fiduciary passkey add`` on a principal that already has one) serves it, opens it, and
   waits for the touch. :func:`create` registers a new passkey the same way.
 - :func:`signer_for` is the key a command signs with for a principal: its key file, or its
-  passkey.
+  passkey. :func:`sign_all` signs several documents with one touch (a batch,
+  :class:`~fiduciary.webauthn.Batch`).
+- A server ``fiduciary protect`` wraps shares its owner with every other server under the
+  same root (:class:`fiduciary.protect.Owner`): registering the owner's passkey on one
+  registers it on all of them, with one touch (:func:`fiduciary.protect.register_owner`).
 
 The console (``fiduciary console``) approves tickets with a passkey on its own page.
 """
@@ -30,11 +34,11 @@ import threading
 import time
 import uuid
 import webbrowser
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 from fiduciary import fidu1, webauthn
 from fiduciary.exceptions import FiduciaryError, SignatureError
@@ -44,18 +48,24 @@ if TYPE_CHECKING:
     from agentgov.receipts.signing import Signer
 
     from fiduciary.bridge import Fiduciary
-    from fiduciary.documents import Charter
+    from fiduciary.documents import Approval, Charter
+    from fiduciary.documents._base import Document
+
+D = TypeVar("D", bound="Document")
 
 __all__ = [
     "BrowserPasskey",
     "Created",
     "PasskeyError",
     "Registered",
+    "approval_draft",
     "complete",
     "create",
     "draft_charter",
+    "key_file",
     "policy_for",
     "register",
+    "sign_all",
     "signer_for",
 ]
 
@@ -150,10 +160,12 @@ def complete(
     signed: Charter,
     *,
     signer: Signer | PasskeySigner | None = None,
+    approval: Approval | None = None,
 ) -> Registered:
     """Propose ``signed`` (a :func:`draft_charter` the passkey signed), approve it with
-    ``principal``'s current key (``signer``, or its key file), and adopt it when the
-    charter's quorum is one, moving the old key file to ``keys/retired/``.
+    ``principal``'s current key (``signer``, or its key file; or ``approval``, signed
+    already, by that key), and adopt it when the charter's quorum is one, moving the old
+    key file to ``retired/`` beside it.
 
     :raises PasskeyError: When ``signed`` is not signed by the passkey it names for
         ``principal``, or the principal's current key does not sign here.
@@ -168,9 +180,13 @@ def complete(
         signed.verify(named.public_key)
     except FiduciaryError as exc:
         raise PasskeyError(f"the passkey's signature of the charter: {exc}") from exc
-    current = signer if signer is not None else signer_for(fid, root, principal)
-    authority.propose(signed)
-    approve(fid, charter, principal, current, "charter", signed.digest)
+    if approval is None:
+        current = signer if signer is not None else signer_for(fid, root, principal)
+        authority.propose(signed)
+        approve(fid, charter, principal, current, "charter", signed.digest)
+    else:
+        authority.propose(signed)
+        fid.log.store.submit(approval.canonical())
     path = root / f"charter-v{signed.version}.json"
     path.write_text(signed.pretty())
     adopted = charter.charter_quorum <= 1
@@ -204,6 +220,17 @@ def register(
     :raises PasskeyError: When the principal is unknown, its key is already this
         passkey, or no key of its signs here.
     """
+    from fiduciary import protect
+
+    owner = protect.Owner.serving(root)
+    if owner is not None and principal == protect.OWNER:
+        # One owner for every protected server: its passkey is registered on all of them.
+        done = protect.register_owner(
+            owner, point, policy, passkey=passkey, opened={root.resolve(): fid}
+        )
+        if root.resolve() not in done.registered:
+            raise PasskeyError(done.skipped.get(root.resolve(), "this server did not take it"))
+        return done.registered[root.resolve()]
     draft = draft_charter(fid, principal, point, policy)
     key = PasskeyKey(point, policy)
     holder = (
@@ -229,10 +256,16 @@ def approve(
     digest: str,
 ) -> None:
     """``principal``'s approval of the document ``digest``, into the intake."""
+    approval = approval_draft(charter, principal, subject, digest).signed(signer)
+    fid.log.store.submit(approval.canonical())
+
+
+def approval_draft(charter: Charter, principal: str, subject: str, digest: str) -> Approval:
+    """``principal``'s approval of the document ``digest``, unsigned, valid for an hour."""
     from fiduciary.documents import Approval
 
     now = datetime.now(UTC)
-    approval = Approval.from_json(
+    return Approval.from_json(
         {
             "v": "FIDU1",
             "type": "approval",
@@ -246,17 +279,47 @@ def approve(
             "not_after": fidu1.format_instant(now + timedelta(hours=1)),
         },
         signed=False,
-    ).signed(signer)
-    fid.log.store.submit(approval.canonical())
+    )
+
+
+def sign_all(
+    signer: Signer | PasskeySigner, drafts: Sequence[D], *, what: str | None = None
+) -> list[D]:
+    """Each of ``drafts`` signed by ``signer``: a passkey signs two or more with one touch
+    (a batch), each signature carrying its document's path to the root it signed.
+
+    :param what: What a browser page says it is signing, when ``signer`` asks in one.
+    """
+    if not isinstance(signer, PasskeySigner) or len(drafts) < 2:
+        return [d.signed(signer) for d in drafts]
+    if what is not None and isinstance(signer, BrowserPasskey):
+        signer.what = what
+    header = {"alg": webauthn.ALG, "key_id": signer.key_id}
+    batch = webauthn.Batch(signer, [fidu1.signing_input(d.TYPE, d.body(), header) for d in drafts])
+    return [d.signed(batch) for d in drafts]
+
+
+def key_file(root: Path, principal: str) -> Path:
+    """Where ``principal``'s key file is: ``keys/`` in the deployment, or, for the owner of
+    a server ``fiduciary protect`` wraps, the owner directory every such server shares
+    (1.17.0)."""
+    from fiduciary import protect
+
+    own = root / "keys" / f"{principal}.key"
+    owner = protect.Owner.serving(root) if principal == protect.OWNER else None
+    if own.is_file() or owner is None:
+        return own
+    return owner.key_file
 
 
 def _retire(root: Path, principal: str, old_key: str) -> Path | None:
-    """Move ``principal``'s key file out of ``keys/``, if it holds the key the charter
-    no longer does. Never deleted: its owner decides what becomes of it."""
+    """Move ``principal``'s key file out of ``keys/`` (or the shared owner directory),
+    into ``retired/`` beside it, if it holds the key the charter no longer does. Never
+    deleted: its owner decides what becomes of it."""
     from fiduciary.bundle.export import spec as key_spec
     from fiduciary.keys import load_key
 
-    path = root / "keys" / f"{principal}.key"
+    path = key_file(root, principal)
     if not path.is_file():
         return None
     try:
@@ -264,7 +327,7 @@ def _retire(root: Path, principal: str, old_key: str) -> Path | None:
             return None
     except Exception:  # not a key file this deployment wrote
         return None
-    retired = root / "keys" / "retired"
+    retired = path.parent / "retired"
     retired.mkdir(mode=0o700, exist_ok=True)
     target = retired / path.name
     if target.exists():
@@ -295,7 +358,7 @@ def signer_for(
                 raise PasskeyError(f"that passkey is not the one the charter holds for {principal}")
             return passkey
         return BrowserPasskey(principal, PasskeyKey.parse(member.key, member.webauthn))
-    path = root / "keys" / f"{principal}.key"
+    path = key_file(root, principal)
     if not path.is_file():
         raise PasskeyError(f"{principal}'s key is not at {path}")
     signer = load_key(path)

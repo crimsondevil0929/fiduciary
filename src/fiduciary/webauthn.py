@@ -27,6 +27,16 @@ challenge. So the signature object holds three things: ``authenticator_data`` an
 
 The signature counter is not checked: a synced passkey reports zero.
 
+**Many documents, one touch.** A batch signs several documents with one assertion: each
+document's signing input is a leaf of a Merkle tree (SHA-256 over ``00`` and the input; a
+node is SHA-256 over ``01``, its left child and its right child; an odd last node is
+carried up as it is), and the challenge is :data:`BATCH` followed by the root. Each
+document's signature carries ``batch``, its path to the root: one step per level, ``l`` or
+``r`` (the side its sibling is on) and the sibling in hex. Step 1 then checks the
+challenge against the root that path leads to from this document's own signing input. No
+FIDU1 signing input begins as :data:`BATCH` does, so a batch's challenge is never one
+document's. Registering a passkey on eight protected servers is one touch, not eight.
+
 **What it proves, and what not.** That a person the passkey verified was present, on an
 admitted origin, when the signature was made. Not that they read the page: WebAuthn shows
 the relying party and asks for a touch, and does not display what is signed.
@@ -44,13 +54,17 @@ from typing import Any, Final, Protocol, runtime_checkable
 
 __all__ = [
     "ALG",
+    "BATCH",
     "SPEC",
     "Assertion",
+    "Batch",
     "PasskeyKey",
     "PasskeySigner",
     "Policy",
     "SoftPasskey",
     "SoftSigner",
+    "batch_challenge",
+    "batch_paths",
     "check_origin",
     "der_to_raw",
     "key_id_of",
@@ -74,6 +88,62 @@ ORIGIN: Final = re.compile(
 of it, or ``http://localhost`` (a secure context), with ``:*`` for any port of it."""
 MAX_AUTHENTICATOR_DATA: Final = 1024
 MAX_CLIENT_DATA: Final = 4096
+BATCH: Final = b"FIDU1/webauthn-batch/v1\n"
+"""What a batch's challenge begins with, before its Merkle root (module docstring)."""
+MAX_BATCH_PATH: Final = 8
+"""The longest path a batch signature carries: 256 documents to one touch."""
+STEP: Final = re.compile(r"[lr][0-9a-f]{64}")
+
+
+def _leaf(message: bytes) -> bytes:
+    return hashlib.sha256(b"\x00" + message).digest()
+
+
+def _node(left: bytes, right: bytes) -> bytes:
+    return hashlib.sha256(b"\x01" + left + right).digest()
+
+
+def batch_challenge(message: bytes, path: Sequence[str]) -> bytes:
+    """The challenge a batch signature of ``message`` was made over: :data:`BATCH`, then
+    the root ``path`` leads to from ``message``'s leaf.
+
+    :raises ValueError: On a path that is not 1 to 8 steps, each ``l`` or ``r`` and 64 hex.
+    """
+    if (
+        isinstance(path, str)
+        or not 1 <= len(path) <= MAX_BATCH_PATH
+        or not all(isinstance(step, str) and STEP.fullmatch(step) for step in path)
+    ):
+        raise ValueError("a path is 1 to 8 steps, each l or r and the sibling's 64 hex")
+    node = _leaf(message)
+    for step in path:
+        sibling = bytes.fromhex(step[1:])
+        node = _node(sibling, node) if step[0] == "l" else _node(node, sibling)
+    return BATCH + node
+
+
+def batch_paths(messages: Sequence[bytes]) -> tuple[bytes, list[tuple[str, ...]]]:
+    """One challenge over each of ``messages`` (2 to 256), and each one's path to it.
+
+    :raises ValueError: On fewer than two messages, or more than 256.
+    """
+    if not 2 <= len(messages) <= 1 << MAX_BATCH_PATH:
+        raise ValueError("a batch signs 2 to 256 documents")
+    level = [_leaf(m) for m in messages]
+    at = list(range(len(messages)))
+    paths: list[list[str]] = [[] for _ in messages]
+    while len(level) > 1:
+        for k, position in enumerate(at):
+            if position % 2 == 1:
+                paths[k].append("l" + level[position - 1].hex())
+            elif position + 1 < len(level):
+                paths[k].append("r" + level[position + 1].hex())
+            at[k] = position // 2
+        level = [
+            _node(level[i], level[i + 1]) if i + 1 < len(level) else level[i]
+            for i in range(0, len(level), 2)
+        ]
+    return BATCH + level[0], [tuple(p) for p in paths]
 
 
 def key_id_of(point: bytes) -> str:
@@ -166,6 +236,8 @@ class Assertion:
     client_data_json: bytes
     signature: bytes
     """ECDSA over P-256 and SHA-256, DER-encoded, as WebAuthn returns it."""
+    batch: tuple[str, ...] = ()
+    """The document's path to the root the passkey signed, when it signed a batch."""
 
 
 class PasskeyKey:
@@ -218,7 +290,14 @@ class PasskeyKey:
             return "clientDataJSON is no JSON object"
         if client.get("type") != "webauthn.get":
             return f"clientDataJSON's type is {client.get('type')!r}, not webauthn.get"
-        if client.get("challenge") != b64url(message):
+        if assertion.batch:
+            try:
+                expected = batch_challenge(message, assertion.batch)
+            except ValueError as exc:
+                return f"the batch path is malformed: {exc}"
+            if client.get("challenge") != b64url(expected):
+                return "clientDataJSON's challenge is not the root of this document's batch"
+        elif client.get("challenge") != b64url(message):
             return "clientDataJSON's challenge is not this document's signing input"
         origin = client.get("origin")
         if not isinstance(origin, str) or not policy.admits(origin):
@@ -290,6 +369,35 @@ class PasskeySigner(Protocol):
     def public_key(self) -> PasskeyKey: ...
 
     def assertion(self, message: bytes) -> Assertion: ...
+
+
+class Batch:
+    """A passkey that signs many documents with one touch (module docstring): built over
+    their signing inputs, it asks ``signer`` for one assertion, over the batch's root, the
+    first time a document is signed with it, and gives each document its own path.
+    A :class:`PasskeySigner`; :func:`fiduciary.passkeys.sign_all` uses it."""
+
+    alg: str = ALG
+
+    def __init__(self, signer: PasskeySigner, messages: Sequence[bytes]) -> None:
+        self._signer = signer
+        self.key_id = signer.key_id
+        self.challenge, paths = batch_paths(messages)
+        self._paths = {m: p for m, p in zip(messages, paths, strict=True)}
+        self._made: Assertion | None = None
+
+    def public_key(self) -> PasskeyKey:
+        return self._signer.public_key()
+
+    def assertion(self, message: bytes) -> Assertion:
+        """:raises ValueError: When ``message`` is no signing input of the batch."""
+        path = self._paths.get(message)
+        if path is None:
+            raise ValueError("that document is not in this batch")
+        if self._made is None:
+            self._made = self._signer.assertion(self.challenge)
+        made = self._made
+        return Assertion(made.authenticator_data, made.client_data_json, made.signature, path)
 
 
 class SoftPasskey:

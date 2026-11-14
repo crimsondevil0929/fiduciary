@@ -49,13 +49,27 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from interlock.mcp import DECIMAL
 
 from fiduciary.starters import Starter, Target, coding, starter
 
-__all__ = ["InitReport", "Target", "classify", "discover", "init", "schema_of", "trust_of"]
+if TYPE_CHECKING:
+    from agentgov.receipts.signing import Signer
+
+__all__ = [
+    "Governed",
+    "InitReport",
+    "Target",
+    "classify",
+    "discover",
+    "govern",
+    "init",
+    "schema_of",
+    "trust_of",
+    "write_pins",
+]
 
 SINK: Final = "upstream"
 READ: Final = "read"
@@ -508,6 +522,7 @@ def init(
     solo: bool = False,
     shadow: bool = False,
     sessions: bool = False,
+    owner: Signer | None = None,
 ) -> InitReport:
     """Write the deployment into ``root`` (new or empty).
 
@@ -524,6 +539,8 @@ def init(
     :param sessions: For coding sessions on a Git ``target`` (1.15.0,
         :func:`fiduciary.starters.coding`): a session's whole change is one plan, which no
         tool binding pins, so the mandate admits statements none pins.
+    :param owner: A solo owner's key, kept outside ``root`` (1.17.0): the one owner
+        every server ``fiduciary protect`` wraps shares. No key file of its is written here.
     :raises ValueError: On a name, principals or a directory init cannot use,
         or a target it cannot read.
     """
@@ -544,6 +561,9 @@ def init(
     if root.exists() and any(root.iterdir()):
         raise ValueError(f"{root} is not empty: init writes a fresh deployment")
     trio = tuple(principals)
+    if owner is not None and not solo:
+        raise ValueError("an owner's key is given for a solo deployment only")
+    given = {trio[0]: owner} if owner is not None else None
     options: dict[str, Any] = {}
     if shadow:
         options["enforcement"] = "shadow"
@@ -572,7 +592,7 @@ def init(
             notes=list(st.notes),
             cautions=list(st.cautions),
         )
-        world = kit.build(root, _starter_pack(label, trio, st, options))
+        world = kit.build(root, _starter_pack(label, trio, st, options), keys=given)
         try:
             if target.substrate == "postgres":
                 # init staged nothing: the outbox it made to stand the world up is not
@@ -593,9 +613,43 @@ def init(
         return report
     listed = list(discovered) if discovered is not None else (discover(command) if command else [])
     report = InitReport(root=root.resolve(), scope=f"{label}-agent", principals=tuple(principals))
-    bindings: list[dict[str, Any]] = []
-    modes: dict[str, str] = {}
-    schemas: dict[str, dict[str, Any]] = {}
+    governed = govern(listed)
+    bindings, modes, schemas = governed.bindings, governed.modes, governed.schemas
+    report.tools.extend(governed.tools)
+    report.skipped.extend(governed.skipped)
+    pack = _pack(label, trio, bindings, modes, schemas, options)
+    world = kit.build(root, pack, keys=given)
+    try:
+        if command and any(m != READ for m in modes.values()):
+            with (root / "interlock.toml").open("a", encoding="utf-8") as config:
+                config.write(_relay_toml(root, command, bindings))
+        if listed:
+            write_pins(root, listed, bindings)
+        _write_report(root, report, command, None, solo=solo, shadow=shadow)
+    finally:
+        world.close()
+    _write_pins(root)
+    _private(root, solo)
+    return report
+
+
+@dataclass
+class Governed:
+    """How each tool an MCP server lists is governed (:func:`govern`)."""
+
+    bindings: list[dict[str, Any]] = field(default_factory=list)
+    modes: dict[str, str] = field(default_factory=dict)
+    schemas: dict[str, dict[str, Any]] = field(default_factory=dict)
+    tools: list[dict[str, str]] = field(default_factory=list)
+    skipped: list[dict[str, str]] = field(default_factory=list)
+
+
+def govern(listed: Sequence[Mapping[str, Any]]) -> Governed:
+    """Each tool of ``listed`` (an MCP server's ``tools/list``) as a binding, unsigned, with
+    its mode and why; a tool no binding can hold is left out, with the reason. What
+    ``init --mcp`` writes, and what ``fiduciary protect --review --accept`` signs again."""
+    found = Governed()
+    bindings, modes, schemas, report = found.bindings, found.modes, found.schemas, found
     for tool in listed:
         upstream_name = str(tool.get("name") or "")
         tool_name = binding_name(upstream_name)
@@ -624,29 +678,27 @@ def init(
         modes[tool_name] = mode
         schemas[tool_name] = binding["input"]
         report.tools.append({"name": tool_name, "mode": mode, "why": why})
-    pack = _pack(label, trio, bindings, modes, schemas, options)
-    world = kit.build(root, pack)
-    try:
-        if command and any(m != READ for m in modes.values()):
-            with (root / "interlock.toml").open("a", encoding="utf-8") as config:
-                config.write(_relay_toml(root, command, bindings))
-        if listed:
-            # Each tool as the server listed it, beside its pin: what a review shows a
-            # change against (1.17.0).
-            pins = root / "pins"
-            pins.mkdir(exist_ok=True)
-            by_upstream = {str(t.get("name")): t for t in listed}
-            for binding in bindings:
-                upstream_tool = by_upstream[str(binding.get("upstream", binding["name"]))]
-                (pins / f"{binding['name']}.json").write_text(
-                    json.dumps(upstream_tool, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-                )
-        _write_report(root, report, command, None, solo=solo, shadow=shadow)
-    finally:
-        world.close()
-    _write_pins(root)
-    _private(root, solo)
-    return report
+    return found
+
+
+def write_pins(
+    root: Path, listed: Sequence[Mapping[str, Any]], bindings: Sequence[Mapping[str, Any]]
+) -> None:
+    """Each tool as the server listed it, beside its pin, in ``pins/``: what a review shows a
+    change against (1.17.0). A pin no binding holds any more is removed."""
+    pins = root / "pins"
+    pins.mkdir(exist_ok=True)
+    by_upstream = {str(t.get("name")): t for t in listed}
+    kept = set()
+    for binding in bindings:
+        upstream_tool = by_upstream[str(binding.get("upstream", binding["name"]))]
+        (pins / f"{binding['name']}.json").write_text(
+            json.dumps(upstream_tool, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        kept.add(f"{binding['name']}.json")
+    for old in pins.glob("*.json"):
+        if old.name not in kept:
+            old.unlink()
 
 
 DEFAULT_PRINCIPALS: Final = ("approver-1", "approver-2", "approver-3")

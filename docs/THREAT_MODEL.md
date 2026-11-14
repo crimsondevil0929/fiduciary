@@ -61,7 +61,11 @@ session, over MCP or in process.
   unchanged definition and version is not caught, and what the server does with a call is
   its own. An agent that can edit the client's file can unwrap a server; `fiduciary protect`
   shows which entries are protected, and nothing prevents the edit. Remote (HTTP) servers are
-  not wrapped yet.
+  not wrapped yet. Every protected server shares one owner, so until a passkey replaces it,
+  one key file (`owner/owner.key`) signs for all of them: an agent that reads it can approve
+  its own writes on every server. And a program running as you can write `step-aside.json`
+  into a deployment to make its proxy refuse calls for up to 15 minutes at a time; that
+  stops the agent, and lets nothing through.
 - **What a turn's committed calls changed.** A refused call cancels the turn's requests; the
   rows and files its earlier calls changed stay changed. Claude Desktop and Cursor give a
   server no turn boundary, so turns there are not available.

@@ -28,7 +28,8 @@
 //                            bundle holds, by id, place and leaf hash
 //   passkeys    part of V2   (when a principal signed with a passkey, 1.17.0) every document a
 //                            passkey signed verifies under the key the bundle's charter holds
-//                            for its signer: the challenge is the document's signing input,
+//                            for its signer: the challenge is the document's signing input
+//                            (or the root of a batch its path leads to, one touch for many),
 //                            the origin is one the charter admits, the relying party is its
 //                            own, the passkey says the user was present and verified, and
 //                            the P-256 signature verifies (checkAssertion, below)
@@ -678,9 +679,12 @@
     if (!client || typeof client !== "object" || Array.isArray(client)) return done("clientDataJSON is no JSON object");
     if (!uniqueKeys(text)) return done("clientDataJSON is no JSON object: a key appears twice");
     if (client.type !== "webauthn.get") return done("clientDataJSON's type is " + JSON.stringify(client.type) + ", not webauthn.get");
-    if (client.challenge !== b64url(message)) return done("clientDataJSON's challenge is not this document's signing input");
-    if (typeof client.origin !== "string" || !admits(policy, client.origin)) return done("it was made on " + JSON.stringify(client.origin) + ", an origin the charter does not admit");
-    if ((client.crossOrigin !== undefined && client.crossOrigin !== null && client.crossOrigin !== false) || "topOrigin" in client) return done("it was made in a cross-origin frame");
+    var batched = sig.batch !== undefined && sig.batch !== null && !(Array.isArray(sig.batch) && sig.batch.length === 0);
+    if (batched && !(Array.isArray(sig.batch) && sig.batch.length <= 8 && sig.batch.every(function (step) { return typeof step === "string" && /^[lr][0-9a-f]{64}$/.test(step); }))) return done("the batch path is malformed: a path is 1 to 8 steps, each l or r and the sibling's 64 hex");
+    return (batched ? batchChallenge(subtle, message, sig.batch) : Promise.resolve(message)).then(function (expected) {
+    if (client.challenge !== b64url(expected)) return batched ? "clientDataJSON's challenge is not the root of this document's batch" : "clientDataJSON's challenge is not this document's signing input";
+    if (typeof client.origin !== "string" || !admits(policy, client.origin)) return "it was made on " + JSON.stringify(client.origin) + ", an origin the charter does not admit";
+    if ((client.crossOrigin !== undefined && client.crossOrigin !== null && client.crossOrigin !== false) || "topOrigin" in client) return "it was made in a cross-origin frame";
     return subtle.digest("SHA-256", utf8(policy.rp_id)).then(function (ab) {
       if (bytesHex(new Uint8Array(ab)) !== bytesHex(data.slice(0, 32))) return "authenticatorData is for another relying party than " + policy.rp_id;
       if (!(data[32] & 0x01)) return "the passkey says no user was present (UP)";
@@ -694,6 +698,20 @@
         }).then(function (ok) { return ok ? null : "the ECDSA signature does not verify"; }, function () { return "the ECDSA signature does not verify"; });
       });
     });
+    });
+  }
+  // A batch's challenge (fiduciary.webauthn.batch_challenge): "FIDU1/webauthn-batch/v1\n", then
+  // the Merkle root the path leads to from the document's leaf, SHA-256(00 || signing input).
+  function batchChallenge(subtle, message, path) {
+    var sha = function (bytes) { return subtle.digest("SHA-256", bytes).then(function (ab) { return new Uint8Array(ab); }); };
+    var node = sha(concat(new Uint8Array([0]), message));
+    path.forEach(function (step) {
+      var sibling = hexBytes(step.slice(1));
+      node = node.then(function (n) {
+        return sha(concat(new Uint8Array([1]), step[0] === "l" ? concat(sibling, n) : concat(n, sibling)));
+      });
+    });
+    return node.then(function (root) { return concat(utf8("FIDU1/webauthn-batch/v1\n"), root); });
   }
 
   var api = { check: check, readTar: readTar, checkAssertion: checkAssertion, passkeyId: passkeyId };

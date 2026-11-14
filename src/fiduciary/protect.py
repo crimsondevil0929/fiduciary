@@ -29,12 +29,28 @@ server itself, behind a solo deployment of its own:
 
 ``--undo`` puts every entry back as it was. Remote (HTTP) servers are listed and left as
 they are.
+
+**One owner.** Every server under one ``--root`` shares its owner (:class:`Owner`): one key
+file, ``owner/owner.key``, until a passkey replaces it, for all of them at once and with one
+touch (:func:`register_owner`). A server protected after that starts with the passkey.
+
+**Accepting a change keeps the deployment.** ``fiduciary protect --review --accept`` signs
+each changed tool's binding again from what the server lists now, and issues the mandate's
+next version pinning them, signed by the owner: its key file, or its passkey, two touches
+for every server accepted at once (:func:`accept`). The charter, its keys and passkey, the
+log and every record stay where they are.
+
+**A running proxy steps aside.** A proxy holds its deployment open while its client runs.
+A command that changes the deployment (``--accept``, a passkey) asks it to let go
+(``step-aside.json``, :func:`held`); the proxy answers calls with "call again in a moment"
+until the command is done, then opens the deployment again, with whatever changed.
 """
 
 from __future__ import annotations
 
 import contextlib
 import copy
+import functools
 import hashlib
 import json
 import os
@@ -42,6 +58,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
@@ -54,24 +71,39 @@ from fiduciary import turns
 from fiduciary.exceptions import FiduciaryError
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from agentgov.receipts.signing import Signer
     from interlock.relay import Relay
 
     from fiduciary.bridge import CallResult, Fiduciary, Session
-    from fiduciary.documents import ToolBinding
-    from fiduciary.mcp import Upstream
+    from fiduciary.documents import Charter, ToolBinding
+    from fiduciary.mcp import McpServer, Upstream
+    from fiduciary.passkeys import Registered
+    from fiduciary.webauthn import PasskeyKey, PasskeySigner, Policy
 
 __all__ = [
+    "OWNER",
     "PIN_FIELDS",
+    "Accepted",
     "Keychain",
+    "Owner",
+    "OwnerRegistered",
     "ProtectError",
     "Server",
     "Step",
+    "accept",
     "client_paths",
     "diff",
+    "held",
+    "owner_drafts",
+    "owner_finish",
+    "owner_passkey",
     "pin_command",
     "pin_of",
     "protect",
     "read_servers",
+    "register_owner",
     "review",
     "serve",
     "undo",
@@ -86,6 +118,18 @@ SECTIONS: Final = ("mcpServers", "servers")
 """Where a client's file keeps its servers: ``mcpServers`` (Claude Desktop, Cursor,
 Claude Code), ``servers`` (VS Code)."""
 KEYCHAIN_SERVICE: Final = "fiduciary-protect"
+OWNER: Final = "owner"
+"""The owner's principal, and its directory under a protect root."""
+ASIDE: Final = "step-aside.json"
+"""What a command writes into a deployment to ask its running proxy to let go of it."""
+ASIDE_WAIT: Final = 30.0
+"""How long a command waits, in seconds, for a running proxy to step aside."""
+ASIDE_LONGEST: Final = timedelta(minutes=15)
+"""How long a proxy stays aside for one ask: a command that never finishes is not waited on."""
+NOT_NOW: Final = (
+    "Not run: this server's owner is changing what it may do (accepting a tool change, or a "
+    "passkey), and nothing was sent to it. Call it again in a moment."
+)
 _NAME: Final = re.compile(r"[a-z][a-z0-9_]{0,63}")
 
 
@@ -360,6 +404,340 @@ def _account(state: Mapping[str, Any], variable: str) -> str:
 
 
 # --------------------------------------------------------------------------
+# the owner every protected server shares
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Owner:
+    """The one owner of every server under a protect root (1.17.0).
+
+    Its key is a key file, ``owner/owner.key``, until a passkey replaces it; then
+    ``owner/owner.json`` holds the passkey's public key and policy, and the key file is in
+    ``owner/retired/``. A server protected later starts with this owner, so a passkey is
+    registered once, for every server.
+    """
+
+    path: Path
+
+    @classmethod
+    def under(cls, root: Path) -> Owner:
+        """The owner of the servers protected under ``root``."""
+        return cls((root / OWNER).resolve())
+
+    @classmethod
+    def serving(cls, deployment: Path) -> Owner | None:
+        """The shared owner of a protected server's deployment; ``None`` for any other."""
+        try:
+            named = json.loads((deployment / STATE).read_text(encoding="utf-8")).get("owner")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return cls(Path(named)) if isinstance(named, str) and named else None
+
+    @property
+    def key_file(self) -> Path:
+        return self.path / "owner.key"
+
+    def passkey(self) -> PasskeyKey | None:
+        """The owner's passkey, once one replaced its key file."""
+        from fiduciary.webauthn import PasskeyKey, Policy
+
+        found = self.path / "owner.json"
+        if not found.is_file():
+            return None
+        data = json.loads(found.read_text(encoding="utf-8"))
+        return PasskeyKey.parse(str(data["key"]), Policy.from_json(data["webauthn"]))
+
+    def signer(self) -> Signer:
+        """The owner's key file, written the first time it is asked for.
+
+        :raises ProtectError: When the owner signs with a passkey: it has no key file.
+        """
+        from fiduciary.keys import generate_key, load_key
+
+        if self.passkey() is not None:
+            raise ProtectError("the owner signs with a passkey: it has no key file")
+        if self.key_file.is_file():
+            return load_key(self.key_file)
+        self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        return generate_key(self.key_file)
+
+    def key(self) -> str | None:
+        """The owner's key as a charter writes it, or ``None`` before it has one."""
+        from fiduciary.bundle.export import spec
+        from fiduciary.keys import load_key
+
+        passkey = self.passkey()
+        if passkey is not None:
+            return passkey.spec()
+        return spec(load_key(self.key_file).public_key()) if self.key_file.is_file() else None
+
+    def deployments(self) -> list[Path]:
+        """Every deployment this owner owns: each under the protect root whose
+        ``protect.json`` names it."""
+        return [
+            state.parent
+            for state in sorted(self.path.parent.glob(f"*/*/{STATE}"))
+            if Owner.serving(state.parent) == self
+        ]
+
+    def adopt(self, key: PasskeyKey) -> None:
+        """Record ``key`` as the owner's: what servers protected from now on start with."""
+        assert key.policy is not None
+        self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        (self.path / "owner.json").write_text(
+            json.dumps(
+                {
+                    "principal": OWNER,
+                    "key": key.spec(),
+                    "key_id": key.key_id,
+                    "webauthn": key.policy.to_json(),
+                    "since": datetime.now(UTC).isoformat(),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OwnerRegistered:
+    """What :func:`register_owner` did, server by server."""
+
+    registered: dict[Path, Registered]
+    skipped: dict[Path, str]
+    """A server whose owner is not this one any more (grown to three principals, say)."""
+
+
+def register_owner(
+    owner: Owner,
+    point: bytes,
+    policy: Policy,
+    *,
+    passkey: PasskeySigner | None = None,
+    opened: Mapping[Path, Fiduciary] | None = None,
+    wait: float = ASIDE_WAIT,
+) -> OwnerRegistered:
+    """Make the passkey ``point`` the owner's key on every server it owns, with one touch.
+
+    Each server's charter gets its next version naming the passkey. The passkey signs them
+    all at once (``passkey``, or a page in the browser): a batch, one assertion over their
+    root. The owner's current key approves each, and each is adopted; the key file then
+    moves to ``owner/retired/``. A proxy that holds a server steps aside meanwhile (:func:`held`).
+
+    :param opened: Deployments this process holds open already, by root.
+    :raises ProtectError: When the owner owns no server, or none could take the passkey.
+    """
+    from fiduciary.passkeys import BrowserPasskey
+    from fiduciary.webauthn import PasskeyKey
+
+    key = PasskeyKey(point, policy)
+    roots = owner.deployments()
+    if not roots:
+        raise ProtectError(f"{owner.path.parent} holds no protected server of this owner")
+    with _opened(roots, opened, wait) as fids:
+        holder = passkey or BrowserPasskey(OWNER, key)
+        if holder.key_id != key.key_id:
+            raise ProtectError("the passkey that signs the charters is not the one they name")
+        done, skipped = owner_passkey(fids, key, holder)
+    if not done:
+        raise ProtectError(
+            "no server took the passkey: " + "; ".join(f"{r.name}: {w}" for r, w in skipped.items())
+        )
+    owner.adopt(key)
+    return OwnerRegistered(done, skipped)
+
+
+def owner_passkey(
+    fids: Mapping[Path, Fiduciary], key: PasskeyKey, holder: PasskeySigner
+) -> tuple[dict[Path, Registered], dict[Path, str]]:
+    """The owner's key made ``key`` on each deployment of ``fids``: its charter's next
+    versions signed by ``holder`` in one batch, each approved by that server's current
+    owner key (grouped by key, so a passkey being replaced also signs once)."""
+    from fiduciary.passkeys import sign_all
+
+    drafts, skipped = owner_drafts(fids, key)
+    if not drafts:
+        return {}, skipped
+    order = list(drafts)
+    signed = sign_all(
+        holder,
+        [drafts[r] for r in order],
+        what=f"the charters of {len(order)} protected servers, making this passkey their "
+        "owner's key",
+    )
+    return owner_finish(fids, dict(zip(order, signed, strict=True))), skipped
+
+
+def owner_drafts(
+    fids: Mapping[Path, Fiduciary], key: PasskeyKey
+) -> tuple[dict[Path, Charter], dict[Path, str]]:
+    """Each server's charter's next version making ``key`` the owner's, unsigned; and each
+    server that cannot take it, with the reason."""
+    from fiduciary.exceptions import FiduciaryError
+    from fiduciary.passkeys import draft_charter
+
+    drafts: dict[Path, Charter] = {}
+    skipped: dict[Path, str] = {}
+    for root, fid in fids.items():
+        charter = fid._authority.decide.charter(fid.log.state())
+        if len(charter.principals) != 1 or charter.principal(OWNER) is None:
+            skipped[root] = "its charter is not one owner's alone"
+            continue
+        try:
+            drafts[root] = draft_charter(fid, OWNER, key.point, key.policy)  # type: ignore[arg-type]
+        except FiduciaryError as exc:
+            skipped[root] = str(exc)
+    return drafts, skipped
+
+
+def owner_finish(
+    fids: Mapping[Path, Fiduciary], signed: Mapping[Path, Charter]
+) -> dict[Path, Registered]:
+    """Each charter of ``signed`` (signed by the passkey it names) approved by its server's
+    current owner key, servers sharing that key in one batch, and adopted."""
+    from fiduciary.passkeys import approval_draft, complete, sign_all, signer_for
+
+    groups: dict[str, tuple[Any, list[tuple[Path, Any]]]] = {}
+    for root, document in signed.items():
+        fid = fids[root]
+        charter = fid._authority.decide.charter(fid.log.state())
+        current = signer_for(fid, root, OWNER)
+        groups.setdefault(current.key_id, (current, []))[1].append(
+            (root, approval_draft(charter, OWNER, "charter", document.digest))
+        )
+    approvals = {}
+    for current, items in groups.values():
+        made = sign_all(current, [d for _, d in items], what="the owner's new passkey")
+        approvals.update({root: a for (root, _), a in zip(items, made, strict=True)})
+    return {
+        root: complete(fids[root], root, OWNER, document, approval=approvals[root])
+        for root, document in signed.items()
+    }
+
+
+# --------------------------------------------------------------------------
+# a running proxy steps aside
+# --------------------------------------------------------------------------
+
+
+def _claimed(exc: BaseException) -> bool:
+    from fiduciary.service import _claimed as claimed
+
+    found: BaseException | None = exc
+    while found is not None:
+        if claimed(found) or type(found).__name__ == "ConcurrentGovernorError":
+            return True
+        found = found.__cause__
+    return False
+
+
+def _free(root: Path) -> bool:
+    """Whether no other process holds the deployment at ``root`` (its ledger)."""
+    from agentgov import BudgetManager
+
+    try:
+        BudgetManager.open_sqlite(str(root / "ledger.db")).close()
+    except Exception as exc:
+        if _claimed(exc):
+            return False
+        raise
+    return True
+
+
+def _alive(pid: int) -> bool:
+    if os.name == "nt":  # no signal 0 there: os.kill would end the process
+        return True
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def asked_aside(root: Path) -> bool:
+    """Whether a command asks the proxy of ``root`` to step aside now. An ask whose command
+    is gone, or older than :data:`ASIDE_LONGEST`, is removed, and answered no."""
+    path = root / ASIDE
+    try:
+        asked = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        asked = {}
+    pid = asked.get("pid") if isinstance(asked, dict) else None
+    at = asked.get("asked_at") if isinstance(asked, dict) else None
+    try:
+        fresh = datetime.now(UTC) - datetime.fromisoformat(str(at)) < ASIDE_LONGEST
+    except ValueError:
+        fresh = False
+    if isinstance(pid, int) and _alive(pid) and fresh:
+        return True
+    with contextlib.suppress(OSError):
+        path.unlink()
+    return False
+
+
+@contextlib.contextmanager
+def held(roots: Sequence[Path], *, wait: float = ASIDE_WAIT) -> Iterator[None]:
+    """While the block runs, no protected server's proxy holds any deployment of ``roots``:
+    each one that does is asked to step aside (``step-aside.json``), and opens its
+    deployment again once the block is done. A deployment ``fiduciary protect`` did not
+    write is not asked.
+
+    :raises ProtectError: When a proxy did not step aside within ``wait`` seconds.
+    """
+    asked: list[Path] = []
+    try:
+        for root in roots:
+            if (root / STATE).is_file() and not _free(root):
+                (root / ASIDE).write_text(
+                    json.dumps({"pid": os.getpid(), "asked_at": datetime.now(UTC).isoformat()}),
+                    encoding="utf-8",
+                )
+                asked.append(root)
+        deadline = time.monotonic() + wait
+        for root in asked:
+            while not _free(root):
+                if time.monotonic() > deadline:
+                    raise ProtectError(
+                        f"the proxy serving {root} did not step aside within {wait:.0f} "
+                        f"seconds: quit its client, run this again, then start the client"
+                    )
+                time.sleep(0.05)
+        yield
+    finally:
+        for root in asked:
+            with contextlib.suppress(OSError):
+                (root / ASIDE).unlink()
+
+
+@contextlib.contextmanager
+def _opened(
+    roots: Sequence[Path], opened: Mapping[Path, Fiduciary] | None, wait: float
+) -> Iterator[dict[Path, Fiduciary]]:
+    """Each deployment of ``roots`` open in this process (those in ``opened`` as they
+    are), its proxy aside (:func:`held`), and closed again after the block."""
+    from fiduciary.bridge import Fiduciary
+
+    given = dict(opened or {})
+    mine: dict[Path, Fiduciary] = {}
+    with held([r for r in roots if r not in given], wait=wait):
+        try:
+            for root in roots:
+                if root not in given:
+                    mine[root] = Fiduciary.from_config(root / "fiduciary.toml")
+            yield {root: given.get(root) or mine[root] for root in roots}
+        finally:
+            for fid in mine.values():
+                with contextlib.suppress(Exception):
+                    fid.close()
+
+
+# --------------------------------------------------------------------------
 # protect, undo, review
 # --------------------------------------------------------------------------
 
@@ -408,10 +786,17 @@ def protect(
     keychain: Keychain | None = None,
     discover: Callable[[Sequence[str], Mapping[str, str]], list[dict[str, Any]]] | None = None,
     runner: Sequence[str] | None = None,
+    passkey: PasskeySigner | None = None,
 ) -> list[Step]:
     """Protect each stdio server of ``servers``; with ``apply`` false, only say what would
     be done. A deployment is written for each under ``root/<client>/<server>``, and the
     client's file is rewritten once, at the end.
+
+    Every server under ``root`` has one owner (:class:`Owner`). While its key is a key
+    file, a new server's charter names that key. Once it is a passkey, each new server
+    starts with a key of its own, and its charter's next version names the passkey at once:
+    the passkey signs them all with one touch (``passkey``, or a page in the browser), and
+    the key of its own is retired.
 
     :param shadow: Start each mandate in shadow mode (pins hold either way).
     :param runner: The command a protected entry runs (:func:`executable`, by default).
@@ -424,7 +809,9 @@ def protect(
             raise ProtectError("--move-secrets needs the macOS Keychain (security)")
         keychain = Keychain()
     run = list(runner or executable())
+    owner = Owner.under(root)
     steps: list[Step] = []
+    made: list[Path] = []
     changes: dict[Path, dict[tuple[str, str], dict[str, Any]]] = {}
     for server in servers:
         if server.protected:
@@ -463,9 +850,12 @@ def protect(
             solo=True,
             shadow=shadow,
             name=_slug(server.name),
+            owner=owner.signer() if owner.passkey() is None else None,
         )
+        made.append(deployment)
         step.tools, step.skipped = list(report.tools), list(report.skipped)
         state: dict[str, Any] = {
+            "owner": str(owner.path),
             "client": server.client,
             "config": str(server.config),
             "section": server.section,
@@ -500,6 +890,20 @@ def protect(
         if state["env"]:
             entry["env"] = state["env"]
         changes.setdefault(server.config, {})[(server.section, server.name)] = entry
+    key = owner.passkey() if made else None
+    if key is not None:
+        # The owner signs with a passkey: each new server takes it now, with one touch.
+        from fiduciary.passkeys import BrowserPasskey
+
+        try:
+            with _opened(made, None, ASIDE_WAIT) as fids:
+                _, skipped = owner_passkey(fids, key, passkey or BrowserPasskey(OWNER, key))
+            if skipped:
+                raise ProtectError("; ".join(f"{r.name}: {why}" for r, why in skipped.items()))
+        except BaseException:
+            for deployment in made:  # written by this call alone, with nothing in them yet
+                shutil.rmtree(deployment, ignore_errors=True)
+            raise
     for config, changed in changes.items():
         _write_config(config, changed)
     return steps
@@ -606,34 +1010,198 @@ def review(
     return drifts
 
 
-def reprotect(
-    root: Path,
-    *,
-    resolver: Resolver = resolve,
-    keychain: Keychain | None = None,
-    discover: Callable[[Sequence[str], Mapping[str, str]], list[dict[str, Any]]] | None = None,
-    shadow: bool = True,
-) -> Path:
-    """Accept what the server lists now: a new deployment from its current definitions,
-    where the old one was; the old one is kept beside it, with its records."""
-    from fiduciary.init import init
+@dataclass(frozen=True, slots=True)
+class Accepted:
+    """What :func:`accept` issued for one server."""
 
-    state = json.loads((root / STATE).read_text(encoding="utf-8"))
-    kept = root.with_name(f"{root.name}.{time.strftime('%Y%m%dT%H%M%S')}")
-    os.replace(root, kept)
-    env = _environment(state, keychain)
-    listed = (discover or _discover)(state["command"], env)
-    init(
-        root,
-        state["command"],
-        discovered=listed,
-        solo=True,
-        shadow=shadow,
-        name=_slug(state["server"]),
+    version: int
+    """The mandate version that pins what the server lists now."""
+    changed: tuple[str, ...]
+    """Each binding signed again, added, or no longer pinned."""
+    tools: tuple[dict[str, str], ...]
+    skipped: tuple[dict[str, str], ...]
+
+
+def accept(
+    roots: Sequence[Path],
+    *,
+    discover: Callable[[Sequence[str], Mapping[str, str]], list[dict[str, Any]]] | None = None,
+    keychain: Keychain | None = None,
+    passkey: PasskeySigner | None = None,
+    wait: float = ASIDE_WAIT,
+) -> dict[Path, Accepted]:
+    """Accept what each server of ``roots`` lists now, in the deployment it has (1.17.0).
+
+    Each tool's binding is signed again from its definition now, with the deployment's
+    developer key (a binding no longer pinned is kept, under ``tools/retired/``, so the
+    plans that cite it still verify). The outbox's sink and ``interlock.toml`` follow the
+    tools that write. Then the mandate's next version pins the new bindings, signed and
+    approved by the owner: its key file, or its passkey, one touch to sign every server's
+    version and one to approve them. The charter, its keys and passkey, the log and every
+    record stay as they are. A running proxy steps aside meanwhile (:func:`held`).
+
+    :raises ProtectError: When a server's mandate cannot be read, or its owner cannot sign.
+    """
+    from interlock.sqlite_outbox import install_sqlite_outbox
+
+    from fiduciary.demo.packs import kit
+    from fiduciary.documents import ToolBinding
+    from fiduciary.init import _pack, _relay_toml, govern, write_pins
+    from fiduciary.keys import load_key
+    from fiduciary.passkeys import approval_draft, sign_all, signer_for
+    from fiduciary.solo import draft_next
+
+    listings = {}
+    for root in roots:
+        state = json.loads((root / STATE).read_text(encoding="utf-8"))
+        listed = (discover or _discover)(state["command"], _environment(state, keychain))
+        listings[root] = (state, listed, govern(listed))
+    accepted: dict[Path, Accepted] = {}
+    with held(roots, wait=wait):
+        pins: dict[Path, list[dict[str, str]]] = {}
+        packs: dict[Path, Any] = {}
+        changed: dict[Path, tuple[str, ...]] = {}
+        for root, (state, listed, governed) in listings.items():
+            mandate = json.loads((root / "mandate.json").read_text(encoding="utf-8"))
+            label = str(mandate["subject"]["scope"]).removesuffix("-agent")
+            pack = _pack(
+                label,
+                (OWNER,),
+                governed.bindings,
+                governed.modes,
+                governed.schemas,
+                {},
+            )
+            developer = load_key(root / "keys" / "developer.key")
+            bindings = [
+                ToolBinding.from_json(raw, signed=False).signed(developer)
+                for raw in governed.bindings
+            ]
+            changed[root] = _write_bindings(root, bindings)
+            back_office = root / "back_office.db"
+            interlock = kit.interlock_toml(root, pack, back_office)
+            if any(m != "read" for m in governed.modes.values()):
+                interlock += _relay_toml(root, state["command"], governed.bindings)
+            (root / "interlock.toml").write_text(interlock, encoding="utf-8")
+            install_sqlite_outbox(back_office, pack.sinks, pack.sources)
+            write_pins(root, listed, governed.bindings)
+            with contextlib.suppress(FileNotFoundError):
+                (root / "drift.json").unlink()
+            pins[root] = sorted(
+                ({"name": b.name, "digest": b.digest} for b in bindings), key=lambda x: x["name"]
+            )
+            packs[root] = pack
+        with _opened(list(listings), None, wait) as fids:
+            drafts = {}
+            for root, fid in fids.items():
+                state_now = fid.log.state()
+                charter = fid._authority.decide.charter(state_now)
+                mandate_id = json.loads((root / "mandate.json").read_text())["mandate_id"]
+                head = fid._authority.decide.head_mandate(
+                    state_now, fid._lineage(state_now, mandate_id)
+                )
+                tools = head.body()["tools"]
+                drafts[root] = draft_next(
+                    head,
+                    charter,
+                    tools={**tools, "bindings": pins[root]},
+                    outbound=packs[root].outbound(),
+                    windows=packs[root].windows(),
+                )
+            signer = functools.partial(signer_for, passkey=passkey)
+            signed = _sign_grouped(fids, drafts, "the mandate's next version", signer, sign_all)
+            for root, document in signed.items():
+                fids[root]._authority.propose(document)
+            approvals = _sign_grouped(
+                fids,
+                {
+                    root: approval_draft(
+                        fids[root]._authority.decide.charter(fids[root].log.state()),
+                        OWNER,
+                        "mandate",
+                        document.digest,
+                    )
+                    for root, document in signed.items()
+                },
+                "approvals of the mandate's next version",
+                signer,
+                sign_all,
+            )
+            for root, document in signed.items():
+                fid = fids[root]
+                fid.log.store.submit(approvals[root].canonical())
+                fid.binder.issue(document.digest)
+                (root / "mandate.json").write_text(document.pretty())
+                _, _, governed = listings[root]
+                accepted[root] = Accepted(
+                    document.version,
+                    changed[root],
+                    tuple(governed.tools),
+                    tuple(governed.skipped),
+                )
+    return accepted
+
+
+def _sign_grouped(
+    fids: Mapping[Path, Fiduciary],
+    drafts: Mapping[Path, Any],
+    what: str,
+    signer_for: Callable[..., Any],
+    sign_all: Callable[..., list[Any]],
+) -> dict[Path, Any]:
+    """Each draft signed by its server's owner, servers that share an owner's key in one
+    batch: one touch, when that key is a passkey."""
+    groups: dict[str, tuple[Any, list[Path]]] = {}
+    for root in drafts:
+        signer = signer_for(fids[root], root, OWNER)
+        groups.setdefault(signer.key_id, (signer, []))[1].append(root)
+    out: dict[Path, Any] = {}
+    for signer, members in groups.values():
+        made = sign_all(signer, [drafts[r] for r in members], what=f"{what}: {len(members)}")
+        out.update(zip(members, made, strict=True))
+    return out
+
+
+def _write_bindings(root: Path, bindings: Sequence[ToolBinding]) -> tuple[str, ...]:
+    """Write ``bindings`` into ``tools/``; one whose file held another binding moves that
+    one to ``tools/retired/``, as does a binding no longer listed, and ``fiduciary.toml``
+    lists every file, retired ones too: an earlier version's plans cite them. Each
+    binding name that changed, was added or was retired."""
+    from fiduciary.documents import ToolBinding
+
+    tools = root / "tools"
+    retired = tools / "retired"
+    names = {b.name for b in bindings}
+    changed: list[str] = []
+    for binding in bindings:
+        path = tools / f"{binding.name}.tool.json"
+        if path.is_file():
+            old = ToolBinding.loads(path.read_bytes())
+            if old.digest == binding.digest:
+                continue
+            retired.mkdir(exist_ok=True)
+            os.replace(path, retired / f"{old.name}.{old.digest[:12]}.tool.json")
+        path.write_text(binding.pretty())
+        changed.append(binding.name)
+    for path in sorted(tools.glob("*.tool.json")):
+        old = ToolBinding.loads(path.read_bytes())
+        if old.name not in names:
+            retired.mkdir(exist_ok=True)
+            os.replace(path, retired / f"{old.name}.{old.digest[:12]}.tool.json")
+            changed.append(old.name)
+    listed = [str(p.resolve()) for p in sorted(tools.glob("*.tool.json"))]
+    listed += [str(p.resolve()) for p in sorted(retired.glob("*.tool.json"))]
+    config = root / "fiduciary.toml"
+    text = config.read_text(encoding="utf-8")
+    replaced, count = re.subn(
+        r"(?m)^(\[binding\]\n)tools = \[.*\]$",
+        lambda m: m[1] + "tools = " + json.dumps(listed),
+        text,
     )
-    (root / STATE).write_text((kept / STATE).read_text(encoding="utf-8"), encoding="utf-8")
-    os.chmod(root / STATE, 0o600)
-    return kept
+    if count != 1:
+        raise ProtectError(f"{config} has no [binding] tools list to rewrite")
+    config.write_text(replaced, encoding="utf-8")
+    return tuple(sorted(changed))
 
 
 def _environment(state: Mapping[str, Any], keychain: Keychain | None) -> dict[str, str]:
@@ -758,6 +1326,102 @@ def plan_messages(root: Path, plan_id: str) -> list[Any]:
     return [uuid.UUID(str(r[0])) for r in rows]
 
 
+class _Proxy:
+    """One protected server's proxy: the deployment it holds open, and the session, pins and
+    relay on it. It lets the deployment go when a command asks (:func:`held`), and opens it
+    again, with whatever that command changed, once it is done."""
+
+    def __init__(self, config: Path, upstream: Upstream) -> None:
+        self.config = config
+        self.root = config.resolve().parent
+        self.upstream = upstream
+        self.fid: Fiduciary | None = None
+        self.session: Session | None = None
+        self.guard: Guard | None = None
+        self.relay: Relay | None = None
+        self.mandate_id = ""
+        self.notes: list[str] = []
+        self.listed: list[dict[str, Any]] = []
+        """The tools last listed: what a client is shown while the proxy is aside."""
+        self.server: McpServer | None = None
+
+    def open(self) -> None:
+        from interlock.mcp import numbers_on_the_wire
+
+        from fiduciary.bridge import Fiduciary
+
+        fid = Fiduciary.from_config(self.config, bridged=True)
+        try:
+            mandate = json.loads((self.root / "mandate.json").read_text())
+            session = fid.session(mandate["subject"]["scope"], bridged=True)
+            guard = Guard(fid, session, self.upstream, self.root)
+            guard.notes = self.notes
+            bindings = guard.bindings()
+            for name, binding in bindings.items():
+                if binding.kind == "passthrough":
+                    fid.register(
+                        name,
+                        _numbered(
+                            self.upstream.handler(name, binding.upstream),
+                            binding.numbers,
+                            numbers_on_the_wire,
+                        ),
+                    )
+            relay = (
+                relay_for(self.root, self.upstream, bindings)
+                if any(b.kind == "plan" for b in bindings.values())
+                else None
+            )
+            guard.check()
+            if turns.closing(self.root):  # asked to close while no proxy held it
+                turns.close_file(fid, self.root, str(mandate["mandate_id"]))
+        except BaseException:
+            with contextlib.suppress(Exception):
+                fid.close()
+            raise
+        self.fid, self.session, self.guard, self.relay = fid, session, guard, relay
+        self.mandate_id = str(mandate["mandate_id"])
+        if self.server is not None:
+            self.server._session = session
+
+    def close(self) -> None:
+        if self.relay is not None:
+            with contextlib.suppress(Exception):
+                self.relay.close()
+        if self.fid is not None:
+            with contextlib.suppress(Exception):
+                self.fid.close()
+        self.fid = self.session = self.guard = self.relay = None
+
+    def tick(self) -> None:
+        """One turn between messages: step aside when asked, come back when the ask is gone,
+        and otherwise serve the deployment (warrants, closed turns, the relay)."""
+        from fiduciary.service import raise_triggers
+
+        if self.fid is None:
+            if asked_aside(self.root):
+                return
+            try:
+                self.open()
+            except Exception as exc:
+                if not _claimed(exc):
+                    raise
+                return  # another process holds it still: asked again next turn
+            self.notes.append("notifications/tools/list_changed")
+            return
+        if asked_aside(self.root):
+            self.close()
+            return
+        fid = self.fid
+        fid.serve_once()
+        if fid.outbox is not None:
+            raise_triggers(fid)
+        if turns.closing(self.root):
+            turns.close_file(fid, self.root, self.mandate_id)  # Claude Code stopped
+        if self.relay is not None:
+            self.relay.run_once()  # what a closed turn released, and any retry now due
+
+
 def serve(
     config: Path,
     reader: IO[bytes],
@@ -766,47 +1430,41 @@ def serve(
     keychain: Keychain | None = None,
 ) -> None:
     """Serve one client over stdio, in front of the protected server (module docstring)."""
-    from interlock.mcp import numbers_on_the_wire
-
-    from fiduciary.bridge import Fiduciary
     from fiduciary.mcp import McpServer, Upstream, serve_stdio
-    from fiduciary.service import raise_triggers
 
     root = config.resolve().parent
     state = json.loads((root / STATE).read_text(encoding="utf-8"))
     upstream = Upstream(state["command"], env=_environment(state, keychain))
-    fid = Fiduciary.from_config(config, bridged=True)
+    proxy = _Proxy(config, upstream)
+    gate = threading.RLock()
     try:
-        scope = json.loads((root / "mandate.json").read_text())["subject"]["scope"]
-        session = fid.session(scope, bridged=True)
-        guard = Guard(fid, session, upstream, root)
-        bindings = guard.bindings()
-        for name, binding in bindings.items():
-            if binding.kind == "passthrough":
-                fid.register(
-                    name,
-                    _numbered(
-                        upstream.handler(name, binding.upstream),
-                        binding.numbers,
-                        numbers_on_the_wire,
-                    ),
-                )
-        relay = (
-            relay_for(root, upstream, bindings)
-            if any(b.kind == "plan" for b in bindings.values())
-            else None
-        )
-        guard.check()
-        if turns.closing(root):  # asked to close while no proxy ran
-            turns.close_file(
-                fid, root, json.loads((root / "mandate.json").read_text())["mandate_id"]
-            )
+        if not asked_aside(root):
+            try:
+                proxy.open()
+            except Exception as exc:
+                if not _claimed(exc):
+                    raise
+        # With a command holding the deployment, the proxy starts aside (no session yet),
+        # and opens it once that command is done.
+        placeholder: Any = proxy.session
 
         class Protected(McpServer):
+            def tool_list(self) -> list[dict[str, Any]]:
+                if proxy.fid is None:
+                    return list(proxy.listed)
+                with proxy.fid.lock:
+                    proxy.listed = super().tool_list()
+                return list(proxy.listed)
+
             def _dispatch(
                 self, method: str, params: Mapping[str, Any], *, modern: bool = False
             ) -> dict[str, Any]:
-                if method == "tools/list" or method == "tools/call" or upstream.changed:
+                fid, session, guard = proxy.fid, proxy.session, proxy.guard
+                if fid is None or session is None or guard is None:
+                    if method == "tools/call":
+                        return {"content": [{"type": "text", "text": NOT_NOW}], "isError": True}
+                    return super()._dispatch(method, params, modern=modern)
+                if method == "tools/list" or method == "tools/call" or proxy.upstream.changed:
                     with fid.lock:
                         guard.check()  # before every call: a definition that moved is withheld
                 if method != "tools/call":
@@ -823,29 +1481,18 @@ def serve(
                 if found is not None and not result.ok:
                     turns.note_refused(root, f"{name} was refused")
                 return _answer(
-                    result, relay, root, turn=None if found is None else str(found["turn"])
+                    result, proxy.relay, root, turn=None if found is None else str(found["turn"])
                 )
 
             def drain(self) -> list[dict[str, Any]]:
-                notes = [{"jsonrpc": "2.0", "method": n} for n in guard.notes]
-                guard.notes.clear()
+                notes = [{"jsonrpc": "2.0", "method": n} for n in dict.fromkeys(proxy.notes)]
+                proxy.notes.clear()
                 return notes
 
-        mandate_id = json.loads((root / "mandate.json").read_text())["mandate_id"]
-
-        def turn() -> None:
-            fid.serve_once()
-            if fid.outbox is not None:
-                raise_triggers(fid)
-            if turns.closing(root):
-                turns.close_file(fid, root, mandate_id)  # Claude Code stopped: the hook asked
-            if relay is not None:
-                relay.run_once()  # what a closed turn released, and any retry now due
-
-        serve_stdio(Protected(session, lock=fid.lock), reader, writer, service=turn, lock=fid.lock)
+        proxy.server = Protected(placeholder, lock=gate)
+        serve_stdio(proxy.server, reader, writer, service=proxy.tick, lock=gate)
     finally:
-        with contextlib.suppress(Exception):
-            fid.close()
+        proxy.close()
         upstream.close()
 
 

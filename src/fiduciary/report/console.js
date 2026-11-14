@@ -2172,7 +2172,10 @@
       }).then(function (d) {
         // The passkey signs the charter version that makes it the principal's key.
         return assertWith(d.passkey, d.signing_input).then(function (assertion) {
-          return api("POST", base, { principal: name, charter: d.charter, key_id: d.key_id, assertion: assertion });
+          var body = { principal: name, charter: d.charter, key_id: d.key_id, assertion: assertion };
+          // The owner every protected server shares: one touch signs every server's charter.
+          if (d.charters) body.charters = d.charters;
+          return api("POST", base, body);
         });
       }).then(function (r) { PK.busy = null; PK.done = r; DESK.profileFor = null; refreshStatus(); render(); })
       .catch(function (e) { PK.busy = null; PK.error = e.message || String(e); render(); });
@@ -2190,7 +2193,7 @@
       h("p", { class: "small ink2" }, "Each principal signs with one key. A key file can be read by any program running as its owner, an agent's tools included. A passkey (Touch ID, Windows Hello, a security key) signs only when its owner touches it, and its private key never leaves the device."),
       rows.length ? table(["Principal", "Key", "Key id", ""], rows) : h("p", { class: "small muted" }, "The charter could not be read."),
       PK.error ? errorLine(PK.error) : null,
-      PK.done ? h("div", { class: "outcome good", role: "status" }, icon("check"), h("span", null, PK.done.principal + "'s key is now a passkey, in charter version " + PK.done.charter_version + (PK.done.adopted ? ", in force." : ", which waits for the other principals' approvals.") + (PK.done.retired ? " The old key file was moved to " + PK.done.retired + " and signs nothing here now." : ""))) : null);
+      PK.done ? h("div", { class: "outcome good", role: "status" }, icon("check"), h("span", null, PK.done.principal + "'s key is now a passkey, in charter version " + PK.done.charter_version + (PK.done.servers > 1 ? " here and on every other protected server (" + PK.done.servers + " in all)" : "") + (PK.done.adopted ? ", in force." : ", which waits for the other principals' approvals.") + (PK.done.retired ? " The old key file was moved to " + PK.done.retired + " and signs nothing here now." : ""))) : null);
   }
   function signWithSandbox(dep, t) {
     DESK.busy = true; DESK.error = null; DESK.result = null; render();

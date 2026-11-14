@@ -395,23 +395,29 @@ class Signature:
     alg: str = ALG
     authenticator_data: bytes | None = None
     client_data_json: bytes | None = None
+    batch: tuple[str, ...] = ()
+    """A passkey's path to the root it signed, when one touch signed a batch (1.17.0)."""
 
     def header(self) -> dict[str, str]:
         return {"alg": self.alg, "key_id": self.key_id}
 
-    def to_json(self) -> dict[str, str]:
-        out = {**self.header(), "signature": self.value.hex()}
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {**self.header(), "signature": self.value.hex()}
         if self.alg == webauthn.ALG:
             assert self.authenticator_data is not None and self.client_data_json is not None
             out["authenticator_data"] = self.authenticator_data.hex()
             out["client_data_json"] = self.client_data_json.hex()
+            if self.batch:
+                out["batch"] = list(self.batch)
         return out
 
     def assertion(self) -> webauthn.Assertion:
         """A passkey signature's parts. :raises SignatureError: On an Ed25519 one."""
         if self.authenticator_data is None or self.client_data_json is None:
             raise SignatureError("alg", "an Ed25519 signature is no passkey assertion")
-        return webauthn.Assertion(self.authenticator_data, self.client_data_json, self.value)
+        return webauthn.Assertion(
+            self.authenticator_data, self.client_data_json, self.value, self.batch
+        )
 
     @classmethod
     def from_json(cls, value: object, path: str = "$.sig") -> Signature:
@@ -421,7 +427,20 @@ class Signature:
                 value,
                 path,
                 ("alg", "key_id", "signature", "authenticator_data", "client_data_json"),
+                ("batch",),
             )
+            present = isinstance(value, dict) and "batch" in value
+            batch = fields.raw("batch") if present else ()
+            if present and (
+                not isinstance(batch, list)
+                or not 1 <= len(batch) <= webauthn.MAX_BATCH_PATH
+                or not all(isinstance(s, str) and webauthn.STEP.fullmatch(s) for s in batch)
+            ):
+                raise MalformedError(
+                    "fields",
+                    fields.path("batch"),
+                    "is a path of 1 to 8 steps, each l or r and the sibling's 64 hex",
+                )
             return cls(
                 key_id=fields.text("key_id", KEY_ID, "16 lowercase hex characters"),
                 value=bytes.fromhex(fields.text("signature", _DER, "a DER signature in hex")),
@@ -432,6 +451,7 @@ class Signature:
                 client_data_json=bytes.fromhex(
                     fields.text("client_data_json", _CLIENT_DATA, "16 to 4096 bytes")
                 ),
+                batch=tuple(batch),
             )
         fields = Fields(value, path, ("alg", "key_id", "signature"))
         if fields.raw("alg") != ALG:
@@ -481,6 +501,7 @@ def sign(kind: str, body: Mapping[str, Any], signer: Signer | webauthn.PasskeySi
             alg=webauthn.ALG,
             authenticator_data=made.authenticator_data,
             client_data_json=made.client_data_json,
+            batch=made.batch,
         )
         problem = signer.public_key().check(message, made)
         if problem is not None:

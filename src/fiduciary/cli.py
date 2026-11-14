@@ -7,6 +7,7 @@ Exit status: 0 on success; 1 when something is refused or does not verify;
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import shlex
@@ -1707,6 +1708,15 @@ def _deployment_config(args: argparse.Namespace) -> Path:
         _fail(f"{exc}; or give --config")
 
 
+def _aside(path: Path) -> contextlib.AbstractContextManager[None]:
+    """For a server ``fiduciary protect`` wraps, its running proxy steps aside while a
+    command changes its deployment (1.17.0); anything else, as it is."""
+    from fiduciary import protect
+
+    root = path.resolve().parent
+    return protect.held([root]) if (root / protect.STATE).is_file() else contextlib.nullcontext()
+
+
 def _solo(args: argparse.Namespace) -> int:
     """``fiduciary solo enforce`` and ``fiduciary solo add-principals`` (1.14.0)."""
     from fiduciary import solo
@@ -1715,13 +1725,17 @@ def _solo(args: argparse.Namespace) -> int:
 
     path = _deployment_config(args)
     try:
-        fid = _opened(Fiduciary.from_config(path))
-        if args.solo_command == "enforce":
-            grown = solo.enforce(fid, path.parent, mandate=args.mandate)
-        else:
-            grown = solo.add_principals(
-                fid, path.parent, args.names, mandate=args.mandate, enforce=args.enforce
-            )
+        with _aside(path):
+            fid = Fiduciary.from_config(path)
+            try:
+                if args.solo_command == "enforce":
+                    grown = solo.enforce(fid, path.parent, mandate=args.mandate)
+                else:
+                    grown = solo.add_principals(
+                        fid, path.parent, args.names, mandate=args.mandate, enforce=args.enforce
+                    )
+            finally:
+                fid.close()
     except (ConfigError, OSError, ValueError, FiduciaryError) as exc:
         _fail(str(exc), REFUSED)
     _out(
@@ -1802,7 +1816,7 @@ def _protect(args: argparse.Namespace) -> int:
 
 
 def _protect_review(protect: Any, servers: Sequence[Any], *, accept: bool) -> int:
-    changed = 0
+    drifted: dict[Path, str] = {}
     for server in servers:
         root = server.deployment
         if not server.protected or root is None:
@@ -1811,15 +1825,27 @@ def _protect_review(protect: Any, servers: Sequence[Any], *, accept: bool) -> in
         if not drifts:
             _out(f"unchanged   {server.name}: every tool is as pinned")
             continue
-        changed += 1
+        drifted[root.resolve()] = server.name
         for drift in drifts:
             _out(f"changed     {server.name} {drift.tool}:")
             for line in drift.lines:
                 _out(f"              {line}")
-        if accept:
-            kept = protect.reprotect(root)
-            _out(f"accepted    {server.name}: protected again; the old deployment is at {kept}")
-    return OK if accept or not changed else REFUSED
+    if accept and drifted:
+        owner = protect.Owner.serving(next(iter(drifted)))
+        if owner is not None and owner.passkey() is not None:
+            _err(
+                "fiduciary protect: the owner signs with a passkey: touch it twice, once to "
+                f"sign the new mandate versions of {noun(len(drifted), 'server')} and once to "
+                "approve them"
+            )
+        done = protect.accept(list(drifted))
+        for root, accepted in done.items():
+            _out(
+                f"accepted    {drifted[root]}: mandate version {accepted.version} pins what the "
+                f"server lists now ({', '.join(accepted.changed) or 'no binding changed'}); "
+                "its charter, keys and records are as they were"
+            )
+    return OK if accept or not drifted else REFUSED
 
 
 def _turn_command(args: argparse.Namespace) -> int:
@@ -1863,13 +1889,50 @@ def _turn_command(args: argparse.Namespace) -> int:
     return OK
 
 
+def _passkey_owner(owner: Any, args: argparse.Namespace) -> int:
+    """``fiduciary passkey add`` for the owner every protected server shares (1.17.0): one
+    passkey, made once, and one touch to make it the owner's key on every server."""
+    from fiduciary import passkeys, protect
+
+    try:
+        servers = owner.deployments()
+        if not servers:
+            raise protect.ProtectError(f"{owner.path.parent} holds no protected server")
+        _err(
+            f"fiduciary passkey: opening {args.origin} to make the owner's passkey, then once "
+            f"more to sign it in as the owner of {noun(len(servers), 'protected server')}"
+        )
+        made = passkeys.create(protect.OWNER, args.origin)
+        policy = passkeys.policy_for(
+            made.origin, any_port=args.any_port, credential=made.credential
+        )
+        done = protect.register_owner(owner, made.point, policy)
+    except (OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc), REFUSED)
+    for root, registered in done.registered.items():
+        _out(f"passkey     {root.name}: charter version {registered.charter_version}, adopted")
+    for root, why in done.skipped.items():
+        _out(f"skipped     {root.name}: {why}")
+    first = next(iter(done.registered.values()))
+    _out(f"owner       {first.key} (key {first.key_id}), for every server protected here")
+    if any(r.retired is not None for r in done.registered.values()):
+        retired = next(r.retired for r in done.registered.values() if r.retired is not None)
+        _out(f"            the owner's key file was moved to {retired} and signs nothing now")
+    return OK
+
+
 def _passkey(args: argparse.Namespace) -> int:
     """``fiduciary passkey add`` (1.17.0)."""
-    from fiduciary import passkeys
+    from fiduciary import passkeys, protect
     from fiduciary.bridge import Fiduciary
     from fiduciary.config import ConfigError
 
+    if args.protected:
+        return _passkey_owner(protect.Owner.under(args.root.expanduser()), args)
     path = _deployment_config(args)
+    owner = protect.Owner.serving(path.resolve().parent)
+    if owner is not None and args.principal in (None, protect.OWNER):
+        return _passkey_owner(owner, args)
     try:
         fid = _opened(Fiduciary.from_config(path))
         charter = fid._authority.decide.charter(fid.log.state())
@@ -2502,8 +2565,8 @@ def _parser() -> argparse.ArgumentParser:
             guard.add_argument(
                 "--accept",
                 action="store_true",
-                help="with --review: protect a server again from what it lists now (its old "
-                "deployment is kept beside the new one)",
+                help="with --review: accept what each server lists now, in a new version of "
+                "its mandate signed by the owner (its charter, keys, passkey and records are kept)",
             )
             guard.add_argument(
                 "--root",
@@ -2546,6 +2609,17 @@ def _parser() -> argparse.ArgumentParser:
         "--any-port",
         action="store_true",
         help="admit every port of http://localhost, for a console on a port of its own choosing",
+    )
+    add_passkey.add_argument(
+        "--protected",
+        action="store_true",
+        help="the owner of every server fiduciary protect wraps: one passkey for all of them",
+    )
+    add_passkey.add_argument(
+        "--root",
+        type=Path,
+        default=Path.home() / ".fiduciary" / "protect",
+        help="with --protected: where the servers' deployments are (~/.fiduciary/protect)",
     )
     add_passkey.set_defaults(handler=_passkey)
 

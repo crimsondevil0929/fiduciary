@@ -47,6 +47,7 @@ def test_every_vector_gets_the_answer_it_records(case: dict[str, Any]) -> None:
         bytes.fromhex(sig["authenticator_data"]),
         bytes.fromhex(sig["client_data_json"]),
         bytes.fromhex(sig["signature"]),
+        tuple(sig.get("batch", ())),
     )
     problem = key.check(bytes.fromhex(case["message"]), assertion)
     if case["expect"] is None:

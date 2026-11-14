@@ -52,7 +52,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
-from fiduciary import __version__, fidu1, webauthn
+from fiduciary import __version__, fidu1, protect, webauthn
 from fiduciary.documents import Approval, Charter, Record, Ticket, Warrant, loads
 from fiduciary.exceptions import FiduciaryError
 from fiduciary.log import LOG_ID
@@ -841,6 +841,10 @@ class ConfiguredDeployment(Deployment):
             raise _bad(str(exc)) from exc
         if len(point) != 64:
             raise _bad("point is a P-256 point: 64 bytes, x then y, in hex")
+        key = webauthn.PasskeyKey(point, policy)
+        owner = protect.Owner.serving(self.config_path.parent)
+        if owner is not None and principal == protect.OWNER:
+            return self._owner_draft(owner, key)
         with self.lock:
             fid = Fiduciary.from_config(self.config_path)
             try:
@@ -849,13 +853,94 @@ class ConfiguredDeployment(Deployment):
                 raise _bad(str(exc)) from exc
             finally:
                 fid.close()
-        key = webauthn.PasskeyKey(point, policy)
         header = {"alg": webauthn.ALG, "key_id": key.key_id}
         return {
             "charter": draft.to_json(),
             "key_id": key.key_id,
             "passkey": policy.to_json(),
             "signing_input": fidu1.signing_input("charter", draft.body(), header).hex(),
+        }
+
+    def _owner_draft(self, owner: Any, key: webauthn.PasskeyKey) -> dict[str, Any]:
+        """The owner every protected server shares: each server's charter's next version,
+        and the one challenge (a batch's root) that signs them all with one touch."""
+        from fiduciary import protect
+
+        try:
+            with self.lock, protect._opened(owner.deployments(), None, protect.ASIDE_WAIT) as fids:
+                drafts, skipped = protect.owner_drafts(fids, key)
+        except FiduciaryError as exc:
+            raise ControlError(409, str(exc)) from exc
+        here = self.config_path.parent.resolve()
+        if here not in drafts:
+            raise _bad(skipped.get(here, "this server cannot take the passkey"))
+        header = {"alg": webauthn.ALG, "key_id": key.key_id}
+        inputs = [fidu1.signing_input("charter", d.body(), header) for d in drafts.values()]
+        challenge = webauthn.batch_paths(inputs)[0] if len(inputs) > 1 else inputs[0]
+        assert key.policy is not None
+        return {
+            "charter": drafts[here].to_json(),
+            "charters": [
+                {"config": str(root / "fiduciary.toml"), "charter": d.to_json()}
+                for root, d in drafts.items()
+            ],
+            "key_id": key.key_id,
+            "passkey": key.policy.to_json(),
+            "signing_input": challenge.hex(),
+        }
+
+    def _owner_register(self, payload: Mapping[str, Any], owner: Any) -> dict[str, Any]:
+        """Every charter :meth:`_owner_draft` gave, signed by the one assertion over their
+        batch: each gets its path, its server's owner key approves it, and it is adopted."""
+        from fiduciary import protect
+        from fiduciary.documents import Charter
+
+        listed = payload.get("charters")
+        assertion = payload.get("assertion")
+        key_id = _text(payload, "key_id")
+        if not isinstance(listed, list) or not listed or not isinstance(assertion, Mapping):
+            raise _bad("charters (the drafts) and assertion are required")
+        mine = {r.resolve() for r in owner.deployments()}
+        drafts: dict[Path, Charter] = {}
+        for item in listed:
+            config = item.get("config") if isinstance(item, Mapping) else None
+            raw = item.get("charter") if isinstance(item, Mapping) else None
+            root = Path(str(config)).resolve().parent
+            if not isinstance(raw, Mapping) or root not in mine or root in drafts:
+                raise _bad("each charter names a server of this owner, once")
+            try:
+                drafts[root] = Charter.from_json(dict(raw), signed=False)
+            except FiduciaryError as exc:
+                raise _bad(f"charter: {exc}") from exc
+        header = {"alg": webauthn.ALG, "key_id": key_id}
+        inputs = [fidu1.signing_input("charter", d.body(), header) for d in drafts.values()]
+        paths = webauthn.batch_paths(inputs)[1] if len(inputs) > 1 else [()]
+        sig = _passkey_sig(key_id, assertion)
+        try:
+            signed = {
+                root: Charter.from_json(
+                    {**d.to_json(), "sig": {**sig, **({"batch": list(path)} if path else {})}},
+                    signed=True,
+                )
+                for (root, d), path in zip(drafts.items(), paths, strict=True)
+            }
+            first = next(iter(signed.values())).principal(protect.OWNER)
+            assert first is not None and first.webauthn is not None
+            key = webauthn.PasskeyKey.parse(first.key, first.webauthn)
+            with self.lock, protect._opened(list(signed), None, protect.ASIDE_WAIT) as fids:
+                done = protect.owner_finish(fids, signed)
+        except FiduciaryError as exc:
+            raise ControlError(422, str(exc)) from exc
+        owner.adopt(key)
+        here = done[self.config_path.parent.resolve()]
+        retired = next((d.retired for d in done.values() if d.retired is not None), None)
+        return {
+            "principal": here.principal,
+            "key_id": here.key_id,
+            "charter_version": here.charter_version,
+            "adopted": all(d.adopted for d in done.values()),
+            "retired": None if retired is None else str(retired),
+            "servers": len(done),
         }
 
     def passkey_register(self, payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -866,6 +951,9 @@ class ConfiguredDeployment(Deployment):
         from fiduciary.documents import Charter
 
         principal = _text(payload, "principal")
+        owner = protect.Owner.serving(self.config_path.parent)
+        if owner is not None and principal == protect.OWNER and "charters" in payload:
+            return self._owner_register(payload, owner)
         raw = payload.get("charter")
         assertion = payload.get("assertion")
         if not isinstance(raw, Mapping) or not isinstance(assertion, Mapping):

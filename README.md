@@ -93,13 +93,17 @@ fiduciary protect --claude-desktop --apply     # or --cursor, or --mcp-config .m
 ```
 
 Each local MCP server in the client's file is then started through `fiduciary mcp proxy
---protected`, behind a solo deployment of its own in `~/.fiduciary/protect/`:
+--protected`, behind a deployment of its own in `~/.fiduciary/protect/`. Every server there
+has the same owner, you:
 
 - **Pinned tools.** Each tool's whole definition (its name, title, description, schemas and
   annotations) is hashed into its signed binding. The proxy lists the server's tools again
   before every call. A tool whose definition changed is withheld, the client is told its
   tool list changed, and `fiduciary protect --review` shows the change field by field. A
   read-only tool that turns into a write is caught the same way. This holds in shadow mode.
+  When you have read the change, `fiduciary protect --review --accept` pins what the server
+  lists now, in the next version of its mandate. Its history, its records and your passkey
+  stay as they were, and the client keeps running.
 - **Pinned versions.** `npx -y some-server` becomes `npx -y some-server@<the version
   published now>`, and `uvx` likewise, so the code that runs is the code that was pinned.
 - **Writes that answer.** A write the mandate lets through is made at once, in the proxy, and
@@ -118,10 +122,13 @@ its private key never leaves the device.
 
 ```bash
 fiduciary passkey add          # makes one in the browser; the old key file moves to keys/retired/
+fiduciary passkey add --protected   # the owner of every server fiduciary protect wraps
 fiduciary console --accept-approvals --open
 ```
 
-The charter's next version holds the passkey, signed by the passkey itself. From then on a
+The charter's next version holds the passkey, signed by the passkey itself. For the servers
+`fiduciary protect` wraps, one touch signs every server's charter at once, and a server you
+protect later starts with the same passkey. From then on a
 held write is approved with a touch ("Approve with my passkey"), and `fiduciary solo
 enforce` asks for one. An auditor checks each passkey signature offline, in `fiduciary
 verify-bundle` and in the browser: the right document, an origin the charter admits, a user

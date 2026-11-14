@@ -63,6 +63,18 @@ class LiveClock(Clock):
         self._offset += timedelta(**delta)
 
 
+@pytest.fixture(autouse=True)
+def no_real_browser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test opens the browser on the machine it runs on: a passkey page a test did not
+    answer itself fails it at once, instead of waiting for a touch no one gives."""
+    import webbrowser
+
+    def refuse(url: str, *args: object, **kwargs: object) -> bool:
+        raise AssertionError(f"a test opened a real browser at {url}: answer the page itself")
+
+    monkeypatch.setattr(webbrowser, "open", refuse)
+
+
 @pytest.fixture
 def clock() -> Clock:
     return Clock(e.at("2026-10-18T10:10:00"))

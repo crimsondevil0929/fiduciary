@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from fiduciary.documents import Charter, Mandate
     from fiduciary.webauthn import PasskeySigner
 
-__all__ = ["Grown", "add_principals", "enforce"]
+__all__ = ["Grown", "add_principals", "draft_next", "enforce"]
 
 QUORUMS = {
     "amend": 2,
@@ -139,6 +139,17 @@ def _next(
 ) -> Grown:
     """Issue version n+1 of ``head``'s lineage with ``changes``, approved by ``approvers``,
     and rebind it."""
+    draft = draft_next(head, charter, **changes).signed(signer)
+    fid._authority.propose(draft)
+    for principal, key in approvers:
+        _approve(fid, charter, principal, key, "mandate", draft.digest)
+    fid.binder.issue(draft.digest)
+    return Grown(draft.mandate_id, draft.version, draft.digest, charter.version)
+
+
+def draft_next(head: Mandate, charter: Charter, **changes: Any) -> Mandate:
+    """Version n+1 of ``head``'s lineage with ``changes``, under ``charter``, unsigned.
+    ``enforcement=None`` drops shadow mode."""
     from fiduciary.documents import Mandate
 
     body = head.body()
@@ -155,14 +166,9 @@ def _next(
             **changes,
         }
     )
-    if changes.get("enforcement") is None:
+    if "enforcement" in changes and changes["enforcement"] is None:
         body.pop("enforcement", None)
-    draft = Mandate.from_json(body, signed=False).signed(signer)
-    fid._authority.propose(draft)
-    for principal, key in approvers:
-        _approve(fid, charter, principal, key, "mandate", draft.digest)
-    fid.binder.issue(draft.digest)
-    return Grown(draft.mandate_id, draft.version, draft.digest, charter.version)
+    return Mandate.from_json(body, signed=False)
 
 
 def enforce(

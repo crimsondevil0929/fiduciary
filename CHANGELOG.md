@@ -18,16 +18,24 @@ charter, binding, mandate and bundle written before verifies as it did.
 - **`fiduciary protect`** puts a proxy in front of each stdio MCP server in Claude Desktop's
   file (`--claude-desktop`), Cursor's (`--cursor`) or any other (`--mcp-config FILE`: Claude
   Code's `.mcp.json`, VS Code's `.vscode/mcp.json`). Without `--apply` it says what it would do.
-  Each server gets a solo deployment of its own under `~/.fiduciary/protect/`, and its entry
+  Each server gets a deployment of its own under `~/.fiduciary/protect/`, and its entry
   runs this installation's `fiduciary` by absolute path. `fiduciary unprotect` (or `--undo`)
   puts every entry back as it was.
+  - **One owner for every server.** All the servers under one root share their owner: one
+    key file, until one passkey replaces it on every server at once, with one touch. A
+    server protected after that starts with the passkey (one touch for every server
+    protected in that run).
   - **Pins.** Each tool's whole definition (name, title, description, input and output
     schemas, annotations) is hashed into its signed binding. The proxy lists the server's
     tools when it starts, before every call, and when the server says its list changed; a
     tool whose definition moved is withheld, the client is told its tool list changed, and
-    `fiduciary protect --review` shows the change field by field (`--accept` protects the
-    server again from what it lists now, and keeps the old deployment). Pins hold in shadow
-    mode too.
+    `fiduciary protect --review` shows the change field by field. `--accept` signs the
+    changed bindings again and issues the mandate's next version pinning them, signed by the
+    owner: its charter, its passkey, its log and every record are kept, and a passkey
+    signs every server accepted at once with two touches. Pins hold in shadow mode too.
+  - **No restart.** A command that changes a protected server's deployment (`--accept`, a
+    passkey, `fiduciary solo`) asks its running proxy to step aside; the proxy answers
+    calls with "call it again in a moment" meanwhile, and comes back with the change.
   - **Versions.** `npx -y pkg` is pinned to `pkg@<the version published now>`, `uvx pkg` to
     `pkg==<version>`.
   - **One process, and the server's own answer.** A write the mandate lets through is made at
@@ -51,8 +59,10 @@ charter, binding, mandate and bundle written before verifies as it did.
   - Verified offline in `verify.py` and in the browser (`verify.js`, a new `passkeys` check):
     the challenge is the document's signing input, the origin is one the charter admits, the
     relying party is the charter's, the user was present and verified, and the P-256
-    signature verifies. Fourteen golden vectors (`vectors/fidu1/webauthn.json`), tampered
-    cases among them, get the same answer in both.
+    signature verifies. One touch can sign several documents: a batch, whose challenge is
+    the root of a Merkle tree over their signing inputs, each signature carrying its path.
+    Twenty-two golden vectors (`vectors/fidu1/webauthn.json`), tampered cases and batches
+    among them, get the same answer in both.
 - **Turns.** `with gov.turn():` around a turn of your agent loop, or a framework's run: every
   request the calls in it enqueue waits, held, and is made only if every call committed; a
   refused call or an exception cancels them all. A `turn.closed` record says which, and the

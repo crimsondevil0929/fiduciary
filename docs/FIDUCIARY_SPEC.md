@@ -367,8 +367,16 @@ calling it, because it depends on no private name.
   `authenticatorData` begins with SHA-256 of the relying party's id and its flags say the
   user was present (UP) and verified (UV); and when the P-256 signature verifies over
   `authenticatorData ‖ SHA-256(clientDataJSON)`. The counter is not checked: synced
-  passkeys report zero. Golden vectors: `vectors/fidu1/webauthn.json`, held in Python and in
-  the browser's checks alike.)
+  passkeys report zero. One touch may sign several documents (a batch): each document's
+  signing input is a leaf of a Merkle tree, `SHA-256(00 ‖ input)`, a node is
+  `SHA-256(01 ‖ left ‖ right)`, an odd last node is carried up a level as it is, and the
+  challenge is `FIDU1/webauthn-batch/v1\n` followed by the root. Each document's signature
+  then carries `batch`, its path to the root: 1 to 8 steps, each `l` or `r` (the side the
+  sibling is on) and the sibling's 64 hex. It is not part of the signing input: a path that
+  is not the document's leads to another root, and the challenge no longer matches. No FIDU1
+  signing input begins as a batch's challenge does. Golden vectors:
+  `vectors/fidu1/webauthn.json`, 22 cases, 8 of them batches, held in Python and in the
+  browser's checks alike.)
 - **F3-3.** Every signature is Ed25519, or (1.17.0, F3-2) a principal's passkey's. A
   document whose `sig.alg` is anything else is malformed. HMAC is refused outright, because whoever verifies an HMAC holds the secret and
   can forge it:
@@ -498,7 +506,9 @@ version 1, as interlock's configuration pins `[operators.keys]`.
   verification). Only a passkey's key has it, so every charter before it keeps its digest.
   A charter version that makes a principal's key a passkey is signed by that passkey (a
   charter is signed by one of its own principals) and approved as any version is
-  (`fiduciary passkey add`, or the console).
+  (`fiduciary passkey add`, or the console). The servers `fiduciary protect` wraps under one
+  root share one owner (F8-7c), so its passkey is registered on all of them at once: one
+  batch (F3-2), one touch.
 - **F4-2.** `deployment.ledger` is the hash of AgentGov entry 1: the same value agentgov's
   published ledger checkpoints name (`agentgov-ledger:<hash>`). Every document under the
   charter is bound to that ledger through it. A charter, mandate, ticket or approval from
@@ -1771,6 +1781,23 @@ billing scope. It is recorded (`session.opened`) before its first call.
   deployment's `drift.json`. This holds in shadow mode too. A write the mandate lets through
   is delivered at once, in the proxy, through Interlock's relay (`Relay.deliver`), and the
   server's own answer is returned; a held write returns the hold.
+- **F8-7c.** *Added in 1.17.0.* The servers `fiduciary protect` wraps under one root share
+  one owner: one key file (`owner/owner.key`) that every server's charter names, until one
+  passkey replaces it on every server at once, with one touch (F4-1a); the key file then
+  moves to `owner/retired/`. A server protected after that starts with a key of its own, and
+  its charter's next version names the passkey at once, with one touch for every server
+  protected in that run; its own key is retired. Accepting what a server lists now
+  (`fiduciary protect --review --accept`) keeps its deployment: each changed tool's binding
+  is signed again with the deployment's developer key, a binding no longer pinned stays
+  listed (under `tools/retired/`, so the plans that cite it still verify), the outbox's
+  sink and `interlock.toml` follow the tools that write, and the mandate's next version pins
+  the new bindings, signed and approved by the owner (two touches for every server accepted
+  at once, when the owner's key is a passkey). The charter, its keys, the log and every
+  record are kept. A command that changes a protected deployment (accepting, a passkey,
+  `fiduciary solo`) writes `step-aside.json` there; the running proxy closes the deployment
+  on its next turn, answers each call meanwhile with a refusal that asks to call again, and
+  opens it again, with what changed, once the file is gone. An ask whose process is gone, or
+  older than 15 minutes, is dropped.
 - **F8-7b.** *Added in 1.17.0.* The bridge speaks MCP 2026-07-28 to a request that carries
   its revision in `_meta` (no `initialize`; `server/discover`; `resultType` and the server's
   name on every result; an unknown revision is answered `-32022` with the revisions spoken)
@@ -2957,11 +2984,12 @@ SQLite and on PostgreSQL. The test kinds:
 | F2-1, F2-2, G1: no ambient authority | 3, 5 | V7 ambient-injection tests; soak | Implemented. `test_bundle_checks.py`, `test_soak.py` |
 | F3-1: strict decoding | 1 | golden; per-field mutation sweep | Implemented. `test_vectors.py`, `test_fidu1.py`, `test_documents.py` |
 | F3-2 to F3-8: framing; Ed25519 only; inputs ≤ 96 bytes; KMS | 1 | golden signing inputs; fake KMS and fake key service; HMAC refused | Implemented. `test_signers.py`, `test_vectors.py` |
-| F3-2 (1.17.0): passkey keys, one construction per key type, the three WebAuthn steps | 1 | 14 golden passkey vectors in Python and in Node's Web Crypto; a solo owner's passkey; the console's | Implemented. `test_webauthn.py`, `test_passkeys.py` |
+| F3-2 (1.17.0): passkey keys, one construction per key type, the three WebAuthn steps, batches | 1 | 22 golden passkey vectors (8 batches) in Python and in Node's Web Crypto; a solo owner's passkey; the console's; one touch for several servers | Implemented. `test_webauthn.py`, `test_passkeys.py`, `test_owner.py` |
 | F4-1a: a passkey's policy in the charter | 1 | charters with and without one; malformed policies | Implemented. `test_webauthn.py` |
 | F4-16c: `numbers`, `pin`, `upstream` | 1 | a camelCase tool with number arguments, protected | Implemented. `test_protect.py` |
 | F8-7a: pins held by a protected proxy; writes answered in the call | 1 | a server that changes a description and flips `readOnlyHint` mid-session | Implemented. `test_protect.py` |
 | F8-7b: MCP 2026-07-28 and older revisions | 1 | modern and legacy clients and servers | Implemented. `test_protect.py`, interlock `test_wave15.py` |
+| F8-7c: one owner per protect root; accepting in place; a running proxy steps aside | 1 | three servers, one touch to register, two to accept two servers; a proxy that runs throughout; the console | Implemented. `test_owner.py` |
 | F7-17, V7 (1.17.0): a turn's release and cancel, held to its `turn.closed` record | 1 | a released and a cancelled turn, then the bundle verified | Implemented. `test_turns.py` |
 | F3-9: ILOK1 sizes under KMS | 3 | executor guard test, both ways; chunking test; the measured table, regenerated by script; with U-2, an operator record of any size through KMS | Implemented where U-2 is installed; else the refusal. `test_executor.py`, `test_ilok1_sizes.py` |
 | F4-1 to F4-6: the charter | 1 | golden; property: adoption and suspension quorums | Implemented. `test_authority.py`, `test_vectors.py` |
