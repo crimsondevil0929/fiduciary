@@ -771,7 +771,7 @@ fiduciary verify-bundle lineage.fidb --charter {charter} --keys pinned-keys.json
 `verify-bundle` needs no database and no network. `pinned-keys.json` holds this
 deployment's public keys and `charter.digest` the charter's digest, so the bundle is
 checked against them and not against the keys it carries. Neither holds a secret: hand them
-to an auditor once, apart from any bundle, and then each bundle alone. It checks V1 to V13 and
+to an auditor once, apart from any bundle, and then each bundle alone. It checks V1 to V14 and
 exits 0 when the bundle passes. Drop the bundle on the console's Verify page to check it in
 a browser. A system that keeps its own log of writes (Stripe, SendGrid, Kubernetes, FHIR,
 GitHub) can be matched against the bundle with `fiduciary reconcile-actions lineage.fidb

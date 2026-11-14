@@ -351,7 +351,7 @@ fiduciary verify-bundle desk.fidb \
   --charter "$(cat desk/charter.digest)" --keys desk/pinned-keys.json
 ```
 
-The verifier checks V1 to V13: the container, the charter you pinned, the delegation, the
+The verifier checks V1 to V14: the container, the charter you pinned, the delegation, the
 compiled policy, every receipt, the ledger, that every act traces to a mandate or a warrant,
 that the warrant had its quorum, the ordering in time, and that no plan made after the agent
 read untrusted input skipped the approval its mandate asked for. It ends `PASS`. Drop

@@ -206,3 +206,77 @@ def test_an_undo_whose_digests_are_not_its_commits_fails_v14(project: Path) -> N
     if browser:
         assert browser["checks"].get("undo") == "fail"
         assert any("are not the ones its commit names" in f for f in browser["failing"])
+
+
+def test_fiduciary_undo_puts_a_plan_back_by_the_owners_warrant(
+    project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with fiduciary.open() as gov:
+        close_ticket, _ = _govern(gov)
+        close_ticket(ticket_id=2)
+        (plan_id,) = [o for o in _committed_plans(project)]
+    assert tickets(project)[1] == (2, "closed")
+    config = str(project / ".fiduciary" / "fiduciary.toml")
+    assert cli.main(["--config", config, "undo", plan_id]) == 0
+    said = capsys.readouterr().out
+    assert "1 change put back exactly as it was" in said and "undone      plan" in said
+    assert tickets(project) == ROWS
+    (record,) = records(project, "plan.undone")
+    assert record["plan_id"] == plan_id and record["why"].startswith("FIDU1 warrant ")
+    # asked again: the plan's images are still kept, but the rows no longer hold its after
+    # image, so the undo is not exact and is refused
+    assert cli.main(["--config", config, "undo", plan_id]) == 1
+    assert "not undone" in capsys.readouterr().err
+    assert cli.main(["--config", config, "undo", "plan-nothing"]) == 1
+    assert "nothing is kept to undo plan plan-nothing" in capsys.readouterr().err
+    code, browser = _verdicts(project, "warranted")
+    assert code == 0
+    if browser:
+        assert browser["checks"].get("undo") == "pass"
+
+
+def _committed_plans(project: Path) -> list[str]:
+    """Every plan the lineage's escrow chain committed, in order."""
+    from interlock.chain import EscrowChain, RecordType
+
+    chains = sorted((project / ".fiduciary" / "chains").glob("*.chain"))
+    found: list[str] = []
+    for path in chains:
+        chain = EscrowChain.load(path)
+        found += [str(r.plan_id) for r in chain.records() if r.record_type is RecordType.COMMITTED]
+    return found
+
+
+def test_the_console_asks_an_undo_and_the_owner_approves_it_on_the_desk(
+    project: Path, tmp_path: Path
+) -> None:
+    from fiduciary.control import ConfiguredDeployment, ControlError
+    from fiduciary.keys import load_key
+
+    with fiduciary.open() as gov:
+        close_ticket, _ = _govern(gov)
+        close_ticket(ticket_id=1)
+    root = project / ".fiduciary"
+    desk = ConfiguredDeployment("d", root / "fiduciary.toml", scratch=tmp_path, accepts=True)
+    try:
+        (row,) = [r for r in desk.profile()["receipts"] if r.get("plan_id")]
+        asked = desk.undo({"plan_id": row["plan_id"]})
+        assert asked["changes"] == 1 and asked["cannot"] == []
+        with pytest.raises(ControlError, match="nothing is kept"):
+            desk.undo({"plan_id": "plan-unknown"})
+        vote = desk.draft({"ticket_id": asked["ticket_id"], "principal": "owner", "option": "undo"})
+        key = load_key(root / "keys" / "owner.key")
+        signature = key.sign(bytes.fromhex(vote["signing_input"])).hex()
+        queued = desk.accept(
+            {"approval": vote["approval"], "key_id": vote["key_id"], "signature": signature}
+        )
+        assert queued["intake"] > 0
+    finally:
+        desk.close()
+    fid = Fiduciary.from_config(root / "fiduciary.toml")
+    try:
+        fid.serve_once()  # the writer records the approval, forms the warrant, executes it
+    finally:
+        fid.close()
+    assert tickets(project) == ROWS
+    assert len(records(project, "plan.undone")) == 1

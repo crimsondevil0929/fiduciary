@@ -42,10 +42,8 @@ DESCRIPTION: Final = (
 
 COPY: Final[dict[str, Any]] = {
     "badge": {
-        "version": "1.17",
-        "text": (
-            "Pins for every MCP server your desktop client runs, and one passkey for all of them"
-        ),
+        "version": "1.18",
+        "text": "Undo: a committed plan put back exactly, and a failed turn put back",
         "href": REPO + "fiduciary/blob/main/CHANGELOG.md",
     },
     "headline": "Let AI agents change real systems. Keep only the changes you approved.",
@@ -196,8 +194,8 @@ COPY: Final[dict[str, Any]] = {
             ],
             [
                 "Prove",
-                "Every decision is a signed record. An auditor runs all thirteen checks (V1 to "
-                "V13) on an exported bundle, offline, with public keys you gave them separately. "
+                "Every decision is a signed record. An auditor runs all fourteen checks (V1 to "
+                "V14) on an exported bundle, offline, with public keys you gave them separately. "
                 "They need no access to your systems.",
             ],
         ],

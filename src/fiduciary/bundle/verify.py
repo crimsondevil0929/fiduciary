@@ -1183,6 +1183,20 @@ class _Checks:
                 self.add("V8", "authority", f"{where}: its anchor and reset are not in the ledger")
         elif kind == "accept_repair" and str(result.get("record")) not in committed:
             self.add("V8", "authority", f"{where}: the repair's commit is not in the escrow chain")
+        elif kind == "undo":
+            # 1.18.0: the undo committed, and its plan.undone record says this warrant made it
+            undone = self.by_seq.get(int(result.get("undone", 0)))
+            if str(result.get("record")) not in committed:
+                self.add(
+                    "V8", "authority", f"{where}: the undo's commit is not in the escrow chain"
+                )
+            elif (
+                undone is None
+                or undone.kind != "plan.undone"
+                or undone.content.get("why") != reason
+                or undone.content.get("plan_id") != step.get("plan_id")
+            ):
+                self.add("V8", "authority", f"{where}: no plan.undone record of this warrant's")
 
     # -- V11 revocation ----------------------------------------------------------------
 

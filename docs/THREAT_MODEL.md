@@ -66,9 +66,15 @@ session, over MCP or in process.
   its own writes on every server. And a program running as you can write `step-aside.json`
   into a deployment to make its proxy refuse calls for up to 15 minutes at a time; that
   stops the agent, and lets nothing through.
-- **What a turn's committed calls changed.** A refused call cancels the turn's requests; the
-  rows and files its earlier calls changed stay changed. Claude Desktop and Cursor give a
-  server no turn boundary, so turns there are not available.
+- **What a turn's committed calls changed.** A refused call cancels the turn's requests and
+  (1.18.0) puts back what its earlier calls changed, but only exactly: a row someone changed
+  in the meantime stays as it is, and a request already sent with no compensation stays sent.
+  Claude Desktop and Cursor give a server no turn boundary, so turns there are not available.
+- **What an undo keeps.** To undo a commit, each commit's before and after images are kept for
+  a week in the system it changed (a table in the same database, copies beside the workspace).
+  Whoever can read that system can read them there, for that long: a deleted row is still there
+  until its window ends. Set `[undo] days` shorter, or remove it, where that matters. The audit
+  log and bundles hold only keyed digests of them.
 
 ## The four measurement classes
 

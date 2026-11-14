@@ -1417,12 +1417,26 @@ class Session:
             )
         try:
             if arguments["kind"] == "undo":
+                from interlock.undo import changes_hash
+
                 plan_id = arguments.get("plan_id")
                 outbox = self._fid._outbox
-                if plan_id is None or plan_id not in self._committed or outbox is None:
+                # 1.18.0: what the plan's commit kept is put back too, when it kept anything
+                kept = self._engine().kept(str(plan_id)) if plan_id is not None else None
+                if (
+                    plan_id is None
+                    or plan_id not in self._committed
+                    or (outbox is None and kept is None)
+                ):
                     return CallResult(name, "error", "An undo names a plan this session committed.")
                 ticket, warrant = escalation.raise_undo(
-                    self.mandate_id, outbox, str(plan_id), statement=statement
+                    self.mandate_id,
+                    outbox,
+                    str(plan_id),
+                    statement=statement,
+                    kept=None
+                    if kept is None
+                    else (changes_hash(kept.digests()), len(kept.changes)),
                 )
             else:
                 proposed = self._proposed(arguments.get("mandate"))

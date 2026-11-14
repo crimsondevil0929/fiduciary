@@ -35,7 +35,7 @@ import re
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Final
 
 from agentgov.exceptions import AgentGovError
 from interlock.deliveries import OUTCOMES, OutboxOperations
@@ -96,6 +96,10 @@ if TYPE_CHECKING:
 __all__ = ["Escalation", "EscalationError", "clip_statement"]
 
 _CONTROLS = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+UNSENT: Final = ("pending", "held", "retryable")
+"""The states of a request not sent yet: an undo cancels it (1.18.0)."""
 
 
 class EscalationError(FiduciaryError):
@@ -592,19 +596,34 @@ class Escalation:
     def raise_undo(
         self,
         mandate_id: str,
-        outbox: OutboxOperations,
+        outbox: OutboxOperations | None,
         plan_id: str,
         *,
         statement: str | None = None,
         ticket_id: str | None = None,
+        kept: tuple[str, int] | None = None,
+        partial: bool = False,
     ) -> tuple[Ticket | None, Warrant | None]:
-        """Raise an ``undo`` ticket for the compensable delivered messages of ``plan_id`` (§7.1)."""
-        compensables = outbox.compensables(plan_id)
+        """Raise an ``undo`` ticket for the compensable delivered messages of ``plan_id`` (§7.1).
+
+        With ``kept`` (1.18.0: the hash and count of the change digests its commit kept), the
+        ticket puts the plan back too: its option is an ``undo``, which also compensates its
+        delivered requests and cancels those not sent yet. A request sent with nothing to undo
+        it refuses the ticket, unless ``partial`` says to undo the rest and name it.
+
+        :raises EscalationError: When there is nothing to undo, or (without ``partial``) a
+            request that cannot be.
+        """
+        compensables = outbox.compensables(plan_id) if outbox is not None else []
         eligible = [
             c
             for c in compensables
             if c.state == "delivered" and c.compensation is not None and c.compensated_by is None
         ]
+        if kept is not None:
+            return self._raise_undo_plan(
+                mandate_id, plan_id, kept, compensables, eligible, statement, ticket_id, partial
+            )
         if not eligible:
             raise EscalationError(f"plan {plan_id!r} has no compensable delivered messages")
         now = self.log.now()
@@ -638,6 +657,74 @@ class Escalation:
             resolutions,
             statement=statement,
             ticket_id=ticket_id,
+        )
+
+    def _raise_undo_plan(
+        self,
+        mandate_id: str,
+        plan_id: str,
+        kept: tuple[str, int],
+        compensables: Sequence[Any],
+        eligible: Sequence[Any],
+        statement: str | None,
+        ticket_id: str | None,
+        partial: bool,
+    ) -> tuple[Ticket | None, Warrant | None]:
+        """An ``undo`` ticket whose option puts the plan back (1.18.0)."""
+        now = self.log.now()
+        pending = sorted(
+            (c for c in compensables if c.state in UNSENT),
+            key=lambda c: str(c.message_id),
+        )
+        cannot = sorted(
+            (str(c.message_id), str(c.effect_id))
+            for c in compensables
+            if c.state == "delivered" and c.compensation is None
+        )
+        if cannot and not partial:
+            raise EscalationError(
+                f"plan {plan_id} sent {len(cannot)} request(s) nothing undoes ("
+                + ", ".join(f"{effect} as message {message}" for message, effect in cannot[:5])
+                + "): undo the rest only when asked to, in part"
+            )
+        late = any(now >= c.not_after for c in eligible)
+        messages = tuple(
+            sorted(
+                (
+                    UndoMessage(
+                        message_id=str(c.message_id),
+                        head=c.log_head,
+                        not_after=c.not_after,
+                        operation=str(c.compensation["operation"]),
+                    )
+                    for c in eligible
+                    if c.compensation is not None
+                ),
+                key=lambda item: item.message_id,
+            )
+        )
+        cancels = tuple(MessageTarget(str(c.message_id), c.log_head) for c in pending)
+        evidence = UndoEvidence(
+            plan_id=plan_id,
+            messages=messages,
+            late=late,
+            changes=kept,
+            pending=cancels,
+            cannot=tuple(cannot),
+        )
+        resolutions = (
+            Resolution(
+                action="undo",
+                plan_id=plan_id,
+                changes=kept[0],
+                messages=tuple(MessageTarget(m.message_id, m.head) for m in messages),
+                cancels=cancels,
+                late=late,
+            ),
+            Resolution(action="reject", plan_id=plan_id),
+        )
+        return self.raise_ticket(
+            mandate_id, "undo", evidence, resolutions, statement=statement, ticket_id=ticket_id
         )
 
     def raise_extension(

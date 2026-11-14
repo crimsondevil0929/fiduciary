@@ -241,6 +241,15 @@ def execution_steps(warrant: Warrant, ticket: Ticket) -> list[dict[str, Any]]:
                 late=action == "compensate_late",
                 targets=_targets(chunk),
             )
+    elif action == "undo":
+        # 1.18.0: the plan put back first, from what its commit kept, then its requests.
+        assert res.plan_id is not None and res.changes is not None
+        add("undo", plan_id=res.plan_id, changes=res.changes)
+        kind = "compensate_late" if res.late else "compensate"
+        for chunk in _chunks(res.messages):
+            add(kind, plan_id=res.plan_id, late=res.late, targets=_targets(chunk))
+        for target in res.cancels:
+            add("cancel", targets=_targets([target]))
     elif action in ("grant", "decline"):
         assert isinstance(ev, ExtensionEvidence) and res.quote is not None
         if action == "grant":

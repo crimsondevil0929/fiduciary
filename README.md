@@ -146,9 +146,28 @@ with gov.turn():
 
 Every request the calls in a turn enqueue (an email, a payment, an MCP server's write) waits,
 and is made only if every call of the turn committed. A refused call, or an exception, cancels
-them all. Rows a committed call changed stay changed: only requests wait. In Claude Code,
-`fiduciary protect --mcp-config .mcp.json --claude-code --apply` adds hooks that open a turn
-when you send a prompt and close it when Claude stops.
+them all, and puts back what the turn's earlier calls changed, latest first, each exactly as it
+found it. A row someone changed in the meantime is left alone and named in the turn's record.
+In Claude Code, `fiduciary protect --mcp-config .mcp.json --claude-code --apply` adds hooks that
+open a turn when you send a prompt and close it when Claude stops.
+
+## Undo a plan
+
+```bash
+fiduciary undo plan-32fe84ef4033          # or the Undo button beside a receipt in the console
+```
+
+Each commit keeps what undoes it for a week, in the system it changed and under that system's
+access control: a table in your database, copies beside your workspace, your repository's own
+history, or each changed record beside the API's undo journal. Nothing of it goes into the audit
+log or a bundle. An undo is a plan like any other, judged by the mandate, except that the
+measured change must be exactly the inverse of the original: every row back as it was, nothing
+else touched. Then it is not held to the size limits, which would otherwise refuse undoing a
+large mistake. If anything changed since, the whole undo is refused and the rows that moved are
+named. It is a ticket, approved at the mandate's `compensate` quorum (in a solo deployment, you,
+with your key file or a touch of your passkey). An email that was already sent cannot be
+unsent: `fiduciary undo` says so and stops, unless `--partial` says to put back the rest.
+An auditor checks every undo offline (V14), from the change digests both commits recorded.
 
 ## What the agent read before it asked
 
@@ -367,7 +386,7 @@ What this does not claim:
 agent ──▶ MCP / policy gateway ──▶ ┌────────────────────────────────────────────┐ ──▶ database
           identity, input checks   │ Fiduciary  who may decide: signed          │     Stripe
           (Cedar, OPA, allow-lists)│            mandates, quorum warrants,      │     mail
-                                   │            an audit bundle, V1 to V13      │
+                                   │            an audit bundle, V1 to V14      │
                                    │ Interlock  what changed: stage, measure,   │
                                    │            commit or roll back; exactly-   │
                                    │            once outbox, signed inbox       │
@@ -596,7 +615,7 @@ engine mints afresh (a plan's id), which the model's text quotes from the record
   pinned by module, version and the digest of its code. A verifier replaying the policy
   without exactly that code installed says so, by name, and fails V4.
 - **Audit bundle.** A lineage exports to one file with no row data, payloads, prompts or
-  secrets. `verify-bundle` checks it offline (V1 to V13) and re-evaluates every recorded
+  secrets. `verify-bundle` checks it offline (V1 to V14) and re-evaluates every recorded
   decision. A sealed bundle (`--sealed`) is one customer's: its own records whole, and of
   every other record only the position and hash the ledger vouches for.
 - **Service and cluster** on PostgreSQL, with crash-safe recovery.
@@ -775,7 +794,7 @@ keys, obtained independently of the bundle:
 fiduciary verify-bundle support-agent.fidb --charter <digest> --keys keys.json
 ```
 
-`verify-bundle` prints the result of each check (V1 to V13) and every finding. `--json`
+`verify-bundle` prints the result of each check (V1 to V14) and every finding. `--json`
 prints the attestation instead, for a SIEM or GRC system: the verdict, each check with its
 findings and the controls it supports, and a summary of the bundle (mandates and their
 tree, tickets, approvals, warrants, operator actions and ledger usage). `--report
@@ -1068,7 +1087,7 @@ It has three views:
   that system can be measured (transactional, plan-bound, predicted or request-only). A held
   request shows the payload it would send, checked against the hash the ticket signs. Then
   the options, who has voted, and the warrant once one forms.
-- **Verify a bundle.** Drop any `.fidb`. The console runs V1 to V13 on it, offline, against
+- **Verify a bundle.** Drop any `.fidb`. The console runs V1 to V14 on it, offline, against
   the charter digest and keys you pinned (or the deployment's), and maps each check to the
   nine control frameworks.
 - **Sandbox**, with `--sandbox` or under `fiduciary demo --serve`: each demo industry built

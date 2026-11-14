@@ -1,6 +1,6 @@
 [project]
 name = "interlock-fiduciary"
-version = "1.17.0"
+version = "1.18.0"
 description = "Signed mandates, quorum warrants and offline compliance proofs over Interlock and AgentGov."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -124,4 +124,4 @@ exclude = ["/HANDOFF.md", "/AGENTS.md", "/CLAUDE.md", "/STRATEGY_AND_MOAT.md", "
 # pull request. Remove this table and relock before tagging (scripts/upstream_pins.py tells
 # CI's pip steps about it).
 [tool.uv.sources]
-interlock-escrow = { path = "../interlock", editable = true }
+interlock-escrow = { git = "https://github.com/crimsondevil0929/interlock", rev = "b845dd454c558af983652e2a767f4499e756ee5c" }

@@ -456,6 +456,8 @@ class Executor:
             return _Step(True, {"step": idx, "kind": "reject"})
         if kind == "accept_repair":
             return self._accept_repair(idx, ticket, str(step["proposal"]))
+        if kind == "undo":
+            return self._undo(idx, reason, ticket, step)
         if kind == "reset":
             return self._reset(idx, reason, str(step["scope"]), bool(step["spent_out"]))
         if kind in _OUTBOX_STEPS:
@@ -476,6 +478,82 @@ class Executor:
                 "records": [r.seq for r in issued],
             },
         )
+
+    def _undo(self, idx: int, reason: str, ticket: Ticket, step: Mapping[str, Any]) -> _Step:
+        """Put the plan back (1.18.0): Interlock's undo of it, only when what its commit kept
+        is what the principals approved (the hash its change digests have), committed only
+        as exactly the inverse; then a ``plan.undone`` record names both plans' digests."""
+        from interlock.exceptions import UndoError
+        from interlock.undo import changes_hash
+
+        mandate_id = ticket.mandate.mandate_id
+        plan_id = str(step["plan_id"])
+        engine = self._binder.engine(mandate_id)
+        kept = engine.kept(plan_id)
+        if kept is None:
+            return _Step(False, why=f"nothing is kept to undo plan {plan_id} any more")
+        if changes_hash(kept.digests()) != step["changes"]:
+            return _Step(
+                False, why=f"what is kept to undo plan {plan_id} is not what the ticket approved"
+            )
+        try:
+            staged = engine.undo(plan_id)
+        except (FiduciaryError, InterlockError, UndoError) as exc:
+            return _Step(False, why=str(exc))
+        if not staged.committed:
+            blocking = staged.verdict.blocking if staged.verdict is not None else ()
+            return _Step(
+                False, why="; ".join(v.message for v in blocking) or "the undo did not commit"
+            )
+        with self.log.store.transaction():
+            body = self.decide.undo_plan(
+                self.log.state(),
+                {
+                    "mandate_id": mandate_id,
+                    "plan_id": plan_id,
+                    "undo_plan_id": str(staged.plan.plan_id),
+                    "original": [list(d) for d in staged.undid],
+                    "undo": [list(d) for d in staged.changes],
+                    "why": reason,
+                },
+            )
+            record = self.log.append("plan.undone", body, issued_at=self.log.now())
+        found = self._undone(idx, mandate_id, plan_id, reason)
+        assert found.result is not None
+        return _Step(True, {**found.result, "undone": record.seq})
+
+    def _undone(self, idx: int, mandate_id: str, plan_id: str, reason: str) -> _Found:
+        """Whether the warrant's undo of ``plan_id`` committed: its ``plan.undone`` record,
+        and the undo's commit in the lineage's escrow chain."""
+        state = self.log.state()
+        for seq, (plan, undo, lineage) in sorted(state.undone.items()):
+            if plan != plan_id or lineage != mandate_id:
+                continue
+            record = next(iter(self.log.records(after=seq - 1)), None)
+            if record is None or record.content.get("why") != reason:
+                continue
+            committed = next(
+                (
+                    r
+                    for r in self._chain(mandate_id)
+                    if r.plan_id == undo and r.record_type is RecordType.COMMITTED
+                ),
+                None,
+            )
+            if committed is None:
+                return _Found("missing")
+            return _Found(
+                "reached",
+                {
+                    "step": idx,
+                    "kind": "undo",
+                    "plan_id": plan_id,
+                    "undo_plan_id": undo,
+                    "record": committed.record_hash,
+                    "undone": seq,
+                },
+            )
+        return _Found("missing")
 
     def _accept_repair(self, idx: int, ticket: Ticket, proposal: str) -> _Step:
         plan = self._find_proposal(proposal)
@@ -752,6 +830,8 @@ class Executor:
                         },
                     )
             return _Found("missing")
+        if kind == "undo":
+            return self._undone(idx, mandate_id, str(step["plan_id"]), reason)
         if kind == "accept_repair":
             found = self._committed(mandate_id, str(step["proposal"]))
             if found.result is not None:

@@ -1889,6 +1889,49 @@ def _turn_command(args: argparse.Namespace) -> int:
     return OK
 
 
+def _undo(args: argparse.Namespace) -> int:
+    """``fiduciary undo PLAN`` (1.18.0)."""
+    from fiduciary import undo
+    from fiduciary.bridge import Fiduciary
+    from fiduciary.config import ConfigError
+
+    path = _deployment_config(args)
+    try:
+        with _aside(path):
+            fid = Fiduciary.from_config(path)
+            try:
+                plan = undo.find(fid, args.plan, args.mandate)
+                _out(f"plan        {plan.plan_id} (lineage {plan.mandate_id})")
+                _out(f"            {tally(plan.changes, 'change')} put back exactly as it was")
+                for message in plan.compensate:
+                    _out(f"            request {message}: compensated")
+                for message in plan.cancel:
+                    _out(f"            request {message}: not sent yet, cancelled")
+                for message, effect in plan.cannot:
+                    _out(
+                        f"cannot      request {message} ({effect}) was sent, and nothing undoes it"
+                    )
+                ticket = undo.ask(fid, plan, partial=args.partial)
+                _out(f"ticket      {ticket.ticket_id}: undo, at the mandate's compensate quorum")
+                if not undo.approve_solo(fid, path.parent, ticket):
+                    _out(
+                        "            the principals approve it in fiduciary console, or with "
+                        "fiduciary approve; the writer then puts the plan back"
+                    )
+                    return OK
+                done = undo.outcome(fid, ticket)
+            finally:
+                fid.close()
+    except (ConfigError, OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc), REFUSED)
+    if done is None or done["event"] != "applied":
+        why = "" if done is None else str(done.get("why", ""))
+        _fail(f"not undone: {why or 'the warrant did not execute'}", REFUSED)
+    put: dict[str, Any] = next((r for r in done.get("results", ()) if r.get("kind") == "undo"), {})
+    _out(f"undone      plan {put.get('undo_plan_id')} put it back; record {put.get('undone')}")
+    return OK
+
+
 def _passkey_owner(owner: Any, args: argparse.Namespace) -> int:
     """``fiduciary passkey add`` for the owner every protected server shares (1.17.0): one
     passkey, made once, and one touch to make it the owner's key on every server."""
@@ -2323,7 +2366,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     export.set_defaults(handler=_export_bundle)
 
-    check = commands.add_parser("verify-bundle", help="verify a bundle offline, V1 to V13")
+    check = commands.add_parser("verify-bundle", help="verify a bundle offline, V1 to V14")
     check.add_argument("bundle")
     check.add_argument("--charter", required=True, help="the pinned digest of charter version 1")
     check.add_argument("--keys", help="the public keys to pin, in keys.json format")
@@ -2590,6 +2633,20 @@ def _parser() -> argparse.ArgumentParser:
             "--hook", action="store_true", help="as a hook runs it: read the event, print nothing"
         )
         step.set_defaults(handler=_turn_command)
+
+    undoing = commands.add_parser(
+        "undo",
+        help="put a committed plan back exactly, from what its commit kept, as the "
+        "principals approve (1.18.0)",
+    )
+    undoing.add_argument("plan", help="the plan's id, as its receipt and the console show it")
+    undoing.add_argument("--mandate", help="the lineage that committed it (any, by default)")
+    undoing.add_argument(
+        "--partial",
+        action="store_true",
+        help="when a request it sent cannot be undone, put back the rest and record that one",
+    )
+    undoing.set_defaults(handler=_undo)
 
     passkey = commands.add_parser(
         "passkey", help="sign as a principal with a passkey: Touch ID, Windows Hello, a key"
