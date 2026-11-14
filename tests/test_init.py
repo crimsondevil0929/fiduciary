@@ -107,7 +107,7 @@ def test_tools_are_governed_by_what_the_server_says_of_them() -> None:
     assert trust_of({"annotations": {"readOnlyHint": True, "openWorldHint": False}}) is None
     assert trust_of({"annotations": "odd"}) is not None
     for schema, message in (
-        ({"type": "number"}, "FIDU1 holds no floats"),
+        ({"type": "number"}, "FIDU1 holds no floats"),  # outside an argument (1.17.0)
         ({"type": "object", "properties": {"x": {"format": "date"}}}, "would not enforce"),
         ({"type": "object", "properties": {"x": {"type": "string"}}, "minimum": 1.5}, "float"),
         ({"type": "decimal"}, "outside the binding grammar"),
@@ -126,18 +126,29 @@ def test_a_tool_the_grammar_cannot_hold_is_left_out_and_named(tmp_path: Path) ->
             "name": "set_price",
             "inputSchema": {"type": "object", "properties": {"price": {"type": "number"}}},
         },
+        {
+            "name": "set_floor",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"price": {"type": "number", "minimum": 0.5}},
+            },
+        },
         {"name": "Bad-Name", "inputSchema": {"type": "object"}},
+        {"name": "9lives", "inputSchema": {"type": "object"}},
         TOOLS[0],
     ]
     report = init(tmp_path / "d", None, discovered=tools, name="pricing")
-    assert [t["name"] for t in report.tools] == ["list_tickets"]
-    assert "its results count as untrusted input" in report.tools[0]["why"]
+    # 1.17.0: a number argument is held as its decimal string, and a name a binding cannot
+    # hold is bound under its words in lowercase.
+    assert [t["name"] for t in report.tools] == ["set_price", "bad_name", "list_tickets"]
+    assert "listed as bad_name, the server's Bad-Name" in report.tools[1]["why"]
+    assert "its results count as untrusted input" in report.tools[2]["why"]
     closed = {**TOOLS[0], "annotations": {"readOnlyHint": True, "openWorldHint": False}}
     inside = init(tmp_path / "c", None, discovered=[closed], name="closed")
     assert "untrusted" not in inside.tools[0]["why"]
-    assert {s["name"] for s in report.skipped} == {"set_price", "Bad-Name"}
+    assert {s["name"] for s in report.skipped} == {"set_floor", "9lives"}
     readme = (tmp_path / "d" / "README.md").read_text()
-    assert "Left out" in readme and "set_price" in readme
+    assert "Left out" in readme and "set_floor" in readme
     with pytest.raises(ValueError, match="not empty"):
         init(tmp_path / "d", None, discovered=[])
     with pytest.raises(ValueError, match="three principals"):

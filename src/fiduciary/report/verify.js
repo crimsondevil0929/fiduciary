@@ -26,6 +26,12 @@
 //                            signed by a receipt key, included in its signed checkpoint,
 //                            attested by a relay key, and bound to an action receipt the
 //                            bundle holds, by id, place and leaf hash
+//   passkeys    part of V2   (when a principal signed with a passkey, 1.17.0) every document a
+//                            passkey signed verifies under the key the bundle's charter holds
+//                            for its signer: the challenge is the document's signing input,
+//                            the origin is one the charter admits, the relying party is its
+//                            own, the passkey says the user was present and verified, and
+//                            the P-256 signature verifies (checkAssertion, below)
 //   provenance  V13          (when a session in the bundle read anything labeled, 1.16.0)
 //                            every plan committed after the session read untrusted input or
 //                            labeled data met the mandate's provenance rules, or ran as the
@@ -234,7 +240,42 @@
           });
         });
       }).catch(function () { ed.ok = false; add("manifest", "The manifest's signature, by the service key", "V9", "skip", "no Ed25519 in this Web Crypto"); });
-    }).then(function () { return logChecks(); }).then(function () { receiptChecks(); provenanceChecks(); return deliveryChecks(); }).then(function () { return out; });
+    }).then(function () { return logChecks(); }).then(function () { return passkeyChecks(); }).then(function () { receiptChecks(); provenanceChecks(); return deliveryChecks(); }).then(function () { return out; });
+
+    // Passkeys (1.17.0): every document signed webauthn-es256 is checked under the key the
+    // charter holds for the principal whose key id it carries, with that key's policy.
+    function passkeyChecks() {
+      var NAME = "Every passkey signature, under the charter's key and origins";
+      var keys = {}, signed = [];
+      Object.keys(by).forEach(function (n) {
+        if (!DOCUMENTS.test(n)) return;
+        var d; try { d = JSON.parse(dec.decode(by[n])); } catch (e) { return; }
+        if (d && d.type === "charter") (d.principals || []).forEach(function (p) {
+          if (/^webauthn-es256:[0-9a-f]{128}$/.test(String(p.key))) keys[p.key] = { spec: p.key, policy: p.webauthn, name: p.name };
+        });
+        if (d && d.sig && d.sig.alg === WEBAUTHN) signed.push({ name: n, doc: d });
+      });
+      if (!signed.length) return Promise.resolve();
+      return Promise.all(Object.keys(keys).map(function (spec) {
+        return passkeyId(subtle, spec).then(function (id) { keys[id] = keys[spec]; });
+      })).then(function () {
+        return Promise.all(signed.map(function (s) {
+          var key = keys[s.doc.sig.key_id];
+          if (!key) return s.name + " is signed by passkey " + s.doc.sig.key_id + ", which no charter in the bundle holds";
+          var reduced = canon(Object.assign({}, s.doc, { sig: { alg: s.doc.sig.alg, key_id: s.doc.sig.key_id } }));
+          return subtle.digest("SHA-512", utf8(reduced)).then(function (ab) {
+            var msg = concat(utf8("FIDU1/" + s.doc.type + "/v1\n"), new Uint8Array(ab));
+            return checkAssertion(subtle, key.spec, key.policy, msg, s.doc.sig).then(function (problem) {
+              return problem ? s.name + " (" + key.name + "): " + problem : null;
+            });
+          });
+        }));
+      }).then(function (found) {
+        var bad = found.filter(Boolean);
+        add("passkeys", NAME, "V2", bad.length ? "fail" : "pass",
+          bad.length ? bad.slice(0, 3).join("; ") : signed.length + " document" + (signed.length === 1 ? "" : "s") + " signed with a passkey, each verified");
+      }).catch(function () { add("passkeys", NAME, "V2", "skip", "no ECDSA P-256 in this Web Crypto"); });
+    }
 
     function receiptChecks() {
       // The record a plan settles on names its action receipt before the receipt is issued, so
@@ -573,7 +614,89 @@
     }
   }
 
-  var api = { check: check, readTar: readTar };
+  // -- passkeys (1.17.0): fiduciary.webauthn's three steps, with Web Crypto -------------------
+  var WEBAUTHN = "webauthn-es256";
+  function b64url(u8) { var s = ""; for (var i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+  function passkeyId(subtle, spec) {
+    var point = hexBytes(String(spec).replace(WEBAUTHN + ":", ""));
+    return subtle.digest("SHA-256", concat(concat(utf8("FIDU1/webauthn-es256/v1\n"), new Uint8Array([4])), point)).then(function (ab) { return bytesHex(new Uint8Array(ab)).slice(0, 16); });
+  }
+  function admits(policy, origin) {
+    var listed = policy.origins || [];
+    if (listed.indexOf(origin) >= 0) return true;
+    return /^http:\/\/localhost:[0-9]{1,5}$/.test(origin) && listed.indexOf("http://localhost:*") >= 0;
+  }
+  function uniqueKeys(text) {
+    // JSON.parse keeps the last of two equal keys; the verifier refuses the object. Scan it.
+    var stack = [], i = 0, expectKey = false;
+    while (i < text.length) {
+      var c = text[i];
+      if (c === '"') {
+        var j = i + 1, str = "";
+        while (j < text.length && text[j] !== '"') { if (text[j] === "\\") { str += text[j] + text[j + 1]; j += 2; } else { str += text[j]; j++; } }
+        var top = stack[stack.length - 1];
+        if (top && top.obj && expectKey) { if (top.keys[str]) return false; top.keys[str] = true; expectKey = false; }
+        i = j + 1; continue;
+      }
+      if (c === "{") { stack.push({ obj: true, keys: {} }); expectKey = true; }
+      else if (c === "[") { stack.push({ obj: false }); }
+      else if (c === "}" || c === "]") { stack.pop(); }
+      else if (c === ",") { var t = stack[stack.length - 1]; expectKey = !!(t && t.obj); }
+      i++;
+    }
+    return true;
+  }
+  function derToRaw(der) {
+    // SEQUENCE { INTEGER r, INTEGER s }, each at most 33 bytes: r || s, 32 bytes each.
+    if (der.length < 8 || der[0] !== 0x30 || der[1] !== der.length - 2) return null;
+    var out = new Uint8Array(64), at = 2;
+    for (var k = 0; k < 2; k++) {
+      if (der[at] !== 0x02) return null;
+      var len = der[at + 1], v = der.slice(at + 2, at + 2 + len);
+      if (len < 1 || len > 33 || v.length !== len) return null;
+      while (v.length > 32 && v[0] === 0) v = v.slice(1);
+      if (v.length > 32) return null;
+      out.set(v, k * 32 + (32 - v.length));
+      at += 2 + len;
+    }
+    return at === der.length ? out : null;
+  }
+  // What is wrong with a passkey signature of message (bytes) under keySpec and its policy, or
+  // null when it verifies: the order and the words of fiduciary.webauthn.PasskeyKey.check.
+  function checkAssertion(subtle, keySpec, policy, message, sig) {
+    function done(p) { return Promise.resolve(p); }
+    if (!/^webauthn-es256:[0-9a-f]{128}$/.test(String(keySpec))) return done("the key is no passkey's");
+    if (!policy || typeof policy.rp_id !== "string") return done("the key comes with no relying-party policy");
+    var hex = /^(?:[0-9a-f]{2})+$/;
+    if (!sig || !hex.test(sig.authenticator_data || "") || !hex.test(sig.client_data_json || "") || !hex.test(sig.signature || "")) return done("the signature is no passkey assertion");
+    var data = hexBytes(sig.authenticator_data), cdj = hexBytes(sig.client_data_json);
+    if (data.length < 37) return done("authenticatorData is shorter than 37 bytes");
+    if (data.length > 1024) return done("authenticatorData is too long");
+    if (cdj.length > 4096) return done("clientDataJSON is too long");
+    var text, client;
+    try { text = new TextDecoder("utf-8", { fatal: true }).decode(cdj); client = JSON.parse(text); } catch (e) { return done("clientDataJSON is no JSON object: " + e.message); }
+    if (!client || typeof client !== "object" || Array.isArray(client)) return done("clientDataJSON is no JSON object");
+    if (!uniqueKeys(text)) return done("clientDataJSON is no JSON object: a key appears twice");
+    if (client.type !== "webauthn.get") return done("clientDataJSON's type is " + JSON.stringify(client.type) + ", not webauthn.get");
+    if (client.challenge !== b64url(message)) return done("clientDataJSON's challenge is not this document's signing input");
+    if (typeof client.origin !== "string" || !admits(policy, client.origin)) return done("it was made on " + JSON.stringify(client.origin) + ", an origin the charter does not admit");
+    if ((client.crossOrigin !== undefined && client.crossOrigin !== null && client.crossOrigin !== false) || "topOrigin" in client) return done("it was made in a cross-origin frame");
+    return subtle.digest("SHA-256", utf8(policy.rp_id)).then(function (ab) {
+      if (bytesHex(new Uint8Array(ab)) !== bytesHex(data.slice(0, 32))) return "authenticatorData is for another relying party than " + policy.rp_id;
+      if (!(data[32] & 0x01)) return "the passkey says no user was present (UP)";
+      if (!(data[32] & 0x04)) return "the passkey says the user was not verified (UV)";
+      var raw = derToRaw(hexBytes(sig.signature));
+      if (!raw) return "the ECDSA signature does not verify";
+      var point = concat(new Uint8Array([4]), hexBytes(String(keySpec).replace(WEBAUTHN + ":", "")));
+      return subtle.digest("SHA-256", cdj).then(function (h) {
+        return subtle.importKey("raw", point, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]).then(function (k) {
+          return subtle.verify({ name: "ECDSA", hash: "SHA-256" }, k, raw, concat(data, new Uint8Array(h)));
+        }).then(function (ok) { return ok ? null : "the ECDSA signature does not verify"; }, function () { return "the ECDSA signature does not verify"; });
+      });
+    });
+  }
+
+  var api = { check: check, readTar: readTar, checkAssertion: checkAssertion, passkeyId: passkeyId };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.FidbVerify = api;
 })(typeof window !== "undefined" ? window : this);

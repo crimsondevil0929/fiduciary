@@ -352,11 +352,25 @@ This is ARC1 1.2's version 2 construction (in agentgov, `schema._signing_input` 
 `version=2`), reproduced over FIDU1's own domains. Fiduciary reproduces it rather than
 calling it, because it depends on no private name.
 
-- **F3-2.** FIDU1 has exactly one signature construction. There is no whole-document mode
-  and no `sv` field, so no signature can be downgraded to a construction a key service
-  limits. The domain carries the version.
-- **F3-3.** Every signature is Ed25519. A document whose `sig.alg` is anything else is
-  malformed. HMAC is refused outright, because whoever verifies an HMAC holds the secret and
+- **F3-2.** FIDU1 has exactly one signature construction for each type of key. There is no
+  whole-document mode and no `sv` field, so no signature can be downgraded to a construction
+  a key service limits. The domain carries the version. *(Amended in 1.17.0:* a principal's
+  key may be a passkey's, `webauthn-es256:<128 hex>`, the P-256 point of a WebAuthn
+  credential (Touch ID, Face ID, Windows Hello, a security key), with its relying party and
+  admitted origins beside it in the charter (F4-1a). The construction that verifies a
+  signature is the one its signer's pinned key requires, never the one `sig.alg` claims: a
+  signature claiming another is refused, so there is still nothing to downgrade to. A
+  passkey signs the document's signing input as its WebAuthn challenge, and the signature
+  carries `authenticator_data`, `client_data_json` and the DER signature. It verifies when
+  `clientDataJSON` is a JSON object with `type` `webauthn.get`, the challenge equal to the
+  signing input in base64url, an origin the charter admits, and no cross-origin frame; when
+  `authenticatorData` begins with SHA-256 of the relying party's id and its flags say the
+  user was present (UP) and verified (UV); and when the P-256 signature verifies over
+  `authenticatorData ‖ SHA-256(clientDataJSON)`. The counter is not checked: synced
+  passkeys report zero. Golden vectors: `vectors/fidu1/webauthn.json`, held in Python and in
+  the browser's checks alike.)
+- **F3-3.** Every signature is Ed25519, or (1.17.0, F3-2) a principal's passkey's. A
+  document whose `sig.alg` is anything else is malformed. HMAC is refused outright, because whoever verifies an HMAC holds the secret and
   can forge it:
   - an HMAC approval proves nothing to anyone else;
   - a quorum of HMAC approvals checked by one service is a quorum of one.
@@ -476,6 +490,15 @@ version 1, as interlock's configuration pins `[operators.keys]`.
 
 - **F4-1.** `principals` is sorted by name. Names are unique, and so are keys: one key under
   two names would let its holder count twice (F7-5).
+- **F4-1a.** *Added in 1.17.0.* A principal whose `key` is a passkey's carries `webauthn`:
+  `rp_id` (a host name, never an address), `origins` (sorted, 1 to 16: `https://` on the
+  relying party or a subdomain, or `http://localhost[:port]`; `http://localhost:*` admits
+  every port of it, and with it any page on a local port may ask the passkey to sign), and
+  `credential` (its credential id, which the console asks the browser for; no part of
+  verification). Only a passkey's key has it, so every charter before it keeps its digest.
+  A charter version that makes a principal's key a passkey is signed by that passkey (a
+  charter is signed by one of its own principals) and approved as any version is
+  (`fiduciary passkey add`, or the console).
 - **F4-2.** `deployment.ledger` is the hash of AgentGov entry 1: the same value agentgov's
   published ledger checkpoints name (`agentgov-ledger:<hash>`). Every document under the
   charter is bound to that ledger through it. A charter, mandate, ticket or approval from
@@ -786,6 +809,17 @@ parameters only; the statements are the developer's.
   changes its digest, and the session refuses the binding until a mandate version pins the
   new digest. A code change to a tool is a change of authority, so it goes through the same
   quorum.
+- **F4-16c.** *Added in 1.17.0.* Three more members, each written only when used:
+  - `numbers`: the arguments the tool takes as JSON numbers, by path (`price`,
+    `lines[].qty`). Each is held in `input` as a string with the decimal pattern, so no float
+    is hashed or signed; an agent is shown it as a number, its number is recorded as its
+    decimal string, and the tool is sent the number.
+  - `pin`: for a tool an MCP server lists, the SHA-256 of its whole definition as listed
+    (`name`, `title`, `description`, `inputSchema`, `outputSchema`, `annotations`, JSON with
+    sorted keys; `fiduciary.protect.pin_of`). A proxy withholds the tool while the server
+    lists anything else (F8-7a).
+  - `upstream`: the server's own name for the tool, when it is not one a binding can hold
+    (`createIssue` is bound as `create_issue`).
 - **F4-16a.** *Added in 1.5.0.* A mandate pins each checker pack it uses
   (`data.checkers[]`) as it pins a tool binding: by module, version and the SHA-256 of the
   pack's code (`interlock.checker_packs.pack_digest`, over every file of the package). A
@@ -892,8 +926,10 @@ parameters only; the statements are the developer's.
 
   `resolution` is a digest for a ticket, and `null` for every other subject: the subject is
   then itself what is approved.
-- **F4-22.** `decision` is `approve` or `decline`. An approval is at most 1,024 canonical
-  bytes.
+- **F4-22.** `decision` is `approve` or `decline`. An approval is at most 2,048 canonical
+  bytes. *Amended in 1.17.0* (it was 1,024): a passkey's signature carries its
+  `authenticator_data` and `client_data_json` (§3, F3-2), and an approval signed with one
+  is about 1,100 bytes. An Ed25519 approval stays under 1,024.
 - **F4-23.** `not_after` is the principal's own bound on the approval. It never extends a
   ticket's deadline or a quote's expiry. A warrant expires at the earliest of the three
   (§4.6).
@@ -957,6 +993,7 @@ Fiduciary's own acts are records in a hash-chained, signed log. It is built as I
 | `session.opened`, `session.closed` | a bridge session: its mandate version, tenant, trajectory and billing scope; at its close, every scope it billed, in order |
 | `session.refused` | a call the session refused before anything was built or metered: the refusal's code, and the tool only when a version the session runs pins it, or it is a built-in |
 | `session.labeled` | *(added in 1.16.0)* a call whose result brought a provenance label the session did not hold: the session, its lineage, the tool (or the SDK's source), the labels it brought, and every label the session holds after |
+| `turn.closed` | *(added in 1.17.0)* an agent turn of the lineage ended, holding requests: the turn, the lineage, `released` (every plan of the turn committed) or `cancelled` (one did not, or the turn ended in an exception), the requests it held, and why. The operator intent that releases or cancels them cites it (F7-17, V7) |
 
 - **F4-26.** Hashing and anchoring follow ILOK1:
   - A record's hash is the SHA-256 of the canonical bytes of the whole signed record.
@@ -1595,7 +1632,10 @@ resolution. It runs in two phases, as interlock's operators act:
   held elsewhere delays the step and fails nothing.
 - **F7-17.** Interlock operators and AgentGov governors outside fiduciary keep their powers.
   Some acts on the lineage's footprint name no warrant:
-  - an operator intent without `FIDU1 warrant`;
+  - an operator intent without `FIDU1 warrant`, or (1.17.0) without `FIDU1 turn record
+    <seq>` naming a `turn.closed` record of the lineage whose outcome is the intent's action
+    (`released` for a release, `cancelled` for a cancel) and whose `messages` include every
+    message the intent acts on;
   - a `CIRCUIT_RESET` with no anchor before it;
   - a delegation into a lineage scope with no mandate memo.
 
@@ -1635,7 +1675,10 @@ billing scope. It is recorded (`session.opened`) before its first call.
 - **F8-1.** A session never exposes the engine, the substrate, the governor, the outbox or
   any signer. Its methods are `call`, `govern`, `tool_definitions`, `tickets` and `close`.
   *(Amended in 1.16.0:* and one read-only property, `labels`, every provenance label the
-  session holds.)
+  session holds.) *(Amended in 1.17.0:* and `turn`, the agent turn its next plans are part
+  of, which the process serving the session sets from the turn it knows of: a plan built
+  in it names the turn, and its requests wait for the turn's end. An agent's tools never
+  reach it.)
 - **F8-2.** `session.call(name, arguments)` works in four steps:
   1. The binding must be one the version pins.
   2. The arguments must validate against its schema.
@@ -1718,6 +1761,21 @@ billing scope. It is recorded (`session.opened`) before its first call.
   the mandate pins a `passthrough` binding naming it, and every call to it is metered and
   counted (F4-15). An upstream tool the mandate does not pin is not listed, and a call to it
   is refused.
+- **F8-7a.** *Added in 1.17.0.* A protected proxy (`fiduciary mcp proxy --protected`, what
+  `fiduciary protect` writes into a client's file) lists the server's tools when it starts,
+  before every call, and when the server says its list changed. A tool whose binding has a
+  `pin` (F4-16c) and whose definition now hashes otherwise, or that the server no longer
+  lists, is withheld from every session: it leaves `tools/list`, a call to it is refused
+  before anything is built (refusal code `withheld`), the client is sent
+  `notifications/tools/list_changed`, and the change is recorded field by field in the
+  deployment's `drift.json`. This holds in shadow mode too. A write the mandate lets through
+  is delivered at once, in the proxy, through Interlock's relay (`Relay.deliver`), and the
+  server's own answer is returned; a held write returns the hold.
+- **F8-7b.** *Added in 1.17.0.* The bridge speaks MCP 2026-07-28 to a request that carries
+  its revision in `_meta` (no `initialize`; `server/discover`; `resultType` and the server's
+  name on every result; an unknown revision is answered `-32022` with the revisions spoken)
+  and 2025-11-25 down to 2024-11-05 after `initialize`. Its upstream client probes with
+  `server/discover` and falls back to `initialize`.
 
 ## 8.3 Model calls, halts and recovery
 
@@ -2899,6 +2957,12 @@ SQLite and on PostgreSQL. The test kinds:
 | F2-1, F2-2, G1: no ambient authority | 3, 5 | V7 ambient-injection tests; soak | Implemented. `test_bundle_checks.py`, `test_soak.py` |
 | F3-1: strict decoding | 1 | golden; per-field mutation sweep | Implemented. `test_vectors.py`, `test_fidu1.py`, `test_documents.py` |
 | F3-2 to F3-8: framing; Ed25519 only; inputs ≤ 96 bytes; KMS | 1 | golden signing inputs; fake KMS and fake key service; HMAC refused | Implemented. `test_signers.py`, `test_vectors.py` |
+| F3-2 (1.17.0): passkey keys, one construction per key type, the three WebAuthn steps | 1 | 14 golden passkey vectors in Python and in Node's Web Crypto; a solo owner's passkey; the console's | Implemented. `test_webauthn.py`, `test_passkeys.py` |
+| F4-1a: a passkey's policy in the charter | 1 | charters with and without one; malformed policies | Implemented. `test_webauthn.py` |
+| F4-16c: `numbers`, `pin`, `upstream` | 1 | a camelCase tool with number arguments, protected | Implemented. `test_protect.py` |
+| F8-7a: pins held by a protected proxy; writes answered in the call | 1 | a server that changes a description and flips `readOnlyHint` mid-session | Implemented. `test_protect.py` |
+| F8-7b: MCP 2026-07-28 and older revisions | 1 | modern and legacy clients and servers | Implemented. `test_protect.py`, interlock `test_wave15.py` |
+| F7-17, V7 (1.17.0): a turn's release and cancel, held to its `turn.closed` record | 1 | a released and a cancelled turn, then the bundle verified | Implemented. `test_turns.py` |
 | F3-9: ILOK1 sizes under KMS | 3 | executor guard test, both ways; chunking test; the measured table, regenerated by script; with U-2, an operator record of any size through KMS | Implemented where U-2 is installed; else the refusal. `test_executor.py`, `test_ilok1_sizes.py` |
 | F4-1 to F4-6: the charter | 1 | golden; property: adoption and suspension quorums | Implemented. `test_authority.py`, `test_vectors.py` |
 | F4-7 to F4-12: the mandate schema | 1 | golden; strict parsing | Implemented. `test_documents.py`, `test_vectors.py` |

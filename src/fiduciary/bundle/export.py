@@ -697,10 +697,15 @@ def _keys(
     written only when there is one (1.10.0), so a bundle without a delivery
     has the bytes it always had."""
     principals: dict[str, str] = {}
-    for kind, raw in held.values():
-        if kind == "charter":
-            for principal in json.loads(raw)["principals"]:
-                principals[principal["name"]] = principal["key"]
+    # In version order (1.17.0): a principal whose key changed (to a passkey) is listed
+    # with the key of the latest version, whatever order the digests sort in.
+    charters = sorted(
+        (json.loads(raw) for kind, raw in held.values() if kind == "charter"),
+        key=lambda c: int(c["version"]),
+    )
+    for adopted in charters:
+        for principal in adopted["principals"]:
+            principals[principal["name"]] = principal["key"]
     service = evidence.service
     service_key = None
     if service is not None:

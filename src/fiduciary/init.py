@@ -51,6 +51,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final
 
+from interlock.mcp import DECIMAL
+
 from fiduciary.starters import Starter, Target, coding, starter
 
 __all__ = ["InitReport", "Target", "classify", "discover", "init", "schema_of", "trust_of"]
@@ -205,11 +207,22 @@ def trust_of(tool: Mapping[str, Any]) -> tuple[str, str] | None:
     return "untrusted", "its results may come from anyone (MCP's default is an open world)"
 
 
-def schema_of(schema: object, path: str = "inputSchema") -> dict[str, Any]:
-    """The tool's input schema in the binding grammar, or :class:`UnsupportedSchemaError`."""
+def schema_of(
+    schema: object,
+    path: str = "inputSchema",
+    numbers: list[str] | None = None,
+    at: str = "",
+) -> dict[str, Any]:
+    """The tool's input schema in the binding grammar, or :class:`UnsupportedSchemaError`.
+
+    With ``numbers`` (1.17.0), a ``number`` argument is held as its decimal string, and
+    its path (``at``) is added to ``numbers``: the binding records it so, and the tool is
+    sent the number. Without it, a number is refused, as before.
+    """
     if not isinstance(schema, Mapping):
         raise UnsupportedSchemaError(f"{path} is not an object")
     out: dict[str, Any] = {}
+    number = False
     for key, value in schema.items():
         if key in _HARMLESS:
             continue
@@ -220,9 +233,13 @@ def schema_of(schema: object, path: str = "inputSchema") -> dict[str, Any]:
             if not isinstance(kinds, list) or not all(isinstance(k, str) for k in kinds):
                 raise UnsupportedSchemaError(f"{path}.type is no type")
             if "number" in kinds:
-                raise UnsupportedSchemaError(
-                    f"{path} is a number: FIDU1 holds no floats (a decimal is a string)"
-                )
+                if numbers is None or not at:
+                    raise UnsupportedSchemaError(
+                        f"{path} is a number: FIDU1 holds no floats (a decimal is a string)"
+                    )
+                number = True
+                kinds = ["string" if k == "number" else k for k in kinds]
+                value = kinds[0] if len(kinds) == 1 else kinds
             if not set(kinds) <= _TYPES:
                 raise UnsupportedSchemaError(
                     f"{path}.type {value!r} is outside the binding grammar"
@@ -232,23 +249,41 @@ def schema_of(schema: object, path: str = "inputSchema") -> dict[str, Any]:
             if not isinstance(value, Mapping):
                 raise UnsupportedSchemaError(f"{path}.properties is not an object")
             out[key] = {
-                str(name): schema_of(sub, f"{path}.properties.{name}")
+                str(name): schema_of(
+                    sub,
+                    f"{path}.properties.{name}",
+                    numbers,
+                    f"{at}.{name}" if at else str(name),
+                )
                 for name, sub in value.items()
             }
         elif key == "items":
-            out[key] = schema_of(value, f"{path}.items")
+            out[key] = schema_of(value, f"{path}.items", numbers, f"{at}[]" if at else "")
         elif key in ("minimum", "maximum") and isinstance(value, float):
             raise UnsupportedSchemaError(f"{path}.{key} is a float")
         else:
             out[key] = copy.deepcopy(value)
+    if number:
+        assert numbers is not None
+        if {"minimum", "maximum", "enum", "const"} & set(out):
+            raise UnsupportedSchemaError(
+                f"{path} bounds a number, which its decimal string could not be held to"
+            )
+        out["pattern"] = DECIMAL
+        numbers.append(at)
     return out
 
 
-def _binding(tool: Mapping[str, Any], mode: str) -> dict[str, Any]:
+def _binding(tool: Mapping[str, Any], mode: str, name: str | None = None) -> dict[str, Any]:
+    """A tool's binding (``name``: the binding's own name, when the server's is not one a
+    binding can hold). It pins the whole definition (1.17.0): :func:`fiduciary.protect.pin_of`."""
     from fiduciary.demo.packs.kit import request
+    from fiduciary.protect import pin_of
 
-    name = str(tool["name"])
-    schema = schema_of(tool.get("inputSchema") or {"type": "object"})
+    upstream = str(tool["name"])
+    name = name or upstream
+    numbers: list[str] = []
+    schema = schema_of(tool.get("inputSchema") or {"type": "object"}, numbers=numbers)
     schema.setdefault("type", "object")
     schema.setdefault("properties", {})
     schema["additionalProperties"] = False
@@ -256,7 +291,15 @@ def _binding(tool: Mapping[str, Any], mode: str) -> dict[str, Any]:
     description = str(
         tool.get("description") or (tool.get("annotations") or {}).get("title") or name
     )
-    base = {"v": "FIDU1", "type": "tool", "name": name, "description": description[:2000]}
+    base: dict[str, Any] = {
+        "v": "FIDU1",
+        "type": "tool",
+        "name": name,
+        "description": description[:2000],
+        "pin": pin_of(tool),
+        **({"numbers": sorted(set(numbers))} if numbers else {}),
+        **({"upstream": upstream} if upstream != name else {}),
+    }
     if mode == READ:
         return {
             **base,
@@ -554,18 +597,25 @@ def init(
     modes: dict[str, str] = {}
     schemas: dict[str, dict[str, Any]] = {}
     for tool in listed:
-        tool_name = str(tool.get("name") or "")
-        if not _NAME.fullmatch(tool_name) or tool_name.startswith("fiduciary_"):
+        upstream_name = str(tool.get("name") or "")
+        tool_name = binding_name(upstream_name)
+        if tool_name is None or tool_name.startswith("fiduciary_") or tool_name in modes:
             report.skipped.append(
-                {"name": tool_name, "why": "not a lowercase identifier the bridge can list"}
+                {
+                    "name": upstream_name,
+                    "why": "no name a binding can hold: lowercase letters, digits and _, "
+                    "after a letter, once each",
+                }
             )
             continue
         mode, why = classify(tool)
         try:
-            binding = _binding(tool, mode)
+            binding = _binding(tool, mode, tool_name)
         except UnsupportedSchemaError as exc:
-            report.skipped.append({"name": tool_name, "why": str(exc)})
+            report.skipped.append({"name": upstream_name, "why": str(exc)})
             continue
+        if tool_name != upstream_name:
+            why = f"{why}; listed as {tool_name}, the server's {upstream_name}"
         trust = trust_of(tool) if mode == READ else None
         if trust is not None:
             binding["trust"], said = trust
@@ -579,7 +629,18 @@ def init(
     try:
         if command and any(m != READ for m in modes.values()):
             with (root / "interlock.toml").open("a", encoding="utf-8") as config:
-                config.write(_relay_toml(root, command))
+                config.write(_relay_toml(root, command, bindings))
+        if listed:
+            # Each tool as the server listed it, beside its pin: what a review shows a
+            # change against (1.17.0).
+            pins = root / "pins"
+            pins.mkdir(exist_ok=True)
+            by_upstream = {str(t.get("name")): t for t in listed}
+            for binding in bindings:
+                upstream_tool = by_upstream[str(binding.get("upstream", binding["name"]))]
+                (pins / f"{binding['name']}.json").write_text(
+                    json.dumps(upstream_tool, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+                )
         _write_report(root, report, command, None, solo=solo, shadow=shadow)
     finally:
         world.close()
@@ -742,8 +803,23 @@ def _write_report(
     )
 
 
-def _relay_toml(root: Path, command: Sequence[str]) -> str:
-    """``[relay]``: the relay that makes each released call on the MCP server."""
+def binding_name(name: str) -> str | None:
+    """A binding's name for a tool the server calls ``name`` (1.17.0): itself, when it is
+    one; else its words in lowercase, joined by ``_`` (``createIssue``, ``create-issue``
+    and ``github.create_issue`` are ``create_issue``, ``create_issue`` and
+    ``github_create_issue``); ``None`` when nothing is left that is one."""
+    if _NAME.fullmatch(name):
+        return name
+    words = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+    found = re.sub(r"[^a-z0-9]+", "_", words.lower()).strip("_")
+    return found if _NAME.fullmatch(found) else None
+
+
+def _relay_toml(
+    root: Path, command: Sequence[str], bindings: Sequence[Mapping[str, Any]] = ()
+) -> str:
+    """``[relay]``: the relay that makes each released call on the MCP server, with each
+    write's server-side name and number arguments (1.17.0)."""
     from fiduciary.bundle.export import spec as key_spec
     from fiduciary.keys import load_key
 
@@ -760,6 +836,28 @@ def _relay_toml(root: Path, command: Sequence[str]) -> str:
         "[[relay.endpoints]]\n"
         f'sink = "{SINK}"\n'
         f"command = {json.dumps(list(command))}\n"
+        + (
+            "tools = { "
+            + ", ".join(
+                f"{b['name']} = {json.dumps(b['upstream'])}"
+                for b in bindings
+                if b.get("upstream") and b["kind"] == "plan"
+            )
+            + " }\n"
+            if any(b.get("upstream") and b["kind"] == "plan" for b in bindings)
+            else ""
+        )
+        + (
+            "numbers = { "
+            + ", ".join(
+                f"{b['name']} = {json.dumps(b['numbers'])}"
+                for b in bindings
+                if b.get("numbers") and b["kind"] == "plan"
+            )
+            + " }\n"
+            if any(b.get("numbers") and b["kind"] == "plan" for b in bindings)
+            else ""
+        )
     )
 
 

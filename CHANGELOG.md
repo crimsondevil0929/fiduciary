@@ -6,6 +6,83 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.17.0] - Unreleased
+
+Three things a person running agents on their own machine was missing: protection for the MCP
+servers their desktop client already runs, approvals an agent cannot sign for itself, and
+requests that wait for the end of the agent's turn. Requires interlock-escrow 1.9.0. Every
+charter, binding, mandate and bundle written before verifies as it did.
+
+### Added
+
+- **`fiduciary protect`** puts a proxy in front of each stdio MCP server in Claude Desktop's
+  file (`--claude-desktop`), Cursor's (`--cursor`) or any other (`--mcp-config FILE`: Claude
+  Code's `.mcp.json`, VS Code's `.vscode/mcp.json`). Without `--apply` it says what it would do.
+  Each server gets a solo deployment of its own under `~/.fiduciary/protect/`, and its entry
+  runs this installation's `fiduciary` by absolute path. `fiduciary unprotect` (or `--undo`)
+  puts every entry back as it was.
+  - **Pins.** Each tool's whole definition (name, title, description, input and output
+    schemas, annotations) is hashed into its signed binding. The proxy lists the server's
+    tools when it starts, before every call, and when the server says its list changed; a
+    tool whose definition moved is withheld, the client is told its tool list changed, and
+    `fiduciary protect --review` shows the change field by field (`--accept` protects the
+    server again from what it lists now, and keeps the old deployment). Pins hold in shadow
+    mode too.
+  - **Versions.** `npx -y pkg` is pinned to `pkg@<the version published now>`, `uvx pkg` to
+    `pkg==<version>`.
+  - **One process, and the server's own answer.** A write the mandate lets through is made at
+    once, in the proxy, through Interlock's `Relay.deliver`, and the agent gets the server's
+    result (its `structuredContent` too). A held write says it waits for approval.
+  - **Secrets.** `--move-secrets` moves each `env` value to the macOS Keychain; the proxy
+    hands it to the server when it starts it.
+  - **Turns in Claude Code.** `--claude-code` adds `UserPromptSubmit` and `Stop` hooks to the
+    project's `.claude/settings.local.json` (see Turns).
+- **Passkeys** (Touch ID, Face ID, Windows Hello, a security key) as principals' keys,
+  `webauthn-es256:<128 hex>` with the relying party and origins beside it in the charter
+  (F3-2 amended, F4-1a). A key file can be read by any program running as its owner, an
+  agent's tools included; a passkey signs only when its owner touches it.
+  - `fiduciary passkey add` makes one in the browser, and the charter's next version, signed
+    by the passkey itself, makes it the principal's key; in a solo deployment it is adopted
+    at once and the old key file moves to `keys/retired/`, where it signs nothing more.
+  - The console registers one too ("Who signs", on a deployment's mandate page), and a
+    principal whose key is a passkey approves a ticket with "Approve with my passkey".
+  - `fiduciary solo enforce` and `solo add-principals` sign with the owner's passkey, through a
+    one-shot page on `http://localhost`.
+  - Verified offline in `verify.py` and in the browser (`verify.js`, a new `passkeys` check):
+    the challenge is the document's signing input, the origin is one the charter admits, the
+    relying party is the charter's, the user was present and verified, and the P-256
+    signature verifies. Fourteen golden vectors (`vectors/fidu1/webauthn.json`), tampered
+    cases among them, get the same answer in both.
+- **Turns.** `with gov.turn():` around a turn of your agent loop, or a framework's run: every
+  request the calls in it enqueue waits, held, and is made only if every call committed; a
+  refused call or an exception cancels them all. A `turn.closed` record says which, and the
+  operator intent that releases or cancels the requests cites it; V7 holds each to its record.
+  `fiduciary turn open` and `fiduciary turn close` do the same for a protected server, as
+  Claude Code's hooks run them. What a committed call changed stays changed: only requests
+  wait.
+- `fiduciary.Sql.request(sink, operation, payload)`: an in-process tool enqueues an outbound
+  request, which commits with its rows.
+- Tool bindings: `numbers` (arguments sent as JSON numbers, held as decimal strings), `pin`
+  and `upstream` (F4-16c). `fiduciary init --mcp` now governs tools with `number` arguments and
+  tools whose names are camelCase or dotted, which it used to leave out.
+- MCP 2026-07-28 (F8-7b): the bridge serves a request that carries its revision in `_meta`
+  with no handshake, answers `server/discover`, and still opens 2025-11-25 and older with
+  `initialize`. Its upstream client probes, then falls back.
+
+### Changed
+
+- `fiduciary console` listens on, and prints, `http://localhost:8740` (it was 127.0.0.1): a
+  passkey's relying party is a name, never an address.
+- An approval may be 2,048 canonical bytes (F4-22 amended): one signed with a passkey is about
+  1,100.
+- A bundle's `keys.json` lists each principal's key from the latest charter version it holds,
+  in version order.
+
+### Fixed
+
+- With interlock-escrow 1.9.0, an interpreter that exits with a deployment still open no longer
+  prints "Exception ignored ... sys.meta_path is None".
+
 ## [1.16.1] - 2026-11-13
 
 Copy only: no change to what is checked, recorded or verified.

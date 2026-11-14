@@ -53,6 +53,11 @@ _SOURCE: Final = re.compile(r"\$(\.[A-Za-z_][A-Za-z0-9_]{0,63}|session\.(tenant|
 _PLACEHOLDER: Final = re.compile(r"(?<![:\w]):([A-Za-z_][A-Za-z0-9_]*)")
 _PYFORMAT: Final = re.compile(r"(?<!%)%\(([A-Za-z_][A-Za-z0-9_]*)\)s")
 _EFFECT_ID: Final = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+_NUMBER_PATH: Final = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]{0,63}(\[\])?(\.[A-Za-z_][A-Za-z0-9_]{0,63}(\[\])?){0,7}"
+)
+"""An argument's path (1.17.0): dotted names, ``[]`` for each item of an array."""
+_UPSTREAM: Final = re.compile(r"[A-Za-z0-9_.:/-]{1,128}")
 MAX_ITEMS: Final = 64
 
 
@@ -321,7 +326,14 @@ class ToolBinding(Document):
         "requests",
         "price",
     )
-    OPTIONAL: ClassVar[tuple[str, ...]] = ("trust", "confidentiality", "quarantine")
+    OPTIONAL: ClassVar[tuple[str, ...]] = (
+        "trust",
+        "confidentiality",
+        "quarantine",
+        "numbers",
+        "pin",
+        "upstream",
+    )
 
     name: str
     description: str
@@ -341,6 +353,16 @@ class ToolBinding(Document):
     """``secret``, or ``tenant`` (the session's tenant's data), or ``None`` (1.16.0)."""
     quarantine: Quarantine | None = None
     """A reader sub-agent's typed result (1.16.0): see :class:`Quarantine`."""
+    numbers: tuple[str, ...] = ()
+    """The arguments the tool takes as JSON numbers (1.17.0), by path (``price``,
+    ``lines[].qty``): held here as decimal strings, so no float is ever hashed or signed,
+    and sent to the tool as the numbers they are."""
+    pin: str | None = None
+    """For a tool an MCP server lists (1.17.0): the SHA-256 of its whole definition as
+    the server listed it when the binding was made (:func:`fiduciary.protect.pin_of`).
+    A proxy withholds the tool while the server lists anything else."""
+    upstream: str | None = None
+    """The server's own name for the tool, when it is not the binding's (1.17.0)."""
     signature: Signature | None = None
 
     def labels(self, tenant: str | None) -> tuple[str, ...]:
@@ -369,6 +391,9 @@ class ToolBinding(Document):
             **({"trust": self.trust} if self.trust != SYSTEM else {}),
             **({"confidentiality": self.confidentiality} if self.confidentiality else {}),
             **({"quarantine": self.quarantine.to_json()} if self.quarantine else {}),
+            **({"numbers": list(self.numbers)} if self.numbers else {}),
+            **({"pin": self.pin} if self.pin else {}),
+            **({"upstream": self.upstream} if self.upstream else {}),
         }
 
     @classmethod
@@ -462,6 +487,13 @@ class ToolBinding(Document):
             else None,
             "quarantine": Quarantine.read(fields.object("quarantine", ("reader", "output")))
             if fields.has("quarantine")
+            else None,
+            "numbers": fields.strings("numbers", _NUMBER_PATH, "an argument path", MAX_ITEMS)
+            if fields.has("numbers")
+            else (),
+            "pin": fields.hash("pin") if fields.has("pin") else None,
+            "upstream": fields.text("upstream", _UPSTREAM, "a tool name of 1 to 128 characters")
+            if fields.has("upstream")
             else None,
         }
 

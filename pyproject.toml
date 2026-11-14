@@ -1,6 +1,6 @@
 [project]
 name = "interlock-fiduciary"
-version = "1.16.1"
+version = "1.17.0"
 description = "Signed mandates, quorum warrants and offline compliance proofs over Interlock and AgentGov."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,7 +18,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "interlock-escrow>=1.8.0",
+    "interlock-escrow>=1.9.0",
     # Signing is part of every install: keygen, approve, the service and the demo sign.
     "interlock-agentgov[sign]>=1.3.2",
 ]
@@ -28,7 +28,7 @@ fiduciary = "fiduciary.cli:main_entry"
 
 [project.optional-dependencies]
 # The PostgreSQL store (fiduciary.postgres), and AgentGov and Interlock on PostgreSQL.
-postgres = ["psycopg[binary]>=3.2", "interlock-escrow[postgres]>=1.8.0"]
+postgres = ["psycopg[binary]>=3.2", "interlock-escrow[postgres]>=1.9.0"]
 # Signing with an Ed25519 key held locally. In the base install since 1.1.0; the
 # extra stays so that `interlock-fiduciary[sign]` still resolves.
 sign = ["interlock-agentgov[sign]>=1.3.2"]
@@ -119,3 +119,8 @@ packages = ["src/fiduciary"]
 [tool.hatch.build.targets.sdist]
 # Working notes for whoever builds the next phase: untracked, and not part of a release.
 exclude = ["/HANDOFF.md", "/AGENTS.md", "/CLAUDE.md", "/STRATEGY_AND_MOAT.md", "/.env.benchmark", "/live-run", "/soak"]
+
+# Temporary, until interlock-escrow 1.9.0 is on PyPI: the commit of interlock#41. Remove this
+# table and relock before tagging (scripts/upstream_pins.py tells CI's pip steps about it).
+[tool.uv.sources]
+interlock-escrow = { git = "https://github.com/crimsondevil0929/interlock", rev = "b1b07af9b5caa047ed0eb30ce00739ada949cf5f" }
