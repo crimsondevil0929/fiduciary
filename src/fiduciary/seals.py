@@ -240,7 +240,7 @@ def audience(
     if kind.startswith("mandate."):
         parent = body.get("parent")
         return line(str(body["mandate_id"]), state.issued.get(parent) if parent else None)
-    if kind.startswith("session."):
+    if kind.startswith("session.") or kind == "turn.closed":
         return Audience("lineage", str(body["mandate_id"]))
     if kind.startswith(("ticket.", "warrant.")):
         return ticket(str(body["mandate_id"]), str(body["class"]))

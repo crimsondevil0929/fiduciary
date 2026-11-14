@@ -198,6 +198,7 @@ class MandateEngine:
         trajectory: str | None = None,
         intent: str = "",
         provenance: Sequence[str] = (),
+        turn: str | None = None,
     ) -> MandateStage:
         """Open a stage before its plan is whole (interlock's ``EscrowEngine.stage``,
         1.14.0): for code in this process that reads, decides and writes. The plan
@@ -218,7 +219,7 @@ class MandateEngine:
             self._staging += 1
         try:
             opened = engine.stage(
-                scope, trajectory_id=trajectory, intent=intent, provenance=provenance
+                scope, trajectory_id=trajectory, intent=intent, provenance=provenance, turn=turn
             )
         except BaseException:
             self._finished()

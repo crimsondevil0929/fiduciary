@@ -57,7 +57,9 @@ class Approval(Document):
         "issued_at",
         "not_after",
     )
-    MAX_BYTES: ClassVar[int] = 1024
+    MAX_BYTES: ClassVar[int] = 2048
+    """F4-22, amended in 1.17.0: room for a passkey's assertion, which an Ed25519
+    approval never needed (it stays under 1,024 bytes)."""
 
     approval_id: str
     charter_id: str

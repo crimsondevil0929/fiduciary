@@ -89,6 +89,7 @@ REFUSAL_CODES: Final = (
     "tenant",  # a binding that stamps the session's tenant, in a session with none
     "unpinned",  # no binding the version pins, and no built-in (F4-16)
     "velocity",  # past governance.max_calls in governance.seconds (F6-5)
+    "withheld",  # its MCP server lists another definition than the binding's pin (1.17.0)
 )
 """Why a session refused a call before anything was built or metered."""
 
@@ -1061,6 +1062,36 @@ class Decide:
             )
         return state.sessions[session_id][0][1]
 
+    def close_turn(self, state: State, body: Mapping[str, Any]) -> dict[str, Any]:
+        """The ``turn.closed`` body (1.17.0): an agent turn of lineage ``mandate_id`` ended,
+        and the requests its plans enqueued, held for it, are released (every plan of the
+        turn committed) or cancelled (one did not). The operator intent that releases or
+        cancels them cites this record, which is what V7 holds it to."""
+        turn = str(body.get("turn", ""))
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", turn):
+            raise AuthorityError(f"{turn!r} is no turn id")
+        mandate_id = str(body.get("mandate_id", ""))
+        if state.head(mandate_id) is None:
+            raise AuthorityError(f"no lineage {mandate_id} is issued")
+        outcome = body.get("outcome")
+        if outcome not in ("released", "cancelled"):
+            raise AuthorityError("a turn's requests are released or cancelled")
+        messages = body.get("messages")
+        if (
+            not isinstance(messages, list)
+            or not messages
+            or not all(isinstance(m, str) and re.fullmatch(r"[0-9a-f-]{36}", m) for m in messages)
+        ):
+            raise AuthorityError("a closed turn lists the requests it held")
+        why = body.get("why")
+        return {
+            "turn": turn,
+            "mandate_id": mandate_id,
+            "outcome": outcome,
+            "messages": sorted(messages),
+            "why": None if why is None else str(why)[:512],
+        }
+
     def refuse_call(
         self, state: State, session_id: str, tool: str | None, code: str
     ) -> dict[str, Any]:
@@ -1437,6 +1468,8 @@ def _expected(
         return decide.label_session(
             state, str(body["session"]), str(body["tool"]), list(body["introduced"])
         )
+    if kind == "turn.closed":
+        return decide.close_turn(state, body)
     raise AuthorityError(f"no rule writes a {kind} record")
 
 

@@ -79,6 +79,8 @@ __all__ = ["TrustedKeys", "verify_bundle"]
 
 _SESSION: Final = re.compile(r"FIDU1 session ([0-9a-f-]{36}) ")
 _WARRANT: Final = re.compile(r"FIDU1 warrant ([0-9a-f]{64})")
+_TURN: Final = re.compile(r"FIDU1 turn record ([0-9]+)")
+"""What a turn's release or cancel cites (1.17.0): its ``turn.closed`` record."""
 _RESET: Final = re.compile(r"FIDU1 warrant ([0-9a-f]{64}) reset (\S+)")
 _ILOK1: Final = re.compile(r"ILOK1 (\S+) (\d+) ([0-9a-f]{64})")
 _INTERLOCK: Final = re.compile(r"interlock:([0-9a-f]{16})")
@@ -665,11 +667,13 @@ class _Checks:
                 "the pinned charter binds another ledger than the bundle's (A5)",
             )
         principals: dict[str, str] = {}
-        for kind, raw in self.b.docs.values():
-            if kind == "charter":
-                adopted = json.loads(raw)
-                self.break_glass.update(adopted.get("break_glass", ()))
-                principals.update({p["name"]: p["key"] for p in adopted["principals"]})
+        charters = sorted(
+            (json.loads(raw) for kind, raw in self.b.docs.values() if kind == "charter"),
+            key=lambda c: int(c.get("version", 0)) if isinstance(c, dict) else 0,
+        )
+        for adopted in charters:  # in version order: the latest key of a name is listed
+            self.break_glass.update(adopted.get("break_glass", ()))
+            principals.update({p["name"]: p["key"] for p in adopted["principals"]})
         named = self.b.keys.get("principals")
         if named is not None and named != principals:
             self.add(
@@ -1690,12 +1694,28 @@ class _Explained:
             )
 
     def operators(self) -> None:
+        # A turn's release or cancel (1.17.0) cites its turn.closed record: it acts on the
+        # requests that record lists, which the turn's own plans enqueued, held for it.
+        turns = {r.seq: r.content for r in self.c.b.records if r.kind == "turn.closed"}
+        acted = {"release": "released", "cancel": "cancelled"}
         for record in self.c.b.operators:
             if record.kind != "operator.intent":
                 continue
-            named = _WARRANT.search(str(record.body.get("reason", "")))
+            reason = str(record.body.get("reason", ""))
+            named = _WARRANT.search(reason)
             if named is not None and named[1] in self.warrants:
                 continue
+            turned = _TURN.search(reason)
+            if turned is not None:
+                closed = turns.get(int(turned[1]))
+                targets = {str(t.get("message")) for t in record.body.get("targets", ())}
+                if (
+                    closed is not None
+                    and closed.get("mandate_id") in self.c.lineages
+                    and acted.get(str(record.body.get("action"))) == closed.get("outcome")
+                    and targets <= set(closed.get("messages", ()))
+                ):
+                    continue
             label = "break-glass" if record.key_id in self.c.break_glass else ""
             action = record.body.get("action")
             self.c.add(

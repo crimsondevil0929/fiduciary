@@ -51,6 +51,8 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import IO, Any, Final
 
+from interlock.mcp import LEGACY_VERSIONS, MODERN_VERSIONS, UNSUPPORTED_VERSION
+
 from fiduciary import __version__
 from fiduciary.bridge import Fiduciary, Session
 from fiduciary.exceptions import FiduciaryError
@@ -68,8 +70,11 @@ __all__ = [
 
 logger = logging.getLogger("fiduciary.mcp")
 
-PROTOCOL_VERSIONS: Final = ("2025-06-18", "2025-03-26", "2024-11-05")
-"""The MCP revisions this server speaks, newest first."""
+PROTOCOL_VERSIONS: Final = MODERN_VERSIONS + LEGACY_VERSIONS
+"""The MCP revisions this server speaks, newest first (1.17.0): 2026-07-28, served
+statelessly to a request that carries its revision in ``_meta``, and the revisions that
+open with ``initialize``."""
+_META: Final = "io.modelcontextprotocol/"
 MAX_MESSAGE: Final = 1_048_576
 """The largest JSON-RPC message read, in bytes."""
 SERVICE_SECONDS: Final = 1.0
@@ -126,8 +131,21 @@ def parse_message(data: bytes | str) -> Any:
         raise McpError(PARSE_ERROR, f"not JSON: {exc}") from exc
 
 
-def _error(ident: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": ident, "error": {"code": code, "message": message}}
+def _error(ident: Any, code: int, message: str, data: Any = None) -> dict[str, Any]:
+    error: dict[str, Any] = {"code": code, "message": message}
+    if data is not None:
+        error["data"] = data
+    return {"jsonrpc": "2.0", "id": ident, "error": error}
+
+
+def _server_info() -> dict[str, str]:
+    return {"name": "fiduciary", "version": __version__}
+
+
+INSTRUCTIONS: Final = (
+    "Every tool here acts under a signed mandate. A refused call says why, in terms of your "
+    "own arguments; fiduciary_request asks the principals for what the mandate does not allow."
+)
 
 
 class McpServer:
@@ -166,41 +184,76 @@ class McpServer:
             return None  # every other notification is ignored, as MCP allows
         if not isinstance(params, dict):
             return _error(ident, INVALID_PARAMS, "params is an object")
+        # 2026-07-28 (1.17.0): a request that carries its revision in _meta is served on
+        # its own, with no initialize; an older client's initialize opens the legacy era.
+        meta = params.get("_meta")
+        version = meta.get(_META + "protocolVersion") if isinstance(meta, dict) else None
+        if version is not None:
+            if version not in MODERN_VERSIONS:
+                return _error(
+                    ident,
+                    UNSUPPORTED_VERSION,
+                    "Unsupported protocol version",
+                    {"supported": list(PROTOCOL_VERSIONS), "requested": version},
+                )
+            if not isinstance(meta.get(_META + "clientCapabilities"), dict):  # type: ignore[union-attr]
+                return _error(
+                    ident, INVALID_PARAMS, "a request carries its client's capabilities in _meta"
+                )
         try:
-            result = self._dispatch(method, params)
+            result = self._dispatch(method, params, modern=version is not None)
         except McpError as exc:
             return _error(ident, exc.code, str(exc))
+        if version is not None:
+            result = {
+                **result,
+                "resultType": "complete",
+                "_meta": {**result.get("_meta", {}), _META + "serverInfo": _server_info()},
+            }
         return {"jsonrpc": "2.0", "id": ident, "result": result}
 
-    def _dispatch(self, method: str, params: Mapping[str, Any]) -> dict[str, Any]:
+    def drain(self) -> list[dict[str, Any]]:
+        """Notifications this server has for its client, sent after the next answer
+        (1.17.0): ``notifications/tools/list_changed`` when a protected tool is withheld."""
+        return []
+
+    def tool_list(self) -> list[dict[str, Any]]:
+        """The tools this connection lists: the session's, as MCP writes them."""
+        with self._lock:
+            tools = self._session.tool_definitions()
+        return [
+            {"name": t["name"], "description": t["description"], "inputSchema": t["input_schema"]}
+            for t in tools
+        ]
+
+    def _dispatch(
+        self, method: str, params: Mapping[str, Any], *, modern: bool = False
+    ) -> dict[str, Any]:
         if method == "initialize":
             asked = params.get("protocolVersion")
-            version = asked if asked in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
+            version = asked if asked in LEGACY_VERSIONS else LEGACY_VERSIONS[0]
             return {
                 "protocolVersion": version,
-                "capabilities": {"tools": {"listChanged": False}},
-                "serverInfo": {"name": "fiduciary", "version": __version__},
-                "instructions": (
-                    "Every tool here acts under a signed mandate. A refused call says why, in "
-                    "terms of your own arguments; fiduciary_request asks the principals for "
-                    "what the mandate does not allow."
-                ),
+                "capabilities": {"tools": {"listChanged": True}},
+                "serverInfo": _server_info(),
+                "instructions": INSTRUCTIONS,
+            }
+        if method == "server/discover":
+            return {
+                "supportedVersions": list(PROTOCOL_VERSIONS),
+                "capabilities": {"tools": {"listChanged": True}},
+                "instructions": INSTRUCTIONS,
+                "ttlMs": 0,
+                "cacheScope": "private",
             }
         if method == "ping":
             return {}
         if method == "tools/list":
-            with self._lock:
-                tools = self._session.tool_definitions()
-            return {
-                "tools": [
-                    {
-                        "name": t["name"],
-                        "description": t["description"],
-                        "inputSchema": t["input_schema"],
-                    }
-                    for t in tools
-                ]
-            }
+            listed: dict[str, Any] = {"tools": self.tool_list()}
+            if modern:
+                # A tool can be withheld at any moment (a pin that moved): never cached.
+                listed.update(ttlMs=0, cacheScope="private")
+            return listed
         if method == "tools/call":
             name = params.get("name")
             arguments = params.get("arguments", {})
@@ -308,6 +361,8 @@ def serve_stdio(
             answer = _error(None, exc.code, str(exc))
         if answer is not None:
             writer.write(json.dumps(answer, separators=(",", ":")).encode() + b"\n")
+            for note in server.drain():
+                writer.write(json.dumps(note, separators=(",", ":")).encode() + b"\n")
             writer.flush()
 
 
@@ -728,35 +783,73 @@ def _close(session: Session) -> None:
 class Upstream:
     """An upstream MCP server, run as a child process speaking stdio.
 
-    :raises McpError: When it does not start, or does not answer ``initialize``.
+    The revision is agreed as 2026-07-28 asks (1.17.0): a ``server/discover`` probe, and
+    ``initialize`` for a server that needs it (:func:`interlock.mcp.handshake`).
+
+    :param env: Its environment, beside this process's own: where a protected server's
+        secrets go (1.17.0).
+    :raises McpError: When it does not start, or does not answer.
     """
 
-    def __init__(self, command: Sequence[str], *, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        command: Sequence[str],
+        *,
+        timeout: float = 30.0,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
+        from interlock.mcp import McpCallError, handshake
+
         if not command:
             raise McpError(INVALID_REQUEST, "the proxy needs an upstream command")
         self._timeout = timeout
         self._next = 0
         self._lock = threading.Lock()
+        self.changed = False
+        """Whether the server said its tools changed (``notifications/tools/list_changed``)
+        since :meth:`definitions` last listed them."""
+        for probe in (2.0, 0.0):
+            try:
+                self._process = subprocess.Popen(  # noqa: S603 - the operator's own command
+                    list(command),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    env=None if env is None else {**os.environ, **env},
+                )
+            except OSError as exc:
+                raise McpError(INVALID_REQUEST, f"cannot run the upstream: {exc}") from exc
+            assert self._process.stdout is not None
+            self._lines = _Lines(self._process.stdout)
+            try:
+                self.era = handshake(
+                    self._request_for_handshake,
+                    lambda method: self._send({"jsonrpc": "2.0", "method": method}),
+                    {"name": "fiduciary-proxy", "version": __version__},
+                    timeout=timeout,
+                    probe=probe,
+                )
+                return
+            except (McpCallError, McpError) as exc:
+                died = self._process.poll() is not None
+                self.close()
+                if probe and died:
+                    continue  # the probe stopped it: start it again, and initialize
+                raise McpError(INVALID_REQUEST, f"the upstream did not start: {exc}") from exc
+
+    def _request_for_handshake(
+        self, method: str, params: Mapping[str, Any], seconds: float
+    ) -> Mapping[str, Any]:
+        from interlock.mcp import McpCallError, McpRefusedError
+
         try:
-            self._process = subprocess.Popen(  # noqa: S603 - the operator's own command
-                list(command),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-            )
+            return self._exchange(method, params, seconds, raw=True)
+        except _RefusedError as exc:
+            raise McpRefusedError(exc.text, code=exc.code, data=exc.data) from exc
+        except McpError as exc:
+            raise McpCallError(str(exc), sent=self._process.poll() is None) from exc
         except OSError as exc:
-            raise McpError(INVALID_REQUEST, f"cannot run the upstream: {exc}") from exc
-        assert self._process.stdout is not None
-        self._lines = _Lines(self._process.stdout)
-        self.request(
-            "initialize",
-            {
-                "protocolVersion": PROTOCOL_VERSIONS[0],
-                "capabilities": {},
-                "clientInfo": {"name": "fiduciary-proxy", "version": __version__},
-            },
-        )
-        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            raise McpCallError(str(exc), sent=False) from exc
 
     def _send(self, message: Mapping[str, Any]) -> None:
         assert self._process.stdin is not None
@@ -764,40 +857,100 @@ class Upstream:
         self._process.stdin.flush()
 
     def request(self, method: str, params: Mapping[str, Any]) -> dict[str, Any]:
-        """Send one request and read its response.
+        """Send one request and read its response, in the agreed revision.
 
         :raises McpError: On an error response, or silence past the timeout.
         """
+        try:
+            return self._exchange(
+                method,
+                self.era.params(params, {"name": "fiduciary-proxy", "version": __version__}),
+                self._timeout,
+            )
+        except _RefusedError as exc:
+            raise McpError(INVALID_REQUEST, f"the upstream refused {method}") from exc
+
+    def _exchange(
+        self, method: str, params: Mapping[str, Any], seconds: float, *, raw: bool = False
+    ) -> dict[str, Any]:
         with self._lock:
             self._next += 1
             ident = self._next
             self._send({"jsonrpc": "2.0", "id": ident, "method": method, "params": dict(params)})
-            deadline = time.monotonic() + self._timeout
+            deadline = time.monotonic() + seconds
             while True:
                 left = deadline - time.monotonic()
-                if not self._lines.ready(max(0.0, left)):
+                if not self._lines.ready(max(0.0, left)) or left <= 0:
                     raise McpError(INVALID_REQUEST, f"the upstream did not answer {method}")
                 line = self._lines.readline()
                 if not line:
                     raise McpError(INVALID_REQUEST, "the upstream closed its pipe")
-                message = parse_message(line)
+                try:
+                    message = parse_message(line)
+                except McpError:
+                    continue  # a server's stray output
+                if isinstance(message, dict) and message.get("method") == (
+                    "notifications/tools/list_changed"
+                ):
+                    self.changed = True
                 if not isinstance(message, dict) or message.get("id") != ident:
                     continue  # a notification, or a request of its own: not answered
                 if "error" in message:
-                    raise McpError(INVALID_REQUEST, f"the upstream refused {method}")
+                    error = message["error"] if isinstance(message["error"], dict) else {}
+                    code = error.get("code")
+                    raise _RefusedError(
+                        str(error.get("message") or "an error")[:200],
+                        code if isinstance(code, int) else None,
+                        error.get("data"),
+                    )
                 result = message.get("result")
                 return result if isinstance(result, dict) else {}
 
+    def definitions(self) -> list[dict[str, Any]]:
+        """Every tool the server lists, as it lists it (every page)."""
+        tools: list[dict[str, Any]] = []
+        cursor: str | None = None
+        while True:
+            found = self.request("tools/list", {"cursor": cursor} if cursor else {})
+            tools.extend(t for t in found.get("tools") or () if isinstance(t, dict))
+            cursor = found.get("nextCursor")
+            if not cursor:
+                self.changed = False
+                return tools
+
     def tools(self) -> list[str]:
         """The upstream's tool names."""
-        listed = self.request("tools/list", {}).get("tools", [])
-        return [str(t["name"]) for t in listed if isinstance(t, dict) and "name" in t]
+        return [str(t["name"]) for t in self.definitions() if "name" in t]
 
-    def handler(self, name: str) -> Callable[[Mapping[str, Any]], Any]:
-        """A passthrough implementation that calls upstream tool ``name``."""
+    def call(self, tool: str, arguments: Mapping[str, Any], timeout: float) -> dict[str, Any]:
+        """One ``tools/call``, as :class:`interlock.mcp.McpAdapter` makes it (1.17.0).
+
+        :raises interlock.mcp.McpCallError: When no result came back.
+        """
+        from interlock.mcp import McpCallError, McpRefusedError
+
+        try:
+            return self._exchange(
+                "tools/call",
+                self.era.params(
+                    {"name": tool, "arguments": dict(arguments)},
+                    {"name": "fiduciary-proxy", "version": __version__},
+                ),
+                timeout,
+            )
+        except _RefusedError as exc:
+            raise McpRefusedError(exc.text, code=exc.code, data=exc.data) from exc
+        except McpError as exc:
+            raise McpCallError(str(exc), sent=True) from exc
+
+    def handler(self, name: str, upstream: str | None = None) -> Callable[[Mapping[str, Any]], Any]:
+        """A passthrough implementation that calls upstream tool ``upstream`` (``name``
+        by default)."""
 
         def call(arguments: Mapping[str, Any]) -> dict[str, Any]:
-            result = self.request("tools/call", {"name": name, "arguments": dict(arguments)})
+            result = self.request(
+                "tools/call", {"name": upstream or name, "arguments": dict(arguments)}
+            )
             content = result.get("content", [])
             return {
                 "content": [c for c in content if isinstance(c, dict)],
@@ -807,8 +960,9 @@ class Upstream:
         return call
 
     def close(self) -> None:
-        if self._process.stdin is not None:
-            self._process.stdin.close()
+        if self._process.stdin is not None and not self._process.stdin.closed:
+            with contextlib.suppress(OSError):
+                self._process.stdin.close()
         try:
             self._process.wait(5)
         except subprocess.TimeoutExpired:
@@ -816,6 +970,14 @@ class Upstream:
             self._process.wait()
         if self._process.stdout is not None:
             self._process.stdout.close()
+
+
+class _RefusedError(Exception):
+    """An upstream's JSON-RPC error, with its code and data."""
+
+    def __init__(self, text: str, code: int | None, data: Any) -> None:
+        super().__init__(text)
+        self.text, self.code, self.data = text, code, data
 
 
 def proxy_handlers(fid: Fiduciary, upstream: Upstream) -> dict[str, Callable[..., Any]]:

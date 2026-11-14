@@ -77,9 +77,10 @@ def test_tools_list_is_the_pinned_bindings_and_the_built_ins(fid: Fiduciary) -> 
     server = McpServer(_session(fid))
     init = _call(server, 1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}})
     assert init["result"]["protocolVersion"] == "2025-03-26"
-    assert init["result"]["capabilities"] == {"tools": {"listChanged": False}}
+    # 1.17.0: a protected proxy tells its client when it withholds a tool
+    assert init["result"]["capabilities"] == {"tools": {"listChanged": True}}
     later = _call(server, 2, "initialize", {"protocolVersion": "2099-01-01"})
-    assert later["result"]["protocolVersion"] == "2025-06-18"
+    assert later["result"]["protocolVersion"] == "2025-11-25"
     assert server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
     assert server.initialized
     assert _call(server, 3, "ping")["result"] == {}

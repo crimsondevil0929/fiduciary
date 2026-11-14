@@ -802,8 +802,12 @@ def world_key(signers: Mapping[str, Signer], name: str) -> str:
     return str(signers[name].public_key().key_id)
 
 
-def build(root: Path, pack: Pack) -> PackWorld:
-    """Stand ``pack``'s deployment up under ``root``, which must be empty or absent."""
+def build(root: Path, pack: Pack, *, keys: Mapping[str, Signer] | None = None) -> PackWorld:
+    """Stand ``pack``'s deployment up under ``root``, which must be empty or absent.
+
+    :param keys: Signers to use for some of the names, whose key files are kept
+        elsewhere (the owner every protected server shares, 1.17.0): none is written here.
+    """
     root.mkdir(parents=True, exist_ok=True)
     if any(root.iterdir()):
         raise FileExistsError(f"{root} is not empty: the demo writes a fresh deployment")
@@ -818,7 +822,8 @@ def build(root: Path, pack: Pack) -> PackWorld:
         "relay-b",
         *(("inbox",) if pack.sources else ()),
     )
-    signers: dict[str, Signer] = {name: _key(root, name) for name in names}
+    given = dict(keys or {})
+    signers: dict[str, Signer] = {name: given.get(name) or _key(root, name) for name in names}
     closers: list[Callable[[], None]] = []
 
     back_office = pack.back_office or root / "back_office.db"
