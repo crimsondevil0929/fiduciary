@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import dataclasses
 import functools
 import hashlib
 import json
@@ -1079,6 +1080,9 @@ def accept(
             ]
             changed[root] = _write_bindings(root, bindings)
             back_office = root / "back_office.db"
+            # A write no longer listed keeps its operation: the version still in force pins
+            # its binding until the next one is issued, and its plans' requests name it.
+            pack = dataclasses.replace(pack, sinks=_with_retired(root, pack.sinks))
             interlock = kit.interlock_toml(root, pack, back_office)
             if any(m != "read" for m in governed.modes.values()):
                 interlock += _relay_toml(root, state["command"], governed.bindings)
@@ -1160,6 +1164,21 @@ def _sign_grouped(
         made = sign_all(signer, [drafts[r] for r in members], what=f"{what}: {len(members)}")
         out.update(zip(members, made, strict=True))
     return out
+
+
+def _with_retired(root: Path, sinks: Sequence[Any]) -> tuple[Any, ...]:
+    """``sinks``, with each operation the deployment's sinks have now and ``sinks`` leave
+    out added back as it is."""
+    from fiduciary.config import load_config
+
+    current = {s.name: s for s in load_config(root / "fiduciary.toml").interlock_config().sinks}
+    merged = []
+    for sink in sinks:
+        old = current.pop(sink.name, None)
+        names = {op.name for op in sink.operations}
+        kept = [op for op in (old.operations if old is not None else ()) if op.name not in names]
+        merged.append(dataclasses.replace(sink, operations=(*sink.operations, *kept)))
+    return (*merged, *current.values())
 
 
 def _write_bindings(root: Path, bindings: Sequence[ToolBinding]) -> tuple[str, ...]:

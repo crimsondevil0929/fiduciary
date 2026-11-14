@@ -373,3 +373,66 @@ def test_the_console_registers_the_owners_passkey_on_every_server_with_one_touch
     for each in roots:
         assert _charter(each).principal("owner").key == passkey.spec  # type: ignore[union-attr]
     assert Owner.under(tmp_path / "protect").passkey() is not None
+
+
+def test_what_the_owner_commands_refuse_and_leave_behind(tmp_path: Path) -> None:
+    from fiduciary import solo
+
+    client = _client_file(tmp_path, "notes", "tasks", "wiki")
+    root = tmp_path / "protect"
+    roots = _protect(client, root, "notes", "tasks")
+    owner = Owner.under(root)
+    passkey, stranger = SoftPasskey(seed=61), SoftPasskey(seed=62)
+    with pytest.raises(ProtectError, match="not the one they name"):
+        protect.register_owner(owner, passkey.point, POLICY, passkey=Touches(stranger))
+    with pytest.raises(ProtectError, match="holds no protected server"):
+        protect.register_owner(Owner.under(tmp_path / "none"), passkey.point, POLICY)
+    # one server grows to three principals: it is no longer this owner's alone
+    fid = Fiduciary.from_config(roots[1] / "fiduciary.toml")
+    try:
+        solo.add_principals(fid, roots[1], ["alice", "bob"])
+    finally:
+        fid.close()
+    done = protect.register_owner(owner, passkey.point, POLICY, passkey=Touches(passkey))
+    assert set(done.registered) == {roots[0]}
+    assert done.skipped == {roots[1]: "its charter is not one owner's alone"}
+
+    # a new server the passkey cannot sign for is not left half-protected
+    before = client.read_text()
+    with pytest.raises(Exception, match="not by the key pinned for its signer"):
+        _protect(client, root, "wiki", passkey=Touches(stranger))
+    assert not (root / "claude-desktop" / "wiki").exists() and client.read_text() == before
+
+
+def test_a_proxy_started_while_asked_waits_and_a_dropped_tool_is_retired(tmp_path: Path) -> None:
+    client = _client_file(tmp_path, "notes")
+    (deployment,) = _protect(client, tmp_path / "protect", "notes")
+    ask = deployment / protect.ASIDE
+    ask.write_text(json.dumps({"pid": os.getpid(), "asked_at": datetime.now(UTC).isoformat()}))
+    proxy = Pipes(deployment / "fiduciary.toml")
+    try:
+        answer = proxy.tool("search_notes", {"query": "x"})
+        assert answer["isError"] and "Call it again in a moment" in answer["content"][0]["text"]
+        assert proxy.call("tools/list")["result"]["tools"] == []
+        ask.unlink()
+        _until(lambda: not protect._free(deployment))
+        assert not proxy.tool("search_notes", {"query": "x"})["isError"]
+        bad = proxy.call("tools/call", {"name": 5, "arguments": {}})
+        assert "error" in bad
+    finally:
+        proxy.close()
+
+    def listing(command: Any, env: Any) -> list[dict[str, Any]]:
+        """The stand-in's tools, less delete_note."""
+        found = protect._discover(command, env)
+        return [t for t in found if t["name"] != "delete_note"]
+
+    accepted = protect.accept([deployment], discover=listing)
+    assert "delete_note" in accepted[deployment].changed
+    assert not (deployment / "tools" / "delete_note.tool.json").exists()
+    assert any(
+        p.name.startswith("delete_note.") for p in (deployment / "tools" / "retired").iterdir()
+    )
+    assert protect._alive(os.getpid()) and not protect._alive(2**22 + 11)
+    if os.getuid() != 0:
+        assert protect._alive(1)  # someone else's process: alive, though not ours to signal
