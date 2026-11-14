@@ -37,6 +37,7 @@ from agentgov.exceptions import MalformedReceiptError
 from agentgov.receipts import canonical_bytes, loads_strict
 from agentgov.receipts.signing import Ed25519PublicKey, Signer, Verifier, verifier_of
 
+from fiduciary import webauthn
 from fiduciary.exceptions import MalformedError, SignatureError
 
 __all__ = [
@@ -53,6 +54,7 @@ __all__ = [
     "format_instant",
     "key_of",
     "parse",
+    "principal_key",
     "sign",
     "signing_input",
     "utf16_sorted",
@@ -84,6 +86,8 @@ MAX_DOCUMENT: Final = 65_536
 HASH: Final = re.compile(r"[0-9a-f]{64}")
 KEY_ID: Final = re.compile(r"[0-9a-f]{16}")
 PUBLIC_KEY: Final = re.compile(r"ed25519:[0-9a-f]{64}")
+PRINCIPAL_KEY: Final = re.compile(r"ed25519:[0-9a-f]{64}|webauthn-es256:[0-9a-f]{128}")
+"""A principal's key (1.17.0): Ed25519, or a passkey's P-256 point."""
 SIGNATURE: Final = re.compile(r"[0-9a-f]{128}")
 UUID: Final = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 INSTANT: Final = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z")
@@ -148,6 +152,19 @@ def key_of(spec: str) -> Ed25519PublicKey:
     if not isinstance(spec, str) or not PUBLIC_KEY.fullmatch(spec):
         raise MalformedError("format", "$", "a key is ed25519:<64 lowercase hex>")
     return Ed25519PublicKey(bytes.fromhex(spec.removeprefix("ed25519:")))
+
+
+def principal_key(
+    spec: str, policy: webauthn.Policy | None = None
+) -> Ed25519PublicKey | webauthn.PasskeyKey:
+    """A principal's key (1.17.0): ``ed25519:<64 hex>``, or a passkey's
+    ``webauthn-es256:<128 hex>`` with the policy the charter holds beside it.
+
+    :raises MalformedError: ``format``, on anything else.
+    """
+    if isinstance(spec, str) and webauthn.SPEC.fullmatch(spec):
+        return webauthn.PasskeyKey.parse(spec, policy)
+    return key_of(spec)
 
 
 # -- reading strictly (F3-1) -----------------------------------------------------
@@ -358,28 +375,71 @@ def check_set(items: Sequence[str], path: str) -> None:
 # -- signatures (F3-2 to F3-8) ---------------------------------------------------
 
 
+_DER: Final = re.compile(r"(?:[0-9a-f]{2}){8,80}")
+_AUTHENTICATOR_DATA: Final = re.compile(r"(?:[0-9a-f]{2}){37,1024}")
+_CLIENT_DATA: Final = re.compile(r"(?:[0-9a-f]{2}){16,4096}")
+
+
 @dataclass(frozen=True, slots=True)
 class Signature:
-    """``sig``: the key that signed, and its Ed25519 signature."""
+    """``sig``: the key that signed, and its signature.
+
+    Ed25519, or (1.17.0, F3-2 amended) a passkey's: ``alg`` ``webauthn-es256``, the
+    ECDSA signature in DER, and the ``authenticator_data`` and ``client_data_json``
+    it was made over (:mod:`fiduciary.webauthn`). Which one verifies a document is
+    decided by the key pinned for its signer, never by ``alg``.
+    """
 
     key_id: str
     value: bytes
     alg: str = ALG
+    authenticator_data: bytes | None = None
+    client_data_json: bytes | None = None
 
     def header(self) -> dict[str, str]:
         return {"alg": self.alg, "key_id": self.key_id}
 
     def to_json(self) -> dict[str, str]:
-        return {**self.header(), "signature": self.value.hex()}
+        out = {**self.header(), "signature": self.value.hex()}
+        if self.alg == webauthn.ALG:
+            assert self.authenticator_data is not None and self.client_data_json is not None
+            out["authenticator_data"] = self.authenticator_data.hex()
+            out["client_data_json"] = self.client_data_json.hex()
+        return out
+
+    def assertion(self) -> webauthn.Assertion:
+        """A passkey signature's parts. :raises SignatureError: On an Ed25519 one."""
+        if self.authenticator_data is None or self.client_data_json is None:
+            raise SignatureError("alg", "an Ed25519 signature is no passkey assertion")
+        return webauthn.Assertion(self.authenticator_data, self.client_data_json, self.value)
 
     @classmethod
     def from_json(cls, value: object, path: str = "$.sig") -> Signature:
+        alg = value.get("alg") if isinstance(value, dict) else None
+        if alg == webauthn.ALG:
+            fields = Fields(
+                value,
+                path,
+                ("alg", "key_id", "signature", "authenticator_data", "client_data_json"),
+            )
+            return cls(
+                key_id=fields.text("key_id", KEY_ID, "16 lowercase hex characters"),
+                value=bytes.fromhex(fields.text("signature", _DER, "a DER signature in hex")),
+                alg=webauthn.ALG,
+                authenticator_data=bytes.fromhex(
+                    fields.text("authenticator_data", _AUTHENTICATOR_DATA, "37 to 1024 bytes")
+                ),
+                client_data_json=bytes.fromhex(
+                    fields.text("client_data_json", _CLIENT_DATA, "16 to 4096 bytes")
+                ),
+            )
         fields = Fields(value, path, ("alg", "key_id", "signature"))
         if fields.raw("alg") != ALG:
             raise MalformedError(
                 "alg",
                 fields.path("alg"),
-                "every FIDU1 signature is Ed25519; HMAC proves nothing to a third party",
+                "a FIDU1 signature is Ed25519, or a passkey's (webauthn-es256); HMAC proves "
+                "nothing to a third party",
             )
         key_id = fields.text("key_id", KEY_ID, "16 lowercase hex characters")
         value_hex = fields.text("signature", SIGNATURE, "128 lowercase hex characters")
@@ -399,15 +459,37 @@ def signing_input(kind: str, body: Mapping[str, Any], header: Mapping[str, str])
     return domain + hashlib.sha512(canonical(document)).digest()
 
 
-def sign(kind: str, body: Mapping[str, Any], signer: Signer) -> Signature:
+def sign(kind: str, body: Mapping[str, Any], signer: Signer | webauthn.PasskeySigner) -> Signature:
     """Sign a document's body with ``signer``, and check the signature before
     returning it (F3-8): whatever a key service answered never becomes a
     signature that does not verify.
 
-    :raises SignatureError: ``alg`` for a signer that is not Ed25519 (an HMAC
-        key is refused, F3-3), ``signature`` if what it returned does not
-        verify under its own public key.
+    A passkey (1.17.0) signs through :meth:`~fiduciary.webauthn.PasskeySigner.assertion`:
+    a person's touch in a browser, or a test's software passkey.
+
+    :raises SignatureError: ``alg`` for a signer that is neither Ed25519 nor a
+        passkey (an HMAC key is refused, F3-3), ``signature`` if what it returned
+        does not verify under its own public key.
     """
+    if isinstance(signer, webauthn.PasskeySigner):
+        header = {"alg": webauthn.ALG, "key_id": signer.key_id}
+        message = signing_input(kind, body, header)
+        made = signer.assertion(message)
+        signature = Signature(
+            key_id=signer.key_id,
+            value=made.signature,
+            alg=webauthn.ALG,
+            authenticator_data=made.authenticator_data,
+            client_data_json=made.client_data_json,
+        )
+        problem = signer.public_key().check(message, made)
+        if problem is not None:
+            raise SignatureError(
+                "signature",
+                f"passkey {signer.key_id} answered with a signature that does not "
+                f"verify: {problem}",
+            )
+        return signature
     if signer.alg != ALG:
         raise SignatureError(
             "alg",
@@ -427,17 +509,47 @@ def sign(kind: str, body: Mapping[str, Any], signer: Signer) -> Signature:
     return Signature(key_id=signer.key_id, value=value)
 
 
-def verify(kind: str, body: Mapping[str, Any], signature: Signature | None, key: Verifier) -> None:
+def verify(
+    kind: str,
+    body: Mapping[str, Any],
+    signature: Signature | None,
+    key: Verifier | webauthn.PasskeyKey,
+) -> None:
     """Check ``signature`` over ``body`` under ``key``, the key pinned for the
-    signer, never one the document names (F3-4).
+    signer, never one the document names (F3-4). The key's type decides the
+    construction (F3-2, amended in 1.17.0): a signature claiming another is refused.
 
-    :raises SignatureError: ``unsigned``, ``key`` (signed by another key) or
-        ``signature`` (does not verify).
+    :raises SignatureError: ``unsigned``, ``alg`` (not the construction its key
+        requires), ``key`` (signed by another key) or ``signature`` (does not verify).
     """
     if signature is None:
         raise SignatureError("unsigned", f"the {kind} is not signed")
+    if isinstance(key, webauthn.PasskeyKey):
+        if signature.alg != webauthn.ALG:
+            raise SignatureError(
+                "alg",
+                f"the {kind} is signed {signature.alg}, and its signer's key is a passkey: "
+                f"only a passkey's own assertion verifies under it",
+            )
+        if signature.key_id != key.key_id:
+            raise SignatureError(
+                "key",
+                f"the {kind} was signed by key {signature.key_id}, not by the key pinned for "
+                f"its signer ({key.key_id})",
+            )
+        problem = key.check(signing_input(kind, body, signature.header()), signature.assertion())
+        if problem is not None:
+            raise SignatureError(
+                "signature", f"the {kind}'s passkey signature does not verify: {problem}"
+            )
+        return
     if key.alg != ALG:
         raise SignatureError("alg", f"a {key.alg} key verifies no FIDU1 signature")
+    if signature.alg != ALG:
+        raise SignatureError(
+            "alg",
+            f"the {kind} is signed {signature.alg}, and its signer's key is Ed25519",
+        )
     if signature.key_id != key.key_id:
         raise SignatureError(
             "key",

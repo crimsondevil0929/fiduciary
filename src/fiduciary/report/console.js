@@ -1973,7 +1973,7 @@
     return h("div", { class: "card td" },
       h("div", { class: "td-head" }, h("div", { class: "line" }, pill("MANDATE", "info"), h("b", null, dep.name), h("span", { class: "spacer" }), LIVE.on ? h("button", { class: "btn sm", onclick: function () { DESK.profileFor = null; render(); } }, "Refresh") : null),
         h("p", { class: "small ink2" }, "What the agent may do here, as its principals' quorum signed it: every tool it can call and how each call is governed.")),
-      mandates, h("div", { class: "td-sec" }, h("h3", null, "Latest receipts"), receipts));
+      mandates, LIVE.on ? passkeySection(dep) : null, h("div", { class: "td-sec" }, h("h3", null, "Latest receipts"), receipts));
   }
 
   function factList(pairs) {
@@ -2099,8 +2099,12 @@
       field("Option", sel("option", t.options.map(function (o) { return [o.digest, o.action + " · quorum " + o.quorum]; }))),
       field("Decision", sel("decision", [["approve", "approve"], ["decline", "decline"]])));
     var actions = [];
-    if (dep.signs) actions.push(h("button", { class: "btn primary", disabled: DESK.busy ? "disabled" : null, onclick: function () { signWithSandbox(dep, t); } }, icon("key"), "Sign as " + f.principal));
-    if (dep.accepts && !dep.signs) actions.push(h("button", { class: "btn primary", disabled: DESK.busy ? "disabled" : null, onclick: function () { pickFile("", function (file) { signInBrowser(dep, t, file); }); } }, icon("key"), "Sign with " + f.principal + "'s key file…"));
+    var pk = passkeyOf(dep, f.principal);
+    if (pk && dep.accepts) actions.push(passkeyHere()
+      ? h("button", { class: "btn primary", disabled: DESK.busy ? "disabled" : null, onclick: function () { signWithPasskey(dep, t); } }, icon("key"), "Approve with " + f.principal + "'s passkey")
+      : h("span", { class: "small muted" }, f.principal + " signs with a passkey: open this console at http://localhost:" + (location.port || "8740") + " to use it."));
+    if (dep.signs && !pk) actions.push(h("button", { class: "btn primary", disabled: DESK.busy ? "disabled" : null, onclick: function () { signWithSandbox(dep, t); } }, icon("key"), "Sign as " + f.principal));
+    if (dep.accepts && !dep.signs && !pk) actions.push(h("button", { class: "btn primary", disabled: DESK.busy ? "disabled" : null, onclick: function () { pickFile("", function (file) { signInBrowser(dep, t, file); }); } }, icon("key"), "Sign with " + f.principal + "'s key file…"));
     if (dep.accepts) actions.push(h("button", { class: "btn", disabled: DESK.busy ? "disabled" : null, onclick: function () { pickFile(".json,application/json", function (file) { submitSigned(dep, t, file); }); } }, "Submit a signed approval…"));
     actions.push(h("button", { class: "btn", disabled: DESK.busy ? "disabled" : null, onclick: function () { draftVote(dep, t).then(function () { render(); }).catch(failed(DESK)); } }, "Show what is signed"));
     var note = dep.signs ? "The sandbox holds the demo's keys, so the console signs for the principal you pick and is the writer: it records the vote at once, forms the warrant at quorum and executes it."
@@ -2131,6 +2135,62 @@
     setTimeout(function () {
       loadTicket(dep, tid).then(function (x) { if (x && (x.votes.length > seen || x.status !== "open")) { DESK.poll = 0; refreshStatus(); } else pollTicket(dep, tid, seen); });
     }, 1500);
+  }
+  // -- passkeys (1.17.0) ------------------------------------------------------------------------
+  var PK = { busy: null, error: null, done: null };
+  function b64uBytes(text) { var s = String(text).replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; var r = atob(s), u = new Uint8Array(r.length); for (var i = 0; i < r.length; i++) u[i] = r.charCodeAt(i); return u; }
+  function bytesB64u(buf) { var u = new Uint8Array(buf), s = ""; for (var i = 0; i < u.length; i++) s += String.fromCharCode(u[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+  function passkeyHere() { return !!(window.PublicKeyCredential && navigator.credentials) && location.hostname === "localhost"; }
+  function passkeyOf(dep, name) { var p = (dep.principals || []).filter(function (x) { return x.name === name; })[0]; return p && p.passkey ? p : null; }
+  function assertWith(passkey, signingInputHex) {
+    var opts = { challenge: hexBytes(signingInputHex), rpId: passkey.rp_id, userVerification: "required", timeout: 120000 };
+    if (passkey.credential) opts.allowCredentials = [{ type: "public-key", id: b64uBytes(passkey.credential) }];
+    return navigator.credentials.get({ publicKey: opts }).then(function (a) {
+      return { authenticator_data: bytesHex(new Uint8Array(a.response.authenticatorData)), client_data_json: bytesHex(new Uint8Array(a.response.clientDataJSON)), signature: bytesHex(new Uint8Array(a.response.signature)) };
+    });
+  }
+  function signWithPasskey(dep, t) {
+    DESK.busy = true; DESK.error = null; DESK.result = null; render();
+    draftVote(dep, t).then(function (d) {
+      if (!d.passkey) throw new Error(d.approval.principal + " signs with a key file, not a passkey.");
+      return assertWith(d.passkey, d.signing_input).then(function (assertion) {
+        return api("POST", "deployments/" + encodeURIComponent(dep.id) + "/approvals", { approval: d.approval, key_id: d.key_id, assertion: assertion });
+      });
+    }).then(afterVote(dep, t)).catch(failed(DESK));
+  }
+  function registerPasskey(dep, name) {
+    PK.busy = name; PK.error = null; PK.done = null; render();
+    var base = "deployments/" + encodeURIComponent(dep.id) + "/passkeys";
+    var challenge = new Uint8Array(32); crypto.getRandomValues(challenge);
+    navigator.credentials.create({ publicKey: { challenge: challenge, rp: { id: "localhost", name: "Fiduciary" },
+      user: { id: new TextEncoder().encode(name), name: name, displayName: name }, pubKeyCredParams: [{ type: "public-key", alg: -7 }],
+      authenticatorSelection: { userVerification: "required", residentKey: "preferred" }, timeout: 120000 } })
+      .then(function (c) {
+        var spki = new Uint8Array(c.response.getPublicKey()), pt = spki.slice(spki.length - 65);
+        if (pt[0] !== 4) throw new Error("That passkey does not sign with P-256 (ES256), the one curve Fiduciary verifies.");
+        return api("POST", base + "/draft", { principal: name, point: bytesHex(pt.slice(1)), credential: bytesB64u(c.rawId), origin: location.origin });
+      }).then(function (d) {
+        // The passkey signs the charter version that makes it the principal's key.
+        return assertWith(d.passkey, d.signing_input).then(function (assertion) {
+          return api("POST", base, { principal: name, charter: d.charter, key_id: d.key_id, assertion: assertion });
+        });
+      }).then(function (r) { PK.busy = null; PK.done = r; DESK.profileFor = null; refreshStatus(); render(); })
+      .catch(function (e) { PK.busy = null; PK.error = e.message || String(e); render(); });
+  }
+  function passkeySection(dep) {
+    var rows = (dep.principals || []).map(function (p) {
+      var how = p.passkey ? h("span", null, pill("PASSKEY", "good"), " " + p.passkey.origins.join(", ")) : pill("KEY FILE", "permit");
+      var act = null;
+      if (!p.passkey && dep.passkeys && LIVE.on) act = passkeyHere()
+        ? h("button", { class: "btn sm", disabled: PK.busy ? "disabled" : null, onclick: function () { registerPasskey(dep, p.name); } }, icon("key"), PK.busy === p.name ? "Waiting for your device" : "Use a passkey")
+        : h("span", { class: "small muted" }, "Open this console at http://localhost:" + (location.port || "8740") + " to make one.");
+      return [h("b", null, p.name), how, hash(p.key_id || "", 12), act || h("span", { class: "muted" }, "—")];
+    });
+    return h("div", { class: "td-sec" }, h("h3", null, "Who signs"),
+      h("p", { class: "small ink2" }, "Each principal signs with one key. A key file can be read by any program running as its owner, an agent's tools included. A passkey (Touch ID, Windows Hello, a security key) signs only when its owner touches it, and its private key never leaves the device."),
+      rows.length ? table(["Principal", "Key", "Key id", ""], rows) : h("p", { class: "small muted" }, "The charter could not be read."),
+      PK.error ? errorLine(PK.error) : null,
+      PK.done ? h("div", { class: "outcome good", role: "status" }, icon("check"), h("span", null, PK.done.principal + "'s key is now a passkey, in charter version " + PK.done.charter_version + (PK.done.adopted ? ", in force." : ", which waits for the other principals' approvals.") + (PK.done.retired ? " The old key file was moved to " + PK.done.retired + " and signs nothing here now." : ""))) : null);
   }
   function signWithSandbox(dep, t) {
     DESK.busy = true; DESK.error = null; DESK.result = null; render();

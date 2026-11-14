@@ -1,7 +1,7 @@
 """The charter: a deployment's root of authority (``docs/FIDUCIARY_SPEC.md`` §4.1).
 
 Configuration pins version 1's digest. Each principal is a name and one
-Ed25519 public key; the quorums say how many of them adopt the next version,
+public key, Ed25519 or (1.17.0) a passkey's with its relying-party policy; the quorums say how many of them adopt the next version,
 issue a root mandate, and revoke. ``deployment.ledger`` binds everything under
 the charter to one AgentGov ledger, by the hash of its first entry.
 """
@@ -18,6 +18,7 @@ from fiduciary import fidu1
 from fiduciary.documents._base import Document, sorted_by
 from fiduciary.exceptions import MalformedError
 from fiduciary.fidu1 import Fields, Signature
+from fiduciary.webauthn import ALG, PasskeyKey, Policy
 
 __all__ = ["Charter", "Deployment", "Principal"]
 
@@ -30,14 +31,24 @@ class Principal:
 
     name: str
     key: str
-    """``ed25519:<64 hex>``."""
+    """``ed25519:<64 hex>``, or a passkey's ``webauthn-es256:<128 hex>`` (1.17.0)."""
+    webauthn: Policy | None = None
+    """For a passkey, its relying party and the origins it may sign from (1.17.0).
+    Written only for a passkey, so every charter before it keeps its digest."""
 
     @property
-    def public_key(self) -> Ed25519PublicKey:
-        return fidu1.key_of(self.key)
+    def public_key(self) -> Ed25519PublicKey | PasskeyKey:
+        return fidu1.principal_key(self.key, self.webauthn)
 
-    def to_json(self) -> dict[str, str]:
-        return {"name": self.name, "key": self.key}
+    @property
+    def passkey(self) -> bool:
+        return self.webauthn is not None
+
+    def to_json(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"name": self.name, "key": self.key}
+        if self.webauthn is not None:
+            out["webauthn"] = self.webauthn.to_json()
+        return out
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,8 +112,25 @@ class Charter(Document):
         quorums = fields.object("quorums", ("charter", "issue", "revoke"))
         principals = []
         for path, raw in fields.array("principals", MAX_PRINCIPALS):
-            entry = Fields(raw, path, ("name", "key"))
-            principals.append(Principal(entry.name("name"), entry.key("key")))
+            entry = Fields(raw, path, ("name", "key"), ("webauthn",))
+            key = entry.text(
+                "key", fidu1.PRINCIPAL_KEY, "ed25519:<64 hex> or webauthn-es256:<128 hex>"
+            )
+            policy = None
+            if key.startswith(ALG + ":"):
+                if not entry.has("webauthn"):
+                    raise MalformedError(
+                        "fields", entry.path("webauthn"), "a passkey's key needs its policy"
+                    )
+                try:
+                    policy = Policy.from_json(entry.raw("webauthn"))
+                except ValueError as exc:
+                    raise MalformedError("format", entry.path("webauthn"), str(exc)) from exc
+            elif entry.has("webauthn"):
+                raise MalformedError(
+                    "fields", entry.path("webauthn"), "only a passkey's key has a policy"
+                )
+            principals.append(Principal(entry.name("name"), key, policy))
         return {
             "charter_id": fields.uuid("charter_id"),
             "version": fields.integer("version", 1),

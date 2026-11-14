@@ -46,6 +46,8 @@ process instead (:mod:`fiduciary.mcp`).
 
 from __future__ import annotations
 
+import copy
+
 import dataclasses
 import logging
 import re
@@ -342,6 +344,7 @@ def build_plan(
     trajectory: str,
     tenant: str | None,
     provenance: Sequence[str] = (),
+    turn: str | None = None,
 ) -> EffectPlan:
     """The plan a ``plan`` binding builds from validated ``arguments`` (F8-2):
     its statements, tables, sinks and operations the binding's, every
@@ -358,6 +361,7 @@ def build_plan(
         trajectory_id=trajectory,
         intent=f"FIDU1 tool {binding.name} {binding.digest[:16]}",
         provenance=provenance,
+        turn=turn,
     )
     for effect in binding.effects:
         builder.add(
@@ -483,6 +487,9 @@ class Fiduciary:
         self._in_process = in_process
         self._on_close = on_close
         self._lock = threading.RLock()
+        self.withheld: dict[str, str] = {}
+        """Tools a proxy withholds from every session, with what the agent is told (1.17.0):
+        each one whose MCP server lists another definition than its binding's pin."""
         self._guards: dict[str, BudgetGuard] = {}
         self._recoveries: dict[str, RecoveryRuntime] = {}
         self._recovering: dict[str, set[str]] = {}
@@ -752,6 +759,7 @@ class Session:
         "_opened",
         "_pending",
         "_tickets",
+        "turn",
     )
 
     def __init__(self, fid: Fiduciary, opened: Mapping[str, Any]) -> None:
@@ -767,6 +775,9 @@ class Session:
         self._pending: RecoveryStep | None = None
         self._labels: tuple[str, ...] = ()
         """What the session has read, as provenance labels (1.16.0): only ever joined."""
+        self.turn: str | None = None
+        """The agent turn the session's next plans are part of (1.17.0): their requests
+        wait for it (:mod:`fiduciary.turns`)."""
         engine = fid.binder.engine(self.mandate_id)
         self._breaker = CognitiveBreaker(policy=engine.compiled.cognitive, manager=fid.governor)
 
@@ -824,8 +835,13 @@ class Session:
         with its description and schema exactly as the binding holds them,
         and the two built-ins (F8-4)."""
         found = [
-            {"name": b.name, "description": b.description, "input_schema": dict(b.input)}
+            {
+                "name": b.name,
+                "description": b.description,
+                "input_schema": numeric_schema(b.input, b.numbers) if b.numbers else dict(b.input),
+            }
             for b in self._bindings().values()
+            if b.name not in self._fid.withheld
         ]
         found += [
             {
@@ -851,6 +867,14 @@ class Session:
             return self._reject(
                 None, "unpinned", "No tool of that name is granted to this session."
             )
+        withheld = self._fid.withheld.get(name)
+        if withheld is not None:
+            return self._reject(name, "withheld", withheld)
+        if binding.numbers:
+            # A number argument is held as its decimal string (1.17.0): no float is hashed.
+            from interlock.mcp import decimals
+
+            arguments = decimals(dict(arguments), binding.numbers)
         problems = check_arguments(binding.input, arguments)
         if problems:
             text = "; ".join(problems)[:1024]
@@ -1001,6 +1025,7 @@ class Session:
                 trajectory=self.trajectory,
                 tenant=self.tenant,
                 provenance=self.labels,
+                turn=self.turn,
             )
         except PlanError as exc:
             return CallResult(name, "error", feedback_for_error(_empty_plan(self), exc).render())
@@ -1753,3 +1778,29 @@ class _Messages:
 def _cost(pricing: ModelPricing, response: object) -> Decimal:
     usage = default_usage_extractor(response)
     return pricing.cost_of(usage if isinstance(usage, TokenUsage) else TokenUsage())
+
+
+def numeric_schema(schema: Mapping[str, Any], paths: Sequence[str]) -> dict[str, Any]:
+    """A binding's input schema as an agent is shown it (1.17.0): each argument at
+    ``paths``, held as a decimal string, shown as the JSON number it is sent as."""
+    out: dict[str, Any] = copy.deepcopy(dict(schema))
+    for path in paths:
+        node: Any = out
+        steps = [p for p in path.split(".") if p]
+        for index, step in enumerate(steps):
+            name = step.removesuffix("[]")
+            props = node.get("properties") if isinstance(node, dict) else None
+            if not isinstance(props, dict) or not isinstance(props.get(name), dict):
+                break
+            field = props[name]
+            if step.endswith("[]"):
+                field = field.get("items") if isinstance(field.get("items"), dict) else None
+                if field is None:
+                    break
+            if index == len(steps) - 1:
+                kinds = field.get("type")
+                nullable = isinstance(kinds, list) and "null" in kinds
+                field.pop("pattern", None)
+                field["type"] = ["number", "null"] if nullable else "number"
+            node = field
+    return out

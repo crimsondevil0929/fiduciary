@@ -33,6 +33,8 @@ from fiduciary.exceptions import FiduciaryError
 if TYPE_CHECKING:
     from agentgov.receipts.signing import Signer
 
+    from fiduciary.webauthn import PasskeySigner
+
     from fiduciary.bridge import Fiduciary
     from fiduciary.documents import Charter, Mandate
 
@@ -70,7 +72,12 @@ class Grown:
 
 
 def _approve(
-    fid: Fiduciary, charter: Charter, principal: str, signer: Signer, subject: str, digest: str
+    fid: Fiduciary,
+    charter: Charter,
+    principal: str,
+    signer: Signer | PasskeySigner,
+    subject: str,
+    digest: str,
 ) -> None:
     from fiduciary.documents import Approval
 
@@ -93,10 +100,13 @@ def _approve(
     fid.log.store.submit(approval.canonical())
 
 
-def _solo(fid: Fiduciary, root: Path, mandate: str | None) -> tuple[Charter, Mandate, Signer]:
+def _solo(
+    fid: Fiduciary, root: Path, mandate: str | None, passkey: PasskeySigner | None = None
+) -> tuple[Charter, Mandate, Signer | PasskeySigner]:
     """The charter in force, the lineage's head, and the owner's key, when the
-    deployment is solo."""
-    from fiduciary.keys import load_key
+    deployment is solo: the key file in ``keys/``, or (1.17.0) the owner's passkey,
+    asked in the browser unless ``passkey`` is given."""
+    from fiduciary.passkeys import PasskeyError, signer_for
 
     state = fid.log.state()
     authority = fid._authority
@@ -107,12 +117,10 @@ def _solo(fid: Fiduciary, root: Path, mandate: str | None) -> tuple[Charter, Man
             f"approvals (fiduciary mandate amend), not one key"
         )
     owner = charter.principals[0].name
-    key = root / "keys" / f"{owner}.key"
-    if not key.is_file():
-        raise SoloError(f"{owner}'s key is not at {key}")
-    signer = load_key(key)
-    if signer.public_key().key_id != charter.principals[0].public_key.key_id:
-        raise SoloError(f"{key} is not the key the charter holds for {owner}")
+    try:
+        signer = signer_for(fid, root, owner, passkey=passkey)
+    except PasskeyError as exc:
+        raise SoloError(str(exc)) from exc
     if mandate is None:
         live = sorted(m for m, e in fid.binder.engines().items() if not e.closed)
         if len(live) != 1:
@@ -126,8 +134,8 @@ def _next(
     fid: Fiduciary,
     head: Mandate,
     charter: Charter,
-    signer: Signer,
-    approvers: Sequence[tuple[str, Signer]],
+    signer: Signer | PasskeySigner,
+    approvers: Sequence[tuple[str, Signer | PasskeySigner]],
     **changes: Any,
 ) -> Grown:
     """Issue version n+1 of ``head``'s lineage with ``changes``, approved by ``approvers``,
@@ -158,12 +166,18 @@ def _next(
     return Grown(draft.mandate_id, draft.version, draft.digest, charter.version)
 
 
-def enforce(fid: Fiduciary, root: Path, *, mandate: str | None = None) -> Grown:
+def enforce(
+    fid: Fiduciary,
+    root: Path,
+    *,
+    mandate: str | None = None,
+    passkey: PasskeySigner | None = None,
+) -> Grown:
     """Issue the next version of a solo deployment's shadow mandate, enforced.
 
     :raises SoloError: When the deployment is not solo, or its mandate already enforces.
     """
-    charter, head, signer = _solo(fid, root, mandate)
+    charter, head, signer = _solo(fid, root, mandate, passkey)
     if not head.shadow:
         raise SoloError(f"mandate {head.mandate_id} version {head.version} already enforces")
     owner = charter.principals[0].name
@@ -177,6 +191,7 @@ def add_principals(
     *,
     mandate: str | None = None,
     enforce: bool = False,
+    passkey: PasskeySigner | None = None,
 ) -> Grown:
     """Grow a solo deployment to three principals, two of whom must agree to grant.
 
@@ -189,13 +204,13 @@ def add_principals(
     from fiduciary.documents import Charter
     from fiduciary.keys import generate_key
 
-    charter, head, signer = _solo(fid, root, mandate)
+    charter, head, signer = _solo(fid, root, mandate, passkey)
     owner = charter.principals[0].name
     names = list(names)
     if len(names) != 2 or len(set(names)) != 2 or owner in names:
         raise SoloError(f"name two principals beside {owner}, each once")
     keys = []
-    signers = {owner: signer}
+    signers: dict[str, Any] = {owner: signer}
     for name in names:
         path = root / "keys" / f"{name}.key"
         if path.exists():
@@ -211,7 +226,11 @@ def add_principals(
             "prev": charter.digest,
             "deployment": charter.deployment.to_json(),
             "principals": [
-                {"name": n, "key": key_spec(signers[n].public_key())} for n in sorted(signers)
+                # The owner keeps its key as the charter holds it: a passkey keeps its policy.
+                charter.principals[0].to_json()
+                if n == owner
+                else {"name": n, "key": key_spec(signers[n].public_key())}
+                for n in sorted(signers)
             ],
             "quorums": {"charter": 3, "issue": 2, "revoke": 1},
             "break_glass": list(charter.break_glass),

@@ -13,6 +13,7 @@ from agentgov.receipts.signing import Signer, Verifier
 from fiduciary import fidu1
 from fiduciary.exceptions import MalformedError
 from fiduciary.fidu1 import Fields, Signature
+from fiduciary.webauthn import PasskeySigner
 
 __all__ = ["IDENTIFIER", "SCOPE", "Document", "sorted_by"]
 
@@ -112,8 +113,9 @@ class Document:
 
     # -- signing --------------------------------------------------------------------
 
-    def signed(self, signer: Signer) -> Self:
-        """This document signed by ``signer`` (Ed25519 only, F3-3)."""
+    def signed(self, signer: Signer | PasskeySigner) -> Self:
+        """This document signed by ``signer``: Ed25519 (F3-3), or a principal's
+        passkey (1.17.0)."""
         self._agree()
         return dataclasses.replace(self, signature=fidu1.sign(self.TYPE, self.body(), signer))  # type: ignore[type-var]
 

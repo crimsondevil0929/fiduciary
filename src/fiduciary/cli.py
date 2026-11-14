@@ -1077,6 +1077,16 @@ def _mcp_serve(args: argparse.Namespace) -> int:
 def _mcp_proxy(args: argparse.Namespace) -> int:
     from fiduciary.mcp import McpServer, Upstream, proxy_handlers, serve_stdio
 
+    if args.protected:
+        from fiduciary import protect
+
+        try:
+            protect.serve(Path(args.config), sys.stdin.buffer, sys.stdout.buffer)
+        except (OSError, ValueError, FiduciaryError) as exc:
+            _fail(str(exc))
+        return OK
+    if args.mandate is None:
+        _fail("give the lineage the proxy serves: --mandate")
     command = list(args.upstream)
     if command and command[0] == "--":
         command = command[1:]
@@ -1723,6 +1733,175 @@ def _solo(args: argparse.Namespace) -> int:
     return OK
 
 
+def _protect(args: argparse.Namespace) -> int:
+    """``fiduciary protect`` and ``fiduciary unprotect`` (1.17.0)."""
+    from fiduciary import protect
+
+    files: list[tuple[str, Path]] = []
+    paths = protect.client_paths()
+    if args.claude_desktop:
+        files.append(("claude-desktop", paths["claude-desktop"]))
+    if args.cursor:
+        files.append(("cursor", paths["cursor"]))
+    files += [(f"file-{p.stem}", p.expanduser()) for p in args.mcp_config]
+    if not files:
+        found = [(c, p) for c, p in paths.items() if p.is_file()]
+        if not found:
+            _fail(
+                "no client file found: name one with --claude-desktop, --cursor or "
+                "--mcp-config FILE"
+            )
+        files = found
+    try:
+        servers = [s for client, path in files for s in protect.read_servers(path, client)]
+        if args.undo_command or getattr(args, "undo", False):
+            for step in protect.undo(servers):
+                _out(f"{step.action:<10}  {step.server.name} ({step.server.config}): {step.why}")
+            return OK
+        if args.review:
+            return _protect_review(protect, servers, accept=args.accept)
+        steps = protect.protect(
+            servers,
+            root=args.root.expanduser(),
+            apply=args.apply,
+            shadow=not args.enforce,
+            move_secrets=args.move_secrets,
+        )
+    except (OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc), REFUSED)
+    for step in steps:
+        where = f"{step.server.name} ({step.server.client})"
+        if step.action == "skip":
+            _out(f"skip        {where}: {step.why}")
+            continue
+        _out(f"{'protected' if args.apply else 'would wrap':<11} {where}: {' '.join(step.command)}")
+        if step.pinned:
+            _out(f"            {step.pinned}")
+        if step.secrets:
+            _out(f"            secrets to the Keychain: {', '.join(step.secrets)}")
+        for tool in step.tools:
+            _out(f"            {tool['name']}: {tool['mode']}")
+        for skipped in step.skipped:
+            _out(f"            left out {skipped['name']}: {skipped['why']}")
+        if step.deployment is not None and args.apply:
+            _out(f"            deployment {step.deployment}")
+    if args.apply and args.claude_code:
+        for path in {s.server.config for s in steps if s.action == "wrap"}:
+            deployments = [
+                s.deployment
+                for s in steps
+                if s.action == "wrap" and s.server.config == path and s.deployment is not None
+            ]
+            written = protect.claude_code_turns(path.parent, deployments)
+            _out(f"turns       Claude Code's hooks in {written}")
+    if not args.apply and any(s.action == "wrap" for s in steps):
+        _out("nothing was changed: run again with --apply, then restart the client")
+    elif args.apply:
+        _out("restart the client to start the protected servers; fiduciary unprotect undoes it")
+    return OK
+
+
+def _protect_review(protect: Any, servers: Sequence[Any], *, accept: bool) -> int:
+    changed = 0
+    for server in servers:
+        root = server.deployment
+        if not server.protected or root is None:
+            continue
+        drifts = protect.review(root)
+        if not drifts:
+            _out(f"unchanged   {server.name}: every tool is as pinned")
+            continue
+        changed += 1
+        for drift in drifts:
+            _out(f"changed     {server.name} {drift.tool}:")
+            for line in drift.lines:
+                _out(f"              {line}")
+        if accept:
+            kept = protect.reprotect(root)
+            _out(f"accepted    {server.name}: protected again; the old deployment is at {kept}")
+    return OK if accept or not changed else REFUSED
+
+
+def _turn_command(args: argparse.Namespace) -> int:
+    """``fiduciary turn open`` and ``fiduciary turn close`` (1.17.0)."""
+    from fiduciary import turns
+    from fiduciary.bridge import Fiduciary
+    from fiduciary.config import ConfigError
+
+    path = _deployment_config(args)
+    root = path.parent
+    if args.hook and not sys.stdin.isatty():
+        sys.stdin.read()  # the hook's event: nothing in it changes what a turn does
+    if args.turn_command == "open":
+        opened = turns.open_turn(root)
+        if not args.hook:
+            _out(f"turn        {opened} is open at {root}")
+        return OK
+    if not turns.request_close(root):
+        if not args.hook:
+            _out(f"turn        none is open at {root}")
+        return OK
+    try:
+        fid = _opened(Fiduciary.from_config(path))
+    except Exception:  # the proxy holds the deployment: it closes the turn
+        if not args.hook:
+            _out("turn        the server's proxy holds the deployment, and closes it next")
+        return OK
+    try:
+        mandate = json.loads((root / "mandate.json").read_text())["mandate_id"]
+        closed = turns.close_file(fid, root, mandate)
+    except (ConfigError, OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc), REFUSED)
+    if not args.hook:
+        if closed is None:
+            _out("turn        closed: it held no request")
+        else:
+            _out(
+                f"turn        {closed.turn} {closed.outcome}: "
+                f"{noun(len(closed.messages), 'request')}, record {closed.record}"
+            )
+    return OK
+
+
+def _passkey(args: argparse.Namespace) -> int:
+    """``fiduciary passkey add`` (1.17.0)."""
+    from fiduciary import passkeys
+    from fiduciary.bridge import Fiduciary
+    from fiduciary.config import ConfigError
+
+    path = _deployment_config(args)
+    try:
+        fid = _opened(Fiduciary.from_config(path))
+        charter = fid._authority.decide.charter(fid.log.state())
+        principal = args.principal or (
+            charter.principals[0].name if len(charter.principals) == 1 else None
+        )
+        if principal is None:
+            raise passkeys.PasskeyError("name the principal: --principal NAME")
+        if charter.principal(principal) is None:
+            raise passkeys.PasskeyError(f"{principal!r} is no principal of the charter")
+        _err(f"fiduciary passkey: opening {args.origin} to make {principal}'s passkey")
+        made = passkeys.create(principal, args.origin)
+        policy = passkeys.policy_for(
+            made.origin, any_port=args.any_port, credential=made.credential
+        )
+        done = passkeys.register(fid, path.parent, principal, made.point, policy)
+    except (ConfigError, OSError, ValueError, FiduciaryError) as exc:
+        _fail(str(exc), REFUSED)
+    _out(f"passkey     {done.key} (key {done.key_id}) for {principal}")
+    _out(f"charter     version {done.charter_version}: {done.draft}")
+    if done.adopted:
+        _out("            adopted: from now on, approvals by this principal are signed by touch")
+    else:
+        _out(
+            "            proposed: the charter quorum's other principals approve it, then "
+            "fiduciary charter adopt"
+        )
+    if done.retired is not None:
+        _out(f"retired     {done.retired}: it signs nothing here now. Keep it offline or delete it")
+    return OK
+
+
 def _shadow_report(args: argparse.Namespace) -> int:
     """``fiduciary shadow report`` (1.14.0)."""
     from interlock.exceptions import InterlockError
@@ -2034,7 +2213,11 @@ def _parser() -> argparse.ArgumentParser:
         ("proxy", "front an upstream MCP server: only the tools the mandate pins"),
     ):
         sub = mcp.add_parser(name, help=helping)
-        sub.add_argument("--mandate", required=True, help="the lineage, or its subject scope")
+        sub.add_argument(
+            "--mandate",
+            required=name == "serve",
+            help="the lineage, or its subject scope",
+        )
         sub.add_argument("--tenant", help="the session's tenant")
         sub.add_argument("--trajectory", help="the session's trajectory")
         if name == "serve":
@@ -2044,6 +2227,12 @@ def _parser() -> argparse.ArgumentParser:
             sub.add_argument("--tls-key", help="the listener's private key (PEM)")
             sub.set_defaults(handler=_mcp_serve)
         else:
+            sub.add_argument(
+                "--protected",
+                action="store_true",
+                help="the server a fiduciary protect entry runs: its command, pins and "
+                "secrets are the deployment's (1.17.0)",
+            )
             sub.add_argument("upstream", nargs=argparse.REMAINDER, help="-- <command>")
             sub.set_defaults(handler=_mcp_proxy)
 
@@ -2260,6 +2449,106 @@ def _parser() -> argparse.ArgumentParser:
     )
     grow.set_defaults(handler=_solo)
 
+    for name, helping in (
+        (
+            "protect",
+            "put a fiduciary proxy in front of each MCP server Claude Desktop, Cursor or "
+            "another client runs: pinned tools, pinned versions, writes made once (1.17.0)",
+        ),
+        ("unprotect", "put each protected server's entry back as it was"),
+    ):
+        guard = commands.add_parser(name, help=helping)
+        guard.add_argument("--claude-desktop", action="store_true", help="Claude Desktop's file")
+        guard.add_argument(
+            "--cursor", action="store_true", help="Cursor's file (~/.cursor/mcp.json)"
+        )
+        guard.add_argument(
+            "--mcp-config",
+            action="append",
+            default=[],
+            type=Path,
+            metavar="FILE",
+            help="any client's file of mcpServers (or servers): Claude Code's .mcp.json, a "
+            "project's .cursor/mcp.json, VS Code's .vscode/mcp.json (repeatable)",
+        )
+        if name == "protect":
+            guard.add_argument(
+                "--apply", action="store_true", help="do it (without it, say what would be done)"
+            )
+            guard.add_argument(
+                "--enforce",
+                action="store_true",
+                help="start each mandate enforcing (shadow by default; pins hold either way)",
+            )
+            guard.add_argument(
+                "--move-secrets",
+                action="store_true",
+                help="move each server's env values to the macOS Keychain",
+            )
+            guard.add_argument(
+                "--claude-code",
+                action="store_true",
+                help="with --mcp-config FILE: add Claude Code's turn hooks to the project's "
+                ".claude/settings.local.json, so a turn's writes wait for its end",
+            )
+            guard.add_argument(
+                "--undo", action="store_true", help="put the entries back (as unprotect)"
+            )
+            guard.add_argument(
+                "--review",
+                action="store_true",
+                help="show each pinned tool whose server lists another definition now",
+            )
+            guard.add_argument(
+                "--accept",
+                action="store_true",
+                help="with --review: protect a server again from what it lists now (its old "
+                "deployment is kept beside the new one)",
+            )
+            guard.add_argument(
+                "--root",
+                type=Path,
+                default=Path.home() / ".fiduciary" / "protect",
+                help="where each server's deployment is written (~/.fiduciary/protect)",
+            )
+        guard.set_defaults(handler=_protect, undo_command=name == "unprotect")
+
+    turn = commands.add_parser(
+        "turn",
+        help="open or close an agent turn for a protected server: what Claude Code's "
+        "UserPromptSubmit and Stop hooks run (1.17.0)",
+    ).add_subparsers(dest="turn_command", required=True, metavar="COMMAND")
+    for name, helping in (
+        ("open", "open a turn: the requests its calls enqueue wait for its end"),
+        ("close", "close it: released if every call committed, cancelled if one was refused"),
+    ):
+        step = turn.add_parser(name, help=helping)
+        step.add_argument(
+            "--hook", action="store_true", help="as a hook runs it: read the event, print nothing"
+        )
+        step.set_defaults(handler=_turn_command)
+
+    passkey = commands.add_parser(
+        "passkey", help="sign as a principal with a passkey: Touch ID, Windows Hello, a key"
+    ).add_subparsers(dest="passkey_command", required=True, metavar="COMMAND")
+    add_passkey = passkey.add_parser(
+        "add",
+        help="make a passkey in the browser and make it a principal's key, in the charter's "
+        "next version (the old key file is moved to keys/retired/)",
+    )
+    add_passkey.add_argument("--principal", help="whose key (the solo owner, by default)")
+    add_passkey.add_argument(
+        "--origin",
+        default="http://localhost:8740",
+        help="where it signs: the console's origin (http://localhost:8740)",
+    )
+    add_passkey.add_argument(
+        "--any-port",
+        action="store_true",
+        help="admit every port of http://localhost, for a console on a port of its own choosing",
+    )
+    add_passkey.set_defaults(handler=_passkey)
+
     shadow = commands.add_parser("shadow", help="what a shadow mandate let through").add_subparsers(
         dest="shadow_command", required=True, metavar="COMMAND"
     )
@@ -2308,7 +2597,13 @@ def _parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="a deployment's fiduciary.toml (repeatable; instead of searching --dir)",
     )
-    console.add_argument("--listen", default="127.0.0.1:8740", metavar="HOST:PORT")
+    console.add_argument(
+        "--listen",
+        default="localhost:8740",
+        metavar="HOST:PORT",
+        help="where it listens, on loopback (localhost:8740: a passkey needs the name "
+        "localhost, never an address; port 0 picks one)",
+    )
     console.add_argument(
         "--accept-approvals",
         action="store_true",
@@ -2351,10 +2646,10 @@ def _parser() -> argparse.ArgumentParser:
     demo.add_argument(
         "--serve",
         nargs="?",
-        const="127.0.0.1:8740",
+        const="localhost:8740",
         metavar="HOST:PORT",
         help="serve the dashboard, with the approvals desk, the bundle verifier and a "
-        "sandbox, on loopback (127.0.0.1:8740)",
+        "sandbox, on loopback (localhost:8740)",
     )
     demo.add_argument("--open", action="store_true", help="open the dashboard in a browser")
     demo.add_argument(

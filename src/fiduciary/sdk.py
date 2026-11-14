@@ -49,6 +49,8 @@ To hand the tools to an agent framework, see :mod:`fiduciary.adapters`.
 
 from __future__ import annotations
 
+import contextlib
+
 import hashlib
 import inspect
 import json
@@ -58,7 +60,7 @@ import re
 import types
 import typing
 import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, TypeVar, overload
@@ -163,6 +165,13 @@ class Sql(_Handle):
         the statement would change is rolled back before it returns."""
         rows: list[dict[str, Any]] = self._stage.read(statement, dict(parameters or {}))
         return rows
+
+    def request(self, sink: str, operation: str, payload: Mapping[str, Any]) -> None:
+        """Enqueue one outbound request (1.17.0): an email, a payment, a webhook, an MCP
+        server's write, to a sink the mandate allows. It commits with this call's rows,
+        or not at all, and the relay makes it once; within :meth:`Governor.turn`, only
+        once the turn ends with every call committed."""
+        self._stage.enqueue(sink=sink, operation=operation, payload=dict(payload))
 
     def execute(
         self,
@@ -435,6 +444,19 @@ class GovernedTool:
         return json.dumps(value, sort_keys=True, default=str), False
 
 
+@dataclass
+class Turn:
+    """A turn :meth:`Governor.turn` opened (1.17.0)."""
+
+    id: str
+    refused: str | None = None
+    """Why it will not release its requests: the first call refused in it, or the
+    exception that ended it."""
+    closed: Any = None
+    """What closing it did (:class:`fiduciary.turns.Closed`), once it is closed: ``None``
+    when it held no request."""
+
+
 class Governor:
     """One deployment's mandate, governing tools in this process. :func:`open` makes one.
 
@@ -448,6 +470,7 @@ class Governor:
         self.config = config
         self.trajectory = f"fiduciary-sdk-{uuid.uuid4()}"
         self._session: Any = None
+        self._turn: Turn | None = None
         self.tools: dict[str, GovernedTool] = {}
         self.observed: list[Observation] = []
         """What a shadow mandate let through in this process, call by call."""
@@ -542,11 +565,13 @@ class Governor:
                 outcome="rejected",
             )
         engine = self._engine()
+        turn = self._turn
         stage = engine.stage(
             engine.compiled.subject,
             trajectory=self.trajectory,
             intent=f"{INTENT}{tool.name} {tool.code_digest[:16]}",
             provenance=self.labels,
+            turn=None if turn is None else turn.id,
         )
         opened = stage.opened
         handle_type = _HANDLES.get(opened.substrate.substrate_id)
@@ -575,11 +600,48 @@ class Governor:
             self._label(tool)
             return value  # it wrote nothing: nothing to judge, and nothing recorded
         if not result.committed:
+            if turn is not None:
+                turn.refused = turn.refused or f"{tool.name} was refused"
             raise Refused(_shown(result.feedback), outcome="refused", result=result)
         if result.would_refuse:
             self._observe(tool, result)
         self._label(tool)
         return value
+
+    @contextlib.contextmanager
+    def turn(self, turn_id: str | None = None) -> Iterator[Turn]:
+        """One agent turn (1.17.0, :mod:`fiduciary.turns`): every request the calls in it
+        enqueue waits for its end, and is made then only if every call committed. A call
+        refused in it, or an exception out of it, cancels them all.
+
+        Wrap a turn of your agent loop, or a framework's run::
+
+            with gov.turn():
+                result = Runner.run_sync(agent, prompt)
+
+        Turns do not nest. What a committed call changed in your systems stays changed:
+        only the requests wait.
+        """
+        from fiduciary import turns
+
+        if self._turn is not None:
+            raise FiduciaryError(f"turn {self._turn.id} is open: turns do not nest")
+        current = Turn(turn_id or turns.new_id())
+        self._turn = current
+        try:
+            yield current
+        except BaseException as exc:
+            current.refused = current.refused or f"{type(exc).__name__} ended the turn"
+            raise
+        finally:
+            self._turn = None
+            current.closed = turns.close(
+                self._fiduciary,
+                self._mandate_id,
+                current.id,
+                release=current.refused is None,
+                why=current.refused,
+            )
 
     def _observe(self, tool: GovernedTool, result: StageResult) -> None:
         verdict = result.verdict

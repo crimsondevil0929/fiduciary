@@ -52,7 +52,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
-from fiduciary import __version__, fidu1
+from fiduciary import __version__, fidu1, webauthn
 from fiduciary.documents import Approval, Charter, Record, Ticket, Warrant, loads
 from fiduciary.exceptions import FiduciaryError
 from fiduciary.log import LOG_ID
@@ -350,6 +350,9 @@ class Deployment:
         assert isinstance(charter, Charter)
         return charter
 
+    registers = False
+    """Whether a principal's passkey can be registered here (1.17.0)."""
+
     def summary(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "id": self.ident,
@@ -370,9 +373,15 @@ class Deployment:
                     "quorums": charter.body().get("quorums"),
                 }
                 out["principals"] = [
-                    {"name": p.name, "key": p.key, "key_id": p.public_key.key_id}
+                    {
+                        "name": p.name,
+                        "key": p.key,
+                        "key_id": p.public_key.key_id,
+                        **({"passkey": p.webauthn.to_json()} if p.webauthn else {}),
+                    }
                     for p in charter.principals
                 ]
+                out["passkeys"] = self.registers
                 out["records"] = state.head_seq
                 out["tickets"] = len(state.tickets)
                 out["open"] = len(state.open_ticket_ids)
@@ -693,15 +702,20 @@ class Deployment:
                 "not_after": fidu1.format_instant(now + APPROVAL_TTL),
             }
             draft = Approval.from_json(body, signed=False)
-            header = {"alg": fidu1.ALG, "key_id": member.public_key.key_id}
+            # The construction is the principal's key's (1.17.0): a passkey signs its own.
+            header = {"alg": member.public_key.alg, "key_id": member.public_key.key_id}
             return {
                 "approval": draft.to_json(),
+                "alg": header["alg"],
                 "key_id": header["key_id"],
                 "key": member.key,
+                **({"passkey": member.webauthn.to_json()} if member.webauthn else {}),
                 "signing_input": fidu1.signing_input("approval", draft.body(), header).hex(),
                 "option": option.resolution.action,
                 "command": (
-                    f"fiduciary approve ticket-{ticket.ticket_id[:8]}.json --principal "
+                    f"sign it here with {member.name}'s passkey"
+                    if member.webauthn
+                    else f"fiduciary approve ticket-{ticket.ticket_id[:8]}.json --principal "
                     f"{member.name} --resolution {option.resolution.action}"
                     + (" --decline" if decision == "decline" else "")
                     + " --key <your key file> --submit"
@@ -743,8 +757,13 @@ class Deployment:
     def _approval(payload: Mapping[str, Any]) -> Approval:
         raw = payload.get("approval")
         signature = payload.get("signature")
+        assertion = payload.get("assertion")
         try:
-            if isinstance(signature, str):
+            if isinstance(assertion, Mapping):
+                if not isinstance(raw, Mapping):
+                    raise _bad("approval is the draft the passkey signed")
+                raw = {**raw, "sig": _passkey_sig(_text(payload, "key_id"), assertion)}
+            elif isinstance(signature, str):
                 if not isinstance(raw, Mapping):
                     raise _bad("approval is the draft the signature covers")
                 key_id = _text(payload, "key_id")
@@ -756,6 +775,17 @@ class Deployment:
         except FiduciaryError as exc:
             raise _bad(f"approval: {exc}") from exc
         return approval
+
+
+def _passkey_sig(key_id: str, assertion: Mapping[str, Any]) -> dict[str, str]:
+    """A passkey's assertion, as the browser posted it (hex), as a FIDU1 ``sig``."""
+    parts = {}
+    for name in ("authenticator_data", "client_data_json", "signature"):
+        value = assertion.get(name)
+        if not isinstance(value, str):
+            raise _bad(f"assertion.{name} is required, in hex")
+        parts[name] = value.lower()
+    return {"alg": webauthn.ALG, "key_id": key_id, **parts}
 
 
 def _text(payload: Mapping[str, Any], name: str) -> str:
@@ -789,6 +819,78 @@ class ConfiguredDeployment(Deployment):
         self._scratch = scratch
         self._cache: tuple[tuple[int, ...], Store, State] | None = None
         self._receipts = _Receipts(self.config.receipts_log)
+
+    registers = True
+    """A deployment its configuration names can take a principal's new passkey (1.17.0)."""
+
+    def passkey_draft(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """The charter's next version making ``principal``'s key the passkey the browser
+        just made, and what that passkey signs to propose it (1.17.0)."""
+        from fiduciary import passkeys
+        from fiduciary.bridge import Fiduciary
+
+        principal = _text(payload, "principal")
+        try:
+            point = bytes.fromhex(_text(payload, "point"))
+            policy = passkeys.policy_for(
+                _text(payload, "origin"),
+                any_port=payload.get("any_port") is True,
+                credential=_text(payload, "credential"),
+            )
+        except (ValueError, FiduciaryError) as exc:
+            raise _bad(str(exc)) from exc
+        if len(point) != 64:
+            raise _bad("point is a P-256 point: 64 bytes, x then y, in hex")
+        with self.lock:
+            fid = Fiduciary.from_config(self.config_path)
+            try:
+                draft = passkeys.draft_charter(fid, principal, point, policy)
+            except FiduciaryError as exc:
+                raise _bad(str(exc)) from exc
+            finally:
+                fid.close()
+        key = webauthn.PasskeyKey(point, policy)
+        header = {"alg": webauthn.ALG, "key_id": key.key_id}
+        return {
+            "charter": draft.to_json(),
+            "key_id": key.key_id,
+            "passkey": policy.to_json(),
+            "signing_input": fidu1.signing_input("charter", draft.body(), header).hex(),
+        }
+
+    def passkey_register(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """The charter version the passkey signed: proposed, approved with the
+        principal's key file, and adopted when one approval is the quorum (1.17.0)."""
+        from fiduciary import passkeys
+        from fiduciary.bridge import Fiduciary
+        from fiduciary.documents import Charter
+
+        principal = _text(payload, "principal")
+        raw = payload.get("charter")
+        assertion = payload.get("assertion")
+        if not isinstance(raw, Mapping) or not isinstance(assertion, Mapping):
+            raise _bad("charter (the draft) and assertion are required")
+        try:
+            signed = Charter.from_json(
+                {**raw, "sig": _passkey_sig(_text(payload, "key_id"), assertion)}, signed=True
+            )
+        except FiduciaryError as exc:
+            raise _bad(f"charter: {exc}") from exc
+        with self.lock:
+            fid = Fiduciary.from_config(self.config_path)
+            try:
+                done = passkeys.complete(fid, self.config_path.parent, principal, signed)
+            except FiduciaryError as exc:
+                raise ControlError(422, str(exc)) from exc
+            finally:
+                fid.close()
+        return {
+            "principal": done.principal,
+            "key_id": done.key_id,
+            "charter_version": done.charter_version,
+            "adopted": done.adopted,
+            "retired": None if done.retired is None else str(done.retired),
+        }
 
     def describe(self) -> dict[str, str]:
         from fiduciary.config import is_dsn
@@ -1189,7 +1291,9 @@ class ConsoleServer(http.server.ThreadingHTTPServer):
         names = ("127.0.0.1", "localhost") if host != "::1" else ("[::1]", "localhost")
         self.hosts = frozenset(f"{n}:{port}" for n in names)
         self.origins = frozenset(f"http://{h}" for h in self.hosts)
-        self.url = f"http://{'[::1]' if host == '::1' else host}:{port}/"
+        # localhost, not 127.0.0.1: a passkey's relying party is a name, never an
+        # address (1.17.0). Both answer; this is the one the console prints and opens.
+        self.url = f"http://{'[::1]' if host == '::1' else 'localhost'}:{port}/"
 
     def server_close(self) -> None:
         try:
@@ -1362,6 +1466,14 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return deployment.sign_draft(payload)
             if action == "":
                 return deployment.accept(payload)
+        if len(parts) >= 3 and parts[0] == "deployments" and parts[2] == "passkeys":
+            deployment = console.deployment(parts[1])
+            if not isinstance(deployment, ConfiguredDeployment):
+                raise ControlError(409, "a passkey is registered on a deployment its config names")
+            if len(parts) == 4 and parts[3] == "draft":
+                return deployment.passkey_draft(payload)
+            if len(parts) == 3:
+                return deployment.passkey_register(payload)
         if len(parts) == 3 and parts[0] == "sandbox" and console.sandbox is not None:
             if parts[2] == "open":
                 return console.sandbox.open(parts[1])
@@ -1372,7 +1484,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         raise ControlError(404, "no such endpoint")
 
 
-def serve(console: Console, where: str = "127.0.0.1:8740") -> ConsoleServer:
+def serve(console: Console, where: str = "localhost:8740") -> ConsoleServer:
     """``console`` on loopback ``where`` (``HOST:PORT``; port 0 picks one).
 
     :raises ValueError: If ``where`` is not a loopback ``HOST:PORT``.

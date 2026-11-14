@@ -262,6 +262,21 @@ class Executor:
         database session."""
         return self.log.store.claim(f"execution:{warrant_digest}")
 
+    def close_turn(self, turn: str, *, release: bool, reason: str) -> Any:
+        """Release, or cancel, every request held for ``turn`` (1.17.0), under one
+        operator intent whose reason cites the turn's record: the turn finished with
+        every plan committed, or it did not. ``None`` when the turn holds none.
+
+        :raises ExecutionError: Without an outbox, or interlock's operator log.
+        """
+        if self._outbox is None:
+            raise ExecutionError("a turn's requests are in an outbox, and there is none")
+        with self._open_operator_log() as op_log:
+            op = Operator(op_log, self._outbox)
+            if release:
+                return op.release_turn(turn, reason=reason)
+            return op.cancel_turn(turn, reason=reason)
+
     @contextmanager
     def _open_operator_log(self) -> Iterator[OperatorLog]:
         """The operator log, claimed for one step (F7-16). A claim held
