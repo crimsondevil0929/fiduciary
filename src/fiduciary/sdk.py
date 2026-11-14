@@ -604,6 +604,8 @@ class Governor:
             raise Refused(_shown(result.feedback), outcome="refused", result=result)
         if result.would_refuse:
             self._observe(tool, result)
+        if turn is not None:
+            self._fiduciary.committed_in_turn(turn.id, self._mandate_id, str(result.plan.plan_id))
         self._label(tool)
         return value
 

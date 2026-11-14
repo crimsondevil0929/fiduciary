@@ -128,6 +128,18 @@
    "receipts": "pass",
    "signatures": "pass"
   },
+  "v14-undo-digests-forged": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "receipts": "pass",
+   "signatures": "pass",
+   "undo": "fail"
+  },
   "v2-wrong-pinned-charter": {
    "anchors": "pass",
    "chain": "pass",
@@ -461,6 +473,18 @@
    "receipts": "pass",
    "seals": "pass",
    "signatures": "pass"
+  },
+  "valid-turn-undone": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "receipts": "pass",
+   "signatures": "pass",
+   "undo": "pass"
   }
  },
  "pinned keys": {
@@ -603,6 +627,19 @@
    "receipts": "pass",
    "signatures": "pass"
   },
+  "v14-undo-digests-forged": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "receipts": "pass",
+   "signatures": "pass",
+   "undo": "fail"
+  },
   "v2-wrong-pinned-charter": {
    "anchors": "pass",
    "chain": "pass",
@@ -966,6 +1003,19 @@
    "receipts": "pass",
    "seals": "pass",
    "signatures": "pass"
+  },
+  "valid-turn-undone": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "receipts": "pass",
+   "signatures": "pass",
+   "undo": "pass"
   }
  }
 }

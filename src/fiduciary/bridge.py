@@ -439,6 +439,23 @@ Handler = Callable[[Mapping[str, Any]], Any]
 """A passthrough tool's implementation: validated arguments in, a JSON value out."""
 
 
+@dataclass(frozen=True, slots=True)
+class UndoOutcome:
+    """What :meth:`Fiduciary.undo_plan` did with one plan (1.18.0)."""
+
+    plan_id: str
+    undo_plan_id: str | None
+    """The plan that undid it, staged; ``None`` when nothing was staged."""
+    why_not: str | None
+    """Why it was not undone; ``None`` when it was."""
+    record: int | None
+    """The ``plan.undone`` record, when it was undone."""
+
+    @property
+    def undone(self) -> bool:
+        return self.why_not is None
+
+
 class Fiduciary:
     """Fiduciary in process: the log, the binder, escalation, the executor,
     and the sessions they serve (module docstring).
@@ -489,6 +506,9 @@ class Fiduciary:
         self.withheld: dict[str, str] = {}
         """Tools a proxy withholds from every session, with what the agent is told (1.17.0):
         each one whose MCP server lists another definition than its binding's pin."""
+        self.turn_plans: dict[str, list[tuple[str, str]]] = {}
+        """Each open turn's committed plans, as ``(mandate_id, plan_id)``, in order (1.18.0):
+        what a turn that does not finish undoes, latest first."""
         self._guards: dict[str, BudgetGuard] = {}
         self._recoveries: dict[str, RecoveryRuntime] = {}
         self._recovering: dict[str, set[str]] = {}
@@ -548,6 +568,43 @@ class Fiduciary:
     @property
     def governor(self) -> BudgetManager:
         return self._governor
+
+    def committed_in_turn(self, turn: str | None, mandate_id: str, plan_id: str) -> None:
+        """Note a plan a turn committed (1.18.0)."""
+        if turn is not None:
+            with self._lock:
+                self.turn_plans.setdefault(turn, []).append((mandate_id, plan_id))
+
+    def undo_plan(self, mandate_id: str, plan_id: str, *, why: str) -> UndoOutcome:
+        """Undo committed plan ``plan_id`` of lineage ``mandate_id`` (1.18.0): exactly, or not
+        at all. When it commits, a ``plan.undone`` record carries both plans' change digests,
+        which the auditor holds to the escrow chain (V14)."""
+        from interlock.exceptions import UndoError
+
+        engine = self._binder.engine(mandate_id)
+        try:
+            result = engine.undo(plan_id)
+        except (UndoError, BindingError) as exc:
+            return UndoOutcome(plan_id, None, str(exc), None)
+        if not result.committed:
+            blocking = result.verdict.blocking if result.verdict is not None else ()
+            why_not = "; ".join(v.message for v in blocking) or "the undo did not commit"
+            return UndoOutcome(plan_id, str(result.plan.plan_id), why_not, None)
+        log = self.log
+        with self._lock, log.store.transaction():
+            body = self._authority.decide.undo_plan(
+                log.state(),
+                {
+                    "mandate_id": mandate_id,
+                    "plan_id": plan_id,
+                    "undo_plan_id": str(result.plan.plan_id),
+                    "original": [list(d) for d in result.undid],
+                    "undo": [list(d) for d in result.changes],
+                    "why": why,
+                },
+            )
+            record = log.append("plan.undone", body, issued_at=log.now())
+        return UndoOutcome(plan_id, str(result.plan.plan_id), None, record.seq)
 
     def handler(self, name: str) -> Handler | None:
         return self._handlers.get(name)
@@ -1072,6 +1129,7 @@ class Session:
             plan_id = str(plan.plan_id)
             with self._lock:
                 self._committed.add(plan_id)
+            self._fid.committed_in_turn(self.turn, self.mandate_id, plan_id)
             sinks = self._fid.binder.deployment.sinks
             held = sorted(
                 f"{r.sink} {r.operation}"

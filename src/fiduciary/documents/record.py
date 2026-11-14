@@ -41,6 +41,7 @@ RECORD_KINDS: Final = frozenset(
         "session.closed",
         "session.labeled",
         "turn.closed",
+        "plan.undone",
     }
 )
 LOG_ID: Final = re.compile(r"[A-Za-z0-9._:@/-]{1,64}")

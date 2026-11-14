@@ -866,19 +866,38 @@ sign = [
 
 [[package]]
 name = "interlock-escrow"
-version = "1.9.0"
-source = { registry = "https://pypi.org/simple" }
+version = "1.10.0"
+source = { editable = "../interlock" }
 dependencies = [
     { name = "interlock-agentgov" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8f/57/612ba8c76b6568e87c59868238b99ee4ce2045614218faeb62da57e86606/interlock_escrow-1.9.0.tar.gz", hash = "sha256:91933e464e6f49aea7b38571a3fef15a7af2140bc8688755c955587e6269336c", size = 1689104, upload-time = "2026-11-14T18:21:56.378Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/35/cb5a2ab898dfb89284cdb2eb1eae1081a7f0d9482648f8f46df6089c7959/interlock_escrow-1.9.0-py3-none-any.whl", hash = "sha256:dbeb5923df537b704ee93f72ed0dfc7aeccf4cfa87e989d7c3b8369bd5bb178d", size = 685477, upload-time = "2026-11-14T18:21:54.385Z" },
 ]
 
 [package.optional-dependencies]
 postgres = [
     { name = "psycopg", extra = ["binary"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "interlock-agentgov", specifier = ">=1.3.2" },
+    { name = "interlock-agentgov", extras = ["kms-aws"], marker = "extra == 'kms-aws'", specifier = ">=1.3.2" },
+    { name = "interlock-agentgov", extras = ["otel"], marker = "extra == 'otel'", specifier = ">=1.3.2" },
+    { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'sign'", specifier = ">=1.3.2" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
+]
+provides-extras = ["postgres", "sign", "kms-aws", "otel"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "anthropic", specifier = ">=1.0.0" },
+    { name = "cryptography", specifier = ">=42" },
+    { name = "hypothesis", specifier = ">=6.100" },
+    { name = "mypy", specifier = ">=1.11.0" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-cov", specifier = ">=5.0.0" },
+    { name = "pytest-timeout", specifier = ">=2.3" },
+    { name = "ruff", specifier = ">=0.6.0" },
 ]
 
 [[package]]
@@ -934,8 +953,8 @@ requires-dist = [
     { name = "interlock-agentgov", extras = ["otel"], marker = "extra == 'otel'", specifier = ">=1.3.2" },
     { name = "interlock-agentgov", extras = ["sign"], specifier = ">=1.3.2" },
     { name = "interlock-agentgov", extras = ["sign"], marker = "extra == 'sign'", specifier = ">=1.3.2" },
-    { name = "interlock-escrow", specifier = ">=1.9.0" },
-    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", specifier = ">=1.9.0" },
+    { name = "interlock-escrow", editable = "../interlock" },
+    { name = "interlock-escrow", extras = ["postgres"], marker = "extra == 'postgres'", editable = "../interlock" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'postgres'", specifier = ">=3.2" },
 ]
 provides-extras = ["postgres", "sign", "kms-aws", "otel", "cedar", "demo"]

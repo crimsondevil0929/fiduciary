@@ -1077,12 +1077,36 @@ class Decide:
         if outcome not in ("released", "cancelled"):
             raise AuthorityError("a turn's requests are released or cancelled")
         messages = body.get("messages")
+        undone = body.get("undone") or []
+        kept = body.get("kept") or []
         if (
             not isinstance(messages, list)
-            or not messages
+            or not (messages or undone or kept)
             or not all(isinstance(m, str) and re.fullmatch(r"[0-9a-f-]{36}", m) for m in messages)
         ):
             raise AuthorityError("a closed turn lists the requests it held")
+        if (undone or kept) and outcome != "cancelled":
+            raise AuthorityError("only a turn that did not finish puts its plans back")
+        if not isinstance(undone, list) or not all(
+            isinstance(u, Mapping)
+            and set(u) == {"plan", "undo", "record"}
+            and isinstance(u["plan"], str)
+            and isinstance(u["undo"], str)
+            and isinstance(u["record"], int)
+            and not isinstance(u["record"], bool)
+            for u in undone
+        ):
+            raise AuthorityError("a closed turn's undone plans are {plan, undo, record}")
+        for u in undone:
+            if state.undone.get(u["record"]) != (u["plan"], u["undo"], mandate_id):
+                raise AuthorityError(
+                    f"record {u['record']} is no plan.undone of plan {u['plan']} in this lineage"
+                )
+        if not isinstance(kept, list) or not all(
+            isinstance(k, Mapping) and set(k) == {"plan", "why"} and isinstance(k["plan"], str)
+            for k in kept
+        ):
+            raise AuthorityError("a closed turn's plans not put back are {plan, why}")
         why = body.get("why")
         return {
             "turn": turn,
@@ -1090,6 +1114,62 @@ class Decide:
             "outcome": outcome,
             "messages": sorted(messages),
             "why": None if why is None else str(why)[:512],
+            # 1.18.0, only when there are any: an older turn keeps its bytes
+            **({"undone": [dict(u) for u in undone]} if undone else {}),
+            **(
+                {"kept": [{"plan": k["plan"], "why": str(k["why"])[:512]} for k in kept]}
+                if kept
+                else {}
+            ),
+        }
+
+    def undo_plan(self, state: State, body: Mapping[str, Any]) -> dict[str, Any]:
+        """The ``plan.undone`` body (1.18.0): plan ``plan_id`` of lineage ``mandate_id`` was put
+        back exactly, by plan ``undo_plan_id``. ``original`` and ``undo`` are the two plans'
+        change digests, as their commits name them in the lineage's escrow chain (V14), and
+        ``undo`` is exactly the inverse of ``original``. ``why``: the turn that did not finish,
+        or the warrant that ordered it."""
+        from interlock.undo import digest_problems
+
+        mandate_id = str(body.get("mandate_id", ""))
+        if state.head(mandate_id) is None:
+            raise AuthorityError(f"no lineage {mandate_id} is issued")
+        plan_id, undo_id = body.get("plan_id"), body.get("undo_plan_id")
+        if not all(isinstance(p, str) and fidu1.TEXT.fullmatch(p) for p in (plan_id, undo_id)):
+            raise AuthorityError("an undo names the plan it undid and the plan that undid it")
+        lists = []
+        for name in ("original", "undo"):
+            found = body.get(name)
+            if (
+                not isinstance(found, list)
+                or not found
+                or not all(
+                    isinstance(d, list)
+                    and len(d) == 4
+                    and all(isinstance(x, str) for x in d[:2])
+                    and all(
+                        x is None or (isinstance(x, str) and fidu1.HASH.fullmatch(x)) for x in d[2:]
+                    )
+                    for d in found
+                )
+            ):
+                raise AuthorityError(f"an undo's {name} is a list of change digests")
+            lists.append([list(d) for d in found])
+        problems = digest_problems(lists[0], lists[1])
+        if problems:
+            raise AuthorityError(
+                f"plan {undo_id} is not the inverse of plan {plan_id}: {problems[0]}"
+            )
+        why = body.get("why")
+        if not isinstance(why, str) or not why:
+            raise AuthorityError("an undo says why it was made")
+        return {
+            "mandate_id": mandate_id,
+            "plan_id": plan_id,
+            "undo_plan_id": undo_id,
+            "original": sorted(lists[0]),
+            "undo": sorted(lists[1]),
+            "why": why[:512],
         }
 
     def refuse_call(
@@ -1470,6 +1550,8 @@ def _expected(
         )
     if kind == "turn.closed":
         return decide.close_turn(state, body)
+    if kind == "plan.undone":
+        return decide.undo_plan(state, body)
     raise AuthorityError(f"no rule writes a {kind} record")
 
 

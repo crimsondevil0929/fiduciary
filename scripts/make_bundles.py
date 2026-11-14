@@ -169,6 +169,15 @@ SCENARIOS = {
         "test_a_tainted_refund_that_committed_without_a_warrant_fails_v13",
         "a refund after an untrusted email, committed by a service whose gate let it through",
     ),
+    # 1.18.0: a turn that did not finish, put back
+    "valid-turn-undone": (
+        "test_the_bundle_holds_every_undo_to_its_plan_v14",
+        "a turn's two committed plans, undone exactly when its next call was refused",
+    ),
+    "v14-undo-digests-forged": (
+        "test_an_undo_whose_digests_are_not_its_commits_fails_v14",
+        "an undo record whose digests are each other's inverse, but not what the commits named",
+    ),
 }
 
 
@@ -189,6 +198,7 @@ def _record(captured: Path, names: set[str]) -> dict[str, Any]:
             "tests/test_sealed_bundles.py",
             "tests/test_bundle_deliveries.py",
             "tests/test_provenance.py",
+            "tests/test_undo.py",
             "-k",
             " or ".join(tests),
         ],

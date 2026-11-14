@@ -63,6 +63,8 @@ PROVES: Final[Mapping[str, str]] = {
     "V12": "Every timestamp the service wrote agrees with the ledger order of its anchor.",
     "V13": "Every plan committed after its session read untrusted input or labeled data met "
     "the mandate's provenance rules, or ran as the plan a warrant approved after that read.",
+    "V14": "Every undo put back exactly what its plan changed: its change digests, as its "
+    "commit names them, are the plan's with before and after swapped.",
 }
 
 MAPPINGS: Final = frameworks.packs()

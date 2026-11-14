@@ -50,6 +50,7 @@ CHECKS: Final = (
     ("V11", "revocation"),
     ("V12", "ordering"),
     ("V13", "provenance"),
+    ("V14", "undo"),
 )
 EXIT: Final = {
     "malformed": 3,
@@ -62,6 +63,7 @@ EXIT: Final = {
     "revocation": 9,
     "time": 9,
     "provenance": 6,
+    "undo": 6,
 }
 """Each class of failure, and its exit code. 0 passes; 1 is a usage error; 2 a
 bundle the verifier could not read."""

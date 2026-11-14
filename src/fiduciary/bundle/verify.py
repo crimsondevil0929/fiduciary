@@ -1,6 +1,6 @@
 """Verifying a bundle offline (``docs/FIDUCIARY_SPEC.md`` §9.3, §9.4).
 
-:func:`verify_bundle` runs V1 to V13 over a bundle's bytes with no database
+:func:`verify_bundle` runs V1 to V14 over a bundle's bytes with no database
 and no network (F9-3), and reports every finding of every check. It trusts
 two things from outside the bundle: the charter's pinned digest, and,
 optionally, the auditor's keys (``--keys``: the service, ledger checkpoint,
@@ -498,7 +498,7 @@ def verify_bundle(
     witness: Verifier | None = None,
     skew_seconds: int = 5,
 ) -> BundleReport:
-    """Run V1 to V13 over a bundle (module docstring).
+    """Run V1 to V14 over a bundle (module docstring).
 
     :param charter: Charter version 1's digest, pinned from outside the bundle.
     :param keys: The auditor's keys; without them, the bundle's own, noted.
@@ -530,7 +530,7 @@ def verify_bundle(
 
 
 class _Checks:
-    """V2 to V13 over what V1 let through."""
+    """V2 to V14 over what V1 let through."""
 
     def __init__(
         self,
@@ -592,6 +592,7 @@ class _Checks:
         self._v11()
         self._v12()
         self._v13()
+        self._v14()
 
     # -- V9 records --------------------------------------------------------------------
 
@@ -1235,6 +1236,72 @@ class _Checks:
                         f"receipt {name} delivers after the lineage was halted at {trip}",
                     )
 
+    # -- V14 undo (1.18.0) -------------------------------------------------------------
+
+    def _v14(self) -> None:
+        """Every undo put back exactly what its plan changed. Each ``plan.undone`` record's
+        two digest lists are the ones its plan's and its own ``COMMITTED`` records name
+        (``; changes <sha256>``), the undo's plan says it undoes that plan, and the undo's
+        digests are the plan's with before and after swapped. And every plan of a lineage
+        that committed as an undo has its ``plan.undone`` record: an undo is the one plan
+        not held to the size bounds, so one the log does not explain is reported."""
+        from interlock.undo import changes_hash, digest_problems
+
+        explained: set[tuple[str, str]] = set()
+        for record in self.chain:
+            if not isinstance(record, Record) or record.kind != "plan.undone":
+                continue
+            body = record.content
+            mandate_id = str(body["mandate_id"])
+            if mandate_id not in self.lineages:
+                continue
+            where = f"record {record.seq}"
+            plan, undo = str(body["plan_id"]), str(body["undo_plan_id"])
+            explained.add((mandate_id, undo))
+            escrow = self.escrow.get(mandate_id, [])
+            named: dict[str, str | None] = {
+                str(r.plan_id): _changes_of(r.note)
+                for r in escrow
+                if r.record_type is RecordType.COMMITTED
+            }
+            admitted: dict[str, str] = {
+                str(r.plan_id): r.note for r in escrow if r.record_type is RecordType.PLAN_ADMITTED
+            }
+            for which, plan_id, digests in (
+                ("plan", plan, body["original"]),
+                ("undo", undo, body["undo"]),
+            ):
+                if plan_id not in named:
+                    self.add("V14", "undo", f"{where}: the {which} {plan_id} did not commit")
+                elif named[plan_id] != changes_hash([tuple(d) for d in digests]):
+                    self.add(
+                        "V14",
+                        "undo",
+                        f"{where}: the {which} {plan_id}'s change digests are not the ones "
+                        f"its commit names",
+                    )
+            if not str(admitted.get(undo, "")).startswith(f"undo of {plan}: "):
+                self.add("V14", "undo", f"{where}: plan {undo} does not say it undoes {plan}")
+            for problem in digest_problems(body["original"], body["undo"])[:5]:
+                self.add("V14", "undo", f"{where}: plan {undo} is not the inverse: {problem}")
+        for mandate_id in sorted(self.lineages):
+            escrow = self.escrow.get(mandate_id, [])
+            committed = {r.plan_id for r in escrow if r.record_type is RecordType.COMMITTED}
+            for r in escrow:
+                found = re.match(r"undo of (\S+): ", r.note)
+                if (
+                    r.record_type is RecordType.PLAN_ADMITTED
+                    and found is not None
+                    and r.plan_id in committed
+                    and (mandate_id, str(r.plan_id)) not in explained
+                ):
+                    self.add(
+                        "V14",
+                        "undo",
+                        f"plan {r.plan_id} committed as the undo of {found[1]}, and no "
+                        f"plan.undone record explains it",
+                    )
+
     # -- V13 provenance (1.16.0) --------------------------------------------------------
 
     def _v13(self) -> None:
@@ -1661,6 +1728,8 @@ class _Explained:
                     if promoted is not None and lineage in unbound:
                         sessions.setdefault(promoted[1], set()).add(lineage)
                         continue
+                    if record.note.startswith("undo of "):
+                        continue  # an undo (1.18.0): its plan.undone record explains it (V14)
                     tool = _TOOL.fullmatch(record.note)
                     if tool is None or tool[2] not in pinned:
                         self.c.add(
@@ -1736,3 +1805,9 @@ def _signed(record: SignedRecord, keyring: Keyring) -> bool:
     except Exception:  # interlock's own signature errors
         return False
     return True
+
+
+def _changes_of(note: str) -> str | None:
+    """The change digests' hash a ``COMMITTED`` record's note names (1.18.0)."""
+    found = re.search(r"; changes ([0-9a-f]{64})", note)
+    return None if found is None else found[1]

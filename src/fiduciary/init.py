@@ -604,6 +604,11 @@ def init(
                 report.changed.append(_sqlite_changes(target.database, before))
             for name, text in st.files.items():
                 (root / name).write_text(text, encoding="utf-8")
+            if target.substrate in UNDOABLE:
+                # What undoes each commit is kept, in the system it changed, for a week
+                # (1.18.0): fiduciary undo, and a turn that does not finish, put plans back.
+                with (root / "interlock.toml").open("a", encoding="utf-8") as config:
+                    config.write(f"\n[undo]\ndays = {UNDO_DAYS}\n")
             _bridge(root, report.scope)
             _write_report(root, report, None, target, solo=solo, shadow=shadow)
         finally:
@@ -700,6 +705,11 @@ def write_pins(
         if old.name not in kept:
             old.unlink()
 
+
+UNDOABLE: Final = frozenset({"sqlite", "postgres", "filesystem", "git", "rest", "fhir"})
+"""The systems whose commits keep what undoes them (Interlock 1.10.0)."""
+UNDO_DAYS: Final = 7
+"""How long a deployment ``init`` writes keeps each commit's undo."""
 
 DEFAULT_PRINCIPALS: Final = ("approver-1", "approver-2", "approver-3")
 SOLO_PRINCIPAL: Final = "owner"
