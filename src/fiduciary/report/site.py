@@ -43,7 +43,9 @@ DESCRIPTION: Final = (
 COPY: Final[dict[str, Any]] = {
     "badge": {
         "version": "1.17",
-        "text": "Pins for the MCP servers your desktop client runs, and approvals by passkey",
+        "text": (
+            "Pins for every MCP server your desktop client runs, and one passkey for all of them"
+        ),
         "href": REPO + "fiduciary/blob/main/CHANGELOG.md",
     },
     "headline": "Let AI agents change real systems. Keep only the changes you approved.",
