@@ -10,6 +10,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import os
 import shlex
 import sys
 import uuid
@@ -1759,13 +1760,18 @@ def _protect(args: argparse.Namespace) -> int:
         files.append(("claude-desktop", paths["claude-desktop"]))
     if args.cursor:
         files.append(("cursor", paths["cursor"]))
+    if args.vscode:
+        files.append(("vscode", paths["vscode"]))
+    if args.codex:
+        files.append(("codex", paths["codex"]))
     files += [(f"file-{p.stem.lstrip('.')}", p.expanduser()) for p in args.mcp_config]
+    scanning = getattr(args, "scan_secrets", False)
     if not files:
         found = [(c, p) for c, p in paths.items() if p.is_file()]
-        if not found:
+        if not found and not scanning:
             _fail(
-                "no client file found: name one with --claude-desktop, --cursor or "
-                "--mcp-config FILE"
+                "no client file found: name one with --claude-desktop, --cursor, --vscode, "
+                "--codex or --mcp-config FILE"
             )
         files = found
     try:
@@ -1782,9 +1788,12 @@ def _protect(args: argparse.Namespace) -> int:
             apply=args.apply,
             shadow=not args.enforce,
             move_secrets=args.move_secrets,
+            secret_store=args.secret_store,
         )
     except (OSError, ValueError, FiduciaryError) as exc:
         _fail(str(exc), REFUSED)
+    if scanning:
+        _scan_secrets(args)
     for step in steps:
         where = f"{step.server.name} ({step.server.client})"
         if step.action == "skip":
@@ -1794,7 +1803,7 @@ def _protect(args: argparse.Namespace) -> int:
         if step.pinned:
             _out(f"            {step.pinned}")
         if step.secrets:
-            _out(f"            secrets to the Keychain: {', '.join(step.secrets)}")
+            _out(f"            secrets to {step.store}: {', '.join(step.secrets)}")
         for tool in step.tools:
             _out(f"            {tool['name']}: {tool['mode']}")
             if tool.get("flag"):
@@ -1816,6 +1825,144 @@ def _protect(args: argparse.Namespace) -> int:
         _out("nothing was changed: run again with --apply, then restart the client")
     elif args.apply:
         _out("restart the client to start the protected servers; fiduciary unprotect undoes it")
+    return OK
+
+
+def _scan_secrets(args: argparse.Namespace) -> None:
+    """``protect --scan-secrets`` (1.20.0): what the scan found, and, with ``--apply``, the
+    seed every protected session takes up."""
+    from fiduciary.flow import WORKSPACE, seed
+    from fiduciary.scan import preview, scan
+
+    workspace = args.workspace.expanduser().resolve()
+    found = scan(workspace)
+    if not found:
+        _out(f"scanned     {workspace}: no credential an agent could read")
+        return
+    _out(f"found       {tally(len(found), 'credential')} an agent could read under {workspace}")
+    for finding in found:
+        where = finding.path.relative_to(workspace)
+        moved = " (an MCP client's file: --move-secrets moves it)" if finding.in_client_file else ""
+        shown = preview(finding.value)
+        _out(f"            {where}:{finding.line}: {finding.kind} ({shown}){moved}")
+    values = sorted({f.value for f in found})
+    if not args.apply:
+        _out(
+            f"            with --apply, every protected server's session treats "
+            f"{'it' if len(values) == 1 else 'them'} as secret from its first call"
+        )
+        return
+    seed(
+        args.root.expanduser(),
+        WORKSPACE,
+        secrets=values,
+        notes=[f"{f.path.relative_to(workspace)}:{f.line}: {f.kind}" for f in found],
+    )
+    _out(
+        f"seeded      every protected server's session treats {tally(len(values), 'value')} as "
+        "secret from its first call: no call carries one out"
+    )
+
+
+def _replay(args: argparse.Namespace) -> int:
+    """``fiduciary replay`` (1.20.0)."""
+    from fiduciary.replays import REPLAYS, run
+
+    out = args.out.expanduser()
+    names = list(REPLAYS) if args.name == "all" else [args.name]
+    if any((out / name).exists() for name in names):
+        _fail(f"{out} has a replay of that name already: give another --out", REFUSED)
+    done = []
+    for name in names:
+        replay = run(name, out)
+        done.append(replay)
+        if args.json:
+            continue
+        _out(f"{replay.title}")
+        _out(f"  {replay.pattern}")
+        for step in replay.steps:
+            _out(f"  {step.actor:<9}  {step.text}")
+        for server, verdict in replay.bundles.items():
+            _out(f"  bundle     {server}: {verdict}")
+        _out(f"  caught by  {replay.caught}")
+        _out(f"  not caught {replay.limits}")
+        _out(f"  work       {out / name}")
+        _out("")
+    if args.json:
+        _out(json.dumps([r.to_json() for r in done], indent=2))
+    return OK if all("NOT" not in v for r in done for v in r.bundles.values()) else REFUSED
+
+
+def _ci_trust() -> tuple[str, ...]:
+    from fiduciary.ci import DEFAULT_TRUST
+
+    return DEFAULT_TRUST
+
+
+def _ci_start(args: argparse.Namespace) -> int:
+    """``fiduciary ci start`` (1.20.0)."""
+    from fiduciary.ci import PROTECTED, CiError, start
+
+    try:
+        state = start(
+            args.mcp_config.expanduser(),
+            args.root.expanduser(),
+            event=args.event_name,
+            event_path=args.event_path,
+            secret_names=args.secret,
+            trust=[t.strip() for t in args.trust.split(",") if t.strip()],
+            protected=args.protected_path or PROTECTED,
+        )
+    except CiError as exc:
+        _fail(str(exc), REFUSED)
+    config = args.root.expanduser().resolve() / "mcp.json"
+    for name in sorted(state["servers"]):
+        _out(f"serving     {name} at {state['url']}/mcp/{name}")
+    for name, why in sorted(state.get("skipped", {}).items()):
+        _out(f"skip        {name}: {why}")
+    for source in state.get("sources") or ():
+        from fiduciary.ci import Source
+
+        _out(f"untrusted   {Source(**source).words()}")
+    if state.get("secrets"):
+        kept = ", ".join(state["secrets"])
+        _out(f"kept        {kept}: out of the agent's reach, and refused in any call")
+    _out(f"agent       --mcp-config {config}")
+    target = os.environ.get("GITHUB_OUTPUT")
+    if target:
+        with open(target, "a", encoding="utf-8") as out:
+            out.write(f"mcp-config={config}\n")
+    return OK
+
+
+def _ci_serve(args: argparse.Namespace) -> int:
+    """``fiduciary ci serve``: the proxy ``ci start`` runs, given its values on stdin."""
+    from fiduciary.ci import serve
+
+    given = json.loads(sys.stdin.read())
+    serve(args.root.expanduser().resolve(), given)
+    return OK
+
+
+def _ci_finish(args: argparse.Namespace) -> int:
+    """``fiduciary ci finish`` (1.20.0)."""
+    from fiduciary.ci import CiError, finish, outputs
+
+    root = args.root.expanduser()
+    bundles = (args.bundles or root / "bundles").expanduser()
+    try:
+        found = finish(root, bundles=bundles, summary=args.summary, comment=args.comment)
+    except CiError as exc:
+        _fail(str(exc), REFUSED)
+    target = os.environ.get("GITHUB_OUTPUT")
+    outputs(found, Path(target) if target else None, bundles)
+    _out(found.markdown.rstrip())
+    if any(s.verified is False for s in found.servers):
+        return REFUSED
+    if args.fail_on == "refused" and found.refused:
+        return REFUSED
+    if args.fail_on == "held" and (found.refused or found.held):
+        return REFUSED
     return OK
 
 
@@ -2696,8 +2843,9 @@ def _parser() -> argparse.ArgumentParser:
     for name, helping in (
         (
             "protect",
-            "put a fiduciary proxy in front of each MCP server Claude Desktop, Cursor or "
-            "another client runs: pinned tools, pinned versions, writes made once",
+            "put a fiduciary proxy in front of each MCP server a client runs, local or remote "
+            "(Claude Desktop, Cursor, Claude Code, VS Code, Codex): pinned tools, pinned "
+            "versions, writes made once, tokens kept out of the client's file",
         ),
         ("unprotect", "put each protected server's entry back as it was"),
     ):
@@ -2706,14 +2854,18 @@ def _parser() -> argparse.ArgumentParser:
         guard.add_argument(
             "--cursor", action="store_true", help="Cursor's file (~/.cursor/mcp.json)"
         )
+        guard.add_argument("--vscode", action="store_true", help="VS Code's profile mcp.json")
+        guard.add_argument(
+            "--codex", action="store_true", help="Codex CLI's file (~/.codex/config.toml)"
+        )
         guard.add_argument(
             "--mcp-config",
             action="append",
             default=[],
             type=Path,
             metavar="FILE",
-            help="any client's file of mcpServers (or servers): Claude Code's .mcp.json, a "
-            "project's .cursor/mcp.json, VS Code's .vscode/mcp.json (repeatable)",
+            help="any client's file: Claude Code's .mcp.json, a project's .cursor/mcp.json, "
+            "VS Code's .vscode/mcp.json, Codex's .codex/config.toml (repeatable)",
         )
         if name == "protect":
             guard.add_argument(
@@ -2727,7 +2879,27 @@ def _parser() -> argparse.ArgumentParser:
             guard.add_argument(
                 "--move-secrets",
                 action="store_true",
-                help="move each server's env values to the macOS Keychain",
+                help="move each server's env values and each remote server's secret headers "
+                "into the system's secret store (macOS Keychain, Linux Secret Service, "
+                "Windows Credential Manager), or a file only you can read where none answers",
+            )
+            guard.add_argument(
+                "--secret-store",
+                choices=("auto", "keychain", "secret-service", "credential-manager", "file"),
+                default="auto",
+                help="with --move-secrets: which store (auto: the system's own, else the file)",
+            )
+            guard.add_argument(
+                "--scan-secrets",
+                action="store_true",
+                help="find the credentials an agent could read under --workspace; with --apply, "
+                "every protected server's session treats them as secret from its first call",
+            )
+            guard.add_argument(
+                "--workspace",
+                type=Path,
+                default=Path("."),
+                help="with --scan-secrets: the directory the agent works in (here)",
             )
             guard.add_argument(
                 "--claude-code",
@@ -3003,6 +3175,82 @@ def _parser() -> argparse.ArgumentParser:
         help="seconds an instant may stray from its anchor's ledger time; [bridge] skew_seconds",
     )
     verify.set_defaults(handler=_verify)
+
+    replaying = commands.add_parser(
+        "replay",
+        help="run an incident replay against stand-in servers: a destructive call with a found "
+        "token, a cross-server toxic flow, a silent server update",
+    )
+    replaying.add_argument(
+        "name",
+        choices=("destructive-call", "toxic-flow", "rug-pull", "all"),
+        help="which replay (all: the three)",
+    )
+    replaying.add_argument(
+        "--out", type=Path, default=Path("fiduciary-replay"), help="where its work and bundles go"
+    )
+    replaying.add_argument("--json", action="store_true", help="print each replay as JSON")
+    replaying.set_defaults(handler=_replay)
+
+    ci = commands.add_parser(
+        "ci",
+        help="run an agent's MCP servers in CI behind protected proxies: untrusted event text "
+        "labeled from the start, secrets kept from the agent, workflow files refused",
+    ).add_subparsers(dest="ci_command", required=True, metavar="COMMAND")
+    root_default = Path(os.environ.get("RUNNER_TEMP", ".")) / "fiduciary-ci"
+    starting = ci.add_parser("start", help="start the CI proxy and write the agent's MCP file")
+    starting.add_argument(
+        "--mcp-config", type=Path, default=Path(".mcp.json"), help="the servers (.mcp.json)"
+    )
+    starting.add_argument("--root", type=Path, default=root_default, help="where it keeps its work")
+    starting.add_argument(
+        "--secret",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="an environment variable holding a secret the agent must never send (repeatable)",
+    )
+    starting.add_argument(
+        "--trust",
+        default=",".join(_ci_trust()),
+        help="author associations whose text is trusted (OWNER,MEMBER,COLLABORATOR)",
+    )
+    starting.add_argument(
+        "--protected-path",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="a path no call may name (.github/workflows and .github/actions by default)",
+    )
+    starting.add_argument("--event-name", default=os.environ.get("GITHUB_EVENT_NAME", ""))
+    starting.add_argument(
+        "--event-path", type=Path, default=os.environ.get("GITHUB_EVENT_PATH") or None
+    )
+    starting.set_defaults(handler=_ci_start)
+    serving = ci.add_parser("serve", help="the CI proxy itself (ci start runs it)")
+    serving.add_argument("--root", type=Path, required=True)
+    serving.set_defaults(handler=_ci_serve)
+    finishing = ci.add_parser(
+        "finish", help="stop the CI proxy, write the job summary and export the bundles"
+    )
+    finishing.add_argument("--root", type=Path, default=root_default)
+    finishing.add_argument("--bundles", type=Path, help="where each server's bundle is written")
+    finishing.add_argument(
+        "--summary",
+        type=Path,
+        default=os.environ.get("GITHUB_STEP_SUMMARY") or None,
+        help="the Markdown summary is added to this file ($GITHUB_STEP_SUMMARY)",
+    )
+    finishing.add_argument(
+        "--comment", type=Path, help="write the summary here too when a call was refused or held"
+    )
+    finishing.add_argument(
+        "--fail-on",
+        choices=("never", "refused", "held"),
+        default="never",
+        help="exit 1 when a call was refused (refused), or refused or held (held)",
+    )
+    finishing.set_defaults(handler=_ci_finish)
     # The listing shows the commands most people need; every one still parses, and
     # ``fiduciary help advanced`` lists them all.
     every = list(commands._choices_actions)

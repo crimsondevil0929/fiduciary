@@ -16,6 +16,13 @@ parent, so their proxies share a small file under the protect root, named for th
 The file holds labels and digests, never a value. A client that exits leaves its file behind;
 the next proxy started under the root removes files whose client is gone. The scope is the
 client process: a restarted client starts with nothing shared.
+
+**Seeds (1.20.0).** Some of what a session must know comes from outside every server: the
+credentials ``protect --scan-secrets`` found in the workspace, and in CI the event's untrusted
+text and the job's secrets. :func:`seed` writes them beside the clients' files, under the same
+key (``seeded.json``), by source: ``fiduciary_workspace`` and ``fiduciary_ci``. Every session
+under the root takes them up before its first call, as it takes up its siblings', and its
+records name the source. Seeds outlive any one client.
 """
 
 from __future__ import annotations
@@ -29,10 +36,17 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
-__all__ = ["SIBLING", "Flow", "for_client"]
+__all__ = ["CI", "OUTSIDE", "SIBLING", "WORKSPACE", "Flow", "for_client", "seed"]
 
 SIBLING: Final = "fiduciary_sibling"
 """The source a session's records name for what it took up from its siblings."""
+WORKSPACE: Final = "fiduciary_workspace"
+"""The source of what ``protect --scan-secrets`` found in the workspace (1.20.0)."""
+CI: Final = "fiduciary_ci"
+"""The source of what ``fiduciary ci`` knows of the job: its event, its secrets (1.20.0)."""
+OUTSIDE: Final = frozenset({SIBLING, WORKSPACE, CI})
+"""Every source a session's records may name that no binding pins (1.20.0)."""
+SEEDS: Final = "seeded.json"
 
 SHARED: Final = frozenset({"untrusted", "secret", "private"})
 """The labels a session shares: ``quarantined:`` and ``cleared`` are its own."""
@@ -120,6 +134,26 @@ class Flow:
                 if new:
                     kept[label] = sorted({*kept.get(label, ()), *new})
 
+    def seeded(self) -> dict[str, tuple[set[str], dict[str, set[str]]]]:
+        """What :func:`seed` gave every session under the root (1.20.0), by source: its
+        labels, and its digests by label."""
+        try:
+            found = json.loads((self.directory / SEEDS).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        sources = found.get("sources") if isinstance(found, dict) else None
+        out: dict[str, tuple[set[str], dict[str, set[str]]]] = {}
+        for source, share in sorted((sources or {}).items()):
+            if source not in OUTSIDE or source == SIBLING or not isinstance(share, dict):
+                continue
+            labels = {x for x in share.get("labels", ()) if isinstance(x, str) and _shared(x)}
+            digests: dict[str, set[str]] = {}
+            for label, values in (share.get("digests") or {}).items():
+                if _shared(str(label)):
+                    digests[str(label)] = {v for v in values if isinstance(v, str)}
+            out[str(source)] = (labels, digests)
+        return out
+
     def others(self) -> tuple[set[str], dict[str, set[str]]]:
         """What every other session of the client published: its labels, and its digests by
         label."""
@@ -153,3 +187,51 @@ def for_client(root: Path, server: str, session: str) -> Flow:
                 with contextlib.suppress(OSError):
                     path.unlink()
     return Flow(directory, f"client-{os.getppid()}", f"{server}:{session}")
+
+
+def seed(
+    root: Path,
+    source: str,
+    *,
+    labels: Sequence[str] = (),
+    secrets: Sequence[str] = (),
+    notes: Sequence[str] = (),
+) -> int:
+    """Give every session under a protect ``root`` ``labels``, and ``secrets`` as ``secret``
+    values (their digests under the root's key), from ``source`` (1.20.0): ``WORKSPACE`` or
+    ``CI``. Joined with what that source seeded before. ``notes`` say where they came from,
+    in words, and are kept beside them (never a value). How many digests the source holds.
+
+    :raises ValueError: For a source that is not one of them.
+    """
+    import hashlib
+    import hmac
+
+    if source not in (WORKSPACE, CI):
+        raise ValueError(f"{source!r} is not a source a seed comes from")
+    flow = Flow(root / "flows", "seed", source)
+    digests = {
+        hmac.new(flow.key, v.encode("utf-8"), hashlib.sha256).hexdigest()[:32] for v in secrets
+    }
+    path = flow.directory / SEEDS
+    with open(flow.directory / "lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            try:
+                found = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                found = {}
+            sources = found.get("sources") if isinstance(found, dict) else None
+            state = {"sources": dict(sources) if isinstance(sources, dict) else {}}
+            mine = state["sources"].setdefault(source, {"labels": [], "digests": {}, "notes": []})
+            mine["labels"] = sorted({*mine.get("labels", ()), *filter(_shared, labels)})
+            kept = sorted({*mine.get("digests", {}).get("secret", ()), *digests})[:MAX_DIGESTS]
+            mine["digests"] = {"secret": kept} if kept else {}
+            mine["notes"] = list(dict.fromkeys([*mine.get("notes", ()), *notes]))[:256]
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(state, sort_keys=True, indent=1), encoding="utf-8")
+            os.chmod(temporary, 0o600)
+            temporary.replace(path)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+    return len(kept)

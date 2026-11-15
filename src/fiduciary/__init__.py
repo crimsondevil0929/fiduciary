@@ -15,10 +15,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-__version__ = "1.19.0"
+__version__ = "1.20.0"
 
 __all__ = [
     "Fiduciary",
+    "Gate",
     "GovernedTool",
     "Governor",
     "Refused",
@@ -28,25 +29,33 @@ __all__ = [
     "Tool",
     "Workspace",
     "__version__",
+    "can_use_tool",
+    "needs_approval",
     "open",
 ]
 
 _SDK = frozenset({"GovernedTool", "Governor", "Refused", "Rest", "Sql", "Workspace", "open"})
+_HOOKS = frozenset({"Gate", "can_use_tool", "needs_approval"})
 
 if TYPE_CHECKING:
     from fiduciary.bridge import Fiduciary, Session
+    from fiduciary.hooks import Gate, can_use_tool, needs_approval
     from fiduciary.sdk import GovernedTool, Governor, Refused, Rest, Sql, Workspace, open
     from fiduciary.tools import Tool
 
 
 def __getattr__(name: str) -> Any:
-    """``Fiduciary``, ``Session``, ``Tool`` and the SDK (``open``, ``Sql``, ...),
-    imported when first named: the command line's ``--version`` loads neither
-    interlock nor AgentGov."""
+    """``Fiduciary``, ``Session``, ``Tool``, the SDK (``open``, ``Sql``, ...) and the
+    frameworks' hooks (``Gate``, ``needs_approval``, ``can_use_tool``), imported when first
+    named: the command line's ``--version`` loads neither interlock nor AgentGov."""
     if name in _SDK:
         from fiduciary import sdk
 
         return getattr(sdk, name)
+    if name in _HOOKS:  # 1.20.0: the agent frameworks' own approval hooks
+        from fiduciary import hooks
+
+        return getattr(hooks, name)
     if name in ("Fiduciary", "Session"):
         from fiduciary import bridge
 

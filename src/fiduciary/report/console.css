@@ -924,6 +924,33 @@ a.brand { color: inherit; text-decoration: none; }
 .lp-terminal .lp-term .tl { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 34px; text-indent: -16px; }
 .lp-term .lp-agent { color: #86acf2; margin-top: 8px; }
 .lp-term .lp-agent .lp-prompt { color: #86acf2; }
+/* the hero's run (1.20.0): protect once, then the agent's calls, each with its verdict */
+.lp-run-step { padding: 14px 18px 16px; background: #0a0c0e; font: 12.5px/1.6 var(--mono); color: #b9bdc2; }
+.lp-run-step + .lp-run-step { border-top: 1px solid rgba(255, 255, 255, 0.07); background: #0c0f12; }
+.lp-run-title { display: block; margin-bottom: 9px; font: 600 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: #7d8590; }
+.lp-run-cmd { display: flex; gap: 1ch; color: #e7e6e1; }
+.lp-run-cmd code { min-width: 0; overflow-wrap: break-word; }
+.lp-run-cmd .nb { white-space: nowrap; }
+.lp-run-cmd code, .lp-run code { font: inherit; }
+.lp-run-cmd .lp-prompt { color: #4fd6a5; }
+.lp-run-out { margin: 6px 0 0; padding-left: 2ch; text-indent: -2ch; color: #9aa0a6; overflow-wrap: break-word; }
+.lp-tools, .lp-calls { list-style: none; margin: 6px 0 0; padding: 0; }
+.lp-tools li { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; padding: 3px 0 3px 14px; }
+.lp-tools code { color: #d6d8db; overflow-wrap: anywhere; }
+.lp-mode { font-size: 11px; color: #4fd6a5; }
+.lp-mode.m-held { color: #f2b84b; }
+.lp-flag { grid-column: 1 / -1; margin: 2px 0 0; padding-left: 12px; border-left: 2px solid rgba(242, 184, 75, 0.45); color: #f2b84b; font-size: 11.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.lp-calls li { padding: 8px 0; }
+.lp-calls li + li { border-top: 1px dashed rgba(255, 255, 255, 0.06); }
+.lp-call { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.lp-call code { color: #86acf2; overflow-wrap: anywhere; min-width: 0; }
+.lp-verdict { flex: none; margin-left: auto; font: 600 10px var(--mono); letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; border: 1px solid rgba(79, 214, 165, 0.35); color: #4fd6a5; }
+.v-held .lp-verdict { color: #f2b84b; border-color: rgba(242, 184, 75, 0.45); }
+.v-refused .lp-verdict { color: #ff8f8f; border-color: rgba(255, 143, 143, 0.45); }
+.v-read .lp-verdict { color: #9aa0a6; border-color: rgba(255, 255, 255, 0.18); }
+.lp-calls p { margin: 4px 0 0; padding-left: calc(12px + 2ch); text-indent: -2ch; color: #b9bdc2; overflow-wrap: anywhere; white-space: pre-wrap; }
+.v-held p { color: #f2b84b; }
+.v-refused p { color: #ff9f9f; }
 .lp-code figcaption { padding: 11px 18px 13px; font-size: 12.5px; color: #9aa0a6; border-top: 1px solid rgba(255, 255, 255, 0.07); background: #14171b; }
 
 .lp-systems { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; justify-content: center; margin-top: 56px; padding-top: 26px; border-top: 1px solid var(--line); }
@@ -1062,6 +1089,7 @@ a.brand { color: inherit; text-decoration: none; }
   .lp-src .ln { width: 16px; margin-right: 10px; }
   .lp-src .cl, .lp-src .tl, .lp-term .tl { padding: 0 12px; }
   .lp-term { font-size: 11px; }
+  .lp-run-step { padding: 12px 12px 14px; font-size: 11.5px; }
   .lp-systems { justify-content: flex-start; margin-top: 36px; }
   .lp-sec { padding: 60px 0; }
   .lp-numbers { padding: 0 0 60px; }

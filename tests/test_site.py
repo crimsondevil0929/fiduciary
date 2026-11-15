@@ -70,9 +70,15 @@ def test_the_site_page_reads_without_its_script() -> None:
     assert site.COPY["headline"] in text and site.COPY["lede"] in text
     for pkg in site.COPY["packages"]:
         assert pkg["name"] in text and pkg["text"] in text and f"pip install {pkg['dist']}" in text
-    # 1.19.0: the hero is a protect run on an MCP server, and three doors follow it
+    # 1.19.0: the hero is a protect run on an MCP server, and three doors follow it; 1.20.0:
+    # two panels, each call with its verdict, the password read before the fetch that carries it
     assert "fiduciary protect --mcp-config .mcp.json --enforce --apply" in text
     assert "Not sent: it carries a credential this session read." in text
+    assert "Held for your approval" in text and "Refused · a credential in the URL" in text
+    assert "flagged: the server marks it read-only" in text
+    assert text.index("Sup3rS3cretPw4@db.internal") < text.index("paste.example/?q=Sup3rS3cretPw4")
+    assert "Held for the principals' approval" not in text and "<html>" not in text
+    assert site.COPY["hero"]["steps"][0] in text and site.COPY["hero"]["steps"][1] in text
     assert "UPDATE tickets" not in text and "close_all" not in text
     for door in site.COPY["doors"]["items"]:
         assert door["tab"] in text and door["text"] in text
@@ -128,7 +134,7 @@ def test_the_script_draws_the_front_page_from_the_same_words() -> None:
 def test_the_files_beside_the_page() -> None:
     data = _with_overview(_run())
     sitemap = site.sitemap(data)
-    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 6  # 1.19.0
+    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 8  # 1.20.0
     assert f"Sitemap: {site.SITE_URL}sitemap.xml" in site.robots()
     assert site.favicon().startswith("<svg") and "prefers-color-scheme:dark" in site.favicon()
     card = (ROOT / "docs" / site.CARD).read_bytes()
@@ -169,8 +175,24 @@ def test_each_guide_is_a_page_of_its_own() -> None:
         assert ("FAQPage" in kinds) == bool(guide["faq"])
         others = [g for g in guides.GUIDES if g is not guide]
         assert all(f'href="../{g["slug"]}/"' in page for g in others)
-    assert len(titles) == len(descriptions) == len(guides.GUIDES) == 5
+    assert len(titles) == len(descriptions) == len(guides.GUIDES) == 7
     mapped = site.sitemap({})
-    assert mapped.count("<loc>") == 6 and f"<loc>{site.SITE_URL}verify/</loc>" in mapped
+    assert mapped.count("<loc>") == 8 and f"<loc>{site.SITE_URL}replays/</loc>" in mapped
     footer = site.COPY["footer"]["guides"]
     assert [href for _, href in footer] == [f"{g['slug']}/" for g in guides.GUIDES]
+
+
+def test_the_hero_is_what_a_run_records(tmp_path: Path) -> None:
+    """1.20.0: ``scripts/record_hero.py`` run again records what the front page shows."""
+    import importlib.util
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "record_hero.py"
+    spec = importlib.util.spec_from_file_location("record_hero", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.main(tmp_path / "hero.json")
+    fresh = json.loads((tmp_path / "hero.json").read_text())
+    shown = {k: site.COPY["hero"][k] for k in fresh}
+    assert fresh == shown, "run scripts/record_hero.py and read the diff"
+    assert [c["verdict"] for c in fresh["calls"]] == ["read", "held", "refused", "allowed"]

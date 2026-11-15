@@ -4,8 +4,11 @@ The server is a stand-in written here (``infra``): it lists volumes, deletes one
 fetches a URL. It is signed in with a credential, so what it reads counts as private; its
 ``delete_volume`` claims ``readOnlyHint: true``, as a careless or hostile server might, and
 its volume list carries a connection string with a password. An MCP client (this script)
-then makes the calls an agent would. Every line printed is what the commands printed; the
-front page's ``hero`` copy is taken from them (``site.COPY["hero"]``).
+then makes the calls an agent would. It writes what happened into
+``src/fiduciary/report/hero.json``, which the front page draws (``site.COPY["hero"]``): the
+command, the tools ``protect`` printed with their modes and flags, and each call with the
+proxy's own answer (its first line) and the verdict that answer gives. The volume list is
+shown one volume to a line, read from what the server returned through the proxy.
 
     python scripts/record_hero.py
 """
@@ -57,7 +60,7 @@ for line in sys.stdin:
         if name == "list_volumes":
             text = json.dumps(VOLUMES)
         elif name == "fetch":
-            text = "<html>ok</html>"
+            text = "All systems operational."
         else:
             text = "deleted " + params["arguments"]["volume"]
         result = {"content": [{"type": "text", "text": text}]}
@@ -81,7 +84,7 @@ def _call(process: subprocess.Popen[bytes], ident: int, method: str, params: Any
             return message.get("result", message.get("error"))
 
 
-def main() -> None:
+def main(target: Path | None = None) -> None:
     with tempfile.TemporaryDirectory() as scratch:
         here = Path(scratch)
         (here / "infra_server.py").write_text(SERVER)
@@ -115,8 +118,23 @@ def main() -> None:
             check=True,
         )
         print("$ " + " ".join(command))
+        hero: dict[str, Any] = {
+            "command": " ".join(command),
+            "server": "",
+            "tools": [],
+            "calls": [],
+        }
         for line in done.stdout.splitlines():
-            print(line.replace(str(here) + "/", "").replace(sys.executable, "python"))
+            shown = line.replace(str(here) + "/", "").replace(sys.executable, "python")
+            print(shown)
+            text = shown.strip()
+            if text.startswith("protected "):
+                hero["server"] = text.removeprefix("protected").strip()
+            elif text.startswith("flagged: ") and hero["tools"]:
+                hero["tools"][-1]["flag"] = text.removeprefix("flagged: ")
+            elif shown.startswith(" " * 12) and ": " in text and " " not in text.split(":")[0]:
+                tool, mode = text.split(": ", 1)
+                hero["tools"].append({"name": tool, "mode": mode})
         entry = json.loads(config.read_text())["mcpServers"]["infra"]
         process = subprocess.Popen(  # noqa: S603 - the entry protect wrote
             [entry["command"], *entry["args"]],
@@ -140,16 +158,50 @@ def main() -> None:
                     for c in (result or {}).get("content", [])
                     if isinstance(c, dict)
                 )
+                error = bool((result or {}).get("isError"))
                 print(f"> {name} {json.dumps(arguments)}")
-                print(f"  {'error ' if (result or {}).get('isError') else ''}{text[:400]}")
+                print(f"  {'error ' if error else ''}{text[:400]}")
+                lines = [line for line in text.splitlines() if line.strip()]
+                if name == "list_volumes":
+                    said = [f"{v['name']}  {v['url']}" for v in json.loads(text)]
+                    verdict = "read"
+                elif any(line.startswith("Not run yet") for line in lines):
+                    said = [next(line for line in lines if line.startswith("Not run yet"))]
+                    verdict = "held"
+                elif error:
+                    said, verdict = lines[:1], "refused"
+                else:
+                    said, verdict = lines[:1], "allowed"
+                if verdict != "read":  # the answer's first sentence; the rest is advice
+                    said = [said[0].split(". ")[0].rstrip(".") + "."] if said else []
+                badge = {
+                    "read": "Allowed · a private read",
+                    "held": "Held for your approval",
+                    "allowed": "Allowed",
+                }.get(verdict, "Refused")
+                if verdict == "refused" and "credential" in " ".join(said) and "url" in arguments:
+                    badge = "Refused · a credential in the URL"
+                hero["calls"].append(
+                    {
+                        "call": f"{name} {json.dumps(arguments)}",
+                        "verdict": verdict,
+                        "badge": badge,
+                        "said": said,
+                    }
+                )
         finally:
             assert process.stdin is not None and process.stderr is not None
             process.stdin.close()
             process.wait(30)
-            said = process.stderr.read().decode()
+            said_err = process.stderr.read().decode()
             if process.returncode:
-                print(said, file=sys.stderr)
+                print(said_err, file=sys.stderr)
+        target = target or (
+            Path(__file__).resolve().parent.parent / "src" / "fiduciary" / "report" / "hero.json"
+        )
+        target.write_text(json.dumps(hero, indent=2) + "\n", encoding="utf-8")
+        print(f"wrote {target}")
 
 
 if __name__ == "__main__":
-    main()
+    main(Path(sys.argv[1]) if len(sys.argv) > 1 else None)

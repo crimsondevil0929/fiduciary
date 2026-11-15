@@ -1,0 +1,62 @@
+# An agent that answers issue comments, behind fiduciary's CI proxy (fiduciary 1.20.0).
+#
+# Copy this to .github/workflows/agent.yml, and list the agent's MCP servers in
+# .github/agent-mcp.json, as Claude Code's .mcp.json does. Values the servers need are
+# written as ${NAME} there and given to the start step below, never to the agent's.
+#
+# What it does: text from anyone the repository does not trust labels every session
+# untrusted from the first call; the job's secrets stay in the proxy's memory, and a call
+# carrying one is refused; a call that points at .github/workflows or .github/actions is
+# refused; a call the mandate holds is not made (nobody approves in CI). The finish step
+# writes why to the job summary and uploads each server's bundle, verified.
+#
+# What it cannot see: an agent with a shell of its own (this one is given none), and tools the
+# agent's action brings itself, such as its own comment tool: those do not go through the proxy.
+
+name: agent
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  answer:
+    if: contains(github.event.comment.body, '@agent')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the CI proxy
+        id: fiduciary
+        uses: crimsondevil0929/fiduciary@v1.20.0
+        with:
+          step: start
+          mcp-config: .github/agent-mcp.json
+          secrets: |
+            GITHUB_TOKEN
+            ANTHROPIC_API_KEY
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: The agent, with only the proxy's MCP file
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: >-
+            --mcp-config ${{ steps.fiduciary.outputs.mcp-config }}
+            --disallowedTools Bash
+
+      - name: Finish, explain and keep the bundles
+        if: always()
+        uses: crimsondevil0929/fiduciary@v1.20.0
+        with:
+          step: finish
+          comment: refusals
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

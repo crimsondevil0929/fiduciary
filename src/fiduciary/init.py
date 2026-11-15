@@ -107,7 +107,9 @@ _KEEP: Final = frozenset(
         "description",
     }
 )
-_HARMLESS: Final = frozenset({"$schema", "$id", "examples", "default", "$comment"})
+_HARMLESS: Final = frozenset({"$schema", "$id", "examples", "default", "$comment", "x-mcp-header"})
+"""Keywords a binding leaves out, as they constrain no value: ``x-mcp-header`` (1.20.0) only
+says which header the transport mirrors an argument into, and the pin covers it."""
 _TYPES: Final = frozenset({"object", "array", "string", "integer", "boolean", "null"})
 
 
@@ -310,6 +312,9 @@ def schema_of(
             }
         elif key == "items":
             out[key] = schema_of(value, f"{path}.items", numbers, f"{at}[]" if at else "")
+        elif key == "required" and isinstance(value, list):
+            # a set, in FIDU1: sorted and once each, in whatever order the server lists it
+            out[key] = sorted({str(v) for v in value})
         elif key in ("minimum", "maximum") and isinstance(value, float):
             raise UnsupportedSchemaError(f"{path}.{key} is a float")
         else:

@@ -1315,16 +1315,25 @@
     return h("button", { class: "lp-copy", title: "Copy: " + command, "aria-label": label || "Copy " + command, onclick: function () { copy(command); } },
       h("span", { class: "lp-prompt", "aria-hidden": "true" }, "$"), h("code", null, command), icon("copy"));
   }
-  function termLine(r) {
-    if (r[0] === "cmd") return h("div", { class: "tl" }, h("span", { class: "lp-prompt" }, "$"), " " + r[1]);
-    if (r[0] === "agent") return h("div", { class: "tl lp-agent" }, h("span", { class: "lp-prompt" }, ">"), " " + r[1]);
-    return h("div", { class: "tl" + (r[0] === "hit" ? " hit" : "") }, r[1]);
-  }
   function codeWindow() {
+    // The hero's run (1.20.0), as site.py's _hero_figure draws it: protect once, then the calls.
     var x = C.hero;
-    return h("figure", { class: "lp-code lp-terminal", "aria-label": x.label },
+    var tools = x.tools.map(function (t) {
+      return h("li", null, h("code", null, t.name), h("span", { class: "lp-mode m-" + t.mode }, t.mode),
+        t.flag ? h("p", { class: "lp-flag" }, "flagged: " + t.flag) : null);
+    });
+    var calls = x.calls.map(function (c) {
+      return h("li", { class: "v-" + c.verdict },
+        h("div", { class: "lp-call" }, h("code", null, c.call), h("span", { class: "lp-verdict" }, c.badge)),
+        c.said.map(function (line) { return h("p", null, line); }));
+    });
+    return h("figure", { class: "lp-code lp-terminal lp-run", "aria-label": x.label },
       h("div", { class: "lp-code-bar" }, h("i"), h("i"), h("i"), h("span", { class: "mono" }, x.file), h("span", { class: "spacer" }), h("span", { class: "lp-tag" }, x.mode)),
-      h("div", { class: "lp-term" }, x.lines.map(termLine)),
+      h("div", { class: "lp-run-step" }, h("span", { class: "lp-run-title" }, x.steps[0]),
+        h("div", { class: "lp-run-cmd" }, h("span", { class: "lp-prompt" }, "$"), " ",
+          h("code", null, x.command.split(" ").reduce(function (out, word, i) { if (i) out.push(" "); out.push(h("span", { class: "nb" }, word)); return out; }, []))),
+        h("p", { class: "lp-run-out" }, "protected " + x.server), h("ul", { class: "lp-tools" }, tools)),
+      h("div", { class: "lp-run-step" }, h("span", { class: "lp-run-title" }, x.steps[1]), h("ol", { class: "lp-calls" }, calls)),
       h("figcaption", null, x.caption));
   }
   function doorsSection() {

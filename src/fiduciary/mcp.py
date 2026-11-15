@@ -205,9 +205,10 @@ class McpServer:
         except McpError as exc:
             return _error(ident, exc.code, str(exc))
         if version is not None:
+            # every modern result says what it is: complete, or input_required (1.20.0)
             result = {
                 **result,
-                "resultType": "complete",
+                "resultType": result.get("resultType", "complete"),
                 "_meta": {**result.get("_meta", {}), _META + "serverInfo": _server_info()},
             }
         return {"jsonrpc": "2.0", "id": ident, "result": result}

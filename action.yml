@@ -1,0 +1,131 @@
+name: Fiduciary for agents in CI
+description: >-
+  Run your agent's MCP servers behind protected proxies: untrusted event text labeled from the
+  first call, the job's secrets kept from the agent, workflow files refused, and a proof bundle.
+author: crimsondevil0929
+branding:
+  icon: shield
+  color: blue
+
+inputs:
+  step:
+    description: "start (before the agent) or finish (after it, with if: always())"
+    required: true
+  mcp-config:
+    description: The MCP servers file your agent would use (start)
+    default: .mcp.json
+  secrets:
+    description: >-
+      Environment variables holding secrets the agent must never send, one per line (start).
+      Set them on this step with env:, never on the agent's.
+    default: GITHUB_TOKEN
+  trust:
+    description: Author associations whose text is trusted (start)
+    default: OWNER,MEMBER,COLLABORATOR
+  protected-paths:
+    description: Paths no call may name, one per line (start)
+    default: |
+      .github/workflows
+      .github/actions
+  comment:
+    description: "Post the summary on the issue or pull request: never, refusals or always (finish)"
+    default: never
+  upload:
+    description: Upload the bundles as a build artifact (finish)
+    default: "true"
+  fail-on:
+    description: "Fail the step when a call was refused, or refused or held: never, refused, held (finish)"
+    default: never
+  event-name:
+    description: The event to read (the job's own, by default)
+    default: ""
+  event-path:
+    description: The event's JSON file (the job's own, by default)
+    default: ""
+
+outputs:
+  mcp-config:
+    description: The MCP file to give the agent (--mcp-config)
+    value: ${{ steps.start.outputs.mcp-config }}
+  refused:
+    description: How many calls were refused
+    value: ${{ steps.finish.outputs.refused }}
+  held:
+    description: How many calls are held for an approval nobody gives in CI
+    value: ${{ steps.finish.outputs.held }}
+  bundles:
+    description: Where each server's bundle, pinned keys and charter digest are
+    value: ${{ steps.finish.outputs.bundles }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install fiduciary from this action's own source
+      if: inputs.step == 'start'
+      shell: bash
+      run: |
+        python3 -m venv "$RUNNER_TEMP/fiduciary-venv"
+        "$RUNNER_TEMP/fiduciary-venv/bin/python" -m pip install --quiet --disable-pip-version-check "$GITHUB_ACTION_PATH"
+        "$RUNNER_TEMP/fiduciary-venv/bin/fiduciary" --version
+
+    - name: Start the CI proxy
+      id: start
+      if: inputs.step == 'start'
+      shell: bash
+      env:
+        INPUT_MCP_CONFIG: ${{ inputs.mcp-config }}
+        INPUT_SECRETS: ${{ inputs.secrets }}
+        INPUT_TRUST: ${{ inputs.trust }}
+        INPUT_PROTECTED: ${{ inputs.protected-paths }}
+        INPUT_EVENT_NAME: ${{ inputs.event-name }}
+        INPUT_EVENT_PATH: ${{ inputs.event-path }}
+      run: |
+        args=(ci start --mcp-config "$INPUT_MCP_CONFIG" --root "$RUNNER_TEMP/fiduciary-ci" --trust "$INPUT_TRUST")
+        while IFS= read -r name; do
+          [ -n "$name" ] && args+=(--secret "$name")
+        done <<< "$INPUT_SECRETS"
+        while IFS= read -r path; do
+          [ -n "$path" ] && args+=(--protected-path "$path")
+        done <<< "$INPUT_PROTECTED"
+        args+=(--event-name "${INPUT_EVENT_NAME:-$GITHUB_EVENT_NAME}" --event-path "${INPUT_EVENT_PATH:-$GITHUB_EVENT_PATH}")
+        "$RUNNER_TEMP/fiduciary-venv/bin/fiduciary" "${args[@]}"
+
+    - name: Finish, summarize and export the bundles
+      id: finish
+      if: inputs.step == 'finish'
+      shell: bash
+      env:
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        "$RUNNER_TEMP/fiduciary-venv/bin/fiduciary" ci finish \
+          --root "$RUNNER_TEMP/fiduciary-ci" \
+          --bundles "$RUNNER_TEMP/fiduciary-bundles" \
+          --comment "$RUNNER_TEMP/fiduciary-comment.md" \
+          --fail-on "$INPUT_FAIL_ON"
+
+    - name: Post the summary on the issue or pull request
+      if: >-
+        always() && inputs.step == 'finish' && inputs.comment != 'never' &&
+        (github.event.issue.number || github.event.pull_request.number)
+      shell: bash
+      env:
+        GH_TOKEN: ${{ env.GITHUB_TOKEN || github.token }}
+        NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        INPUT_COMMENT: ${{ inputs.comment }}
+      run: |
+        body="$RUNNER_TEMP/fiduciary-comment.md"
+        if [ "$INPUT_COMMENT" = "always" ] && [ ! -s "$body" ]; then
+          printf 'Fiduciary: no call was refused or held.\n' > "$body"
+        fi
+        if [ -s "$body" ]; then
+          gh issue comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$body" ||
+            echo "::warning::the summary could not be posted (the job needs issues: write or pull-requests: write)"
+        fi
+
+    - name: Upload the bundles
+      if: always() && inputs.step == 'finish' && inputs.upload == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: fiduciary-bundles-${{ github.job }}
+        path: ${{ runner.temp }}/fiduciary-bundles
+        if-no-files-found: warn

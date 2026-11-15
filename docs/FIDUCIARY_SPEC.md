@@ -1772,7 +1772,10 @@ billing scope. It is recorded (`session.opened`) before its first call.
     calls alike (`velocity`);
   - a model call names a model the mandate does not list, or one with no configured price
     (`model`);
-  - a trigger finds the lineage at `escalation.max_open` (`max_open`).
+  - a trigger finds the lineage at `escalation.max_open` (`max_open`);
+  - *(added in 1.20.0)* one of its arguments, read whole as a path (one line, `.` and `..`
+    resolved, case ignored), is at or under a path the deployment keeps from every call
+    (`protected`; `fiduciary ci` keeps `.github/workflows` and `.github/actions`).
 
   The record holds no agent text: a tool name is recorded only when a version the session
   runs pins it. A plan the engine refuses is recorded by interlock instead, in its ARC1
@@ -1825,6 +1828,45 @@ billing scope. It is recorded (`session.opened`) before its first call.
   - *Amended before release:* `fiduciary shadow report` adds, for each lineage, the sends
     judged, refused, and those a shadow version would have refused, by rule and tool, and the
     reads the read budget withheld or would have, read from the deployment's log.
+  - *Amended in 1.20.0:* a session also takes up what was seeded for every session under the
+    protect root (F8-7e), recorded from `fiduciary_workspace` or `fiduciary_ci`; the authority
+    admits these two sources, and `fiduciary_sibling`, under a version that admits statements
+    no binding pins.
+- **F8-15.** *Added in 1.20.0.* **Agents in CI** (`fiduciary.ci`, `action.yml`). `fiduciary ci
+  start` reads the job's event (`GITHUB_EVENT_NAME`, `GITHUB_EVENT_PATH`) and finds the text
+  the repository does not trust: issue, pull request, review and discussion text and comments
+  by an author whose `author_association` is not in `--trust` (owners, members and
+  collaborators by default), anything from a fork, and any event it does not know; push,
+  `workflow_dispatch`, `schedule` and `merge_group` carry none. It reads the values the MCP
+  file's entries name and the `--secret` variables from its environment, and starts the CI
+  proxy (`fiduciary ci serve`) as a process of its own with those variables removed from its
+  environment and the values on its standard input. The proxy protects each server
+  (enforcing; secrets in its memory alone, `custody.MemoryStore`; on Linux it marks itself
+  not dumpable), keeps `--protected-path` (`.github/workflows` and `.github/actions` by
+  default) from every call (F8-12), seeds `untrusted` when the event had untrusted text and
+  every value as `secret` (F8-7e, `fiduciary_ci`), and serves each server at
+  `http://127.0.0.1:<port>/mcp/<server>` to a bearer token it writes, with the URLs, into the
+  agent's MCP file; a request with a browser `Origin`, without the token, or by any method but
+  POST is refused. `fiduciary ci finish` stops the proxy, reads each deployment's records
+  (writes made; calls refused, with why; tickets open, which nobody approves in CI), writes a
+  Markdown summary to `$GITHUB_STEP_SUMMARY`, to `summary.md` and, when a call was refused or
+  held, to a comment file; exports each server's bundle with its pinned keys and charter
+  digest; verifies it; and exits 1 when one does not verify, or as `--fail-on` says.
+- **F8-16.** *Added in 1.20.0.* **The frameworks' approval hooks** (`fiduciary.hooks`). A
+  `Gate` is a session on a deployment whose mandate pins an agent framework's own tools
+  (`Gate.for_tools` writes one from their definitions, as `protect` does from a server's).
+  `Gate.decide` runs every check a call passes before it would run (F8-12, the outbound rules
+  of F8-14) without running it: `allow`; `deny`, recorded as any refusal is; or `ask`, for a
+  write the mandate holds. `Gate.seen` reads what the tool returned as a passthrough result is
+  read (labels, tracked values, the read budget, which can withhold it). A call id is decided
+  once. The adapters: for the OpenAI Agents SDK, `needs_approval` (true for `ask`) and an
+  input and an output tool guardrail (a refusal is the content the model is shown; an `ask`
+  without the framework's approval is refused); for the Claude Agent SDK, `can_use_tool`
+  (`ask` goes to a callable the application gives, else is denied), and `PreToolUse` and
+  `PostToolUse` hooks (a hook answers `deny` or `ask`, never `allow`, so Claude Code's own
+  permissions still apply). The tools run in the framework's process: nothing they change is
+  staged or measured, and an `ask` is approved by whoever answers the framework's prompt, with
+  no signature.
 
 ## 8.2 MCP
 
@@ -1886,6 +1928,56 @@ billing scope. It is recorded (`session.opened`) before its first call.
   name on every result; an unknown revision is answered `-32022` with the revisions spoken)
   and 2025-11-25 down to 2024-11-05 after `initialize`. Its upstream client probes with
   `server/discover` and falls back to `initialize`.
+- **F8-7d.** *Added in 1.20.0.* **Remote servers and custody.** `fiduciary protect` wraps a
+  remote entry (a `url` with `headers`, or Codex's `bearer_token_env_var`, `http_headers` and
+  `env_http_headers`) as it wraps a local one: the entry becomes the proxy's command over
+  stdio, and the proxy speaks Streamable HTTP to the URL (`fiduciary.remote.HttpUpstream`).
+  To a 2026-07-28 server every request is a POST carrying `MCP-Protocol-Version`,
+  `Mcp-Method` and, on `tools/call`, `Mcp-Name`, with each argument a tool marks
+  `x-mcp-header` mirrored into `Mcp-Param-<name>` (base64 between `=?base64?` and `?=` when
+  it is not plain ASCII); a tool whose marks break the transport's rules is left out of the
+  list. A server that does not answer `server/discover` is spoken to as 2025-11-25:
+  `initialize`, and every request with its `Mcp-Session-Id`; a session the server forgot
+  (404) is opened again once. Answers are one JSON object or a stream of server-sent events.
+  The URL is `https`, or `http` on loopback; redirects are not followed; a 401 is reported,
+  and a token a client gets by OAuth stays with the client. A remote server's secret headers
+  (named like a credential, a bearer or basic value, or a value in a credential's format) and
+  a URL whose query carries a credential always leave the client's file; a header the client
+  fills in from a variable is passed to the proxy through the entry's environment (Codex:
+  `env_vars`). With `--move-secrets`, local servers' `env` values and remote servers' secrets
+  go to the system's own store (`fiduciary.custody`: the macOS Keychain; the Linux Secret
+  Service through `secret-tool`, the value on its standard input; the Windows Credential
+  Manager through `advapi32`), or, where none answers, to a file under the protect root only
+  its user can read (mode 600); without it, a remote server's secrets go to that file.
+  `protect.json` says which store. The client files are Claude Desktop's, Cursor's, Claude
+  Code's `.mcp.json`, VS Code's `mcp.json` (`servers`; a rewritten entry keeps
+  `"type": "stdio"`) and Codex CLI's `config.toml` (`[mcp_servers.<name>]` tables replaced,
+  every other line kept). A tool's `required` list is held sorted, as a set, whatever order
+  the server lists it in.
+- **F8-7e.** *Added in 1.20.0.* **The workspace scan and seeds.** `fiduciary protect
+  --scan-secrets` reads the files under `--workspace` (not version control, dependency or
+  build directories, files over 1 MiB, binary files or links) and finds each credential with
+  the rules F8-13 applies to a result. With `--apply`, each value's digest, under the key of
+  the root's flows (F8-14), is seeded for every protected session (`flows/seeded.json`, source
+  `fiduciary_workspace`); `fiduciary ci` seeds its own (source `fiduciary_ci`). Before each
+  call, a session whose version admits statements no binding pins takes up each seed as it
+  takes up its siblings': a `session.labeled` record and a `session.read` record of its own,
+  naming the seed's source. A seed holds labels, digests and words saying where they came
+  from, never a value. Nothing the scan finds is moved: a value in a workspace file belongs to
+  whatever reads that file.
+- **F8-7f.** *Added in 1.20.0.* **Approvals in the client's own flow.** To a `tools/call` in
+  the 2026-07-28 revision whose client declares URL-mode elicitation
+  (`clientCapabilities.elicitation.url`), a write the mandate holds is answered
+  `resultType: "input_required"`: one `elicitation/create` in URL mode, the console's page for
+  the call's ticket (`#/desk?d=<deployment>&t=<ticket>`), and a `requestState`, an HMAC under a
+  key the deployment keeps over the plan, a digest of the call and an expiry (15 minutes). A
+  retry with `requestState` for the same call returns the server's own answer once the plan's
+  requests are made (the proxy makes a released request itself, to read its answer); waits up
+  to 20 seconds while one is held, then answers `input_required` again; and answers in words
+  when the owner declined or the approval ran out, or when the client declined to open the
+  page. A state this deployment did not give for this call is refused. The plan is committed
+  once, on the first call; a retry never makes another. Every other client is answered in
+  words, as before.
 
 ## 8.3 Model calls, halts and recovery
 
@@ -3153,5 +3245,10 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-31 to F10-33: `fiduciary init --substrate` | 1.9.0 | each of the six substrates written and served through `fiduciary mcp serve`: an allowed write committed, a wider one refused before anything changed; a keyless SQLite table by `rowid`; PostgreSQL's stage role, `grants.sql` and a signed install; Terraform's marker added; the missing-argument refusals | Implemented (1.9.0), SQLite; PostgreSQL where the test DSN is set; Terraform where `tofu` or `terraform` is installed. `test_init_substrates.py` |
 | F10-20 (1.9.0): delivery receipts in the desk | 1.9.0 | a sandbox's receipts include the relay's delivery receipts, shown request-only on their sink | Implemented (1.9.0). `test_interactive_console.py` |
 | F10-18: upgrades in place | 6 | stores each 0.x release wrote, on both stores | Implemented. `test_upgrade.py` |
+| F8-7d: remote servers, client files, secret stores | 1.20.0 | a stand-in Streamable HTTP server in 2026-07-28 and 2025-11-25, as JSON and as server-sent events, with mirrored and base64 headers, a forgotten session, a 401; the official `mcp` SDK server, stateless and stateful; a remote entry protected, its token out of the file, its tools pinned, a held write, a changed definition withheld, `unprotect` restoring the token; a URL carrying a key; a header the client fills in; Codex's `config.toml` and VS Code's `servers`; the Keychain, Secret Service and file stores, and the real Secret Service and Credential Manager in CI | Implemented (1.20.0). `test_remote.py`, `test_clients.py`, `test_custody.py`, `scripts/check_custody.py` |
+| F8-7e, F8-14 amended: the workspace scan and seeds | 1.20.0 | credentials found by kind, skipped directories and binaries, a value seeded and refused at a send no protected tool read it from, both seeds recorded by source, the bundle passing | Implemented (1.20.0), both stores. `test_scan.py` |
+| F8-7f: approvals in the client's own flow | 1.20.0 | the official `mcp` SDK client approving a held delete through the console's page and getting the server's answer; a declined elicitation; a client that does not ask; forged and foreign request states | Implemented (1.20.0). `test_approvals.py` |
+| F8-12 amended, F8-15: agents in CI | 1.20.0 | a hostile issue comment, the CI proxy as its own process, a workflow edit and two credential posts refused, a reply held, nothing reaching the server, no secret on disk, the summary, the comment file and verified bundles; the event rules; the GitHub Action end to end in CI | Implemented (1.20.0). `test_ci.py`, `scripts/ci_check.py`, CI job `the GitHub Action, end to end` |
+| F8-16: the frameworks' approval hooks | 1.20.0 | an OpenAI Agents SDK run on its `ScriptedModel` (a refused fetch, a held delete approved through `needs_approval`, an unapproved hold refused); `ClaudeSDKClient` over a stand-in CLI transport (`can_use_tool`, `PreToolUse`, `PostToolUse`) | Implemented (1.20.0). `test_hooks.py` |
 | F4-12e, F4-16b, F8-13, F8-14, V13: what leaves a session | 1.19.0 | a token read from a private repository refused at five sends (plain, URL-encoded, base64, hex, and an email carrying a private address), V13 passing with its note; the rule of two for a passthrough send; destinations after private data; the read budget withholding and the send budget refusing, per session and per turn; shadow sends recorded `shadow`; a plan carrying a credential refused; a service that let a token out failing V13 with exit 6 while V3 passes; the records held to their form; the golden bundles `valid-outbound-refused` and `v13-outbound-leak` in Python and in the browser; `readOnlyHint` contradictions held and flagged by `init`, `protect` and `protect --review`; `infer-policy` | Implemented (1.19.0), both stores. `test_outbound.py`, `test_infer.py`, `test_bundle_vectors.py`, `test_browser_verifier.py` |
 | F4-12e, F4-16b, F7-1a, F8-13, V13: provenance | 1.16.0 | a refund after an untrusted email held, approved 2 of 3 and run as the cleared plan, V13 passing with its note; `on: "refuse"` raising nothing; a refund the gate let through committed without a warrant, V13 failing with exit 6 while V4 passes; a reader that may write counted as untrusted; the SDK's tool and `read` labels; `init --mcp`'s open-world default; the golden bundles `valid-provenance-held` and `v13-tainted-commit` in Python and in the browser; the demo's eighth act | Implemented (1.16.0), both stores. `test_provenance.py`, `test_init.py`, `test_bundle_vectors.py`, `test_browser_verifier.py`, `test_demo.py` |

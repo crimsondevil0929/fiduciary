@@ -172,7 +172,7 @@ def write_client_file(tmp_path: Path) -> Path:
                             "PHASE_FILE": str(tmp_path / "phase"),
                         },
                     },
-                    "remote": {"url": "https://mcp.example.com/sse"},
+                    "remote": {"type": "sse", "url": "https://mcp.example.com/sse"},
                 },
                 "theme": "dark",
             }
@@ -201,7 +201,8 @@ def test_protect_wraps_a_server_and_holds_it_to_its_pins(client_file: Path, tmp_
     }
     written = json.loads(client_file.read_text())
     assert written["theme"] == "dark" and written["mcpServers"]["remote"] == {
-        "url": "https://mcp.example.com/sse"
+        "type": "sse",
+        "url": "https://mcp.example.com/sse",
     }
     entry = written["mcpServers"]["notes"]
     assert entry["args"][-3:] == ["mcp", "proxy", "--protected"]
@@ -229,7 +230,7 @@ def test_protect_wraps_a_server_and_holds_it_to_its_pins(client_file: Path, tmp_
         found = client.tool("search_notes", {"query": "ship", "limit": 2})
         assert json.loads(found["content"][0]["text"])["args"] == {"query": "ship", "limit": 2}
         held = client.tool("delete_note", {"id": "note-1"})
-        assert "Held for the principals' approval" in held["content"][0]["text"]
+        assert "waits for its owner's approval" in held["content"][0]["text"]
         # the server changes a description mid-session
         (tmp_path / "phase").write_text("1")
         refused = client.tool("search_notes", {"query": "ship"})

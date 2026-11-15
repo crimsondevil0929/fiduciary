@@ -81,10 +81,14 @@ BUILTIN_TOOLS: Final = ("fiduciary_request", "fiduciary_ticket_status")
 PROVENANCE_LABEL: Final = re.compile(r"[a-z][a-z0-9_.:=-]{0,95}")
 """A provenance label a session record may hold (1.16.0)."""
 TOOL_NAME: Final = re.compile(r"[a-z][a-z0-9_-]{0,63}")
+OUTSIDE_SOURCES: Final = frozenset({"fiduciary_sibling", "fiduciary_workspace", "fiduciary_ci"})
+"""What a session's records may name as a source no binding pins (``fiduciary.flow``): its
+siblings (1.19.0), the workspace's credentials and a CI job (1.20.0)."""
 REFUSAL_CODES: Final = (
     "arguments",  # outside the binding's schema, or the canonical domain (F4-13)
     "max_open",  # the lineage's open tickets are at escalation.max_open (F7-2)
     "model",  # a model the mandate does not list, or no price is configured for
+    "protected",  # it names a path the deployment keeps from every call (1.20.0)
     "revoked",  # a tool a recovery step revoked
     "tenant",  # a binding that stamps the session's tenant, in a session with none
     "unpinned",  # no binding the version pins, and no built-in (F4-16)
@@ -1228,8 +1232,9 @@ class Decide:
         if tool in {pin.name for pin in mandate.tools.bindings}:
             return
         # What a session took up from its siblings (1.19.0, fiduciary.flow) is recorded from
-        # fiduciary_sibling, under a version that admits statements no binding pins.
-        if sibling and tool == "fiduciary_sibling" and mandate.tools.statements == "any":
+        # fiduciary_sibling, and what was seeded for it (1.20.0) from fiduciary_workspace or
+        # fiduciary_ci, under a version that admits statements no binding pins.
+        if sibling and tool in OUTSIDE_SOURCES and mandate.tools.statements == "any":
             return
         raise AuthorityError(f"tool {tool!r} is pinned by no version this session runs")
 

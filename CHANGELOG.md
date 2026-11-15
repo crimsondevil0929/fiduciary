@@ -6,6 +6,71 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-11-15
+
+Protect reaches every client and remote servers, tokens leave the agent's reach, an agent in CI
+runs behind the proxies, and the frameworks' own approval hooks can ask a mandate.
+
+### Added
+
+- **Remote MCP servers** (F8-7d). `fiduciary protect` wraps a remote entry (a URL and its
+  headers, in any client's form, Codex's `bearer_token_env_var` included): the proxy speaks
+  Streamable HTTP to the server (`fiduciary.remote.HttpUpstream`), 2026-07-28 with
+  `MCP-Protocol-Version`, `Mcp-Method`, `Mcp-Name` and mirrored `x-mcp-header` arguments, and
+  2025-11-25 with `initialize` and its session. Its tools are pinned as a local server's are.
+  Its secret headers, and a URL whose query carries a credential, leave the client's file. A
+  header the client fills in from a variable is passed through. Tested against a stand-in in
+  both revisions and against the official `mcp` SDK's server.
+- **VS Code and Codex CLI** (`--vscode`, `--codex`, and their project files with
+  `--mcp-config`): VS Code's `servers` keep their `type`; Codex's `config.toml` has only the
+  servers' tables replaced, comments and the rest kept (`fiduciary.clients`).
+- **Secret stores** (`fiduciary.custody`). `--move-secrets` uses the macOS Keychain, the
+  Linux Secret Service (`secret-tool`, the value on its standard input) or the Windows
+  Credential Manager (its API, no program run), or a file only you can read where none
+  answers; `--secret-store` picks one. CI runs the Secret Service and the Credential Manager
+  for real (`scripts/check_custody.py`).
+- **The workspace scan** (F8-7e). `fiduciary protect --scan-secrets --workspace DIR` finds the
+  credentials an agent could read in passing; with `--apply`, each is seeded into every
+  protected session as `secret` from its first call (`fiduciary.flow.seed`, recorded from
+  `fiduciary_workspace`), so a send carrying it is refused, whatever tool the agent read it
+  with.
+- **Approvals in the client's own flow** (F8-7f, `fiduciary.approvals`). For a client that
+  speaks MCP 2026-07-28 and declares URL elicitation, a held write is answered
+  `input_required` with the console's page for its ticket and a signed request state; the
+  retry returns the server's own answer once the owner approved. Tested with the official
+  Python SDK's client; other clients are told in words, as before.
+- **Agents in CI** (F8-15, `fiduciary ci start|serve|finish`, `action.yml`). The agent's MCP
+  servers run behind protected proxies in a process of its own, served over loopback HTTP to
+  a token in the agent's MCP file. The event's untrusted text labels every session from the
+  first call; the job's secrets are held in the proxy's memory and refused in any call; calls
+  pointing at `.github/workflows` or `.github/actions` are refused (refusal code
+  `protected`); `finish` writes the job summary and a comment, and exports and verifies each
+  bundle. `docs/ci/agent.yml` is a workflow to copy; CI runs the Action end to end.
+- **The frameworks' approval hooks** (F8-16, `fiduciary.hooks`): `fiduciary.Gate`,
+  `fiduciary.needs_approval` and tool guardrails for the OpenAI Agents SDK,
+  `fiduciary.can_use_tool` and `PreToolUse`/`PostToolUse` hooks for the Claude Agent SDK.
+  Tested on the SDKs' own run loop and control protocol.
+- **Incident replays** (`fiduciary replay`, `fiduciary.replays`): a destructive call with a
+  found token, a cross-server toxic flow, and a silent server update, run through `protect`
+  against stand-ins, with verified bundles. The site's `/replays/` page shows the recorded
+  run; `/ci/` is a guide to the Action.
+
+### Changed
+
+- `init` holds a tool's `required` list sorted, as FIDU1 holds a set: a server that listed it
+  unsorted stopped `protect`. `x-mcp-header` is left out of a binding's schema (the pin keeps
+  it).
+- The credential rule reads a value given to a prefixed name (`CLOUD_TOKEN=...`).
+- A held write says plainly what waits, and for whom: "Not run yet: delete_volume waits for
+  its owner's approval, and runs once they approve it." (a quorum of the principals, where the
+  charter names more than one).
+- The front page's hero is two panels recorded from one real run (`report/hero.json`,
+  `scripts/record_hero.py`): `protect` once in a terminal, its tools as rows with any flag under
+  its tool; then each of the agent's calls with its verdict, the password read before the fetch
+  that carries it. The announcement links the replays.
+- `Session.call` is `_admit` (the checks before anything runs), then the outbound judgement,
+  then the call; the frameworks' hooks use the first two alone (F8-1's surface unchanged).
+
 ## [1.19.0] - 2026-11-15
 
 What leaves a session is checked before it leaves. A fetch, a search, an email or a write that
