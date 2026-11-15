@@ -105,6 +105,18 @@ from fiduciary._upstream import RECOVERY_REOPENS
 from fiduciary.authority import BUILTIN_TOOLS, Authority
 from fiduciary.binding import Binder, BindingError, MandateEngine
 from fiduciary.documents import Mandate, Ticket, ToolBinding
+from fiduciary.egress import (
+    Tracker,
+    carried,
+    destinations,
+    judge_read,
+    judge_send,
+    records_in,
+    secrets_in,
+    size_of,
+    strings_in,
+    tracked,
+)
 from fiduciary.escalation import Escalation, EscalationError
 from fiduciary.exceptions import FiduciaryError
 from fiduciary.executor import Executor
@@ -797,6 +809,34 @@ class Fiduciary:
 # --------------------------------------------------------------------------
 
 
+_REFUSED_SEND: Final = {
+    "rule_of_two": "this session has read untrusted input and sensitive data, so nothing may "
+    "be sent out now",
+    "destination:url": "after sensitive data, it may send only to the hosts its mandate lists",
+    "destination:email": "after sensitive data, it may write only to the email domains its "
+    "mandate lists",
+    "destination:repository": "after sensitive data, it may write only to the repositories its "
+    "mandate lists as private",
+    "value:secret": "it carries a credential this session read",
+    "budget:bytes_sent": "this session has sent as much as its mandate allows for now",
+}
+
+
+def _refused_send(broken: Sequence[str]) -> str:
+    """Why a send was refused, in words the agent can act on, without the bound's value."""
+    said = [
+        _REFUSED_SEND.get(rule)
+        or f"it carries a value this session read as {rule.split(':', 1)[1]}, to a destination "
+        "the mandate does not list"
+        for rule in broken
+    ]
+    return (
+        "Not sent: "
+        + "; ".join(said)
+        + ". A principal can change the mandate; do not try to send it another way."
+    )
+
+
 class Session:
     """One agent's session (module docstring). Open it with
     :meth:`Fiduciary.session`; its methods are its whole surface (F8-1)."""
@@ -809,12 +849,16 @@ class Session:
         "_closed",
         "_committed",
         "_fid",
+        "_flow",
         "_granted",
         "_labels",
         "_lock",
         "_opened",
         "_pending",
+        "_read",
+        "_sent",
         "_tickets",
+        "_tracker",
         "turn",
     )
 
@@ -831,6 +875,13 @@ class Session:
         self._pending: RecoveryStep | None = None
         self._labels: tuple[str, ...] = ()
         """What the session has read, as provenance labels (1.16.0): only ever joined."""
+        self._tracker = Tracker()
+        """The values the session read as ``secret`` or ``private`` (1.19.0), by digest."""
+        self._read: dict[str, int] = {}
+        self._sent: dict[str, int] = {}
+        self._flow: Any = None
+        """What sibling sessions of the same client read (1.19.0, :mod:`fiduciary.flow`)."""
+        """Records read and bytes sent so far (1.19.0), per turn, or ``""`` per session."""
         self.turn: str | None = None
         """The agent turn the session's next plans are part of (1.17.0): their requests
         wait for it (:mod:`fiduciary.turns`)."""
@@ -862,6 +913,58 @@ class Session:
         with self._lock:
             return self._labels
 
+    def _share(self, flow: Any) -> None:
+        """Share what this session reads with its sibling sessions, and take up what they
+        read, through ``flow`` (:class:`fiduciary.flow.Flow`, 1.19.0): its values are
+        tracked under the flow's key from now on."""
+        with self._lock:
+            self._flow = flow
+            self._tracker = Tracker(key=flow.key)
+            if self._labels:
+                flow.publish(self._labels, {})
+
+    def _from_siblings(self) -> None:
+        """Take up what sibling sessions read (1.19.0): their labels into a
+        ``session.labeled`` record, their tracked values' digests into a ``session.read``
+        record, both from ``fiduciary_sibling``. Only under a version with ``provenance``."""
+        from fiduciary.flow import SIBLING
+
+        flow = self._flow
+        mandate = self._engine().mandate
+        rules = mandate.provenance
+        if flow is None or rules is None or mandate.tools.statements != "any":
+            return  # a version that pins every source admits none from a sibling
+        labels, digests = flow.others()
+        with self._lock:
+            new = sorted(labels - set(self._labels))
+        if new:
+            self._label(SIBLING, new)
+        if not rules.values:
+            return
+        with self._lock:
+            adopted = {
+                label: added
+                for label, found in sorted(digests.items())
+                if (added := self._tracker.adopt(label, found))
+            }
+        if adopted:
+            log = self._fid.log
+            with log.store.transaction():
+                now = log.now()
+                body = self._fid._authority.decide.read_session(
+                    log.state(),
+                    self.session_id,
+                    {
+                        "tool": SIBLING,
+                        "turn": self.turn,
+                        "records": 0,
+                        "values": adopted,
+                        "outcome": "served",
+                        "rules": [],
+                    },
+                )
+                log.append("session.read", body, issued_at=now)
+
     def _label(self, tool: str, labels: Sequence[str]) -> tuple[str, ...]:
         """Join ``labels`` (what ``tool``'s result brought) into the session's, and record
         ``session.labeled`` when that adds one (1.16.0). The labels it holds after."""
@@ -876,6 +979,8 @@ class Session:
                 )
                 log.append("session.labeled", body, issued_at=now)
             self._labels = tuple(body["labels"])
+            if self._flow is not None:
+                self._flow.publish(self._labels, {})
             return self._labels
 
     @property
@@ -957,7 +1062,11 @@ class Session:
             return CallResult(
                 name, "halted", "This task is halted: it repeated calls without progress."
             )
-        if binding.kind == "passthrough":
+        self._from_siblings()
+        blocked = self._outbound(binding, arguments)
+        if blocked is not None:
+            result = blocked
+        elif binding.kind == "passthrough":
             result = self._passthrough(binding, arguments)
         else:
             result = self._plan(binding, arguments)
@@ -1300,9 +1409,141 @@ class Session:
                 # Not a typed result from a reader that cannot write: it is what it read.
                 logger.warning("tool %s: %s; its result counts as untrusted", name, problem)
                 brought = ("untrusted",)
-        if brought:
-            self._label(name, brought)
+        withheld = self._counted_read(binding, value, brought)
+        if withheld is not None:
+            return withheld
         return CallResult(name, "served", "", value=value)
+
+    # -- what leaves the session, and what it read (1.19.0) --------------------------------
+
+    def _per(self, per: str) -> str:
+        """The key a budget counts under: the turn, or ``""`` for the whole session."""
+        return (self.turn or "") if per == "turn" else ""
+
+    def _outbound(self, binding: ToolBinding, arguments: Mapping[str, Any]) -> CallResult | None:
+        """Judge a call that carries data out before it leaves (F8-14): a passthrough tool
+        whose binding declares where it sends, or a plan, when the version in force has
+        outbound rules that could apply to it. ``None`` lets it go on; a refusal is
+        recorded and returned. Under a shadow mandate, nothing is refused: the record says
+        what would have been."""
+        mandate = self._engine().mandate
+        rules = mandate.provenance
+        if rules is None:
+            return None
+        out = rules.outbound()
+        plan = binding.kind != "passthrough"
+        active = out.values or out.bytes_sent is not None or bool(rules.destinations)
+        if plan and not active:
+            return None
+        if not plan and not (binding.egress and (active or out.rule_of_two)):
+            return None
+        where = destinations(binding.egress, arguments)
+        if not plan and not where:
+            return None  # the tool sends nowhere this time: no destination was given
+        size = size_of(arguments)
+        matched = self._tracker.found(carried(arguments)) if out.values else {}
+        with self._lock:
+            key = self._per(out.per)
+            before = self._sent.get(key, 0)
+            broken = judge_send(
+                out,
+                plan=plan,
+                labels=self._labels,
+                destinations=where,
+                matched=matched,
+                sinks=sorted({r.sink for r in binding.requests}),
+                sent_before=before,
+                size=size,
+            )
+            outcome = "allowed" if not broken else "shadow" if mandate.shadow else "refused"
+            if outcome != "refused":
+                self._sent[key] = before + size
+        log = self._fid.log
+        with log.store.transaction():
+            now = log.now()
+            body = self._fid._authority.decide.send_session(
+                log.state(),
+                self.session_id,
+                {
+                    "tool": binding.name,
+                    "turn": self.turn,
+                    "plan": plan,
+                    "destinations": where,
+                    "bytes": size,
+                    "matched": matched,
+                    "outcome": outcome,
+                    "rules": list(broken) if outcome != "allowed" else [],
+                },
+            )
+            log.append("session.sent", body, issued_at=now)
+        if outcome != "refused":
+            return None
+        return CallResult(binding.name, "refused", _refused_send(broken))
+
+    def _counted_read(
+        self, binding: ToolBinding, value: Any, brought: Sequence[str]
+    ) -> CallResult | None:
+        """What a passthrough tool returned, before the agent sees it (1.19.0): a credential
+        in it labels the session ``secret``; under a version with outbound rules, its values
+        are tracked and its records counted, and a read past the budget is withheld.
+        ``None`` serves it."""
+        name = binding.name
+        mandate = self._engine().mandate
+        rules = mandate.provenance
+        if rules is None:
+            if brought:
+                self._label(name, brought)
+            return None
+        out = rules.outbound()
+        found = sorted({c for text in strings_in(value) for c in secrets_in(text)})
+        labels = tuple(sorted({*brought, "secret"})) if found else tuple(brought)
+        records = records_in(value)
+        broken: tuple[str, ...] = ()
+        with self._lock:
+            key = self._per(out.per)
+            before = self._read.get(key, 0)
+            if out.counts:
+                broken = judge_read(out, read_before=before, records=records)
+            outcome = "served" if not broken else "shadow" if mandate.shadow else "withheld"
+            if outcome != "withheld":
+                self._read[key] = before + records
+        values: dict[str, list[str]] = {}
+        if outcome != "withheld":
+            if labels:
+                self._label(name, labels)
+            if out.values:
+                if found:
+                    values["secret"] = self._tracker.track("secret", found)
+                if "private" in labels:
+                    values["private"] = self._tracker.track("private", tracked(value))
+                values = {k: v for k, v in values.items() if v}
+                if values and self._flow is not None:
+                    self._flow.publish(self._labels, values)
+        if values or out.counts:
+            log = self._fid.log
+            with log.store.transaction():
+                now = log.now()
+                body = self._fid._authority.decide.read_session(
+                    log.state(),
+                    self.session_id,
+                    {
+                        "tool": name,
+                        "turn": self.turn,
+                        "records": records,
+                        "values": values,
+                        "outcome": outcome,
+                        "rules": list(broken) if outcome != "served" else [],
+                    },
+                )
+                log.append("session.read", body, issued_at=now)
+        if outcome != "withheld":
+            return None
+        return CallResult(
+            name,
+            "refused",
+            "Not shown: this session has read as many records as its mandate allows for now. "
+            "A principal can raise the limit; do not make the call again.",
+        )
 
     def _quarantine_problem(self, binding: ToolBinding, value: Any) -> str | None:
         """Why a reader's result does not cross as a typed value (1.16.0), or ``None``."""

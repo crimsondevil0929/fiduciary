@@ -200,6 +200,9 @@ class Pack:
     """How long the root mandate is in force."""
     governance: Mapping[str, Any] | None = None
     """The root mandate's ``governance``, when not the demo's."""
+    provenance: Mapping[str, Any] | None = None
+    """The root mandate's ``provenance`` (1.19.0, :data:`fiduciary.init.MCP_PROVENANCE`
+    for an MCP server's tools), when it has one."""
     vendor_log: tuple[str, str, str] | None = None
     """For a pack whose writes go to an outside vendor: the sink, the format
     the vendor exports its log in, and the actor it records for the relay
@@ -546,6 +549,7 @@ def mandate_json(world: PackWorld, *, envelope: str = "25.00000000") -> dict[str
         "delegation": dict(pack.delegation) if pack.delegation is not None else None,
         "issued_at": fidu1.format_instant(now),
         **({"enforcement": "shadow"} if pack.enforcement == "shadow" else {}),
+        **({"provenance": copy.deepcopy(dict(pack.provenance))} if pack.provenance else {}),
     }
 
 

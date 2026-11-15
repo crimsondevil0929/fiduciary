@@ -6,6 +6,95 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-11-15
+
+What leaves a session is checked before it leaves. A fetch, a search, an email or a write that
+carries a credential or a private value the agent read is refused, whole or encoded; after
+untrusted input and private data together, nothing more is sent; reads and sends count against a
+budget; and V13 judges every recorded send again offline. A tool that claims to read only, while
+its own name or arguments say otherwise, is held. Requires interlock-escrow 1.11.0.
+
+### Added
+
+- **Outbound data control** (`fiduciary.egress`, F8-14). A binding's new `egress` names the
+  arguments that say where a call sends (`url`, `email`, `repository`); `init --mcp` and
+  `protect` fill it from the tool's schema. Before such a call leaves, the bridge judges it:
+  - **values**: the distinctive tokens of what the session read as `secret` or `private`, kept
+    only as digests under a key that never leaves the process, are looked for in every
+    argument, as plain text, URL-decoded, and decoded from base64 or hex. A credential never
+    leaves; a private value leaves only to a destination the mandate lists;
+  - **the rule of two, for sends**: after untrusted input and sensitive data, a passthrough
+    tool sends nothing out (a plan's rule of two is the gate's, as before);
+  - **destinations**: after sensitive data, only the hosts, email domains and private
+    repositories the mandate lists;
+  - **budgets**: records read and bytes sent per turn or per session. A read past the budget
+    is withheld from the agent; a send past it is refused.
+
+  It catches an exact value leaving, whole or encoded. It does not catch a paraphrase.
+- **Credentials found by their format.** A tool's result that holds an AWS key, a GitHub,
+  Slack, Stripe, OpenAI or Anthropic token, a JWT, a private key, a password in a connection
+  string, or a long random-looking value assigned to a name like `api_key`, labels the session
+  `secret`.
+- **`private`**, a label and a binding's `confidentiality`: what the deployment's own systems
+  hold. `init --mcp` and `protect` give it to every closed-world read, and to every read of a
+  server signed in with a credential.
+- **`provenance` gains `destinations`, `values` and `budget`**, each written only when set
+  (F4-12e amended). `init --mcp` and `protect` now write the rule of two and value tracking
+  into a new server's mandate.
+- **Two records**, `session.read` and `session.sent` (F8-14), and **V13 judges them again** in
+  `verify-bundle` and in the browser: the labels each send held, the values it carried (by
+  digest, each one tracked by an earlier read), its destinations and bytes, against the rules
+  of the session's own mandate version. Golden bundles `valid-outbound-refused` and
+  `v13-outbound-leak`.
+- **One client's protected servers share what they read** (`fiduciary.flow`): the proxies
+  `fiduciary protect` starts for one client share the labels they hold and the digests they
+  tracked, so a token read through a database server is refused when it leaves through a fetch
+  server. Each server records what it took up (`fiduciary_sibling`) on its own chain, and its
+  bundle verifies on its own.
+- **`fiduciary shadow report` says what would have left**: the sends judged, refused, and
+  those a shadow mandate would have refused, by rule and tool ("a credential the session had
+  read, in what it sent: 1 send, from fetch"), and the reads past the read budget.
+- **`fiduciary infer-policy`**: a draft policy from an MCP server's tools (`--mcp`, `--tools`),
+  an OpenAPI document (`--openapi`) or a deployment's shadow runs (`--traces`): each tool as a
+  read, a send or a write, held or not, the labels its result brings, where it sends, which
+  tool undoes it (CRUD symmetry), and bounds from the 95th percentile of what was measured.
+  Deterministic. `--llm URL --llm-model NAME` asks any OpenAI-compatible endpoint, local or
+  not, to review it; only what makes it stricter is kept (a tool held, a label added, a flag),
+  and the draft names the model. Nothing it writes is signed.
+- **AIUC-1**, a tenth control-framework pack, mapping V1 to V14 to AIUC-1's requirements.
+
+### Changed
+
+- **A read-only claim a tool contradicts is not believed** (`fiduciary.infer`). MCP's
+  specification says annotations are untrusted unless the server is: a tool marked
+  `readOnlyHint: true` whose name or description starts with a write verb (`delete`, `send`,
+  `create`, `transfer`, `exec`...) or that takes a recipient, an amount, a webhook or a body is
+  held, not made a passthrough, and `init`, `protect` and `protect --review` flag it.
+- **The front page leads with `fiduciary protect`**: a recorded run on an MCP server whose
+  `delete_volume` claims to read only, the call held, and a fetch carrying a password refused.
+  Three ways in follow it (a desktop or coding client; Python; CI and infrastructure), the
+  systems are listed MCP servers first, and Fiduciary is the product, with Interlock and
+  AgentGov as its engines.
+- **Five guides, each a page of its own** at `/fiduciary/protect/`, `/claude-code/`,
+  `/outbound/`, `/passkeys/` and `/verify/`: securing MCP servers against rug pulls, passkey
+  approvals for Claude Code and Cursor, stopping data from leaving, WebAuthn approvals, and
+  verifying an audit bundle offline. Plain HTML with its own title, description, canonical
+  link and structured data (an article, breadcrumbs, the steps and the questions it answers),
+  listed in `sitemap.xml` and linked from the front page's footer (`fiduciary.report.guides`).
+  `check_site.py` holds each to it.
+- **The front page, refined**: the three ways in are a segmented control over a framed panel;
+  the stack's cards are balanced; the workbench, the verifier and the sandbox say what they
+  do in plainer words.
+- **`fiduciary --help` lists eight commands**; `fiduciary help advanced` lists every one.
+  Release numbers are gone from the help.
+
+### Fixed
+
+- **`protect` run as `python -m fiduciary` from a virtual environment that is not on `PATH`**
+  wrote an entry that ran the interpreter the environment links to, which has none of its
+  packages, so the protected server never started. The entry now names the environment's own
+  interpreter.
+
 ## [1.18.0] - 2026-11-14
 
 A committed plan can be put back: exactly, as a plan of its own, from what its commit kept in

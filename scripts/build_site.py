@@ -34,7 +34,7 @@ import tempfile
 from pathlib import Path
 
 from fiduciary import cli, report
-from fiduciary.report import site
+from fiduciary.report import guides, site
 
 PUBLIC = ("before.fidb", "after.fidb", "pinned-keys.json", "charter.digest", "report.md")
 CARD = Path(__file__).resolve().parent.parent / "docs" / site.CARD
@@ -60,6 +60,11 @@ def build(out: Path) -> list[Path]:
                 if (directory / name).is_file():
                     shutil.copyfile(directory / name, target / name)
         (out / "sitemap.xml").write_text(site.sitemap(data), encoding="utf-8")
+    # 1.19.0: a page of its own for each guide, which a search engine can index.
+    (out / "guides.css").write_text(guides.CSS, encoding="utf-8")
+    for guide in guides.GUIDES:
+        (out / guide["slug"]).mkdir()
+        (out / guide["slug"] / "index.html").write_text(guides.page(guide), encoding="utf-8")
     (out / "robots.txt").write_text(site.robots(), encoding="utf-8")
     (out / "favicon.svg").write_text(site.favicon(), encoding="utf-8")
     shutil.copyfile(CARD, out / site.CARD)

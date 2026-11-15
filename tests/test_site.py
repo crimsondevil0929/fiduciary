@@ -70,7 +70,18 @@ def test_the_site_page_reads_without_its_script() -> None:
     assert site.COPY["headline"] in text and site.COPY["lede"] in text
     for pkg in site.COPY["packages"]:
         assert pkg["name"] in text and pkg["text"] in text and f"pip install {pkg['dist']}" in text
-    assert "@gov.tool" in text and "def close_all(db: fiduciary.Sql) -> str:" in text
+    # 1.19.0: the hero is a protect run on an MCP server, and three doors follow it
+    assert "fiduciary protect --mcp-config .mcp.json --enforce --apply" in text
+    assert "Not sent: it carries a credential this session read." in text
+    assert "UPDATE tickets" not in text and "close_all" not in text
+    for door in site.COPY["doors"]["items"]:
+        assert door["tab"] in text and door["text"] in text
+    assert "@gov.tool" in text and "def refund(api: fiduciary.Rest" in text
+    strip = text[text.index(site.COPY["systems"]) :]
+    shown = [n for n, _, _ in site.COPY["systems_order"] if n in strip]
+    assert shown[0] == "MCP servers" and shown == sorted(
+        shown, key=[n for n, _, _ in site.COPY["systems_order"]].index
+    )
     # the counts the script fills in, counted as it counts them: two workflows ran
     assert "2 workflows" in text and "on 2 kinds of system, in one run" in text
     assert "6plans refused" in text and "4bundles verified offline" in text
@@ -117,7 +128,7 @@ def test_the_script_draws_the_front_page_from_the_same_words() -> None:
 def test_the_files_beside_the_page() -> None:
     data = _with_overview(_run())
     sitemap = site.sitemap(data)
-    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 1
+    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 6  # 1.19.0
     assert f"Sitemap: {site.SITE_URL}sitemap.xml" in site.robots()
     assert site.favicon().startswith("<svg") and "prefers-color-scheme:dark" in site.favicon()
     card = (ROOT / "docs" / site.CARD).read_bytes()
@@ -131,3 +142,35 @@ def test_how_it_works_says_the_five_steps_as_the_front_page_does() -> None:
     script = CONSOLE.read_text(encoding="utf-8")
     for title, text in site.COPY["loop"]["steps"]:
         assert f'"{title}", "{text}"' in script, title
+
+
+def test_each_guide_is_a_page_of_its_own() -> None:
+    """1.19.0: the guides a search engine can index, each with its own title, description,
+    canonical address and structured data, and the sitemap listing them all."""
+    from fiduciary.report import guides
+
+    titles, descriptions = set(), set()
+    for guide in guides.GUIDES:
+        page = guides.page(guide)
+        url = f"{site.SITE_URL}{guide['slug']}/"
+        assert f'<link rel="canonical" href="{url}">' in page
+        title = re.search(r"<title>(.*?)</title>", page)
+        assert title is not None and title.group(1).endswith(" | Fiduciary")
+        titles.add(title.group(1))
+        descriptions.add(str(guide["description"]))
+        assert 70 <= len(str(guide["description"])) <= 170, guide["slug"]
+        assert page.count("<h1>") == 1 and "<script src" not in page
+        found = re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.S)
+        assert found is not None
+        graph = json.loads(found.group(1))["@graph"]
+        kinds = {node["@type"] for node in graph}
+        assert {"TechArticle", "BreadcrumbList"} <= kinds
+        assert ("HowTo" in kinds) == bool(guide["steps"])
+        assert ("FAQPage" in kinds) == bool(guide["faq"])
+        others = [g for g in guides.GUIDES if g is not guide]
+        assert all(f'href="../{g["slug"]}/"' in page for g in others)
+    assert len(titles) == len(descriptions) == len(guides.GUIDES) == 5
+    mapped = site.sitemap({})
+    assert mapped.count("<loc>") == 6 and f"<loc>{site.SITE_URL}verify/</loc>" in mapped
+    footer = site.COPY["footer"]["guides"]
+    assert [href for _, href in footer] == [f"{g['slug']}/" for g in guides.GUIDES]

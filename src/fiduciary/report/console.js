@@ -677,7 +677,7 @@
     var how = DEMO.mode === "live" ? which + " was run live by " + who + "; the others are scripted calls."
       : DEMO.mode === "replay" ? "In " + which.toLowerCase() + ", " + who + " picks the calls. Its recorded session is replayed on today's engine, so no model is called. The other scenarios are scripted."
       : "Every scenario is a scripted sequence of calls, with no model involved.";
-    return "Each tool call goes to two places. The input gateway (Cedar policies, " + DEMO.gateway.engine + ") decides from the call alone. The stack runs the call, measures what it actually changed and enforces the mandate. " + how + " Every number below was measured during the run, which took " + DEMO.seconds + " s.";
+    return "Every tool call is checked twice. First an input gateway (Cedar policies, " + DEMO.gateway.engine + ") decides from the call alone, as most setups do today. Then Fiduciary runs it, measures what it actually changed, and holds that to the mandate. " + how + " Every number below was measured during the run, which took " + DEMO.seconds + " s.";
   }
   function scenariosTab() {
     var draw = PACK ? function (x) { return (PACK_ACTS[x.key] || packCalls)(x); } : function (x) { return ACTS[x.key](x); };
@@ -1180,7 +1180,7 @@
   }
   function modeShort() {
     if (!DEMO) return "a bundle, verified";
-    if (DEMO.mode === "replay" && DEMO.model) return "recorded " + DEMO.model.served + " session, replayed at no cost";
+    if (DEMO.mode === "replay" && DEMO.model) return "a recorded " + DEMO.model.served + " session, replayed with no model called";
     if (DEMO.mode === "live" && DEMO.model) return "live " + DEMO.model.served + " session";
     return "scripted calls, no model";
   }
@@ -1215,8 +1215,8 @@
     var o = OVERVIEW, tt = totals(), acc = o.acceptance;
     var steps = [
       ["01", "Stage", "The tool call becomes a plan and runs where nothing is final yet: a SQL transaction, a Git worktree, a private copy of a directory, a Kubernetes dry run, or a prediction for an API."],
-      ["02", "Measure", "The stage records what the change actually did, including whatever triggers, hooks, renderers and admission webhooks did on top: every row, file, object or record."],
-      ["03", "Check", "The measured change is compared with the mandate: which tables, files, objects or records it touched and how many, whose data it reached, how far any guarded value moved, the rate windows and budgets, and what the agent had read before it asked.", "held for 2 of 3", "Anything outside the mandate can still go ahead if a quorum of named principals signs a warrant for that exact change."],
+      ["02", "Measure", "The stage records what the change actually did, down to every row, file, object or record, including whatever triggers, hooks and admission webhooks added on top."],
+      ["03", "Check", "The measured change is compared with the mandate: what it touched and how much, whose data it reached, how far any guarded value moved, the rate limits and budgets, and what the agent had read before it asked.", "held for 2 of 3", "Anything outside the mandate can still go ahead if a quorum of named principals signs a warrant for that exact change."],
       ["04", "Commit or undo", "A change that passes commits once, on the exact version that was measured. A change that fails never commits. If an API changes more than predicted, the write is undone. A committed plan can be put back later, exactly as it was."],
       ["05", "Prove", "Every decision is a signed record. An auditor runs all fourteen checks (V1 to V14) on an exported bundle, offline, with public keys you gave them separately. They need no access to your systems."]
     ];
@@ -1315,24 +1315,44 @@
     return h("button", { class: "lp-copy", title: "Copy: " + command, "aria-label": label || "Copy " + command, onclick: function () { copy(command); } },
       h("span", { class: "lp-prompt", "aria-hidden": "true" }, "$"), h("code", null, command), icon("copy"));
   }
+  function termLine(r) {
+    if (r[0] === "cmd") return h("div", { class: "tl" }, h("span", { class: "lp-prompt" }, "$"), " " + r[1]);
+    if (r[0] === "agent") return h("div", { class: "tl lp-agent" }, h("span", { class: "lp-prompt" }, ">"), " " + r[1]);
+    return h("div", { class: "tl" + (r[0] === "hit" ? " hit" : "") }, r[1]);
+  }
   function codeWindow() {
-    var lines = C.code.map(function (line, i) { return h("div", { class: "cl" }, h("span", { class: "ln", "aria-hidden": "true" }, String(i + 1)), h("span", null, pyLine(line))); });
-    var report = C.report.map(function (r) {
-      return r[0] === "cmd" ? h("div", { class: "tl" }, h("span", { class: "lp-prompt" }, "$"), " " + r[1]) : h("div", { class: "tl" + (r[0] === "hit" ? " hit" : "") }, r[1]);
+    var x = C.hero;
+    return h("figure", { class: "lp-code lp-terminal", "aria-label": x.label },
+      h("div", { class: "lp-code-bar" }, h("i"), h("i"), h("i"), h("span", { class: "mono" }, x.file), h("span", { class: "spacer" }), h("span", { class: "lp-tag" }, x.mode)),
+      h("div", { class: "lp-term" }, x.lines.map(termLine)),
+      h("figcaption", null, x.caption));
+  }
+  function doorsSection() {
+    var d = C.doors, panels = [], tabs = [];
+    function choose(key) {
+      tabs.forEach(function (t) { t.setAttribute("aria-selected", t.id === "door-" + key ? "true" : "false"); });
+      panels.forEach(function (p) { p.hidden = p.id !== "door-panel-" + key; });
+    }
+    d.items.forEach(function (x, i) {
+      tabs.push(h("button", { class: "lp-door-tab", role: "tab", id: "door-" + x.key, "aria-controls": "door-panel-" + x.key, "aria-selected": i === 0 ? "true" : "false", onclick: function () { choose(x.key); } }, x.tab));
+      var code = x.code.length ? h("pre", { class: "lp-src lp-door-code" }, x.code.map(function (line, n) { return h("div", { class: "cl" }, h("span", { class: "ln", "aria-hidden": "true" }, String(n + 1)), h("span", null, pyLine(line))); })) : null;
+      var panel = h("div", { class: "lp-door", role: "tabpanel", id: "door-panel-" + x.key, "aria-labelledby": "door-" + x.key },
+        h("p", null, x.text), h("div", { class: "lp-door-cmds" }, x.commands.map(function (c) { return copyChip(c); })), code);
+      panel.hidden = i !== 0;
+      panels.push(panel);
     });
-    return h("figure", { class: "lp-code", "aria-label": C.code_label },
-      h("div", { class: "lp-code-bar" }, h("i"), h("i"), h("i"), h("span", { class: "mono" }, C.file), h("span", { class: "spacer" }), h("span", { class: "lp-tag" }, C.mode)),
-      h("pre", { class: "lp-src" }, h("div", { class: "tl lp-init" }, h("span", { class: "lp-prompt" }, "$"), " " + C.init), lines),
-      h("div", { class: "lp-term" }, report),
-      h("figcaption", null, C.caption));
+    return h("section", { class: "lp-sec lp-doors", id: "doors" }, h("div", { class: "wrap" },
+      lpHead(d), h("div", { class: "lp-door-tabs", role: "tablist" }, tabs), panels));
   }
   function systemsStrip() {
     if (!OVERVIEW) return null;
-    var seen = {}, chips = [];
+    var classes = {}, chips = [];
     OVERVIEW.industries.forEach(function (r) {
-      if (!r.ran || !r.substrate || seen[r.substrate]) return;
-      seen[r.substrate] = true;
-      chips.push(h("span", { class: "lp-sys" }, rungChip(r["class"]), r.substrate));
+      if (r.ran && r.substrate && !classes[r.substrate]) classes[r.substrate] = r["class"];
+    });
+    C.systems_order.forEach(function (s) {
+      var letter = s[1] || classes[s[2]];
+      if (letter) chips.push(h("span", { class: "lp-sys" }, rungChip(letter), s[0]));
     });
     return h("div", { class: "lp-systems" }, h("span", { class: "lp-sys-label" }, C.systems), chips);
   }
@@ -1423,7 +1443,7 @@
     view = "run"; use(firstWorkflow()); TAB = null; setRoute(); render(); window.scrollTo(0, 0);
   }
   function home() {
-    return h("main", { id: "home", class: "lp" }, hero(), stackSection(), loopSection(), ladderSection(), numbersSection(), closingSection());
+    return h("main", { id: "home", class: "lp" }, hero(), doorsSection(), stackSection(), loopSection(), ladderSection(), numbersSection(), closingSection());
   }
   function siteFooter() {
     var F = C.footer;
@@ -1434,6 +1454,7 @@
           h("p", null, F.text)),
         col("Source", PACKAGES.map(function (p) { return [p.name, REPO + p.key]; })),
         col("Install", PACKAGES.map(function (p) { return [p.dist, PYPI + p.dist + "/"]; })),
+        col("Guides", F.guides),
         col("Read", F.read)),
       h("p", { class: "lp-foot-note" }, F.note)));
   }
@@ -2324,7 +2345,7 @@
     var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Offline verification"), h("h2", null, "Verify an audit bundle"),
       h("p", null, LIVE.on
         ? "Drop any .fidb, fidb/1 or sealed fidb/2. The console runs V1 to V14 on it with no network, against a charter digest pinned outside the bundle. This browser also checks what it can on its own: the container, every member's digest, the hash chain, every record's signature, the seals and each relay's delivery receipt."
-        : "Drop any .fidb, fidb/1 or sealed fidb/2. This browser checks what it can on its own, with Web Crypto: the container, every member's digest, the hash chain, every record's Ed25519 signature, a sealed bundle's seals and each relay's delivery receipt. The rest of V1 to V14 needs the verifier, fiduciary verify-bundle."));
+        : "Drop an audit bundle (.fidb) here. Your browser checks what it can on its own, with Web Crypto: the container, the digest of every file in it, the hash chain, every record's Ed25519 signature, a sealed bundle's seals and each relay's delivery receipt. For all fourteen checks, V1 to V14, run fiduciary verify-bundle."));
     var dz = h("div", { class: "dropzone", tabindex: "0", role: "button", "aria-label": "Choose or drop a .fidb bundle",
       onclick: function () { pickFile(".fidb,application/x-tar", function (f) { fileBytes(f).then(function (u8) { verifyBytes(f.name, u8); }); }); },
       onkeydown: function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.currentTarget.click(); } },
@@ -2467,7 +2488,7 @@
     var doms = sbDomains();
     if (!SB.key || !doms.some(function (d) { return d.key === SB.key; })) SB.key = (PACK && doms.some(function (d) { return d.key === PACK.key; })) ? PACK.key : doms[0].key;
     var dom = doms.filter(function (d) { return d.key === SB.key; })[0];
-    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Sandbox"), h("h2", null, LIVE.on ? "Try a call on each kind of system" : "Every call the run recorded, by system"),
+    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Sandbox"), h("h2", null, LIVE.on ? "Try a call on each kind of system" : "Every call from the demo run, system by system"),
       h("p", null, LIVE.on
         ? "Each workflow gets its own deployment, built fresh in a scratch directory that the console deletes when it stops. It has the same engine, mandate, checks and approvers as the recorded run, on SQLite, Git, a directory of files, a Kubernetes API server, a FHIR server or a JSON REST API. A call goes through the input gateway, and then the stack stages and measures it. Nothing here touches a recorded run on disk."
         : "Each recorded call, with what the gateway decided and what the stack measured. To try new calls against a scratch deployment of each workflow, start the console: fiduciary demo --out <this directory> --serve."));

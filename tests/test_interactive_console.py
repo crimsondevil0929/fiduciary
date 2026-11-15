@@ -558,7 +558,7 @@ def test_verify_over_http_pins_by_deployment_or_digest(client: _Client, run_dir:
     found = json.loads(raw)
     assert status == 200 and found["pinned_by"] == "fintech" and found["exit_code"] == 7
     assert found["attestation"]["verdict"]["status"] == "BREAK-GLASS DETECTED"
-    assert len(found["attestation"]["frameworks"]) == 9
+    assert len(found["attestation"]["frameworks"]) == 10  # AIUC-1, 1.19.0
     status, _, raw = client.request("POST", "/api/verify?deployment=fintech", after, post)
     assert status == 200 and json.loads(raw)["exit_code"] == 7
     sealed, entry = _vector("valid-sealed-child")

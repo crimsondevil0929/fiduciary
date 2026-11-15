@@ -9,7 +9,9 @@ what the server says of it (MCP's tool annotations), conservatively:
 The server says                        The tool is
 =====================================  ========================================================
 ``readOnlyHint: true``                 a ``passthrough`` binding: called directly, metered,
-                                       counted by the breaker and the velocity bound
+                                       counted by the breaker and the velocity bound; unless
+                                       its name, description or arguments say it writes or
+                                       sends (1.19.0), when it is held, and flagged
 ``destructiveHint: false`` (a write)   a ``plan`` binding whose one request goes to the
                                        server through the outbox, at most once, receipted
                                        ``request-only``
@@ -18,10 +20,19 @@ anything else                          the same, its operation held (``hold = tr
 =====================================  ========================================================
 
 MCP's own default for a write is ``destructiveHint: true``, so a tool that says nothing is
-held. A read-only tool's results count as untrusted input (its binding says ``trust:
+held. MCP's specification says a client must treat annotations as untrusted unless they come
+from a trusted server, so a hint is the server's claim, never a reason to stage less: a
+``readOnlyHint`` that the tool's own name (``delete_volume``), description ("Sends an
+email") or arguments (``to``, ``amount``, ``webhook``) contradict is not believed
+(:mod:`fiduciary.infer`). A tool's arguments that name where it sends (``url``, ``to``,
+``repo``) are its binding's ``egress``: what it carries out is judged before it leaves
+(1.19.0). A read-only tool's results count as untrusted input (its binding says ``trust:
 "untrusted"``) unless the server marks it ``openWorldHint: false``: MCP's default is an open
-world, where what the tool returns may come from anyone. The session records each label it
-gains, and a mandate's ``provenance`` rules decide what that changes (1.16.0).
+world, where what the tool returns may come from anyone. A read the server marks
+``openWorldHint: false``, or any read of a server signed in with a credential (``signed_in``),
+counts as ``private`` too (1.19.0): it is the deployment's own data. The session records each
+label it gains, and the mandate's ``provenance`` rules decide what that changes: the rule of
+two and value tracking, from 1.19.0 (:data:`MCP_PROVENANCE`).
 
 A tool whose input the binding grammar cannot hold whole (a number, which FIDU1 keeps as a
 decimal string; a keyword it would not enforce) is left out and named: nothing is governed
@@ -194,18 +205,44 @@ def discover(command: Sequence[str], *, timeout: float = 30.0) -> list[dict[str,
         upstream.close()
 
 
+MCP_PROVENANCE: Final = {
+    "untrusted": {"kinds": [], "sinks": []},
+    "egress": {},
+    "rule_of_two": True,
+    "on": "hold",
+    "values": True,
+}
+"""The ``provenance`` an MCP server's mandate starts with (1.19.0): after untrusted input and
+private data, nothing more is changed or sent without the principals; a value read as secret
+or private does not leave."""
+
+
 def classify(tool: Mapping[str, Any]) -> tuple[str, str]:
-    """How a tool is governed, and why, from MCP's tool annotations."""
+    """How a tool is governed, and why, from MCP's tool annotations, checked against the
+    rest of its definition (1.19.0): a read-only claim it contradicts is not believed."""
+    from fiduciary.infer import read_tool
+
     hints = tool.get("annotations") or {}
     if not isinstance(hints, Mapping):
         hints = {}
     if hints.get("readOnlyHint") is True:
+        contradiction = read_tool(tool).contradiction
+        if contradiction is not None:
+            return HELD, f"{contradiction}: held, as a write it does not admit to"
         return READ, "the server marks it read-only (readOnlyHint)"
     if hints.get("destructiveHint") is False:
         return WRITE, "a write the server marks non-destructive (destructiveHint: false)"
     if hints.get("destructiveHint") is True:
         return HELD, "the server marks it destructive (destructiveHint)"
     return HELD, "a write with no destructiveHint, which MCP treats as destructive"
+
+
+def flag_of(tool: Mapping[str, Any]) -> str | None:
+    """What a reviewer should look at in ``tool``'s definition (1.19.0): a read-only claim
+    its name, description or arguments contradict."""
+    from fiduciary.infer import read_tool
+
+    return read_tool(tool).contradiction
 
 
 def trust_of(tool: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -305,6 +342,9 @@ def _binding(tool: Mapping[str, Any], mode: str, name: str | None = None) -> dic
     description = str(
         tool.get("description") or (tool.get("annotations") or {}).get("title") or name
     )
+    from fiduciary.egress import egress_of
+
+    egress = egress_of(schema)
     base: dict[str, Any] = {
         "v": "FIDU1",
         "type": "tool",
@@ -313,6 +353,7 @@ def _binding(tool: Mapping[str, Any], mode: str, name: str | None = None) -> dic
         "pin": pin_of(tool),
         **({"numbers": sorted(set(numbers))} if numbers else {}),
         **({"upstream": upstream} if upstream != name else {}),
+        **({"egress": egress} if egress else {}),
     }
     if mode == READ:
         return {
@@ -446,6 +487,7 @@ def _pack(
         acts=lambda run: None,
         canaries=lambda run: {},
         nouns={"substrate": "MCP", "unit": "USD", "partition": "the tenant"},
+        provenance=MCP_PROVENANCE,
         system="",
         # The back office holds the outbox and nothing else: the plans only
         # enqueue requests (interlock 1.4.1's tables = []).
@@ -523,6 +565,7 @@ def init(
     shadow: bool = False,
     sessions: bool = False,
     owner: Signer | None = None,
+    signed_in: bool = False,
 ) -> InitReport:
     """Write the deployment into ``root`` (new or empty).
 
@@ -541,6 +584,8 @@ def init(
         tool binding pins, so the mandate admits statements none pins.
     :param owner: A solo owner's key, kept outside ``root`` (1.17.0): the one owner
         every server ``fiduciary protect`` wraps shares. No key file of its is written here.
+    :param signed_in: The MCP server runs with a credential (1.19.0): its reads are
+        ``private`` (:func:`govern`).
     :raises ValueError: On a name, principals or a directory init cannot use,
         or a target it cannot read.
     """
@@ -618,7 +663,7 @@ def init(
         return report
     listed = list(discovered) if discovered is not None else (discover(command) if command else [])
     report = InitReport(root=root.resolve(), scope=f"{label}-agent", principals=tuple(principals))
-    governed = govern(listed)
+    governed = govern(listed, signed_in=signed_in)
     bindings, modes, schemas = governed.bindings, governed.modes, governed.schemas
     report.tools.extend(governed.tools)
     report.skipped.extend(governed.skipped)
@@ -649,10 +694,13 @@ class Governed:
     skipped: list[dict[str, str]] = field(default_factory=list)
 
 
-def govern(listed: Sequence[Mapping[str, Any]]) -> Governed:
+def govern(listed: Sequence[Mapping[str, Any]], *, signed_in: bool = False) -> Governed:
     """Each tool of ``listed`` (an MCP server's ``tools/list``) as a binding, unsigned, with
     its mode and why; a tool no binding can hold is left out, with the reason. What
-    ``init --mcp`` writes, and what ``fiduciary protect --review --accept`` signs again."""
+    ``init --mcp`` writes, and what ``fiduciary protect --review --accept`` signs again.
+
+    :param signed_in: The server runs with a credential (1.19.0): what it reads is the
+        deployment's own, ``private``, whatever its ``openWorldHint`` says."""
     found = Governed()
     bindings, modes, schemas, report = found.bindings, found.modes, found.schemas, found
     for tool in listed:
@@ -679,10 +727,22 @@ def govern(listed: Sequence[Mapping[str, Any]]) -> Governed:
         if trust is not None:
             binding["trust"], said = trust
             why = f"{why}; its results count as untrusted input: {said}"
+        if mode == READ and (trust is None or signed_in):
+            binding["confidentiality"] = "private"
+            why = f"{why}; its results count as private: " + (
+                "the server reads with a credential" if signed_in else "a closed world"
+            )
+        if mode == READ and binding.get("egress"):
+            sent = ", ".join(sorted(binding["egress"]))
+            why = f"{why}; it sends what {sent} carries, judged before it leaves"
         bindings.append(binding)
         modes[tool_name] = mode
         schemas[tool_name] = binding["input"]
-        report.tools.append({"name": tool_name, "mode": mode, "why": why})
+        entry = {"name": tool_name, "mode": mode, "why": why}
+        flag = flag_of(tool)
+        if flag is not None:
+            entry["flag"] = flag
+        report.tools.append(entry)
     return found
 
 

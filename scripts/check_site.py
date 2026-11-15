@@ -114,13 +114,67 @@ class _Page(HTMLParser):
             self.structured.append(data)
 
 
+def _guides(site: Path, listed: Any) -> list[str]:
+    """1.19.0: each guide is a page of its own, with a title, a description and a canonical
+    link of its own, structured data that parses, and links that lead somewhere built."""
+    problems: list[str] = []
+    titles: set[str] = set()
+    descriptions: set[str] = set()
+    for guide in listed:
+        path = site / guide["slug"] / "index.html"
+        if not path.is_file():
+            problems.append(f"{guide['slug']}/index.html: not built")
+            continue
+        text = path.read_text(encoding="utf-8")
+        title = re.search(r"<title>(.*?)</title>", text)
+        described = re.search(r'<meta name="description" content="([^"]*)">', text)
+        if title is None or described is None:
+            problems.append(f"{guide['slug']}: no title or description")
+            continue
+        titles.add(title.group(1))
+        descriptions.add(described.group(1))
+        if not 30 <= len(html.unescape(title.group(1))) <= 70:
+            problems.append(f"{guide['slug']}: a title of {len(title.group(1))} characters")
+        if not 70 <= len(html.unescape(described.group(1))) <= 170:
+            problems.append(
+                f"{guide['slug']}: a description of {len(described.group(1))} characters"
+            )
+        if f'<link rel="canonical" href="{public.SITE_URL}{guide["slug"]}/">' not in text:
+            problems.append(f"{guide['slug']}: the canonical link is not its own address")
+        if text.count("<h1>") != 1:
+            problems.append(f"{guide['slug']}: not one h1")
+        found = re.search(r'<script type="application/ld\+json">(.*?)</script>', text, re.S)
+        try:
+            kinds = [n["@type"] for n in json.loads(found.group(1))["@graph"]] if found else []
+        except (ValueError, KeyError, TypeError):
+            kinds = []
+        if "TechArticle" not in kinds or "BreadcrumbList" not in kinds:
+            problems.append(f"{guide['slug']}: the structured data has {kinds}")
+        for href in re.findall(r'href="(\.\./[^"#]*)', text):
+            target = (path.parent / href).resolve()
+            if not (target.is_file() or (target / "index.html").is_file()):
+                problems.append(f"{guide['slug']}: {href} leads nowhere built")
+    if len(titles) != len(listed) or len(descriptions) != len(listed):
+        problems.append("two guides share a title or a description")
+    index = (site / "index.html").read_text(encoding="utf-8")
+    for guide in listed:
+        if f'href="{guide["slug"]}/"' not in index:
+            problems.append(f"index.html: no link to the {guide['slug']} guide")
+    return problems
+
+
 def _readable(site: Path, data: dict[str, Any]) -> list[str]:
     """What a crawler, ``curl`` or a link preview reads, with no script run."""
     problems: list[str] = []
     page = _Page()
     page.feed((site / "index.html").read_text(encoding="utf-8"))
     text = " ".join("".join(page.app).split())
-    wanted = [public.COPY["headline"], "@gov.tool", "def close_all(db: fiduciary.Sql) -> str:"]
+    wanted = [
+        public.COPY["headline"],
+        public.COPY["hero"]["lines"][0][1],
+        "@gov.tool",
+        "def refund(api: fiduciary.Rest, order_id: str, amount: str) -> str:",
+    ]
     for pkg in public.COPY["packages"]:
         wanted += [pkg["name"], pkg["role"], f"pip install {pkg['dist']}"]
     for row in (data.get("overview") or {}).get("industries", []):
@@ -158,8 +212,12 @@ def _readable(site: Path, data: dict[str, Any]) -> list[str]:
             "{http://www.sitemaps.org/schemas/sitemap/0.9}loc"
         )
     ]
-    if found != [public.SITE_URL]:
+    from fiduciary.report import guides
+
+    wanted_urls = [public.SITE_URL, *(f"{public.SITE_URL}{g['slug']}/" for g in guides.GUIDES)]
+    if found != wanted_urls:
         problems.append(f"sitemap.xml lists {found}")
+    problems += _guides(site, guides.GUIDES)
     if f"Sitemap: {public.SITE_URL}sitemap.xml" not in (site / "robots.txt").read_text(
         encoding="utf-8"
     ):

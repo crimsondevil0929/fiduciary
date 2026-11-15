@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from fiduciary.documents.mandate import (
     GRANTING,
@@ -517,6 +517,34 @@ def _provenance(check: _Check, child: Mandate, parent: Mandate) -> None:
         check.fail("provenance.rule_of_two", "is off, and the parent's is on")
     if theirs.on == "refuse" and mine.on != "refuse":
         check.fail("provenance.on", "holds what the parent refuses")
+    _what_leaves(check, mine, theirs)
+
+
+def _what_leaves(check: _Check, mine: Any, theirs: Any) -> None:
+    """1.19.0: what leaves a session, as strict as the parent's or stricter: every
+    destination list the parent has, with no name it does not admit (each one of the
+    parent's, as written); values tracked when the parent tracks them; each budget no
+    larger, counted per turn where the parent counts per turn."""
+    for kind in ("hosts", "emails", "repositories"):
+        parent_list = getattr(theirs, kind)
+        if parent_list is None:
+            continue
+        child_list = getattr(mine, kind)
+        if child_list is None or not set(child_list) <= set(parent_list):
+            check.fail(
+                f"provenance.destinations.{kind}", "admits a destination the parent does not"
+            )
+    if theirs.values and not mine.values:
+        check.fail("provenance.values", "is off, and the parent's is on")
+    for name in ("records_read", "bytes_sent"):
+        limit = getattr(theirs, name)
+        if limit is None:
+            continue
+        own = getattr(mine, name)
+        if own is None or own > limit:
+            check.fail(f"provenance.budget.{name}", "is larger than the parent's")
+    if theirs.budget is not None and theirs.per == "turn" and mine.per != "turn":
+        check.fail("provenance.budget.per", "counts per session, and the parent per turn")
 
 
 def _recovery(check: _Check, child: Mandate, parent: Mandate) -> None:

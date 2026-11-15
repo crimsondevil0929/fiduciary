@@ -294,7 +294,9 @@ Three claims, stated so they can be falsified:
 - **What a model did with what it read** *(added in 1.16.0)*. A session's provenance labels
   (F8-13) say what the agent had been shown before a plan, not what it made of it: a plan
   after an untrusted email is held whether or not the email had anything to do with it.
-  The labels are what the bindings, the SDK's `trust` and `confidentiality`, and its
+  *(Amended in 1.19.0:* what leaves after a read is judged by exact values, F8-14: a
+  paraphrase of what was read is not seen either.) The labels are what the bindings, the
+  SDK's `trust` and `confidentiality`, and its
   `read` say; Fiduciary trusts those declarations as it trusts a passthrough binding's.
   A read nothing labels (a tool marked `system` that returns a stranger's text, a document
   the agent's own framework fetched) is not seen, and V13 cannot see it either. A refusal
@@ -738,6 +740,27 @@ version 1, as interlock's configuration pins `[operators.keys]`.
 
   It compiles to interlock's `ProvenanceGate` (§6.2; interlock 1.8.0, ESCROW_SPEC §4.9).
 
+  *Amended in 1.19.0:* `egress` may clear sinks for `private`, which counts as sensitive for
+  the rule of two (interlock 1.11.0); and three members say what may leave a session (F8-14),
+  each written only when set, so a block that sets none keeps its 1.16.0 bytes:
+
+  ```json
+  "destinations": {"hosts": ["*.acme.example"], "emails": ["acme.example"],
+                   "repositories": ["acme/*"]},
+  "values": true,
+  "budget": {"records_read": 5000, "bytes_sent": 65536, "per": "turn"}
+  ```
+
+  - `destinations`: after sensitive data (`secret`, `private` or a partition label), a send
+    may go only to these: `hosts` for a URL, `emails` (domains) for a recipient,
+    `repositories` (the private ones; any other counts as public). `*` admits any;
+    `*.example.com` every name under it; `owner/*` every repository of `owner`. A kind with
+    no list is not limited; an empty object is refused.
+  - `values`: written only as `true`. An exact value the session read as `secret` or
+    `private` may not leave (F8-14).
+  - `budget`: at most `records_read` records read and `bytes_sent` bytes sent (either may be
+    `null`, not both) per `turn` or per `session`.
+
 ## 4.3 Tool binding
 
 A tool binding is what the agent may call, as a principal reviews it. The agent supplies
@@ -843,7 +866,13 @@ parameters only; the statements are the developer's.
   - `trust`: `principal` or `untrusted`. The default, `system` (the deployment's own
     records), is never written. `untrusted` brings the label `untrusted`.
   - `confidentiality`: `secret` brings `secret`; `tenant` brings
-    `partition:tenant=<the session's tenant>`.
+    `partition:tenant=<the session's tenant>`; *(added in 1.19.0)* `private` brings
+    `private`: what the deployment's own systems hold that is not for everyone.
+  - *(Added in 1.19.0.)* `egress`: `{<argument>: "url" | "email" | "repository"}`, the
+    top-level arguments that name where a call sends: a URL's host, a recipient's domain, a
+    repository's `owner/name` (with an `owner` argument when the name has no slash). Every
+    one is an argument of `input`. A passthrough binding that declares one is a send as
+    well as a read (F8-14).
   - `quarantine`: `{"reader": <scope>, "output": <schema>}`, on a passthrough binding
     behind which a reader sub-agent works under its own lineage, `reader`. `output` holds
     no free text: integers, numbers and booleans; strings with an `enum`, or a `pattern`
@@ -1003,6 +1032,8 @@ Fiduciary's own acts are records in a hash-chained, signed log. It is built as I
 | `session.opened`, `session.closed` | a bridge session: its mandate version, tenant, trajectory and billing scope; at its close, every scope it billed, in order |
 | `session.refused` | a call the session refused before anything was built or metered: the refusal's code, and the tool only when a version the session runs pins it, or it is a built-in |
 | `session.labeled` | *(added in 1.16.0)* a call whose result brought a provenance label the session did not hold: the session, its lineage, the tool (or the SDK's source), the labels it brought, and every label the session holds after |
+| `session.read` | *(added in 1.19.0)* a passthrough tool's result, under a version with `provenance`, that tracked values or counted toward a read budget: the session, its lineage, the tool, the turn, how many records, the values tracked (keyed digests, by label), `served`, `withheld` or `shadow`, and the rules broken |
+| `session.sent` | *(added in 1.19.0)* a call that carries data out, judged before it left (F8-14): the session, its lineage, the tool, the turn, whether it is a plan, every label the session held (from its records), its destinations, its bytes, the tracked values it carried (by digest), `allowed`, `refused` or `shadow`, and the rules broken |
 | `turn.closed` | *(added in 1.17.0)* an agent turn of the lineage ended, holding requests: the turn, the lineage, `released` (every plan of the turn committed) or `cancelled` (one did not, or the turn ended in an exception), the requests it held, and why. The operator intent that releases or cancels them cites it (F7-17, V7). *(Amended in 1.18.0:* a cancelled turn first undoes its committed plans, latest first, each by a `plan.undone`; the record then lists, only when there are any, `undone` (each plan, the plan that undid it, and its `plan.undone` record) and `kept` (each plan that could not be put back, and why), and `messages` may be empty when one of the two is not.) |
 | `plan.undone` | *(added in 1.18.0)* a committed plan of the lineage put back exactly: the plan, the plan that undid it, both plans' change digests (Interlock's `(kind, id, before, after)`, sorted; the undo's are the plan's with before and after swapped, F7-18), and why: the turn that did not finish, or the warrant that ordered it (`FIDU1 warrant <digest>`). V14 holds both lists to the digests the escrow chain's `COMMITTED` records name |
 
@@ -1137,7 +1168,10 @@ every one of these holds:
 - `untrusted.kinds` and `untrusted.sinks` ⊇ the parent's (or `*`);
 - each parent `egress` label is in the child's, clearing a subset of the parent's sinks;
 - `rule_of_two` is on if the parent's is;
-- `on` is `refuse` if the parent's is.
+- `on` is `refuse` if the parent's is;
+- *(added in 1.19.0)* each `destinations` list the parent has, the child has, admitting no
+  name the parent's does not (each one of the parent's, as written); `values` if the
+  parent's; each `budget` the parent sets, no larger, and per turn where the parent's is.
 
 A reader sub-agent's lineage (F4-16b) is an ordinary child, derived with no table and no
 sink: it may read untrusted input and change nothing.
@@ -1752,7 +1786,45 @@ billing scope. It is recorded (`session.opened`) before its first call.
   tool's result, and `gov.read(source, value, trust=, confidentiality=)` labels something
   the application fetched itself; the SDK opens a session for its records the first time
   it labels one, and its plans carry the labels as a session's do. A version whose
-  `tools.statements` is `"bound"` admits labels only from a tool it pins.
+  `tools.statements` is `"bound"` admits labels only from a tool it pins. *(Amended in
+  1.19.0:* under a version with `provenance`, a passthrough result that holds a credential,
+  found by its format, brings `secret` as well.)
+- **F8-14.** *Added in 1.19.0.* What leaves a session (`fiduciary.egress`). Under a version
+  with `provenance`:
+  - **A read.** A passthrough result's records are counted (the longest list in its
+    structured content, else one). With `values`, the distinctive tokens of a result labeled
+    `private` (eight to 256 characters, with a digit, an `@`, an inner capital, or twenty
+    characters or more) and every credential found in any result are tracked, as HMAC-SHA256
+    digests under a key the session makes and never records. Past `budget.records_read`, the
+    result is withheld from the agent. A read that tracked a value or that a budget counts is
+    recorded (`session.read`).
+  - **A send** is a passthrough call whose binding declares `egress` and whose arguments name
+    a destination, or a plan, when the version has `values`, `budget.bytes_sent` or
+    `destinations`. Before it leaves, it is judged: the rule of two (a passthrough send
+    only); `destinations` after sensitive data; with `values`, every token its arguments
+    carry, as plain text, URL-decoded, and decoded once from base64 or hex, against the
+    tracked digests: a secret by no send but a plan to sinks `egress.secret` clears, a private
+    value only to listed destinations or, by a plan, to sinks `egress.private` clears (or any,
+    with no such rule); and `budget.bytes_sent`. A send that breaks a rule is refused, and its
+    feedback names the rule, never the value; under a shadow version it goes, and the record
+    says `shadow`. Every send is recorded (`session.sent`).
+  - What this catches is an exact value leaving, whole or encoded once. A paraphrase, a value
+    split across calls, a value shorter than eight characters, and a send through a channel
+    the bridge does not serve are not seen.
+  - *Amended before release:* **sibling sessions** (`fiduciary.flow`). The proxies
+    `fiduciary protect` starts for one client (the process that is their parent) share a file
+    under the protect root: each publishes the labels it holds (`untrusted`, `secret`,
+    `private`, partition labels) and the digests it tracked, under one key kept beside the
+    file. Before each call, a session whose version admits statements no binding pins
+    (`tools.statements: "any"`, as every protected server's does) takes up what its siblings
+    published: a `session.labeled` record and a `session.read` record of its own (no records,
+    the digests), both from `fiduciary_sibling`. So a value read through one server is judged
+    when it leaves through another, and each server's bundle verifies on its own. The file
+    holds labels and digests, never a value; a client's file is removed once the client is
+    gone. Two clients share nothing.
+  - *Amended before release:* `fiduciary shadow report` adds, for each lineage, the sends
+    judged, refused, and those a shadow version would have refused, by rule and tool, and the
+    reads the read budget withheld or would have, read from the deployment's log.
 
 ## 8.2 MCP
 
@@ -2036,7 +2108,7 @@ verified under `keys.json`'s key, and the report says it is the exporter's state
 | V10 anchors | every FIDU1 record in range is anchored, and every anchor names a record the log holds with that hash | `evidence` | 8 |
 | V11 revocation | no receipt of the lineage commits, and no delivery is made, after its revocation's trip sequence. Plans in flight at the trip, by `STAGE_OPENED` order, must show no commit. | `revocation` | 9 |
 | V12 ordering | every instant the service wrote agrees with the ledger order of its anchor, within the configured skew | `time` | 9 |
-| V13 provenance *(1.16.0)* | every committed plan whose session had read what its version's `provenance` rules name either satisfies them, or ran as the plan a `provenance` warrant approved after the last label entered the session (see below) | `provenance` | 6 |
+| V13 provenance *(1.16.0)* | every committed plan whose session had read what its version's `provenance` rules name either satisfies them, or ran as the plan a `provenance` warrant approved after the last label entered the session (see below); *(amended in 1.19.0)* every `session.sent` record met its version's outbound rules, judged again from the records, or was refused, and every read past the read budget was withheld | `provenance` | 6 |
 | V14 undo *(1.18.0)* | each `plan.undone` record's two lists of change digests are the ones its plan's and its undo's `COMMITTED` records name (`; changes <sha256>`), the undo's admission says `undo of <plan>`, and the undo's digests are the plan's with before and after swapped; every plan that committed as an undo has its record | `undo` | 6 |
 
 For V7, an act is explained when it traces to one of:
@@ -2074,6 +2146,15 @@ be the proposal of a `provenance` ticket (by the plan hash its admission recorde
 must come from a binding whose reader's lineage, in the bundle, allows no table and no
 sink. The note says how many committed plans were made after a labeled read, and how many
 of those ran as approved.
+
+*Amended in 1.19.0.* For each session with `session.read` or `session.sent` records, V13 takes
+the version the session opened under and judges each record again, in order, from the records
+alone (F8-14): the labels its `session.labeled` records gave it, the digests its `session.read`
+records tracked, and each send's destinations, bytes, matched digests and the sinks its binding
+names. A send recorded `allowed` that the rules refuse fails; so does a read `served` past the
+read budget, `shadow` under a version that enforces, a send whose labels are not the session's,
+and a matched digest no earlier read tracked. The note counts the sends judged and refused, and
+says that only exact values are seen.
 
 A failing run prints every check, not only the first that fails. It exits with the code of
 the first failing check in the order V1 to V14.
@@ -2543,6 +2624,16 @@ run (`fiduciary.init`), using the builder that stands up each demo industry.
     where what a tool returns may come from anyone. The written mandate has no
     `provenance` rules, so the labels are recorded and decide nothing until a version adds
     them.
+  - *(Amended in 1.19.0.)* An annotation is the server's claim, which MCP's specification
+    says a client must treat as untrusted unless the server is trusted. A tool marked
+    `readOnlyHint: true` whose name starts with a write verb, whose description starts with
+    one that only a write would use, or that takes `to`, `cc`, `bcc`, `recipient`, `recipients`,
+    `webhook`, `webhook_url`, `callback_url`, `amount` or `body`, is held, not made a
+    passthrough, and the report flags why (`fiduciary.infer`). A closed-world read, and any
+    read of a server signed in with a credential, is `confidentiality: "private"`. Every
+    binding declares `egress` from its schema's argument names. The root mandate's
+    `provenance` is the rule of two and `values`, `on: "hold"`: the labels decide from the
+    first version.
 
   A tool whose input the binding grammar cannot hold whole is left out, and named. Such a
   tool has a number (FIDU1 holds no floats) or a keyword the grammar would not enforce.
@@ -3062,4 +3153,5 @@ SQLite and on PostgreSQL. The test kinds:
 | F10-31 to F10-33: `fiduciary init --substrate` | 1.9.0 | each of the six substrates written and served through `fiduciary mcp serve`: an allowed write committed, a wider one refused before anything changed; a keyless SQLite table by `rowid`; PostgreSQL's stage role, `grants.sql` and a signed install; Terraform's marker added; the missing-argument refusals | Implemented (1.9.0), SQLite; PostgreSQL where the test DSN is set; Terraform where `tofu` or `terraform` is installed. `test_init_substrates.py` |
 | F10-20 (1.9.0): delivery receipts in the desk | 1.9.0 | a sandbox's receipts include the relay's delivery receipts, shown request-only on their sink | Implemented (1.9.0). `test_interactive_console.py` |
 | F10-18: upgrades in place | 6 | stores each 0.x release wrote, on both stores | Implemented. `test_upgrade.py` |
+| F4-12e, F4-16b, F8-13, F8-14, V13: what leaves a session | 1.19.0 | a token read from a private repository refused at five sends (plain, URL-encoded, base64, hex, and an email carrying a private address), V13 passing with its note; the rule of two for a passthrough send; destinations after private data; the read budget withholding and the send budget refusing, per session and per turn; shadow sends recorded `shadow`; a plan carrying a credential refused; a service that let a token out failing V13 with exit 6 while V3 passes; the records held to their form; the golden bundles `valid-outbound-refused` and `v13-outbound-leak` in Python and in the browser; `readOnlyHint` contradictions held and flagged by `init`, `protect` and `protect --review`; `infer-policy` | Implemented (1.19.0), both stores. `test_outbound.py`, `test_infer.py`, `test_bundle_vectors.py`, `test_browser_verifier.py` |
 | F4-12e, F4-16b, F7-1a, F8-13, V13: provenance | 1.16.0 | a refund after an untrusted email held, approved 2 of 3 and run as the cleared plan, V13 passing with its note; `on: "refuse"` raising nothing; a refund the gate let through committed without a warrant, V13 failing with exit 6 while V4 passes; a reader that may write counted as untrusted; the SDK's tool and `read` labels; `init --mcp`'s open-world default; the golden bundles `valid-provenance-held` and `v13-tainted-commit` in Python and in the browser; the demo's eighth act | Implemented (1.16.0), both stores. `test_provenance.py`, `test_init.py`, `test_bundle_vectors.py`, `test_browser_verifier.py`, `test_demo.py` |

@@ -225,7 +225,14 @@ def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
                 (body["warrant"], exec_event, exec_detail, record.seq),
             )
         ]
-    if kind in ("session.opened", "session.refused", "session.closed", "session.labeled"):
+    if kind in (
+        "session.opened",
+        "session.refused",
+        "session.closed",
+        "session.labeled",
+        "session.read",
+        "session.sent",
+    ):
         session_event = kind.split(".")[1]
         if session_event == "opened":
             session_detail = str(body["mandate"])
@@ -233,6 +240,8 @@ def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
             session_detail = str(body["code"])
         elif session_event == "labeled":
             session_detail = " ".join(str(label) for label in body["labels"])
+        elif session_event in ("read", "sent"):
+            session_detail = str(body["outcome"])
         else:
             session_detail = " ".join(str(s) for s in body["scopes"])
         return [

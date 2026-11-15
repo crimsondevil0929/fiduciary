@@ -727,13 +727,13 @@ def _code_digest(function: Callable[..., Any]) -> str:
 
 def _labels_for(trust: str, confidentiality: str | None) -> list[str]:
     """The labels a result brings, as a tool binding's ``trust`` and ``confidentiality``
-    say (1.16.0)."""
+    say (1.16.0; ``private``, 1.19.0)."""
     if trust not in ("principal", "system", "untrusted"):
         raise ValueError(f"trust is principal, system or untrusted, not {trust!r}")
-    if confidentiality not in (None, "secret"):
-        raise ValueError(f"confidentiality is secret or None, not {confidentiality!r}")
+    if confidentiality not in (None, "secret", "private"):
+        raise ValueError(f"confidentiality is secret, private or None, not {confidentiality!r}")
     return (["untrusted"] if trust == "untrusted" else []) + (
-        ["secret"] if confidentiality == "secret" else []
+        [confidentiality] if confidentiality is not None else []
     )
 
 

@@ -1327,6 +1327,7 @@ class _Checks:
 
         from interlock.types import OUTBOX_TARGET
 
+        self._v13_outbound()
         sessions: dict[str, dict[str, Any]] = {}
         for record in self.b.records:
             body = record.content
@@ -1420,6 +1421,132 @@ class _Checks:
                 f"{'plan was' if held == 1 else 'plans were'} made after the session read "
                 f"something the mandate's provenance rules cover; {cleared} ran as the plan a "
                 f"warrant approved after the label entered the session"
+            )
+
+    def _v13_outbound(self) -> None:
+        """1.19.0: every send a session recorded met its version's outbound rules, or was
+        refused (or, under a shadow version, let through and said so); every read past the
+        read budget was withheld. Judged again from the records alone: the labels the
+        session's ``session.labeled`` records gave it, the values its ``session.read``
+        records tracked (by digest), and the destinations, bytes and digests each
+        ``session.sent`` record names."""
+        from fiduciary.egress import judge_read, judge_send
+
+        opened: dict[str, Mapping[str, Any]] = {}
+        events: dict[str, list[Record]] = {}
+        for record in self.b.records:
+            body = record.content
+            if record.kind == "session.opened":
+                opened[str(body["session"])] = body
+            if record.kind in ("session.labeled", "session.read", "session.sent"):
+                events.setdefault(str(body["session"]), []).append(record)
+        sends = refused = shadowed = 0
+        for session, records in sorted(events.items()):
+            if not any(r.kind != "session.labeled" for r in records) or session not in opened:
+                continue
+            found = self.b.docs.get(str(opened[session]["mandate"]))
+            version = documents.loads(found[1]) if found is not None else None
+            if not isinstance(version, Mandate) or version.provenance is None:
+                self.add(
+                    "V13",
+                    "provenance",
+                    f"session {session} recorded what it read and sent, under a version the "
+                    f"bundle does not hold with outbound rules",
+                )
+                continue
+            rules = version.provenance.outbound()
+            pins = {pin.name: pin.digest for pin in version.tools.bindings}
+            labels: set[str] = set()
+            tracked: dict[str, set[str]] = {}
+            read: dict[str, int] = {}
+            sent: dict[str, int] = {}
+            for record in sorted(records, key=lambda r: r.seq):
+                body = record.content
+                key = (str(body.get("turn") or "")) if rules.per == "turn" else ""
+                outcome = str(body.get("outcome", ""))
+                if record.kind == "session.labeled":
+                    labels.update(str(x) for x in body["introduced"])
+                    continue
+                if outcome == "shadow" and not version.shadow:
+                    self.add(
+                        "V13",
+                        "provenance",
+                        f"record {record.seq}: let through in shadow, under a version that "
+                        f"enforces its rules",
+                    )
+                if record.kind == "session.read":
+                    broken = judge_read(
+                        rules, read_before=read.get(key, 0), records=int(body["records"])
+                    )
+                    if broken and outcome == "served":
+                        self.add(
+                            "V13",
+                            "provenance",
+                            f"record {record.seq}: {body['tool']}'s read was served past "
+                            f"the read budget ({', '.join(broken)})",
+                        )
+                    if outcome != "withheld":
+                        read[key] = read.get(key, 0) + int(body["records"])
+                        for label, digests in body["values"].items():
+                            for digest in digests:
+                                tracked.setdefault(digest, set()).add(str(label))
+                    continue
+                sends += 1
+                held = sorted(str(x) for x in body["labels"])
+                if held != sorted(labels):
+                    said, gave = ", ".join(held) or "no label", ", ".join(sorted(labels)) or "none"
+                    self.add(
+                        "V13",
+                        "provenance",
+                        f"record {record.seq}: says the session held {said}, and its records "
+                        f"gave it {gave}",
+                    )
+                matched: dict[str, list[str]] = {}
+                for label, digests in body["matched"].items():
+                    for digest in digests:
+                        if str(label) not in tracked.get(digest, set()):
+                            self.add(
+                                "V13",
+                                "provenance",
+                                f"record {record.seq}: names a {label} value no earlier read "
+                                f"of the session tracked",
+                            )
+                        matched.setdefault(str(label), []).append(digest)
+                sinks: list[str] = []
+                digest = pins.get(str(body["tool"]))
+                raw = self.b.docs.get(digest) if digest is not None else None
+                if raw is not None and raw[0] == "tool":
+                    sinks = sorted({r.sink for r in ToolBinding.loads(raw[1]).requests})
+                broken = judge_send(
+                    rules,
+                    plan=bool(body["plan"]),
+                    labels=held,
+                    destinations=body["destinations"],
+                    matched=matched,
+                    sinks=sinks,
+                    sent_before=sent.get(key, 0),
+                    size=int(body["bytes"]),
+                )
+                if outcome == "refused":
+                    refused += 1
+                    continue
+                if outcome == "shadow":
+                    shadowed += 1
+                if broken and outcome == "allowed":
+                    self.add(
+                        "V13",
+                        "provenance",
+                        f"record {record.seq}: {body['tool']} sent after the session read "
+                        f"{', '.join(held) or 'nothing labeled'}, and the version's outbound "
+                        f"rules refuse it: {', '.join(broken)}",
+                    )
+                sent[key] = sent.get(key, 0) + int(body["bytes"])
+        if sends:
+            self.r.notes.append(
+                f"outbound: {sends} {'send was' if sends == 1 else 'sends were'} judged before "
+                f"leaving; {refused} refused"
+                + (f", {shadowed} let through in shadow" if shadowed else "")
+                + "; exact values only: a paraphrase is not seen"
             )
 
     def _v13_approved(self) -> dict[str, datetime]:

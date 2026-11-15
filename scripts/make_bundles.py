@@ -178,6 +178,15 @@ SCENARIOS = {
         "test_an_undo_whose_digests_are_not_its_commits_fails_v14",
         "an undo record whose digests are each other's inverse, but not what the commits named",
     ),
+    # 1.19.0: what leaves a session
+    "valid-outbound-refused": (
+        "test_a_token_the_session_read_does_not_leave_whole_or_encoded",
+        "a token read from a private repository, refused at five sends, whole and encoded",
+    ),
+    "v13-outbound-leak": (
+        "test_a_send_the_service_let_through_fails_v13",
+        "a fetch that carried a token the session read, let through by the service",
+    ),
 }
 
 
@@ -199,6 +208,7 @@ def _record(captured: Path, names: set[str]) -> dict[str, Any]:
             "tests/test_bundle_deliveries.py",
             "tests/test_provenance.py",
             "tests/test_undo.py",
+            "tests/test_outbound.py",
             "-k",
             " or ".join(tests),
         ],

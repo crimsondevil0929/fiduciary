@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, Final, NoReturn
 
 from agentgov.receipts.signing import Signer
 from interlock.text import noun, tally
@@ -1612,6 +1612,8 @@ def _init(args: argparse.Namespace) -> int:
         _fail(str(exc))
     for tool in report.tools:
         _out(f"{tool['mode']:<8} {tool['name']}: {tool['why']}")
+        if tool.get("flag"):
+            _out(f"flagged  {tool['name']}: {tool['flag']}")
     for tool in report.skipped:
         _out(f"left out {tool['name']}: {tool['why']}")
     for note in report.notes:
@@ -1757,7 +1759,7 @@ def _protect(args: argparse.Namespace) -> int:
         files.append(("claude-desktop", paths["claude-desktop"]))
     if args.cursor:
         files.append(("cursor", paths["cursor"]))
-    files += [(f"file-{p.stem}", p.expanduser()) for p in args.mcp_config]
+    files += [(f"file-{p.stem.lstrip('.')}", p.expanduser()) for p in args.mcp_config]
     if not files:
         found = [(c, p) for c, p in paths.items() if p.is_file()]
         if not found:
@@ -1795,6 +1797,8 @@ def _protect(args: argparse.Namespace) -> int:
             _out(f"            secrets to the Keychain: {', '.join(step.secrets)}")
         for tool in step.tools:
             _out(f"            {tool['name']}: {tool['mode']}")
+            if tool.get("flag"):
+                _out(f"              flagged: {tool['flag']}")
         for skipped in step.skipped:
             _out(f"            left out {skipped['name']}: {skipped['why']}")
         if step.deployment is not None and args.apply:
@@ -1821,7 +1825,9 @@ def _protect_review(protect: Any, servers: Sequence[Any], *, accept: bool) -> in
         root = server.deployment
         if not server.protected or root is None:
             continue
-        drifts = protect.review(root)
+        drifts, flags = protect.inspect(root)
+        for flag in flags:
+            _out(f"flagged     {server.name} {flag.tool}: {flag.why}; held, not trusted")
         if not drifts:
             _out(f"unchanged   {server.name}: every tool is as pinned")
             continue
@@ -2008,12 +2014,89 @@ def _passkey(args: argparse.Namespace) -> int:
     return OK
 
 
+def _infer_policy(args: argparse.Namespace) -> int:
+    """``fiduciary infer-policy`` (1.19.0): a draft policy, for a person to review."""
+    import os
+
+    from fiduciary import infer
+    from fiduciary.mcp import McpError
+
+    try:
+        if args.mcp:
+            command = list(args.server)
+            if command[:1] == ["--"]:
+                command = command[1:]
+            if not command:
+                _fail("--mcp needs the server's command after --")
+            from fiduciary.init import discover
+
+            tools = discover(command)
+            source = f"the MCP server {command[0]}"
+        elif args.tools is not None:
+            listed = json.loads(args.tools.read_text(encoding="utf-8"))
+            tools = listed.get("tools", listed) if isinstance(listed, dict) else listed
+            if not isinstance(tools, list):
+                _fail(f"{args.tools} holds no list of tools")
+            source = str(args.tools)
+        else:
+            spec = json.loads(args.openapi.read_text(encoding="utf-8"))
+            tools = infer.openapi_tools(spec if isinstance(spec, dict) else {})
+            source = str(args.openapi)
+    except (OSError, ValueError, McpError) as exc:
+        _fail(str(exc))
+    lineages: list[Any] = []
+    if args.traces:
+        from fiduciary.config import ConfigError, load_config
+        from fiduciary.shadow import report
+
+        try:
+            config = load_config(_deployment_config(args))
+        except ConfigError as exc:
+            _fail(str(exc))
+        if config.chains is not None:
+            lineages = report(config.chains)
+    found = infer.draft(tools, source=source, signed_in=args.signed_in, lineages=lineages)
+    if args.llm:
+        if not args.llm_model:
+            _fail("--llm needs --llm-model")
+        key = os.environ.get(args.llm_key_env) if args.llm_key_env else None
+        try:
+            infer.ask_model(found, tools, endpoint=args.llm, model=args.llm_model, key=key)
+        except ValueError as exc:
+            _fail(str(exc))
+    if args.out is not None:
+        args.out.write_text(json.dumps(found, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if args.json:
+        _out(json.dumps(found, indent=2, sort_keys=True))
+        return OK
+    _out(f"draft       {found['source']}: {tally(len(found['tools']), 'tool')}")
+    for entry in found["tools"]:
+        held = "held " if entry["held"] else ""
+        parts = [", ".join(entry["labels"]) or "no label"]
+        if entry["egress"]:
+            parts.append("sends by " + ", ".join(sorted(entry["egress"])))
+        if entry.get("undone_by"):
+            parts.append(f"undone by {entry['undone_by']}")
+        _out(f"{held + entry['kind']:<11} {entry['name']}: {'; '.join(parts)}")
+        for flag in entry["flags"]:
+            _out(f"  flagged   {flag}")
+    for tool, bound in found.get("bounds", {}).items():
+        _out(
+            f"bound       {tool}: {bound['plans']} plans measured; changes p50 {bound['p50']}, "
+            f"p95 {bound['p95']}, largest {bound['max']}: start at {bound['suggested']}"
+        )
+    _out("provenance  " + json.dumps(found["provenance"], sort_keys=True))
+    for note in found["notes"]:
+        _out(f"note        {note}")
+    return OK
+
+
 def _shadow_report(args: argparse.Namespace) -> int:
     """``fiduciary shadow report`` (1.14.0)."""
     from interlock.exceptions import InterlockError
 
     from fiduciary.config import ConfigError, load_config
-    from fiduciary.shadow import render, report
+    from fiduciary.shadow import Lineage, flows, render, report
 
     path = _deployment_config(args)
     try:
@@ -2026,10 +2109,31 @@ def _shadow_report(args: argparse.Namespace) -> int:
         lineages = report(config.chains, args.mandate)
     except (OSError, InterlockError) as exc:
         _fail(str(exc))
+    # What left each session (1.19.0): the deployment's own log, read as it stands.
+    args.config = str(path)
+    _, state = _store_and_state(args)
+    outbound = {m: f for m, f in flows(state.sessions).items() if args.mandate in (None, m)}
     if args.json:
-        _out(json.dumps([lineage.to_json(args.top) for lineage in lineages], indent=2))
+        known = {lineage.mandate_id for lineage in lineages}
+        every = [*lineages, *(Lineage(m) for m in sorted(outbound) if m not in known)]
+        _out(
+            json.dumps(
+                [
+                    {
+                        **lineage.to_json(args.top),
+                        **(
+                            {"outbound": outbound[lineage.mandate_id].to_json()}
+                            if lineage.mandate_id in outbound
+                            else {}
+                        ),
+                    }
+                    for lineage in every
+                ],
+                indent=2,
+            )
+        )
     else:
-        sys.stdout.write(render(lineages, top=args.top))
+        sys.stdout.write(render(lineages, top=args.top, outbound=outbound))
     return OK
 
 
@@ -2122,16 +2226,50 @@ def _console(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------
 
 
+PRIMARY_COMMANDS: Final = (
+    "protect",
+    "unprotect",
+    "init",
+    "undo",
+    "passkey",
+    "console",
+    "shadow",
+    "verify-bundle",
+)
+"""What ``fiduciary --help`` lists (1.19.0); ``fiduciary help advanced`` lists every command."""
+_EVERY: list[argparse.Action] = []
+
+
+def _help_advanced(parser: argparse.ArgumentParser) -> int:
+    """``fiduciary help advanced``: every command, the ones ``--help`` lists first."""
+    width = max(len(a.dest) for a in _EVERY)
+    _out("The commands most people need (fiduciary --help):")
+    for name in PRIMARY_COMMANDS:
+        for action in _EVERY:
+            if action.dest == name:
+                _out(f"  {action.dest:<{width}}  {action.help}")
+    _out("")
+    _out("Every other command:")
+    for action in sorted(_EVERY, key=lambda a: a.dest):
+        if action.dest not in PRIMARY_COMMANDS:
+            _out(f"  {action.dest:<{width}}  {action.help}")
+    _out("")
+    _out("fiduciary COMMAND --help says what one takes.")
+    return OK
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="fiduciary",
-        description="Mandates, warrants and compliance proofs, over interlock and AgentGov.",
+        description="Signed limits for AI agents that change real systems, and proof anyone "
+        "can check offline.",
+        epilog="More commands: fiduciary help advanced",
     )
     parser.add_argument("--version", action="version", version=f"fiduciary {__version__}")
     parser.add_argument(
         "--config", default="fiduciary.toml", help="the configuration (fiduciary.toml)"
     )
-    commands = parser.add_subparsers(dest="command", required=True)
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     keygen = commands.add_parser("keygen", help="write a new Ed25519 key; print its public half")
     keygen.add_argument("path")
@@ -2337,7 +2475,7 @@ def _parser() -> argparse.ArgumentParser:
                 "--protected",
                 action="store_true",
                 help="the server a fiduciary protect entry runs: its command, pins and "
-                "secrets are the deployment's (1.17.0)",
+                "secrets are the deployment's",
             )
             sub.add_argument("upstream", nargs=argparse.REMAINDER, help="-- <command>")
             sub.set_defaults(handler=_mcp_proxy)
@@ -2435,8 +2573,8 @@ def _parser() -> argparse.ArgumentParser:
     init = commands.add_parser(
         "init",
         help="write a deployment ready to run: for an MCP server's tools (--mcp), or for a "
-        "database, repository, workspace directory, cluster, Terraform configuration, "
-        "FHIR server, or REST API (--substrate)",
+        "REST API, repository, workspace directory, cluster, Terraform configuration, "
+        "FHIR server or database (--substrate)",
     )
     init.add_argument(
         "--out", help="the directory to write (new or empty; with --solo, .fiduciary by default)"
@@ -2444,7 +2582,7 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument(
         "--claude-code",
         action="store_true",
-        help="coding sessions for Claude Code on the Git repository you are in (1.15.0): each "
+        help="coding sessions for Claude Code on the Git repository you are in: each "
         "session works in a sandboxed worktree and is promoted when it ends; solo unless "
         "three --principal are given",
     )
@@ -2471,7 +2609,7 @@ def _parser() -> argparse.ArgumentParser:
     init.add_argument(
         "--mcp", action="store_true", help="govern an MCP server's tools: its command after --"
     )
-    target = init.add_argument_group("--substrate: a system the agent changes directly (1.9.0)")
+    target = init.add_argument_group("--substrate: a system the agent changes directly")
     target.add_argument(
         "--substrate",
         choices=(
@@ -2559,7 +2697,7 @@ def _parser() -> argparse.ArgumentParser:
         (
             "protect",
             "put a fiduciary proxy in front of each MCP server Claude Desktop, Cursor or "
-            "another client runs: pinned tools, pinned versions, writes made once (1.17.0)",
+            "another client runs: pinned tools, pinned versions, writes made once",
         ),
         ("unprotect", "put each protected server's entry back as it was"),
     ):
@@ -2622,7 +2760,7 @@ def _parser() -> argparse.ArgumentParser:
     turn = commands.add_parser(
         "turn",
         help="open or close an agent turn for a protected server: what Claude Code's "
-        "UserPromptSubmit and Stop hooks run (1.17.0)",
+        "UserPromptSubmit and Stop hooks run",
     ).add_subparsers(dest="turn_command", required=True, metavar="COMMAND")
     for name, helping in (
         ("open", "open a turn: the requests its calls enqueue wait for its end"),
@@ -2637,7 +2775,7 @@ def _parser() -> argparse.ArgumentParser:
     undoing = commands.add_parser(
         "undo",
         help="put a committed plan back exactly, from what its commit kept, as the "
-        "principals approve (1.18.0)",
+        "principals approve",
     )
     undoing.add_argument("plan", help="the plan's id, as its receipt and the console show it")
     undoing.add_argument("--mandate", help="the lineage that committed it (any, by default)")
@@ -2696,7 +2834,7 @@ def _parser() -> argparse.ArgumentParser:
     hook = commands.add_parser(
         "hook",
         help="answer a coding agent's hook (Claude Code), the event as JSON on stdin",
-        description="Answer one of Claude Code's hook events for this deployment (1.15.0): "
+        description="Answer one of Claude Code's hook events for this deployment: "
         "WorktreeCreate opens a staged session, Stop checks it against the mandate, and "
         "SessionEnd and WorktreeRemove promote it. fiduciary init --claude-code writes them.",
     )
@@ -2815,6 +2953,48 @@ def _parser() -> argparse.ArgumentParser:
     demo.add_argument("--quiet", action="store_true", help="print nothing but errors")
     demo.set_defaults(handler=_demo)
 
+    inferring = commands.add_parser(
+        "infer-policy",
+        help="draft a policy from an MCP server's tools, an OpenAPI document or shadow runs: "
+        "for a person to review; an optional model may only make it stricter",
+    )
+    source = inferring.add_mutually_exclusive_group(required=True)
+    source.add_argument(
+        "--mcp", action="store_true", help="the MCP server whose command follows --"
+    )
+    source.add_argument("--tools", type=Path, metavar="FILE", help="a tools/list result (JSON)")
+    source.add_argument("--openapi", type=Path, metavar="FILE", help="an OpenAPI document (JSON)")
+    inferring.add_argument(
+        "--signed-in",
+        action="store_true",
+        help="the server reads with a credential: its reads count as private",
+    )
+    inferring.add_argument(
+        "--traces",
+        action="store_true",
+        help="add bounds from the plans this deployment's shadow chains measured (--config)",
+    )
+    inferring.add_argument(
+        "--llm",
+        metavar="URL",
+        help="an OpenAI-compatible endpoint (http://localhost:11434/v1, say) asked to review "
+        "the draft; only what tightens it is kept. The definitions are sent there",
+    )
+    inferring.add_argument("--llm-model", metavar="NAME", help="the model to ask (with --llm)")
+    inferring.add_argument(
+        "--llm-key-env",
+        metavar="VARIABLE",
+        help="the environment variable holding the endpoint's key, if it needs one",
+    )
+    inferring.add_argument("--json", action="store_true", help="print the draft as JSON")
+    inferring.add_argument("--out", type=Path, metavar="FILE", help="write the draft as JSON")
+    inferring.add_argument("server", nargs=argparse.REMAINDER, help="with --mcp: -- COMMAND ...")
+    inferring.set_defaults(handler=_infer_policy)
+
+    listing = commands.add_parser("help", help="every command: fiduciary help advanced")
+    listing.add_argument("topic", nargs="?", choices=("advanced",), default="advanced")
+    listing.set_defaults(handler=lambda args: _help_advanced(parser))
+
     verify = commands.add_parser("verify", help="verify the store, its log and its anchors")
     verify.add_argument("--service-key", help="ed25519:<hex>; the configured key's by default")
     verify.add_argument(
@@ -2823,6 +3003,14 @@ def _parser() -> argparse.ArgumentParser:
         help="seconds an instant may stray from its anchor's ledger time; [bridge] skew_seconds",
     )
     verify.set_defaults(handler=_verify)
+    # The listing shows the commands most people need; every one still parses, and
+    # ``fiduciary help advanced`` lists them all.
+    every = list(commands._choices_actions)
+    commands._choices_actions[:] = sorted(
+        (a for a in every if a.dest in PRIMARY_COMMANDS),
+        key=lambda a: PRIMARY_COMMANDS.index(a.dest),
+    )
+    _EVERY[:] = every
     return parser
 
 

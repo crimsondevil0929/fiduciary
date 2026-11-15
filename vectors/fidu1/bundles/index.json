@@ -309,6 +309,33 @@
     "witness": null
   },
   {
+    "about": "a fetch that carried a token the session read, let through by the service",
+    "charter": "493a330fc18c2349d8c6a080cfbe23221834122ca1caf7da6b6ee366c4793f02",
+    "checks": [
+      "V13"
+    ],
+    "exit_code": 6,
+    "file": "v13-outbound-leak.fidb",
+    "findings": [
+      "V13 provenance: record 12: fetch sent after the session read private, secret, and the version's outbound rules refuse it: value:private, value:secret"
+    ],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "v13-outbound-leak",
+    "sha256": "a72289de066fca2da811facd11f065315bbf16eeede591e02398db6a9395a95b",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "a refund after an untrusted email, committed by a service whose gate let it through",
     "charter": "5b85614fbe3a5428cde5e65c435da1a8c6f4c0c74b031e26551e6ef4a362c0d8",
     "checks": [
@@ -1166,6 +1193,29 @@
     },
     "name": "valid-lineage-at-work",
     "sha256": "9cd0ca789d1e6513e7da611efbb57bfc45220f1af1dee218293f933de6ea4263",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a token read from a private repository, refused at five sends, whole and encoded",
+    "charter": "e1cacaa075306bd31c4056e611dd0959fef7c6f6a08ce810846300e67d709f56",
+    "checks": [],
+    "exit_code": 0,
+    "file": "valid-outbound-refused.fidb",
+    "findings": [],
+    "keys": {
+      "ledger": "ed25519:291ec0d918f0deddf5f22e923560a04ae69a8588d9a3ff6b54973ee54ae90f8c",
+      "operators": {
+        "fiduciary": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+      },
+      "receipts": [
+        "ed25519:3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29"
+      ],
+      "runtime": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727",
+      "service": "ed25519:3ca19b8e48c17219ecb14079339031844a185925bbf4e486dc8c2e08ac924727"
+    },
+    "name": "valid-outbound-refused",
+    "sha256": "9650ad8aaa1db833c8a5cbf97d224e4b43891dabffdbf40113a315c44ce499ba",
     "skew_seconds": 5,
     "witness": null
   },

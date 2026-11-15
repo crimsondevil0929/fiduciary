@@ -986,9 +986,12 @@ SHADOW: Final = "shadow"
 
 PROVENANCE_ON: Final = ("hold", "refuse")
 PROVENANCE_LABEL: Final = re.compile(
-    r"secret|partition:\*|partition:[a-z][a-z0-9_]{0,31}=[^\s]{1,63}"
+    r"secret|private|partition:\*|partition:[a-z][a-z0-9_]{0,31}=[^\s]{1,63}"
 )
-"""A label ``provenance.egress`` may clear sinks for (1.16.0)."""
+"""A label ``provenance.egress`` may clear sinks for (1.16.0; ``private``, 1.19.0)."""
+BUDGET_PER: Final = ("session", "turn")
+_DESTINATION: Final = re.compile(r"\*|(?:\*\.)?[a-z0-9][a-z0-9.-]{0,252}")
+_REPOSITORY: Final = re.compile(r"\*|[a-z0-9_.-]{1,100}/(?:\*|[a-z0-9_.-]{1,100})")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1005,6 +1008,15 @@ class Provenance:
       when a quorum approves it) or ``refuse``.
 
     Written only when used, so every mandate issued before keeps its encoding.
+
+    *Added in 1.19.0*, for what leaves a session (:mod:`fiduciary.egress`), each written
+    only when set, so a mandate that sets none keeps its 1.16.0 encoding:
+
+    - ``destinations``: after sensitive data, where a send may go: ``hosts``, ``emails``
+      (domains) and ``repositories`` (the private ones), each a list of names or patterns;
+    - ``values``: an exact value read as ``secret`` or ``private`` may not leave;
+    - ``budget``: at most ``records_read`` records read and ``bytes_sent`` bytes sent in a
+      ``per`` (``turn`` or ``session``).
     """
 
     untrusted_kinds: tuple[str, ...] = ()
@@ -1012,14 +1024,62 @@ class Provenance:
     egress: tuple[tuple[str, tuple[str, ...]], ...] = ()
     rule_of_two: bool = False
     on: str = "hold"
+    hosts: tuple[str, ...] | None = None
+    emails: tuple[str, ...] | None = None
+    repositories: tuple[str, ...] | None = None
+    values: bool = False
+    records_read: int | None = None
+    bytes_sent: int | None = None
+    per: str = "turn"
+
+    @property
+    def destinations(self) -> dict[str, list[str]]:
+        return {
+            kind: list(found)
+            for kind, found in (
+                ("emails", self.emails),
+                ("hosts", self.hosts),
+                ("repositories", self.repositories),
+            )
+            if found is not None
+        }
+
+    @property
+    def budget(self) -> dict[str, Any] | None:
+        if self.records_read is None and self.bytes_sent is None:
+            return None
+        return {"bytes_sent": self.bytes_sent, "per": self.per, "records_read": self.records_read}
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "untrusted": {"kinds": list(self.untrusted_kinds), "sinks": list(self.untrusted_sinks)},
             "egress": {label: list(sinks) for label, sinks in self.egress},
             "rule_of_two": self.rule_of_two,
             "on": self.on,
         }
+        if self.destinations:
+            out["destinations"] = self.destinations
+        if self.values:
+            out["values"] = True
+        if self.budget is not None:
+            out["budget"] = self.budget
+        return out
+
+    def outbound(self) -> Any:
+        """The rules for what leaves (:class:`fiduciary.egress.Outbound`, 1.19.0)."""
+        from fiduciary.egress import Outbound
+
+        return Outbound(
+            hosts=self.hosts,
+            emails=self.emails,
+            repositories=self.repositories,
+            values=self.values,
+            records_read=self.records_read,
+            bytes_sent=self.bytes_sent,
+            per=self.per,
+            rule_of_two=self.rule_of_two,
+            egress=self.egress,
+        )
 
     def checker(self) -> Any:
         """Interlock's :class:`~interlock.invariants.ProvenanceGate` for these rules."""
@@ -1034,7 +1094,11 @@ class Provenance:
 
 
 def _read_provenance(fields: Fields) -> Provenance:
-    section = fields.object("provenance", ("untrusted", "egress", "rule_of_two", "on"))
+    section = fields.object(
+        "provenance",
+        ("untrusted", "egress", "rule_of_two", "on"),
+        ("destinations", "values", "budget"),
+    )
     untrusted = section.object("untrusted", ("kinds", "sinks"))
     any_name = re.compile(r"\*|[A-Za-z][A-Za-z0-9_]{0,62}")
     any_sink = re.compile(r"\*|[a-z][a-z0-9_-]{0,63}")
@@ -1042,12 +1106,36 @@ def _read_provenance(fields: Fields) -> Provenance:
         (label, _sinks_at(value, path, SINK_NAME, "a sink"))
         for label, path, value in section.mapping("egress", PROVENANCE_LABEL)
     )
+    found: dict[str, Any] = {}
+    if section.has("destinations"):
+        where = section.object("destinations", (), ("emails", "hosts", "repositories"))
+        if not any(where.has(k) for k in ("emails", "hosts", "repositories")):
+            raise MalformedError("fields", section.path("destinations"), "names no destination")
+        for kind, pattern, what in (
+            ("hosts", _DESTINATION, "a host, *.<domain> or *"),
+            ("emails", _DESTINATION, "a domain, *.<domain> or *"),
+            ("repositories", _REPOSITORY, "owner/name, owner/* or *"),
+        ):
+            if where.has(kind):
+                found[kind] = where.strings(kind, pattern, what)
+    if section.has("values"):
+        if section.boolean("values") is not True:
+            raise MalformedError("format", section.path("values"), "is written only as true")
+        found["values"] = True
+    if section.has("budget"):
+        budget = section.object("budget", ("bytes_sent", "per", "records_read"))
+        for name in ("bytes_sent", "records_read"):
+            found[name] = None if budget.is_null(name) else budget.integer(name, minimum=0)
+        if found["bytes_sent"] is None and found["records_read"] is None:
+            raise MalformedError("fields", section.path("budget"), "sets no budget")
+        found["per"] = budget.choice("per", BUDGET_PER)
     return Provenance(
         untrusted_kinds=untrusted.strings("kinds", any_name, "a kind or *"),
         untrusted_sinks=untrusted.strings("sinks", any_sink, "a sink or *"),
         egress=egress,
         rule_of_two=section.boolean("rule_of_two"),
         on=section.choice("on", PROVENANCE_ON),
+        **found,
     )
 
 

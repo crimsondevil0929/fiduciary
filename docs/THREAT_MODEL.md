@@ -6,20 +6,23 @@ guarantee there is traced to its tests.
 
 ## Where it sits
 
-A gateway in front of an agent decides whether it may call a tool. This stack sits on the
-write path behind the gateway. It stages each change the agent's tool would make, measures
-what the change actually does, checks the measurement against a signed mandate, and then
-commits it once or puts it back. Every decision is a signed record that an auditor can
-verify offline.
+A gateway in front of an agent decides whether it may call a tool. This stack sits behind
+the gateway, between the agent and its tools. It stages each change the agent's tool would
+make, measures what the change actually does, checks the measurement against a signed
+mandate, and then commits it once or puts it back. Since 1.19.0 it also checks what a call
+carries out before it leaves. Every decision is a signed record that an auditor can verify
+offline.
 
-The agent holds no database credential, no signing key and no approval surface. It holds a
-session, over MCP or in process.
+The agent holds no credential for the systems it changes, no signing key and no approval
+surface. It holds a session, over MCP or in process.
 
 ## What it protects against
 
 | Threat | What happens | Checked offline by |
 |---|---|---|
-| **A prompt-injected or careless agent** calls a tool it was given, with arguments that look fine. A trigger, cascade, webhook, hook or rule then does far more. | The change is measured before it commits: the rows a trigger wrote, the files a hook generated, the replicas a webhook multiplied. A change beyond the mandate's bounds (tables, tenants, rows, totals, windows, budgets) is refused, and nothing lands. | V4 (each receipt was judged by the mandated checkers) and V5 (the receipts) |
+| **A prompt-injected or careless agent** calls a tool it was given, with arguments that look fine. A trigger, cascade, webhook, hook or rule then does far more. | The change is measured before it commits: the records a trigger wrote, the files a hook generated, the replicas a webhook multiplied. A change beyond the mandate's bounds (how much changed, where, for whom, how fast, at what cost) is refused, and nothing lands. | V4 (each receipt was judged by the mandated checkers) and V5 (the receipts) |
+| **Data leaving through a read, a fetch or a send** (1.19.0): a URL that carries a token the agent read, an email to an outside address with a customer's details, a pull request into a public repository after reading a private one, a bulk export. | Before a call leaves, its arguments are searched for the exact values the session read as secret or private, as plain text, URL-decoded, base64 or hex: a credential never leaves, a private value only to a destination the mandate lists. After untrusted input and private data together, nothing more is sent without the principals. Reads and bytes sent count against a budget. | V13 (each send judged again from its record) |
+| **A tool that lies about itself**: an MCP server marks a destructive tool `readOnlyHint: true`. | The claim is not believed when the tool's own name, description or arguments say it writes or sends: it is held, and flagged for review (1.19.0). | the bindings, in the bundle |
 | **An agent that tries to widen its own authority**, by calling a tool it was not given, writing outside its tables or tenants, raising its own budget, or approving its own request. | It has no credential to do any of it. An exception is a ticket that principals decide. The agent's own text is shown to them apart, as an unverified claim. | V3 (delegation), V7, V8 |
 | **One approver, or a minority**, acting alone. | An authority-granting decision takes k of n distinct principals' signatures over the exact bytes they were shown: 2 of 3 by default. | V8 (every warrant had its quorum) |
 | **An agent that signs its own approval** with a principal's key file it can read: a solo owner's `keys/owner.key` is readable by any program the owner runs, an agent's tools included. | A principal's key can be a passkey (1.17.0): it signs only when its owner touches it, and its private key never leaves the device. Each signature says the user was present and verified, on an origin the charter admits. | V2 (the charter holds the passkey), V8; the browser's `passkeys` check |
@@ -36,9 +39,13 @@ session, over MCP or in process.
   (V7, V8). Nothing prevents them, and nothing guarantees liveness.
 - **Enough colluding principals.** k of them are the authority. Their decisions are recorded
   and attributable, and are never second-guessed.
-- **Reads, and anything sent through them.** Only writes are staged. A read tool is metered
-  and rate-limited, but what it returns, and where the agent sends it, is not measured. Data
-  that leaves through a read channel is outside this model.
+- **A paraphrase of what an agent read.** What leaves is checked for the exact values a
+  session read, whole or encoded once (1.19.0). A model that rewrites a secret in its own
+  words, splits it across calls, or sends a value shorter than eight characters is not
+  caught. A read that no binding labels (a tool marked `system` that returns a stranger's
+  text) is not seen. The servers one client started share what they read; two clients share
+  nothing. Data the agent sends through a channel the bridge does not serve (its own shell
+  and network) is outside this model.
 - **Unescrowed tools and unobserved tables.** A passthrough tool the mandate trusts to be
   read-only is trusted. A table no `TableSpec` observes is denied to the stage on SQLite and
   by grants on PostgreSQL. A cascade into one is refused unless an operator acknowledged it,

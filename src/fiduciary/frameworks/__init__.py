@@ -5,7 +5,7 @@ Each pack is a JSON file beside this module, read once:
 - ``framework``: the pack's key (``hipaa``), and the file's name;
 - ``title`` and ``source``: what the controls are, and where their text comes from;
 - ``controls``: every control the pack names, by its own identifier, in order;
-- ``evidence``: for each check (``V1`` to ``V13``), the controls its evidence
+- ``evidence``: for each check (``V1`` to ``V14``), the controls its evidence
   supports, a check with none left out;
 - ``limits``: for some controls, what the bundle does not show.
 
@@ -36,6 +36,7 @@ ORDER: Final = (
     "nist800_53",
     "sox_itgc",
     "gdpr",
+    "aiuc-1",
 )
 """Every pack this release ships, in the order reports list them."""
 
@@ -45,7 +46,7 @@ DISCLAIMER: Final = (
     "compliance: an assessor decides whether a control is met."
 )
 
-CHECKS: Final = tuple(f"V{n}" for n in range(1, 14))
+CHECKS: Final = tuple(f"V{n}" for n in range(1, 15))
 
 
 @dataclass(frozen=True, slots=True)
