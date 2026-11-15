@@ -128,7 +128,7 @@ def test_the_script_draws_the_front_page_from_the_same_words() -> None:
 def test_the_files_beside_the_page() -> None:
     data = _with_overview(_run())
     sitemap = site.sitemap(data)
-    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 6  # 1.19.0
+    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 8  # 1.20.0
     assert f"Sitemap: {site.SITE_URL}sitemap.xml" in site.robots()
     assert site.favicon().startswith("<svg") and "prefers-color-scheme:dark" in site.favicon()
     card = (ROOT / "docs" / site.CARD).read_bytes()
@@ -169,8 +169,8 @@ def test_each_guide_is_a_page_of_its_own() -> None:
         assert ("FAQPage" in kinds) == bool(guide["faq"])
         others = [g for g in guides.GUIDES if g is not guide]
         assert all(f'href="../{g["slug"]}/"' in page for g in others)
-    assert len(titles) == len(descriptions) == len(guides.GUIDES) == 5
+    assert len(titles) == len(descriptions) == len(guides.GUIDES) == 7
     mapped = site.sitemap({})
-    assert mapped.count("<loc>") == 6 and f"<loc>{site.SITE_URL}verify/</loc>" in mapped
+    assert mapped.count("<loc>") == 8 and f"<loc>{site.SITE_URL}replays/</loc>" in mapped
     footer = site.COPY["footer"]["guides"]
     assert [href for _, href in footer] == [f"{g['slug']}/" for g in guides.GUIDES]

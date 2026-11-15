@@ -487,7 +487,7 @@ def start(
     except FiduciaryError as exc:
         raise CiError(str(exc)) from exc
     if not entries:
-        raise CiError(f"{config} names no MCP server")
+        raise CiError(f"{config} lists no MCP server")
     named = referenced(entries)
     missing = [n for n in named if n not in os.environ]
     if missing:
@@ -576,7 +576,7 @@ class Finished:
 
 
 _CODES: Final = {
-    "protected": "it names a path this job keeps from every call",
+    "protected": "its arguments point at a path this job keeps from every call",
     "withheld": "its server changed how it describes the tool since it was pinned",
     "unpinned": "no tool of that name is granted",
     "arguments": "its arguments are outside the tool's schema",

@@ -18,10 +18,128 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any, Final
 
-__all__ = ["CSS", "GUIDES", "page"]
+__all__ = ["BACKGROUND", "CSS", "GUIDES", "page"]
 
 SITE: Final = "https://crimsondevil0929.github.io/fiduciary/"
 REPO: Final = "https://github.com/crimsondevil0929/fiduciary"
+
+BACKGROUND: Final = {
+    "destructive-call": [
+        (
+            "A report of an agent that deleted a production volume and its backups with a "
+            "token it found in an unrelated file (Decrypt, April 2026)",
+            "https://decrypt.co/365897/ai-agent-deletes-startup-database-9-seconds-founder-says",
+        ),
+        (
+            "A report of a coding agent that deleted a production database it was told to "
+            "leave alone (eWeek, July 2025)",
+            "https://www.eweek.com/news/replit-ai-coding-assistant-failure/",
+        ),
+    ],
+    "toxic-flow": [
+        (
+            "A security write-up of a public issue that led an agent to publish a private "
+            "repository through an MCP server (May 2025)",
+            "https://invariantlabs.ai/blog/mcp-github-vulnerability",
+        ),
+    ],
+    "rug-pull": [
+        (
+            "A security write-up of an MCP package whose update added a hidden BCC to every "
+            "email it sent (September 2025)",
+            "https://www.koi.ai/blog/postmark-mcp-npm-malicious-backdoor-email-theft",
+        ),
+    ],
+}
+"""The public write-ups each replay reconstructs, linked for background."""
+
+
+def _replays_guide() -> Mapping[str, Any]:
+    """The replays guide, from the run ``scripts/record_replays.py`` recorded."""
+    from importlib.resources import files
+
+    recorded = json.loads((files("fiduciary.report") / "replays.json").read_text("utf-8"))
+    sections: list[dict[str, Any]] = [
+        {
+            "h2": "What these are",
+            "p": [
+                "Each replay reconstructs a pattern from a public incident against stand-in "
+                "servers written for it, with a script in the agent's place doing what the "
+                "write-ups say the agent did. No real company's systems, name or brand appear "
+                "in a replay. Each run protects the stand-ins exactly as fiduciary protect "
+                "protects yours, and ends with bundles anyone can verify offline.",
+            ],
+        },
+    ]
+    for replay in recorded:
+        sections.append(
+            {
+                "h2": replay["title"],
+                "p": [replay["pattern"]],
+                "transcript": [(s["actor"], s["text"]) for s in replay["steps"]],
+                "after": [
+                    f"Caught by {replay['caught']}.",
+                    "Bundles: "
+                    + "; ".join(f"{name} {verdict}" for name, verdict in replay["bundles"].items())
+                    + ".",
+                    f"Not caught: {replay['limits']}",
+                ],
+                "links": BACKGROUND.get(replay["key"], []),
+            }
+        )
+    sections.append(
+        {
+            "h2": "Run them yourself",
+            "code": [
+                "pip install interlock-fiduciary",
+                "fiduciary replay all --out replays",
+                "fiduciary verify-bundle replays/toxic-flow/bundles/web/web.fidb \\",
+                "  --charter $(cat replays/toxic-flow/bundles/web/charter.digest) \\",
+                "  --keys replays/toxic-flow/bundles/web/pinned-keys.json",
+            ],
+            "p": [
+                "Each replay writes its servers, its protected deployments and its bundles into "
+                "the directory, so every step above can be read again from the records.",
+            ],
+        }
+    )
+    return {
+        "slug": "replays",
+        "nav": "Incident replays",
+        "title": "AI agent incident replays: what a proxy would have stopped",
+        "description": (
+            "Three public AI agent incidents, rebuilt against stand-in servers and run through "
+            "fiduciary protect: what was held, what was refused, and the bundles."
+        ),
+        "h1": "Incident replays: three public patterns, run through the proxy",
+        "lede": (
+            "A destructive call with a found token, a cross-server toxic flow, and a silent "
+            "server update. Each is rebuilt from its public write-up and run step by step, and "
+            "each step below is what the run printed."
+        ),
+        "sections": sections,
+        "steps": [
+            ("Install", "pip install interlock-fiduciary"),
+            ("Run the three replays", "fiduciary replay all --out replays"),
+            (
+                "Verify a bundle offline",
+                "fiduciary verify-bundle <bundle> --charter <digest> --keys pinned-keys.json",
+            ),
+        ],
+        "faq": [
+            (
+                "Are these the real incidents?",
+                "No. They are reconstructions of the patterns the public write-ups describe, run "
+                "against stand-in servers. The write-ups are linked for background.",
+            ),
+            (
+                "Does a model run in a replay?",
+                "No. A script makes the agent's calls, so every run is the same and costs nothing.",
+            ),
+        ],
+        "app": ("Watch a call held in the demo", "../#/run"),
+    }
+
 
 GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
     {
@@ -36,7 +154,8 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
         "lede": (
             "An MCP server can change after you approve it, describe a destructive tool as "
             "read-only, or quietly send what it sees somewhere else. fiduciary protect puts a "
-            "proxy in front of each server your client starts, without changing the server."
+            "proxy in front of each server your client uses, local or remote, without changing "
+            "the server."
         ),
         "sections": [
             {
@@ -58,14 +177,31 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
                 "h2": "Protect every server with one command",
                 "code": [
                     "pip install interlock-fiduciary",
-                    "fiduciary protect --claude-desktop            # says what it would do",
-                    "fiduciary protect --claude-desktop --apply    # or --cursor",
+                    "fiduciary protect --claude-desktop          # says what it would do",
+                    "fiduciary protect --claude-desktop --apply  # --cursor, --vscode, --codex",
                     "fiduciary protect --mcp-config .mcp.json --claude-code --apply",
                 ],
                 "p": [
                     "Each server's entry in the client's file is rewritten to start the proxy, "
-                    "which starts the server. Restart the client. fiduciary unprotect puts every "
-                    "entry back as it was.",
+                    "which starts a local server, or speaks HTTP to a remote one. Restart the "
+                    "client. fiduciary unprotect puts every entry back as it was.",
+                ],
+            },
+            {
+                "h2": "Remote servers, and tokens the agent never holds",
+                "p": [
+                    "A remote server's entry (a URL and its headers) is wrapped the same way. The "
+                    "proxy speaks Streamable HTTP to the server, both the 2026-07-28 revision and "
+                    "the older one, and its Authorization token leaves the client's file, which "
+                    "every program that reads files can read, the agent among them.",
+                    "With --move-secrets, each local server's environment values and each remote "
+                    "server's token go to the system's own store: the macOS Keychain, the Linux "
+                    "Secret Service or the Windows Credential Manager, and a file only you can "
+                    "read where none answers. The proxy reads them back when it starts.",
+                    "--scan-secrets looks through the project the agent works in for tokens it "
+                    "could read in passing, such as a .env file. Each one is given to every "
+                    "protected session as a secret before the first call, so no call carries it "
+                    "out, even when the agent read it with the client's own file tools.",
                 ],
             },
             {
@@ -98,8 +234,10 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
                 "h2": "What it does not do",
                 "ul": [
                     "A server that changes what a tool does behind an unchanged definition and "
-                    "version is not caught.",
-                    "Remote (HTTP) MCP servers are not wrapped yet: protect starts local ones.",
+                    "version is not caught. A remote server's code cannot be pinned at all, only "
+                    "its definitions.",
+                    "A token a client gets by OAuth stays with the client: protect holds a token "
+                    "given in the entry's headers.",
                     "An agent that can edit the client's file can unwrap a server. protect shows "
                     "which entries are protected.",
                 ],
@@ -121,8 +259,13 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
             ),
             (
                 "Which clients does it work with?",
-                "Claude Desktop, Cursor, Claude Code (a project's .mcp.json) and VS Code, or any "
-                "client whose configuration lists mcpServers.",
+                "Claude Desktop, Cursor, Claude Code (a project's .mcp.json), VS Code and Codex "
+                "CLI (its config.toml), or any client whose configuration lists mcpServers.",
+            ),
+            (
+                "Does it work with remote MCP servers?",
+                "Yes. A remote entry becomes the proxy's command, the proxy speaks HTTP to the "
+                "server, and the server's token is kept out of the client's file.",
             ),
             (
                 "Does it need a cloud service or an account?",
@@ -461,6 +604,118 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
         ],
         "app": ("Open the verifier", "../#/verify"),
     },
+    {
+        "slug": "ci",
+        "nav": "Agents in CI",
+        "title": "AI agents in GitHub Actions without leaked secrets",
+        "description": (
+            "An agent in a GitHub Actions job reads text anyone can write. Label it untrusted "
+            "from the first call, keep secrets from the agent, and refuse workflow edits."
+        ),
+        "h1": "Run an AI agent in GitHub Actions without handing it your secrets",
+        "lede": (
+            "An agent that answers issues or reviews pull requests reads text anyone can write, "
+            "with tools that can push, comment and read the job's secrets. A line in its prompt "
+            "is not a control. fiduciary ci puts its MCP servers behind protected proxies for "
+            "the length of the job."
+        ),
+        "sections": [
+            {
+                "h2": "What goes wrong",
+                "p": [
+                    "Public write-ups since late 2025 show the pattern working across several "
+                    "coding agents in GitHub Actions: text in an issue or a comment tells the "
+                    "agent what to do, and the agent prints secrets into a comment or edits a "
+                    "workflow file. The text came from someone outside the project, and the "
+                    "agent could not tell.",
+                ],
+            },
+            {
+                "h2": "Add it to a workflow",
+                "code": [
+                    "- uses: crimsondevil0929/fiduciary@v1.20.0",
+                    "  id: fiduciary",
+                    "  with:",
+                    "    step: start",
+                    "    mcp-config: .github/agent-mcp.json",
+                    "    secrets: GITHUB_TOKEN",
+                    "  env:",
+                    "    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+                    "",
+                    "- uses: anthropics/claude-code-action@v1",
+                    "  with:",
+                    "    claude_args: >-",
+                    "      --mcp-config ${{ steps.fiduciary.outputs.mcp-config }}",
+                    "      --disallowedTools Bash",
+                    "",
+                    "- uses: crimsondevil0929/fiduciary@v1.20.0",
+                    "  if: always()",
+                    "  with:",
+                    "    step: finish",
+                ],
+                "p": [
+                    "The start step reads the secrets from its own environment and hands them to "
+                    "the proxy. The agent's step is given only the MCP file the proxy wrote: "
+                    "loopback addresses and a token that reaches the proxy and nothing else. The "
+                    "finish step writes the summary and uploads the bundles.",
+                ],
+            },
+            {
+                "h2": "What it does for each call",
+                "ul": [
+                    "Untrusted from the start. Issue and pull request text, comments, reviews and "
+                    "branch names from anyone the repository does not trust (owners, members and "
+                    "collaborators are trusted by default), and anything from a fork, label "
+                    "every session before the agent reads a word.",
+                    "Secrets kept. The job's secrets live in the proxy's memory alone, and a "
+                    "call that carries one is refused, whole or encoded.",
+                    "Workflow files refused. A call whose arguments point at a path under "
+                    ".github/workflows or .github/actions is refused before it runs.",
+                    "Refuse and explain. Nobody approves in CI, so a call the mandate would hold "
+                    "is not made, and the job summary says which check stopped which call.",
+                    "Proof. Each server's bundle is exported with its pinned keys and verified "
+                    "before it is uploaded.",
+                ],
+            },
+            {
+                "h2": "What it does not do",
+                "ul": [
+                    "It governs the tools behind the proxy. An agent with a shell reaches the "
+                    "network and the runner's files directly, so give it none: in Claude Code, "
+                    "--disallowedTools Bash.",
+                    "A local MCP server holds its own token in its environment, which a process "
+                    "of the same user with a shell could read. A remote server's token never "
+                    "leaves the proxy.",
+                    "Approvals are not asked for in CI. A held call waits, and the job ends "
+                    "without it.",
+                ],
+            },
+        ],
+        "steps": [
+            ("List the agent's MCP servers in a file", ".github/agent-mcp.json"),
+            ("Start the proxy before the agent", "uses: crimsondevil0929/fiduciary (step: start)"),
+            ("Give the agent the proxy's MCP file", "--mcp-config <the start step's output>"),
+            ("Finish after it, always", "uses: crimsondevil0929/fiduciary (step: finish)"),
+        ],
+        "faq": [
+            (
+                "Which agents does it work with?",
+                "Any agent that reads an MCP file over HTTP: Claude Code and its GitHub Action, "
+                "Codex and others. The proxy is the same for each.",
+            ),
+            (
+                "Can it post the summary on the pull request?",
+                "Yes, with comment: refusals or always on the finish step, and permission to "
+                "write issues or pull requests.",
+            ),
+            (
+                "Does the job fail when a call is refused?",
+                "Not by default. Set fail-on: refused, or held, on the finish step.",
+            ),
+        ],
+        "app": ("Read the incident replays", "../replays/"),
+    },
+    _replays_guide(),
 )
 """Each guide: its address, its words, and where it leads."""
 
@@ -514,6 +769,17 @@ summary { cursor: pointer; font-weight: 600; color: var(--ink); }
 .more ul { list-style: none; padding: 0; display: grid; gap: 8px; }
 footer { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size: 13.5px;
   color: var(--muted); }
+.replay { list-style: none; padding: 0; border-left: 2px solid var(--line); }
+.replay li { margin: 0; padding: 7px 0 7px 16px; font-size: 15px; color: var(--ink-2); }
+.who { display: inline-block; min-width: 74px; margin-right: 8px; font: 600 11.5px var(--mono);
+  letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.who.agent { color: #b45309; } .who.fiduciary { color: var(--accent); }
+.who.owner { color: #4f46e5; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .who.agent { color: #f5a65b; }
+  :root:not([data-theme="light"]) .who.owner { color: #a5b4fc; } }
+:root[data-theme="dark"] .who.agent { color: #f5a65b; }
+:root[data-theme="dark"] .who.owner { color: #a5b4fc; }
+.background { font-size: 14px; color: var(--muted); }
 """
 """The guides' stylesheet: the site's colors and type, for reading."""
 
@@ -577,8 +843,10 @@ def _graph(guide: Mapping[str, Any]) -> dict[str, Any]:
 
 _COMMAND: Final = re.compile(
     r"fiduciary (?:passkey add|shadow report|solo add-principals|protect|unprotect|console|"
-    r"verify-bundle|export-bundle|init|undo|infer-policy)(?: --[a-z][a-z-]*)*"
+    r"verify-bundle|export-bundle|init|undo|infer-policy|ci start|ci finish|ci|replay)"
+    r"(?: --[a-z][a-z-]*)*"
     r"|--[a-z][a-z-]+|readOnlyHint|\.mcp\.json|\.claude/settings\.local\.json|mcpServers"
+    r"|\.github/(?:workflows|actions)|config\.toml|\.env\b"
 )
 """What prose shows as code: a command, a flag, a file or a field."""
 
@@ -601,6 +869,25 @@ def _section(section: Mapping[str, Any]) -> str:
         out += "".join(f"<p>{_prose(text)}</p>" for text in section.get("p", ()))
     if "ul" in section:
         out += "<ul>" + "".join(f"<li>{_item(item)}</li>" for item in section["ul"]) + "</ul>"
+    if "transcript" in section:
+        out += (
+            '<ol class="replay">'
+            + "".join(
+                f'<li><span class="who {_e(actor)}">{_e(actor)}</span> {_prose(text)}</li>'
+                for actor, text in section["transcript"]
+            )
+            + "</ol>"
+        )
+    out += "".join(f"<p>{_prose(text)}</p>" for text in section.get("after", ()))
+    if section.get("links"):
+        out += (
+            '<p class="background">Background:</p><ul>'
+            + "".join(
+                f'<li><a href="{_e(url)}" rel="noopener">{_e(label)}</a></li>'
+                for label, url in section["links"]
+            )
+            + "</ul>"
+        )
     return out
 
 

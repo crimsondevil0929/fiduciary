@@ -92,9 +92,9 @@ def test_which_store_answers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
         custody.store_for("keychain", tmp_path)
     with pytest.raises(CustodyError, match="Windows"):
         custody.store_for("credential-manager", tmp_path)
-    with pytest.raises(CustodyError, match="no secret store"):
+    with pytest.raises(CustodyError, match="no secret store called"):
         custody.store_for("vault", tmp_path)
-    with pytest.raises(CustodyError, match="no secret store"):
+    with pytest.raises(CustodyError, match="no secret store called"):
         custody.store_named("vault", tmp_path)
     assert isinstance(custody.store_for("file", tmp_path), FileStore)
     monkeypatch.setattr(sys, "platform", "darwin")

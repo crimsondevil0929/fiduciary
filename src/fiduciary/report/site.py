@@ -334,6 +334,8 @@ COPY: Final[dict[str, Any]] = {
             ["Stop data leaving", "outbound/"],
             ["Passkeys for approvals", "passkeys/"],
             ["Verify an audit bundle", "verify/"],
+            ["Agents in CI", "ci/"],
+            ["Incident replays", "replays/"],
         ],
         "read": [
             ["Quickstart", REPO + "fiduciary/blob/main/docs/QUICKSTART.md"],

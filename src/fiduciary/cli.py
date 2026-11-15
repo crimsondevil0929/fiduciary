@@ -1864,6 +1864,35 @@ def _scan_secrets(args: argparse.Namespace) -> None:
     )
 
 
+def _replay(args: argparse.Namespace) -> int:
+    """``fiduciary replay`` (1.20.0)."""
+    from fiduciary.replays import REPLAYS, run
+
+    out = args.out.expanduser()
+    names = list(REPLAYS) if args.name == "all" else [args.name]
+    if any((out / name).exists() for name in names):
+        _fail(f"{out} has a replay of that name already: give another --out", REFUSED)
+    done = []
+    for name in names:
+        replay = run(name, out)
+        done.append(replay)
+        if args.json:
+            continue
+        _out(f"{replay.title}")
+        _out(f"  {replay.pattern}")
+        for step in replay.steps:
+            _out(f"  {step.actor:<9}  {step.text}")
+        for server, verdict in replay.bundles.items():
+            _out(f"  bundle     {server}: {verdict}")
+        _out(f"  caught by  {replay.caught}")
+        _out(f"  not caught {replay.limits}")
+        _out(f"  work       {out / name}")
+        _out("")
+    if args.json:
+        _out(json.dumps([r.to_json() for r in done], indent=2))
+    return OK if all("NOT" not in v for r in done for v in r.bundles.values()) else REFUSED
+
+
 def _ci_trust() -> tuple[str, ...]:
     from fiduciary.ci import DEFAULT_TRUST
 
@@ -3146,6 +3175,22 @@ def _parser() -> argparse.ArgumentParser:
         help="seconds an instant may stray from its anchor's ledger time; [bridge] skew_seconds",
     )
     verify.set_defaults(handler=_verify)
+
+    replaying = commands.add_parser(
+        "replay",
+        help="run an incident replay against stand-in servers: a destructive call with a found "
+        "token, a cross-server toxic flow, a silent server update",
+    )
+    replaying.add_argument(
+        "name",
+        choices=("destructive-call", "toxic-flow", "rug-pull", "all"),
+        help="which replay (all: the three)",
+    )
+    replaying.add_argument(
+        "--out", type=Path, default=Path("fiduciary-replay"), help="where its work and bundles go"
+    )
+    replaying.add_argument("--json", action="store_true", help="print each replay as JSON")
+    replaying.set_defaults(handler=_replay)
 
     ci = commands.add_parser(
         "ci",

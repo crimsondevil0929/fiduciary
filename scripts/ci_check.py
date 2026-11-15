@@ -179,7 +179,7 @@ def check(work: Path, summary: Path, bundles: Path) -> None:
     for expected in (
         "the comment by @mallory (NONE)",
         "`DEPLOY_KEY`",
-        "it names a path this job keeps from every call",
+        "its arguments point at a path this job keeps from every call",
         "a credential the session had read, in what it sent",
         "**Held** (nobody approves in CI, so it was not made)",
         "verifies: every check passes, V1 to V14",

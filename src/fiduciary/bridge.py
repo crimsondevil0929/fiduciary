@@ -1139,8 +1139,8 @@ class Session:
                 return self._reject(
                     name,
                     "protected",
-                    f"Not run: it names {named}, which this deployment keeps from every call. "
-                    "Nothing was sent; do not make the call again.",
+                    f"Not run: its arguments point at {named}, which this deployment keeps from "
+                    "every call. Nothing was sent; do not make the call again.",
                 )
         if binding.tenant == "session" and self.tenant is None:
             return self._reject(

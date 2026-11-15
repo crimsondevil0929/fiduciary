@@ -355,7 +355,7 @@ def store_named(name: str, root: Path, *, runner: Runner = subprocess.run) -> St
         return FileStore(root)
     if name == "memory":
         raise CustodyError("its secrets were held in the memory of the process that protected it")
-    raise CustodyError(f"no secret store is named {name!r}: {', '.join(STORES)}")
+    raise CustodyError(f"there is no secret store called {name!r}: {', '.join(STORES)}")
 
 
 def store_for(name: str, root: Path, *, runner: Runner = subprocess.run) -> Store:
@@ -379,7 +379,7 @@ def store_for(name: str, root: Path, *, runner: Runner = subprocess.run) -> Stor
         "file": lambda: True,
     }
     if name not in here:
-        raise CustodyError(f"no secret store is named {name!r}: auto, {', '.join(STORES)}")
+        raise CustodyError(f"there is no secret store called {name!r}: auto, {', '.join(STORES)}")
     if not here[name]():
         raise CustodyError(
             {

@@ -50,6 +50,15 @@ MODULES = (
     "report/site.py",
     # 1.19.0: the guides, each a page of its own
     "report/guides.py",
+    # 1.20.0: remote servers, custody, the scan, approvals in the client, CI, the frameworks'
+    # hooks and the incident replays
+    "remote.py",
+    "custody.py",
+    "scan.py",
+    "approvals.py",
+    "ci.py",
+    "hooks.py",
+    "replays.py",
 )
 """Where the demo's, the reports' and the SDK's words are written."""
 
@@ -193,14 +202,14 @@ def test_names_is_not_the_verb_for_everything() -> None:
 
 
 def test_no_markdown_is_left_in_a_string() -> None:
-    """The console draws text, not Markdown. (``report/__init__.py`` writes ``report.md`` and
-    ``init.py`` a deployment's ``README.md``, which are Markdown, so they are the files this
-    rule skips.)"""
+    """The console draws text, not Markdown. (``report/__init__.py`` writes ``report.md``,
+    ``init.py`` a deployment's ``README.md`` and ``ci.py`` a job's summary, which are Markdown,
+    so they are the files this rule skips.)"""
     rule = re.compile(r"\*\*\w|\w\*\*")
     found = [
         f"{f}:{n}: {s!r}"
         for f, n, s in CORPUS
-        if f not in ("report/__init__.py", "init.py") and rule.search(s)
+        if f not in ("report/__init__.py", "init.py", "ci.py") and rule.search(s)
     ]
     assert not found, "\n".join(found)
 

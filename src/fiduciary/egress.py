@@ -238,7 +238,9 @@ _KINDS: Final = (
 _PATTERNS: Final = tuple((re.compile(p), kind) for p, kind in _KINDS)
 _PASSWORD_URL: Final = re.compile(r"\b[a-z][a-z0-9+.-]{1,20}://[^/\s:@]{1,128}:([^@\s/]{6,256})@")
 _ASSIGNED: Final = re.compile(
-    r"(?i)\b(?:api[_-]?key|secret|token|password|passwd|private[_-]?key|access[_-]?key)"
+    # the name may carry a prefix, as variables do: CLOUD_TOKEN, STRIPE_SECRET (1.20.0)
+    r"(?i)\b(?:[a-z0-9]+_)*(?:api[_-]?key|secret|token|password|passwd|private[_-]?key"
+    r"|access[_-]?key)"
     r"[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9_\-+/=.]{16,256})"
 )
 _BARE: Final = re.compile(r"[A-Za-z0-9+/_-]{32,256}")
