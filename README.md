@@ -331,10 +331,11 @@ The OpenAI Agents SDK asks `needs_approval` before a tool runs; the Claude Agent
 ```python
 import fiduciary
 
-gate = fiduciary.Gate.for_tools(definitions)   # a deployment for the framework's own tools
-tools = fiduciary.hooks.openai_agents(tools, gate)   # needs_approval and guardrails, per tool
-options = ClaudeAgentOptions(can_use_tool=fiduciary.can_use_tool(gate),
-                             hooks=fiduciary.hooks.claude_hooks(gate))
+gate = fiduciary.Gate.for_tools(definitions)  # a deployment for the framework's own tools
+tools = fiduciary.hooks.openai_agents(tools, gate)  # needs_approval and guardrails, per tool
+options = ClaudeAgentOptions(
+    can_use_tool=fiduciary.can_use_tool(gate), hooks=fiduciary.hooks.claude_hooks(gate)
+)
 ```
 
 Each call is checked before it runs (its schema, the velocity bound, what it would send under
