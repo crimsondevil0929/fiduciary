@@ -46,6 +46,7 @@ process instead (:mod:`fiduciary.mcp`).
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import dataclasses
 import logging
@@ -1342,10 +1343,15 @@ class Session:
                 if (spec := sinks.get(r.sink)) is not None
                 and any(op.name == r.operation and op.hold for op in spec.operations)
             )
+            alone = False
+            if held:
+                with contextlib.suppress(FiduciaryError):
+                    charter = self._fid._authority.decide.charter(self._fid.log.state())
+                    alone = len(charter.principals) == 1
             return CallResult(
                 name,
                 "committed",
-                _committed(binding, plan_id, rendered, held=held),
+                _committed(binding, plan_id, rendered, held=held, alone=alone),
                 value={"plan_id": plan_id, **({"held": held} if held else {})},
             )
         if "provenance_gate" in result.blocked_by:
@@ -1990,11 +1996,16 @@ def _whole(plan: EffectPlan, kept: set[str]) -> bool:
 
 
 def _committed(
-    binding: ToolBinding, plan_id: str, feedback: str, *, held: Sequence[str] = ()
+    binding: ToolBinding,
+    plan_id: str,
+    feedback: str,
+    *,
+    held: Sequence[str] = (),
+    alone: bool = False,
 ) -> str:
     """What a committed call tells the agent: the plan's id, what it queued,
-    which of it waits for the principals' approval, and how to ask for it to be
-    undone when its requests can be."""
+    which of it waits for approval (its owner's, when the charter names one principal;
+    1.20.0), and how to ask for it to be undone when its requests can be."""
     lines = [f"Committed: {binding.name} ran as plan {plan_id}."]
     if binding.requests:
         queued = sorted({f"{r.sink} {r.operation}" for r in binding.requests} - set(held))
@@ -2004,9 +2015,14 @@ def _committed(
                 f"({', '.join(queued)})."
             )
         if held:
+            # protect's own sink is the server itself: its operation is the tool's name
+            shown = ", ".join(h.removeprefix("upstream ") for h in held)
             lines.append(
-                f"Held for the principals' approval, not yet made: {', '.join(held)}. It is "
-                f"made only once a quorum of them signs its release; do not call it again."
+                f"Not run yet: {shown} waits for its owner's approval, and runs once they "
+                "approve it. Do not call it again."
+                if alone
+                else f"Not run yet: {shown} waits for the principals' approval, and runs once "
+                "a quorum of them signs its release. Do not call it again."
             )
     if any(r.compensation is not None for r in binding.requests):
         lines.append(

@@ -46,7 +46,7 @@
       },
       {
         "actor": "fiduciary",
-        "text": "Held for the principals' approval, not yet made: upstream delete_volume. It is made only once a quorum of them signs its release; do not call it again."
+        "text": "Not run yet: delete_volume waits for its owner's approval, and runs once they approve it. Do not call it again."
       },
       {
         "actor": "agent",

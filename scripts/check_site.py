@@ -171,7 +171,9 @@ def _readable(site: Path, data: dict[str, Any]) -> list[str]:
     text = " ".join("".join(page.app).split())
     wanted = [
         public.COPY["headline"],
-        public.COPY["hero"]["lines"][0][1],
+        public.COPY["hero"]["command"],
+        public.COPY["hero"]["calls"][1]["badge"],
+        "flagged: " + public.COPY["hero"]["tools"][1]["flag"],
         "@gov.tool",
         "def refund(api: fiduciary.Rest, order_id: str, amount: str) -> str:",
     ]

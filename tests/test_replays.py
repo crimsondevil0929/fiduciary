@@ -25,7 +25,7 @@ def test_each_replay_is_what_the_page_shows(key: str, tmp_path: Path) -> None:
     assert replay.bundles and all(v.startswith("verifies") for v in replay.bundles.values())
     said = [s.text for s in replay.steps if s.actor == "fiduciary"]
     if key == "destructive-call":
-        assert any(t.startswith("Held for the principals' approval") for t in said)
+        assert any("waits for its owner's approval" in t for t in said)
         assert any("carries a credential this session read" in t for t in said)
         volumes = json.loads((tmp_path / key / "volumes.json").read_text())
         assert volumes == ["prod-db", "staging-db"], "the volume was not deleted"

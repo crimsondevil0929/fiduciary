@@ -122,7 +122,7 @@ def test_the_proxy_in_this_process_holds_pins_answers_writes_and_waits_for_turns
         assert made["structuredContent"] == {"id": "note-1"}
         assert proxy.tool("search_notes", {"query": "in"})["isError"] is False
         assert (
-            "Held for the principals' approval"
+            "waits for its owner's approval"
             in proxy.tool("delete_note", {"id": "x"})["content"][0]["text"]
         )
         refused = proxy.tool("create_note", {"title": "no priority"})

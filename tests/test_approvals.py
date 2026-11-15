@@ -117,7 +117,7 @@ def test_a_client_that_does_not_ask_is_told_in_words(tmp_path: Path) -> None:
     client = Client(entry)
     try:
         held = client.tool("delete_note", {"id": "note-1"})
-        assert "Held for the principals' approval" in held["content"][0]["text"]
+        assert "waits for its owner's approval" in held["content"][0]["text"]
     finally:
         client.close()
 

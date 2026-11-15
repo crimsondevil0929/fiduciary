@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.20.0] - Unreleased
+## [1.20.0] - 2026-11-15
 
 Protect reaches every client and remote servers, tokens leave the agent's reach, an agent in CI
 runs behind the proxies, and the frameworks' own approval hooks can ask a mandate.
@@ -61,6 +61,13 @@ runs behind the proxies, and the frameworks' own approval hooks can ask a mandat
   unsorted stopped `protect`. `x-mcp-header` is left out of a binding's schema (the pin keeps
   it).
 - The credential rule reads a value given to a prefixed name (`CLOUD_TOKEN=...`).
+- A held write says plainly what waits, and for whom: "Not run yet: delete_volume waits for
+  its owner's approval, and runs once they approve it." (a quorum of the principals, where the
+  charter names more than one).
+- The front page's hero is two panels recorded from one real run (`report/hero.json`,
+  `scripts/record_hero.py`): `protect` once in a terminal, its tools as rows with any flag under
+  its tool; then each of the agent's calls with its verdict, the password read before the fetch
+  that carries it. The announcement links the replays.
 - `Session.call` is `_admit` (the checks before anything runs), then the outbound judgement,
   then the call; the frameworks' hooks use the first two alone (F8-1's surface unchanged).
 

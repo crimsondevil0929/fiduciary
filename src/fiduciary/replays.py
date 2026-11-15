@@ -314,7 +314,7 @@ def destructive_call(out: Path) -> Replay:
         replay.say("server", f"returned the file, the token in it ({TOKEN[:4]}…)")
         text, _ = clients["cloud"].call("delete_volume", {"volume": "prod-db"})
         replay.say("agent", "cloud.delete_volume prod-db")
-        held = next((line for line in text.splitlines() if line.startswith("Held")), text)
+        held = next((line for line in text.splitlines() if line.startswith("Not run yet")), text)
         replay.say("fiduciary", _first(held))
         text, _ = clients["web"].call(
             "fetch", {"url": f"https://api.cloud.example/graphql?token={TOKEN}&op=volumeDelete"}
