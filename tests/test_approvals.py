@@ -153,3 +153,99 @@ def test_a_request_state_is_this_deployments_and_this_calls(tmp_path: Path) -> N
         serve=lambda: None,
     )
     assert words["isError"] and "did not give for this call" in words["content"][0]["text"]
+
+
+def _modern(name: str, arguments: dict[str, Any], **extra: Any) -> dict[str, Any]:
+    meta = {
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {"elicitation": {"url": {}}},
+    }
+    return {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": name, "arguments": arguments, "_meta": meta, **extra},
+    }
+
+
+def test_the_round_trips_in_this_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The proxy's server answered in this process: asked, approved, waited on, cancelled."""
+    import fiduciary.approvals as approvals
+
+    monkeypatch.setattr(approvals, "WAIT", 0.5)
+    _, deployment = _protected(tmp_path)
+    state = json.loads((deployment / protect.STATE).read_text())
+    upstream = protect.upstream_of(state)
+    proxy, server, gate = protect.protected_server(
+        deployment / "fiduciary.toml", upstream, console="http://localhost:9999/"
+    )
+    try:
+
+        def ask(message: dict[str, Any]) -> dict[str, Any]:
+            with gate:
+                answer = server.handle(message)
+                proxy.tick()
+            assert answer is not None
+            result: dict[str, Any] = answer["result"]
+            return result
+
+        first = ask(_modern("delete_note", {"id": "note-1"}))
+        assert first["resultType"] == "input_required"
+        url = first["inputRequests"]["approval"]["params"]["url"]
+        assert url.startswith("http://localhost:9999/#/desk?d=notes&t=")
+        ticket = urllib.parse.parse_qs(url.split("?", 1)[1])["t"][0]
+        state_token = first["requestState"]
+        again = ask(_modern("delete_note", {"id": "note-1"}, requestState=state_token))
+        assert again["resultType"] == "input_required", "still held: asked again"
+        _approve(deployment, ticket)
+        done = ask(
+            _modern(
+                "delete_note",
+                {"id": "note-1"},
+                requestState=state_token,
+                inputResponses={"approval": {"action": "accept"}},
+            )
+        )
+        assert done["resultType"] == "complete" and done["content"][0]["text"] == "deleted"
+        after = ask(_modern("delete_note", {"id": "note-1"}, requestState=state_token))
+        assert "Made, after its owner approved it" in after["content"][0]["text"]
+
+        second = ask(_modern("delete_note", {"id": "note-2"}))
+        cancel = urllib.parse.parse_qs(
+            second["inputRequests"]["approval"]["params"]["url"].split("?", 1)[1]
+        )["t"][0]
+        _cancel(deployment, cancel)
+        refused = ask(_modern("delete_note", {"id": "note-2"}, requestState=second["requestState"]))
+        assert refused["isError"] and "Nothing was sent" in refused["content"][0]["text"]
+        plain = ask(_modern("list_notes", {}))
+        assert plain["resultType"] == "complete"
+    finally:
+        proxy.close()
+        upstream.close()
+
+
+def _cancel(deployment: Path, ticket_id: str) -> None:
+    from fiduciary.control import ConfiguredDeployment
+    from fiduciary.documents import Approval
+    from fiduciary.keys import load_key
+
+    desk = ConfiguredDeployment(
+        "notes", deployment / "fiduciary.toml", accepts=True, scratch=deployment.parent
+    )
+    try:
+        draft = desk.draft({"ticket_id": ticket_id, "principal": "owner", "option": "cancel"})
+        owner = protect.Owner.serving(deployment)
+        assert owner is not None
+        signed = Approval.from_json(draft["approval"], signed=False).signed(
+            load_key(owner.key_file)
+        )
+        desk.accept({"approval": signed.to_json()})
+    finally:
+        desk.close()
+
+
+def test_a_proxy_with_no_relay_says_so() -> None:
+    from fiduciary.approvals import _made
+
+    found = _made(None, [])
+    assert found is not None and "no relay" in found["content"][0]["text"]

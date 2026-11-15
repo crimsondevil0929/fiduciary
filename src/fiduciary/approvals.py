@@ -197,7 +197,7 @@ class Approvals:
         arguments: Mapping[str, Any],
         *,
         serve: Callable[[], None],
-        wait: float = WAIT,
+        wait: float | None = None,
     ) -> dict[str, Any]:
         """The answer to a retry that carries ``requestState``: the server's answer once the
         requests were made, words when they will not be, or ``input_required`` again."""
@@ -219,7 +219,7 @@ class Approvals:
                 f"{name} in fiduciary console; fiduciary_ticket_status says where it stands."
             )
         messages = plan_messages(self.root, plan_id)
-        deadline = time.monotonic() + wait
+        deadline = time.monotonic() + (WAIT if wait is None else wait)
         while True:
             serve()
             found = _made(relay, messages)

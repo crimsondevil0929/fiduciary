@@ -382,3 +382,134 @@ def test_against_the_official_mcp_sdk_server(tmp_path: Path, mode: str) -> None:
     finally:
         server.terminate()
         server.wait(10)
+
+
+class _Answer:
+    """What a fake opener returns: a response with headers and a body, read once."""
+
+    def __init__(self, body: bytes, kind: str = "application/json", status: int = 200) -> None:
+        import io
+
+        self._stream = io.BytesIO(body)
+        self.headers = {"Content-Type": kind}
+        self.status = status
+
+    def read(self, limit: int = -1) -> bytes:
+        return self._stream.read(limit)
+
+    def __iter__(self) -> Any:
+        return iter(self._stream.readlines())
+
+    def close(self) -> None:
+        pass
+
+
+def _fake(script: list[Any]) -> Any:
+    """An opener that answers each request with the next of ``script``: an ``_Answer``, a
+    callable of the request, or an exception to raise."""
+
+    def opener(request: Any, timeout: float = 0) -> Any:
+        step = script.pop(0)
+        if isinstance(step, BaseException):
+            raise step
+        return step(request) if callable(step) else step
+
+    return opener
+
+
+def _discovered() -> _Answer:
+    return _Answer(
+        json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "result": {"supportedVersions": ["2026-07-28"]}}
+        ).encode()
+    )
+
+
+def test_what_a_remote_answer_can_get_wrong() -> None:
+    import io
+    import urllib.error
+
+    from interlock.mcp import McpCallError, McpRefusedError
+
+    url = "https://mcp.example.com/mcp"
+
+    def http_error(status: int, body: bytes) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError(url, status, "x", {}, io.BytesIO(body))  # type: ignore[arg-type]
+
+    # an older server answers the probe with plain text: it is spoken to with initialize
+    legacy = [
+        http_error(405, b"method not allowed"),
+        _Answer(
+            json.dumps(
+                {"jsonrpc": "2.0", "id": 2, "result": {"protocolVersion": "2025-11-25"}}
+            ).encode()
+        ),
+        _Answer(b"", status=202),
+    ]
+    upstream = HttpUpstream(url, opener=_fake(legacy))
+    assert upstream.era.version == "2025-11-25"
+    # the answers that are not the response to the request
+    sse_end = _Answer(
+        b'data: {"jsonrpc":"2.0","method":"notifications/tools/list_changed"}\n\n',
+        "text/event-stream",
+    )
+    upstream._open = _fake([sse_end])
+    with pytest.raises(McpError, match="ended with no response"):
+        upstream.request("tools/list", {})
+    assert upstream.changed, "a list change on the stream is kept"
+    upstream._open = _fake([_Answer(b"not json")])
+    with pytest.raises(McpError, match="not JSON"):
+        upstream.request("tools/list", {})
+    upstream._open = _fake(
+        [_Answer(json.dumps({"jsonrpc": "2.0", "id": 999, "result": {}}).encode())]
+    )
+    with pytest.raises(McpError, match="not the response"):
+        upstream.request("tools/list", {})
+    trailing = _Answer(b'data: {"jsonrpc":"2.0","id":7,"result":{"tools":[]}}', "text/event-stream")
+    upstream._next = 6
+    upstream._open = _fake([trailing])
+    assert upstream.request("tools/list", {}) == {"tools": []}, "a last event with no blank line"
+    upstream._open = _fake(
+        [http_error(500, json.dumps({"error": {"code": -32603, "message": "boom"}}).encode())]
+    )
+    with pytest.raises(McpRefusedError, match="boom"):
+        upstream.call("create_doc", {}, 5)
+    upstream._open = _fake([http_error(502, b"bad gateway")])
+    with pytest.raises(McpCallError, match="HTTP 502"):
+        upstream.call("create_doc", {}, 5)
+    upstream._open = _fake([OSError("reset")])
+    with pytest.raises(McpCallError, match="reset"):
+        upstream.call("create_doc", {}, 5)
+    upstream._open = _fake(
+        [http_error(500, json.dumps({"error": {"code": -32603, "message": "boom"}}).encode())]
+    )
+    with pytest.raises(McpError, match="refused create_doc"):
+        upstream.handler("create_doc")({})
+    upstream._open = _fake([http_error(503, b"busy")])
+    with pytest.raises(McpError, match="did not answer"):
+        upstream.handler("create_doc")({})
+    upstream._open = _fake([http_error(400, b"")])
+    with pytest.raises(McpError, match="did not answer"):
+        upstream.request("tools/list", {})
+    big = _Answer(b"x" * (8 * 1024 * 1024 + 2))
+    upstream._open = _fake([big])
+    with pytest.raises(McpError, match="longer than the proxy reads"):
+        upstream.request("tools/list", {})
+    long_stream = _Answer(b"data: " + b"x" * (8 * 1024 * 1024 + 2) + b"\n\n", "text/event-stream")
+    upstream._open = _fake([long_stream])
+    with pytest.raises(McpError, match="longer than the proxy reads"):
+        upstream.request("tools/list", {})
+    listed = {"tools": ["not a tool", {"name": "ok", "inputSchema": {"type": "object"}}]}
+    upstream._open = _fake(
+        [
+            _Answer(
+                json.dumps({"jsonrpc": "2.0", "id": upstream._next + 1, "result": listed}).encode()
+            )
+        ]
+    )
+    assert [t["name"] for t in upstream.definitions()] == ["ok"]
+    # a redirect is never followed: it is answered as the error it came with
+    from fiduciary.remote import _NoRedirect
+
+    _NoRedirect().redirect_request()  # answers nothing: the redirect stays the error
+    assert header_params({"properties": {"a": "not a schema", "b": {"type": "string"}}}) == {}

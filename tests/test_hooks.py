@@ -342,3 +342,21 @@ def test_the_claude_hooks_without_a_prompt(tmp_path: Path) -> None:
     post = fiduciary.hooks.post_tool_use(gate)
     assert asyncio.run(post({"tool_name": "fetch", "tool_response": "ok"}, None, {})) == {}
     gate.close()
+
+
+def test_a_framework_name_finds_its_binding(tmp_path: Path) -> None:
+    named = [
+        {
+            "name": "createNote",
+            "description": "Create a note.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"title": {"type": "string"}},
+                "required": ["title"],
+            },
+            "annotations": {"destructiveHint": False},
+        }
+    ]
+    with Gate.for_tools(named, root=tmp_path / "hooks") as gate:
+        assert gate.binding_of("createNote") == "create_note"
+        assert gate.decide("createNote", {"title": "x"}).decision == "allow"

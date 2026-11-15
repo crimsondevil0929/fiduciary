@@ -172,3 +172,16 @@ def test_client_paths_cover_every_client(monkeypatch: pytest.MonkeyPatch) -> Non
         assert part in str(found["vscode"]) or platform == "win32"
         assert found["codex"].name == "config.toml"
     monkeypatch.undo()
+
+
+def test_the_smaller_forms(tmp_path: Path) -> None:
+    from fiduciary.clients import placeholders
+
+    remote = remote_of({"url": "https://x/mcp", "env_http_headers": {"X-Key": "KEY_VAR"}})
+    assert remote is not None and remote.headers == {"X-Key": "${KEY_VAR}"}
+    assert remote.variables == ("KEY_VAR",)
+    assert placeholders("Bearer ${A} and ${env:B}") == ["${A}", "${env:B}"]
+    last = tmp_path / "last.toml"
+    last.write_text('model = "x"\n\n[mcp_servers.tail]\ncommand = "old"\n')
+    write_entries(last, {("mcp_servers", "tail"): {"command": "new"}})
+    assert tomllib.loads(last.read_text())["mcp_servers"]["tail"] == {"command": "new"}

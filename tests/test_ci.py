@@ -228,3 +228,43 @@ def test_the_action_is_named_at_this_version() -> None:
         assert "crimsondevil0929/fiduciary@v" not in text.replace(tag, "")
     action = (root / "action.yml").read_text()
     assert '"$GITHUB_ACTION_PATH"' in action and "fiduciary-venv" in action
+
+
+def test_the_ci_proxy_in_this_process(tmp_path: Path) -> None:
+    """``ci serve`` run in a thread of this process, as its own process runs it: what the
+    agent's calls get, and what ``finish`` reads after."""
+    import threading
+    import time
+
+    work = tmp_path / "work"
+    check.prepare(work)
+    root = tmp_path / "ci"
+    root.mkdir()
+    given = {
+        "config": str(work / "agent-mcp.json"),
+        "values": {"REPO_TOKEN": check.REPO_TOKEN, "DEPLOY_KEY": check.DEPLOY_KEY},
+        "secrets": ["DEPLOY_KEY", "MISSING"],
+        "sources": [{"what": "the comment", "author": "mallory", "association": "NONE"}],
+        "protected": [".github/workflows"],
+    }
+    stop = threading.Event()
+    thread = threading.Thread(target=ci.serve, args=(root, given), kwargs={"stop": stop})
+    thread.start()
+    try:
+        for _ in range(600):
+            if (root / "ci.json").is_file():
+                break
+            time.sleep(0.1)
+        state = json.loads((root / "ci.json").read_text())
+        assert state["secrets"] == ["DEPLOY_KEY"], "a secret this job was not given is not listed"
+        check.agent(work, root / "mcp.json")
+        time.sleep(1.5)  # a turn of the service between calls
+    finally:
+        stop.set()
+        thread.join(60)
+    found = ci.finish(root, bundles=tmp_path / "bundles")
+    assert found.refused == 3 and found.held == 1 and found.servers[0].verified
+    assert (root / "summary.md").read_text() == found.markdown
+    assert "the comment by @mallory (NONE)" in found.markdown
+    nothing = ci.render(ci.Finished([], [], [], ""))
+    assert "Nothing in the event came from someone the repository does not trust" in nothing
