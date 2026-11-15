@@ -1780,6 +1780,99 @@ class _Proxy:
             self.relay.run_once()  # what a closed turn released, and any retry now due
 
 
+def protected_server(
+    config: Path, upstream: Upstream | HttpUpstream, *, console: str | None = None
+) -> tuple[_Proxy, McpServer, threading.RLock]:
+    """The proxy of one protected deployment and the MCP server in front of it (1.20.0): what
+    :func:`serve` speaks over stdio, and ``fiduciary ci`` over loopback HTTP. The caller runs
+    ``proxy.tick`` between messages, under the lock, and closes the proxy and the upstream.
+
+    :param console: The console's origin, for in-band approvals
+        (:class:`fiduciary.approvals.Approvals`).
+    """
+    from fiduciary.approvals import CONSOLE, Approvals, url_capable
+    from fiduciary.mcp import McpServer
+    from fiduciary.service import raise_triggers
+
+    root = config.resolve().parent
+    proxy = _Proxy(config, upstream)
+    gate = threading.RLock()
+    approvals = Approvals(root, console=console or CONSOLE)
+    if not asked_aside(root):
+        try:
+            proxy.open()
+        except Exception as exc:
+            if not _claimed(exc):
+                raise
+    # With a command holding the deployment, the proxy starts aside (no session yet),
+    # and opens it once that command is done.
+    placeholder: Any = proxy.session
+
+    def serve_approvals() -> None:
+        """A retry's wait: approvals in, warrants executed, without the relay's turn, so the
+        retry makes the released requests itself and reads their answers."""
+        fid = proxy.fid
+        if fid is not None:
+            fid.serve_once()
+            if fid.outbox is not None:
+                raise_triggers(fid)
+
+    class Protected(McpServer):
+        def tool_list(self) -> list[dict[str, Any]]:
+            if proxy.fid is None:
+                return list(proxy.listed)
+            with proxy.fid.lock:
+                proxy.listed = super().tool_list()
+            return list(proxy.listed)
+
+        def _dispatch(
+            self, method: str, params: Mapping[str, Any], *, modern: bool = False
+        ) -> dict[str, Any]:
+            fid, session, guard = proxy.fid, proxy.session, proxy.guard
+            if fid is None or session is None or guard is None:
+                if method == "tools/call":
+                    return {"content": [{"type": "text", "text": NOT_NOW}], "isError": True}
+                return super()._dispatch(method, params, modern=modern)
+            if method == "tools/list" or method == "tools/call" or proxy.upstream.changed:
+                with fid.lock:
+                    guard.check()  # before every call: a definition that moved is withheld
+            if method != "tools/call":
+                return super()._dispatch(method, params, modern=modern)
+            name = params.get("name")
+            arguments = params.get("arguments", {})
+            if not isinstance(name, str) or not isinstance(arguments, dict):
+                return super()._dispatch(method, params, modern=modern)
+            in_band = modern and url_capable(params)
+            if in_band and "requestState" in params:
+                with fid.lock:
+                    return approvals.resume(
+                        fid, proxy.relay, params, name, arguments, serve=serve_approvals
+                    )
+            found = turns.current(root)
+            with fid.lock:
+                session.turn = None if found is None else str(found["turn"])
+                result = session.call(name, arguments)
+                session.turn = None
+            if found is not None and not result.ok:
+                turns.note_refused(root, f"{name} was refused")
+            if in_band and found is None:
+                with fid.lock:
+                    asked = approvals.ask(fid, result, name, arguments)
+                if asked is not None:
+                    return asked
+            return _answer(
+                result, proxy.relay, root, turn=None if found is None else str(found["turn"])
+            )
+
+        def drain(self) -> list[dict[str, Any]]:
+            notes = [{"jsonrpc": "2.0", "method": n} for n in dict.fromkeys(proxy.notes)]
+            proxy.notes.clear()
+            return notes
+
+    proxy.server = Protected(placeholder, lock=gate)
+    return proxy, proxy.server, gate
+
+
 def serve(
     config: Path,
     reader: IO[bytes],
@@ -1788,69 +1881,18 @@ def serve(
     keychain: Store | None = None,
 ) -> None:
     """Serve one client over stdio, in front of the protected server (module docstring)."""
-    from fiduciary.mcp import McpServer, serve_stdio
+    from fiduciary.mcp import serve_stdio
 
     root = config.resolve().parent
     state = json.loads((root / STATE).read_text(encoding="utf-8"))
     upstream = upstream_of(state, keychain)
-    proxy = _Proxy(config, upstream)
-    gate = threading.RLock()
+    proxy: _Proxy | None = None
     try:
-        if not asked_aside(root):
-            try:
-                proxy.open()
-            except Exception as exc:
-                if not _claimed(exc):
-                    raise
-        # With a command holding the deployment, the proxy starts aside (no session yet),
-        # and opens it once that command is done.
-        placeholder: Any = proxy.session
-
-        class Protected(McpServer):
-            def tool_list(self) -> list[dict[str, Any]]:
-                if proxy.fid is None:
-                    return list(proxy.listed)
-                with proxy.fid.lock:
-                    proxy.listed = super().tool_list()
-                return list(proxy.listed)
-
-            def _dispatch(
-                self, method: str, params: Mapping[str, Any], *, modern: bool = False
-            ) -> dict[str, Any]:
-                fid, session, guard = proxy.fid, proxy.session, proxy.guard
-                if fid is None or session is None or guard is None:
-                    if method == "tools/call":
-                        return {"content": [{"type": "text", "text": NOT_NOW}], "isError": True}
-                    return super()._dispatch(method, params, modern=modern)
-                if method == "tools/list" or method == "tools/call" or proxy.upstream.changed:
-                    with fid.lock:
-                        guard.check()  # before every call: a definition that moved is withheld
-                if method != "tools/call":
-                    return super()._dispatch(method, params, modern=modern)
-                name = params.get("name")
-                arguments = params.get("arguments", {})
-                if not isinstance(name, str) or not isinstance(arguments, dict):
-                    return super()._dispatch(method, params, modern=modern)
-                found = turns.current(root)
-                with fid.lock:
-                    session.turn = None if found is None else str(found["turn"])
-                    result = session.call(name, arguments)
-                    session.turn = None
-                if found is not None and not result.ok:
-                    turns.note_refused(root, f"{name} was refused")
-                return _answer(
-                    result, proxy.relay, root, turn=None if found is None else str(found["turn"])
-                )
-
-            def drain(self) -> list[dict[str, Any]]:
-                notes = [{"jsonrpc": "2.0", "method": n} for n in dict.fromkeys(proxy.notes)]
-                proxy.notes.clear()
-                return notes
-
-        proxy.server = Protected(placeholder, lock=gate)
-        serve_stdio(proxy.server, reader, writer, service=proxy.tick, lock=gate)
+        proxy, server, gate = protected_server(config, upstream)
+        serve_stdio(server, reader, writer, service=proxy.tick, lock=gate)
     finally:
-        proxy.close()
+        if proxy is not None:
+            proxy.close()
         upstream.close()
 
 
