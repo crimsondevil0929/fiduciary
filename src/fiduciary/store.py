@@ -393,6 +393,8 @@ class State:
     """Warrants whose one execution record is its intent."""
     warrants_by_action: dict[str, dict[str, None]] = field(default_factory=dict)
     """Each resolution action's warrants, by digest."""
+    undone: dict[int, tuple[str, str, str]] = field(default_factory=dict)
+    """Each ``plan.undone`` record (1.18.0): ``(plan_id, undo_plan_id, mandate_id)`` by seq."""
 
     @classmethod
     def of(cls, records: Sequence[Record | Withheld]) -> State:
@@ -438,6 +440,12 @@ class State:
         # a record simulated by after() has no hash yet
         self.head_hash = record.hash if record.signature is not None else None
         body = record.content
+        if record.kind == "plan.undone":
+            self.undone[record.seq] = (
+                str(body["plan_id"]),
+                str(body["undo_plan_id"]),
+                str(body["mandate_id"]),
+            )
         for table, row in rows_for(record):
             if table == "charters":
                 self.charters.append((row[1], row[2], row[3]))

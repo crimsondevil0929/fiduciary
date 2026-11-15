@@ -6,6 +6,51 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-11-14
+
+A committed plan can be put back: exactly, as a plan of its own, from what its commit kept in
+the system it changed. A turn that does not finish now puts back what its earlier calls changed,
+and an auditor checks every undo offline (V14). Requires interlock-escrow 1.10.0.
+
+### Added
+
+- **`fiduciary undo PLAN`**, and **Undo** beside each committed receipt in the console: an
+  `undo` ticket whose option puts the plan back (Interlock's `EscrowEngine.undo`), compensates
+  its delivered requests and cancels those not sent yet. Approved at the mandate's `compensate`
+  quorum; in a solo deployment, `fiduciary undo` approves it as the owner (key file or passkey)
+  and the plan is put back at once. A request sent with nothing to undo it is named, and stops
+  the undo, unless `--partial`.
+- **A turn that does not finish puts its plans back.** `with gov.turn():` and Claude Code's
+  turns: when a call is refused or the turn ends in an exception, its committed plans are
+  undone, latest first, each only as exactly its inverse. Each writes a `plan.undone` record;
+  the `turn.closed` record lists what was put back and what could not be (a row someone changed
+  since stays as it is, and is named).
+- **V14 (undo)**, in `verify-bundle` and in the browser: every `plan.undone` record's change
+  digests are the ones its plan's and its undo's commits named in the escrow chain, and the
+  undo's are exactly the plan's with before and after swapped; every plan that committed as an
+  undo is explained. Golden bundles `valid-turn-undone` and `v14-undo-digests-forged`.
+- `fiduciary init` writes `[undo] days = 7` into `interlock.toml` for a deployment on a
+  database, a directory, a repository or an API.
+- Documents: the `plan.undone` record (F7-18); the `undo` resolution (`plan_id`, `changes`,
+  and `messages`, `cancels`, `late` when used); undo evidence `changes`, `pending`, `cannot`;
+  `turn.closed` `undone` and `kept`. Each written only when used: every document written before
+  keeps its bytes and its digest.
+
+### Fixed
+
+- A command that changed protected servers twice in a row (the console registering the owner's
+  passkey drafts, then registers) could open a deployment in the moment its proxy, released by
+  the first step, opened it again, and fail with `ConcurrentGovernorError`. A protected
+  deployment is now asked to step aside for the whole of each command, held or not.
+
+### Limits
+
+- An undo puts back what Interlock measured: a deleted row comes back with the columns a table's
+  spec observes; a table trigger that writes on every change (an audit table) makes the undo
+  inexact, and it is refused. A record an API plan created is not deleted.
+- A protected MCP server's writes are requests: a turn's are cancelled, as in 1.17.0; there is
+  nothing of its own to put back.
+
 ## [1.17.0] - Unreleased
 
 Three things a person running agents on their own machine was missing: protection for the MCP

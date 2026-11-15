@@ -336,6 +336,35 @@
     "witness": null
   },
   {
+    "about": "an undo record whose digests are each other's inverse, but not what the commits named",
+    "charter": "40c78477e52bffe6dca34287a2693a7e76fbdf721cc71de414fbb816097107d9",
+    "checks": [
+      "V14"
+    ],
+    "exit_code": 6,
+    "file": "v14-undo-digests-forged.fidb",
+    "findings": [
+      "V14 undo: record 8: the plan plan-3002adb17fea's change digests are not the ones its commit names",
+      "V14 undo: record 8: the undo 4d61a17b-456f-4535-855f-555c61074e72's change digests are not the ones its commit names"
+    ],
+    "keys": {
+      "ledger": "ed25519:1531a753c5e410f17950b22a32e682466c50e9f2d064f40768a003c42b05bd4d",
+      "operators": {
+        "break-glass": "ed25519:936720f333968133052ebb4adf5d4becce23ead551a9a296cf071502bad0ef73",
+        "fiduciary": "ed25519:2734e97769b3abb12b7fe94fc11d0e97a9badc3ef9efb715d87435ffd921d2e3"
+      },
+      "receipts": [
+        "ed25519:3c9e0b779a7d3ad5f96c30cbadfdb7c2bc2f279174c510e477a58d8c360748bc"
+      ],
+      "runtime": "ed25519:2734e97769b3abb12b7fe94fc11d0e97a9badc3ef9efb715d87435ffd921d2e3",
+      "service": "ed25519:2734e97769b3abb12b7fe94fc11d0e97a9badc3ef9efb715d87435ffd921d2e3"
+    },
+    "name": "v14-undo-digests-forged",
+    "sha256": "84307e3dd670a820e90c9e095854ee168afb3d8afcaf9dbf621249d42fe99de8",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
     "about": "a charter digest the bundle does not hold",
     "charter": "0000000000000000000000000000000000000000000000000000000000000000",
     "checks": [
@@ -1206,6 +1235,30 @@
     },
     "name": "valid-sealed-child",
     "sha256": "fe13be834f702681dd6d93499771bbc416c6cbec2f3ed29ce29ccd38936cb0c7",
+    "skew_seconds": 5,
+    "witness": null
+  },
+  {
+    "about": "a turn's two committed plans, undone exactly when its next call was refused",
+    "charter": "ae795d9820438703da3ef4dde13d6c482558f8d147547a2577d24d616cd56a65",
+    "checks": [],
+    "exit_code": 0,
+    "file": "valid-turn-undone.fidb",
+    "findings": [],
+    "keys": {
+      "ledger": "ed25519:90990233de3c429b364327b88b0eb9ae18067ff7145722383391b12a41f4eb91",
+      "operators": {
+        "break-glass": "ed25519:188a27b06c4ef44d97b45d5f454a3f86ed5c23054cf2965921a8644e3c4b3011",
+        "fiduciary": "ed25519:5c7fb9964d1251a4c20e0cb022e8c4800f93aaabe546369ce3834dd08d8f993a"
+      },
+      "receipts": [
+        "ed25519:21d3cf319ef7113a9e59e86d40fb5a304b9753591e1a9da69b1c49890cccb22c"
+      ],
+      "runtime": "ed25519:5c7fb9964d1251a4c20e0cb022e8c4800f93aaabe546369ce3834dd08d8f993a",
+      "service": "ed25519:5c7fb9964d1251a4c20e0cb022e8c4800f93aaabe546369ce3834dd08d8f993a"
+    },
+    "name": "valid-turn-undone",
+    "sha256": "628ce1100b53b5989e7ff7d7404e211953aff45be66bf9bce548c9aaf887b0da",
     "skew_seconds": 5,
     "witness": null
   }

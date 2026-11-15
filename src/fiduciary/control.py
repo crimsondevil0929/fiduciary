@@ -16,7 +16,7 @@ It does three things:
   ``accept_approvals``. The deployment's own writer (``fiduciary serve``)
   records it, forms the warrant at quorum and releases at the heads it pins.
 - **The bundle verifier.** Any ``.fidb`` (``fidb/1``, or sealed ``fidb/2``),
-  verified in process, offline, V1 to V13, against a charter digest and keys
+  verified in process, offline, V1 to V14, against a charter digest and keys
   pinned from outside the bundle, with the nine control-framework mappings.
 
 What it never does: hold a principal's key, write a deployment's log, or serve
@@ -477,7 +477,16 @@ class Deployment:
                     }
                 )
             receipts = [receipt_view(r) for r in self.receipts().recent(25)]
+            plans = self.plans_by_receipt()
+            for row in receipts:
+                if row.get("receipt_id") in plans:
+                    row["plan_id"] = plans[row["receipt_id"]]
         return {"deployment": self.ident, "mandates": mandates, "receipts": receipts}
+
+    def plans_by_receipt(self) -> dict[str, str]:
+        """Each committed plan's id, by the receipt its ``COMMITTED`` record names (1.18.0):
+        what the desk's Undo asks for."""
+        return {}
 
     def tickets(self) -> list[dict[str, Any]]:
         """Every ticket, newest first, open ones before the rest."""
@@ -980,6 +989,64 @@ class ConfiguredDeployment(Deployment):
             "retired": None if done.retired is None else str(done.retired),
         }
 
+    def plans_by_receipt(self) -> dict[str, str]:
+        """Each committed plan's id, by the receipt its ``COMMITTED`` record names, from
+        the lineages' escrow chains (1.18.0)."""
+        import re as _re
+
+        from interlock.chain import EscrowChain, RecordType
+        from interlock.exceptions import InterlockError
+
+        chains = self.config.chains
+        found: dict[str, str] = {}
+        if chains is None or not Path(chains).is_dir():
+            return found
+        for path in sorted(Path(chains).glob("*.chain")):
+            try:
+                chain = EscrowChain.load(path)
+            except (OSError, ValueError, InterlockError) as exc:
+                _log.warning("console: %s does not load, so it names no plan: %s", path, exc)
+                continue
+            for record in chain.records():
+                named = _re.search(r"; receipt ([0-9a-f-]{36})", record.note)
+                if record.record_type is RecordType.COMMITTED and named is not None:
+                    found[named[1]] = str(record.plan_id)
+        return found
+
+    def undo(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Ask to undo a committed plan (1.18.0): an ``undo`` ticket, which the principals
+        then approve on this desk, as any ticket. What it would put back, compensate and
+        cancel, and what it cannot undo, is said first."""
+        from fiduciary import protect, undo
+        from fiduciary.bridge import Fiduciary
+
+        if not self.accepts:
+            raise ControlError(
+                403, f"{self.name} is read-only here: start the console with --accept-approvals"
+            )
+        plan_id = _text(payload, "plan_id")
+        root = self.config_path.parent
+        aside = (
+            protect.held([root]) if (root / protect.STATE).is_file() else contextlib.nullcontext()
+        )
+        with self.lock, aside:
+            fid = Fiduciary.from_config(self.config_path)
+            try:
+                plan = undo.find(fid, plan_id)
+                ticket = undo.ask(fid, plan, partial=payload.get("partial") is True)
+            except FiduciaryError as exc:
+                raise ControlError(422, str(exc)) from exc
+            finally:
+                fid.close()
+        return {
+            "ticket_id": ticket.ticket_id,
+            "plan_id": plan.plan_id,
+            "changes": plan.changes,
+            "compensate": plan.compensate,
+            "cancel": plan.cancel,
+            "cannot": [{"id": m, "effect": e} for m, e in plan.cannot],
+        }
+
     def describe(self) -> dict[str, str]:
         from fiduciary.config import is_dsn
 
@@ -1096,7 +1163,7 @@ def discover(root: Path) -> list[Path]:
 
 
 def verify(data: bytes, pins: Pins) -> dict[str, Any]:
-    """V1 to V13 over ``data``, offline, and its attestation (``verify-bundle --json``)."""
+    """V1 to V14 over ``data``, offline, and its attestation (``verify-bundle --json``)."""
     from fiduciary.attest import attest
     from fiduciary.bundle import BundleError, TrustedKeys, verify_bundle
 
@@ -1554,6 +1621,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
                 return deployment.sign_draft(payload)
             if action == "":
                 return deployment.accept(payload)
+        if len(parts) == 3 and parts[0] == "deployments" and parts[2] == "undo":
+            deployment = console.deployment(parts[1])
+            if not isinstance(deployment, ConfiguredDeployment):
+                raise ControlError(409, "an undo is asked of a deployment its config names")
+            return deployment.undo(payload)
         if len(parts) >= 3 and parts[0] == "deployments" and parts[2] == "passkeys":
             deployment = console.deployment(parts[1])
             if not isinstance(deployment, ConfiguredDeployment):

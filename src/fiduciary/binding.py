@@ -36,6 +36,7 @@ from interlock.engine import EscrowEngine, OpenStage, StageResult
 from interlock.exceptions import CompensatedError
 from interlock.sensors import Sensor
 from interlock.types import EffectPlan
+from interlock.undo import Kept
 
 from fiduciary import fidu1
 from fiduciary.authority import Authority, Decide
@@ -190,6 +191,45 @@ class MandateEngine:
                 self._staging -= 1
                 if self._closed and not self._staging:
                     self._chain.close()  # closed during this plan: it has finished now
+
+    def kept(self, plan_id: str) -> Kept | None:
+        """What committed plan ``plan_id``'s commit kept to undo it, while it is kept
+        (1.18.0); ``None`` when its substrate keeps no undo, or nothing of it."""
+        found = getattr(self._substrate, "kept", None)
+        if found is None or not getattr(self._substrate, "keeps_undo", False):
+            return None
+        kept: Kept | None = found(plan_id)
+        return kept
+
+    def undo(self, plan_id: str, *, turn: str | None = None) -> StageResult:
+        """Undo committed plan ``plan_id`` of this lineage (1.18.0): Interlock's inverse of
+        it, from what its commit kept, judged by the version bound now, committed only as
+        exactly that inverse, and then without the size bounds (``EscrowEngine.undo``).
+
+        :raises BindingError: When the lineage no longer governs, or is outside its term.
+        :raises UndoError: When nothing is kept to undo the plan with.
+        """
+        with self._lock:
+            if self._closed:
+                raise BindingError(f"mandate {self._mandate.mandate_id} is no longer bound")
+            now = self._clock()
+            if not self._mandate.not_before <= now < self._mandate.not_after:
+                raise BindingError(
+                    f"mandate {self._mandate.mandate_id} version {self._mandate.version} is "
+                    f"outside its term at {fidu1.format_instant(now)}"
+                )
+            self._staging += 1
+            try:
+                result = self._engine.undo(
+                    plan_id, scope_id=self._compiled.subject, intent=f"undo {plan_id}", turn=turn
+                )
+                for observer in self._observers:
+                    observer(result)
+                return result
+            finally:
+                self._staging -= 1
+                if self._closed and not self._staging:
+                    self._chain.close()
 
     def stage(
         self,

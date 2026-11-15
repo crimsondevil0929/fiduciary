@@ -1003,7 +1003,8 @@ Fiduciary's own acts are records in a hash-chained, signed log. It is built as I
 | `session.opened`, `session.closed` | a bridge session: its mandate version, tenant, trajectory and billing scope; at its close, every scope it billed, in order |
 | `session.refused` | a call the session refused before anything was built or metered: the refusal's code, and the tool only when a version the session runs pins it, or it is a built-in |
 | `session.labeled` | *(added in 1.16.0)* a call whose result brought a provenance label the session did not hold: the session, its lineage, the tool (or the SDK's source), the labels it brought, and every label the session holds after |
-| `turn.closed` | *(added in 1.17.0)* an agent turn of the lineage ended, holding requests: the turn, the lineage, `released` (every plan of the turn committed) or `cancelled` (one did not, or the turn ended in an exception), the requests it held, and why. The operator intent that releases or cancels them cites it (F7-17, V7) |
+| `turn.closed` | *(added in 1.17.0)* an agent turn of the lineage ended, holding requests: the turn, the lineage, `released` (every plan of the turn committed) or `cancelled` (one did not, or the turn ended in an exception), the requests it held, and why. The operator intent that releases or cancels them cites it (F7-17, V7). *(Amended in 1.18.0:* a cancelled turn first undoes its committed plans, latest first, each by a `plan.undone`; the record then lists, only when there are any, `undone` (each plan, the plan that undid it, and its `plan.undone` record) and `kept` (each plan that could not be put back, and why), and `messages` may be empty when one of the two is not.) |
+| `plan.undone` | *(added in 1.18.0)* a committed plan of the lineage put back exactly: the plan, the plan that undid it, both plans' change digests (Interlock's `(kind, id, before, after)`, sorted; the undo's are the plan's with before and after swapped, F7-18), and why: the turn that did not finish, or the warrant that ordered it (`FIDU1 warrant <digest>`). V14 holds both lists to the digests the escrow chain's `COMMITTED` records name |
 
 - **F4-26.** Hashing and anchoring follow ILOK1:
   - A record's hash is the SHA-256 of the canonical bytes of the whole signed record.
@@ -1456,7 +1457,7 @@ The surface consumed:
 | `refused` | a session's plan is refused, and `EscrowEngine.repair` returns a proposal | `StageResult`, `Repair` | the refused receipt's id and digest; `blocked_by`; the proposal's plan hash; `kept` and `dropped`, with ids and causes; `exhaustive`; `trials` | `accept_repair`, `reject` |
 | `held` | a message of the lineage is `held`: its scope was halted when a relay came to deliver it | `deliveries.operations(...).held(scope)` and `heads`; `governor.halted_by`; `interlock.recovery.breaker_reason` and `spent_out` | each message's id, head, sink, operation and payload hash; the halting scope, its reason, and whether that reason is `spent_out` | `release` (with `reset` first when the halt is spent out), `cancel` |
 | `dead` | a message of the lineage is dead | the outbox's `snapshot` | the message's id, head and attempts, and the class of its last outcome | `requeue`, `cancel` |
-| `undo` | the agent asks to undo a committed plan (`fiduciary_request`), or a principal opens one | `compensables(plan_id)` | the plan id; each delivered original's id, head, deadline and compensation operation; whether any of them is late | `compensate`, `compensate_late`, `reject` |
+| `undo` | the agent asks to undo a committed plan (`fiduciary_request`), or a principal opens one (`fiduciary undo`, the console's Undo, 1.18.0) | `compensables(plan_id)`, and what the plan's commit kept (1.18.0) | the plan id; each delivered original's id, head, deadline and compensation operation; whether any of them is late. *(Amended in 1.18.0:* when the plan's commit kept what undoes it, `changes` (the hash its change digests have, and how many), `pending` (its requests not sent yet), and, for an undo asked in part, `cannot` (each request sent with no compensation, and its effect); `messages` may then be empty.) | `undo` (1.18.0, when `changes` is present), `compensate`, `compensate_late`, `reject` |
 | `extension` | `BudgetGuard.authorize` returns an `ExtensionRequest`, directly or through `RecoveryRuntime.hold` or `RecoveryExhaustedError` | the quote, and its ILOK1 `extension.quoted` record | the quote's id and record hash; `needed`, `requested`, the spend, the estimate method, and `expires_at`; the receipt-log checkpoint its proof of work names | `grant`, `decline` |
 | `amend` | the agent asks for a bound it lacks (`fiduciary_request`), or a principal proposes a version | the proposed mandate | its digest; `refines(proposed, current)` read both ways, as the diff a principal reviews | `amend`, `reject` |
 | `provenance` *(1.16.0)* | a session's plan is refused by `provenance_gate` alone, under `provenance.on: "hold"` (F4-12e) | `StageResult`; the session's `session.labeled` records | the refused receipt's id and digest; the session; the labels it held; the seqs of the records that brought them; the rules broken; the proposal's plan hash: the same plan, with a new id and the label `cleared` | `accept_repair`, `reject` |
@@ -1632,11 +1633,21 @@ resolution. It runs in two phases, as interlock's operators act:
 | `cancel` | `Operator.cancel(id, reason="FIDU1 warrant <digest>")` | ILOK1, as for `release` |
 | `requeue` | `Operator.requeue(id, reason="FIDU1 warrant <digest>")` | ILOK1 |
 | `compensate`, `compensate_late` | `Operator.compensate(ids, plan_id=, late=, reason="FIDU1 warrant <digest>", registry=compiled sinks)` | ILOK1. The settler credits the compensation under that authority. |
+| `undo` *(1.18.0)* | first `MandateEngine.undo(plan_id)`, only when what the commit kept still has the change digests whose hash the resolution names; then each `compensate` step, then each `cancel` | The `plan.undone` record (`why` = `FIDU1 warrant <digest>`), and the undo's `COMMITTED` record in the escrow chain; then ILOK1, as for `compensate` and `cancel` |
 | `grant` | `BudgetGuard.grant(quote, approved_by="FIDU1 warrant <digest>", amount=)` | The AgentGov `fund` or `delegate` memo (`extension … approved by FIDU1 warrant <digest>`), and the ILOK1 `extension.granted` record |
 | `decline` | `BudgetGuard.decline(quote, declined_by="FIDU1 warrant <digest>", reason=)` | ILOK1 `extension.declined` |
 | `amend` | `mandate.issued` for the approved version, rebound at the next plan boundary | The FIDU1 log |
 | `reject` | recorded only | The FIDU1 log |
 
+- **F7-18.** *Added in 1.18.0.* An undo is Interlock's (`EscrowEngine.undo`, ESCROW_SPEC
+  §4.11): the plan's inverse, built from what its commit kept in the system it changed, staged
+  and judged by the version bound now, committed only as exactly that inverse, and then not
+  held to the size bounds. Fiduciary undoes a plan in two ways only: a turn that did not
+  finish undoes its own committed plans, latest first (`turns.close`); and an `undo` warrant
+  undoes the plan its ticket names, the hash of the kept change digests binding the warrant
+  to exactly what is put back. A request a relay delivered with no compensation cannot be
+  undone: the ticket is refused while one exists, unless the undo is asked in part
+  (`fiduciary undo --partial`), and its evidence then names each.
 - **F7-16.** `Operator` is opened for one execution, and closed after it. The operator log
   has one writer at a time, and interlock's vacuum and human operators open it too. A claim
   held elsewhere delays the step and fails nothing.
@@ -2026,6 +2037,7 @@ verified under `keys.json`'s key, and the report says it is the exporter's state
 | V11 revocation | no receipt of the lineage commits, and no delivery is made, after its revocation's trip sequence. Plans in flight at the trip, by `STAGE_OPENED` order, must show no commit. | `revocation` | 9 |
 | V12 ordering | every instant the service wrote agrees with the ledger order of its anchor, within the configured skew | `time` | 9 |
 | V13 provenance *(1.16.0)* | every committed plan whose session had read what its version's `provenance` rules name either satisfies them, or ran as the plan a `provenance` warrant approved after the last label entered the session (see below) | `provenance` | 6 |
+| V14 undo *(1.18.0)* | each `plan.undone` record's two lists of change digests are the ones its plan's and its undo's `COMMITTED` records name (`; changes <sha256>`), the undo's admission says `undo of <plan>`, and the undo's digests are the plan's with before and after swapped; every plan that committed as an undo has its record | `undo` | 6 |
 
 For V7, an act is explained when it traces to one of:
 
@@ -2038,7 +2050,12 @@ For V7, an act is explained when it traces to one of:
   `tools.statements` is `"any"` (F4-11), listed in a note;
 - *(added in 1.15.0)* a coding session's promotion (interlock 1.7.0, `interlock promote
   <session>` on the escrow chain), under a version whose `tools.statements` is `"any"`,
-  listed in a note with the session's name (F4-12d).
+  listed in a note with the session's name (F4-12d);
+- *(added in 1.18.0)* an undo (`undo of <plan>` on the escrow chain), which V14 holds to its
+  `plan.undone` record.
+
+For V8 *(amended in 1.18.0)*, an `undo` step's evidence is the undo's `COMMITTED` record in
+the escrow chain and a `plan.undone` record whose `why` names the warrant.
 
 The other exit codes:
 
@@ -2059,7 +2076,7 @@ sink. The note says how many committed plans were made after a labeled read, and
 of those ran as approved.
 
 A failing run prints every check, not only the first that fails. It exits with the code of
-the first failing check in the order V1 to V13.
+the first failing check in the order V1 to V14.
 
 - **F9-4. Reports.** `--json` prints, in place of the text, an attestation
   (`fiduciary-attestation/1`, `fiduciary.attest`): the verdict, exit code and every
@@ -2450,7 +2467,7 @@ demo --serve`, a scratch deployment of each demo industry (`fiduciary.control`,
   chunked one; serves only its page, bundles, reports and public pins (`pinned-keys.json`,
   `charter.digest`, `attestation.json`), never keys, configurations or databases; and
   answers a failure without its cause.
-- **F10-23. The verifier.** A bundle is verified in process, offline, V1 to V13 (§9.3),
+- **F10-23. The verifier.** A bundle is verified in process, offline, V1 to V14 (§9.3),
   against a charter digest pinned from outside it: a deployment's configured digest and
   its `pinned-keys.json`, or a digest, keys and a witness given with the request; never
   the bundle's own. The page also checks, with the browser's Web Crypto alone, what it can
@@ -2991,6 +3008,8 @@ SQLite and on PostgreSQL. The test kinds:
 | F8-7b: MCP 2026-07-28 and older revisions | 1 | modern and legacy clients and servers | Implemented. `test_protect.py`, interlock `test_wave15.py` |
 | F8-7c: one owner per protect root; accepting in place; a running proxy steps aside | 1 | three servers, one touch to register, two to accept two servers; a proxy that runs throughout; the console | Implemented. `test_owner.py` |
 | F7-17, V7 (1.17.0): a turn's release and cancel, held to its `turn.closed` record | 1 | a released and a cancelled turn, then the bundle verified | Implemented. `test_turns.py` |
+| F7-18, `plan.undone` (1.18.0): a turn's committed plans undone; an `undo` warrant | 1 | a refused call in a turn, a row changed since, `fiduciary undo`, the console's Undo | Implemented. `test_undo.py` |
+| V14 (1.18.0): every undo, exactly the inverse its commits name | 1 | `valid-turn-undone`, `v14-undo-digests-forged`, in Python and in the browser | Implemented. `test_undo.py`, `test_bundle_vectors.py`, `test_browser_verifier.py` |
 | F3-9: ILOK1 sizes under KMS | 3 | executor guard test, both ways; chunking test; the measured table, regenerated by script; with U-2, an operator record of any size through KMS | Implemented where U-2 is installed; else the refusal. `test_executor.py`, `test_ilok1_sizes.py` |
 | F4-1 to F4-6: the charter | 1 | golden; property: adoption and suspension quorums | Implemented. `test_authority.py`, `test_vectors.py` |
 | F4-7 to F4-12: the mandate schema | 1 | golden; strict parsing | Implemented. `test_documents.py`, `test_vectors.py` |

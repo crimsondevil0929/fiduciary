@@ -80,7 +80,7 @@ ACTIONS_BY_CLASS: Final[Mapping[str, tuple[str, ...]]] = {
     "refused": ("accept_repair", "reject"),
     "held": ("release", "reset", "cancel"),
     "dead": ("requeue", "cancel"),
-    "undo": ("compensate", "compensate_late", "reject"),
+    "undo": ("undo", "compensate", "compensate_late", "reject"),
     "extension": ("grant", "decline"),
     "amend": ("amend", "reject"),
     "provenance": ("accept_repair", "reject"),
@@ -100,6 +100,7 @@ RESOLUTION_ACTIONS: Final = (
     "release",
     "requeue",
     "reset",
+    "undo",
 )
 
 AUTO_ACTIONS: Final = (
@@ -452,22 +453,60 @@ class UndoMessage:
 
 @dataclass(frozen=True, slots=True)
 class UndoEvidence:
-    """Evidence for an ``undo`` ticket: delivered originals that carry compensations."""
+    """Evidence for an ``undo`` ticket: delivered originals that carry compensations; and,
+    since 1.18.0, what the plan's commit kept to undo what it changed (``changes``: the hash
+    its ``COMMITTED`` record names its change digests by, and how many), the requests it
+    enqueued that are not sent yet (``pending``, cancelled by the undo), and, for an undo
+    asked for in part, those sent with nothing to undo them (``cannot``). Each written only
+    when there are any, so a ticket raised before keeps its bytes."""
 
     plan_id: str
     messages: tuple[UndoMessage, ...]
     late: bool
+    changes: tuple[str, int] | None = None
+    pending: tuple[MessageTarget, ...] = ()
+    cannot: tuple[tuple[str, str], ...] = ()
+    """``(message id, effect id)``: sent, and no compensation undoes it."""
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "plan_id": self.plan_id,
             "messages": [m.to_json() for m in self.messages],
             "late": self.late,
         }
+        if self.changes is not None:
+            out["changes"] = {"hash": self.changes[0], "count": self.changes[1]}
+        if self.pending:
+            out["pending"] = [m.to_json() for m in self.pending]
+        if self.cannot:
+            out["cannot"] = [{"id": i, "effect": e} for i, e in self.cannot]
+        return out
 
     @classmethod
     def read(cls, raw: object, path: str) -> UndoEvidence:
-        fields = Fields(raw, path, ("plan_id", "messages", "late"))
+        fields = Fields(
+            raw, path, ("plan_id", "messages", "late"), optional=("changes", "pending", "cannot")
+        )
+        changes = None
+        if fields.has("changes"):
+            kept = Fields(fields.raw("changes"), fields.path("changes"), ("hash", "count"))
+            changes = (kept.hash("hash"), kept.integer("count", 1))
+        pending = (
+            tuple(MessageTarget.read(item, p) for p, item in fields.array("pending"))
+            if fields.has("pending")
+            else ()
+        )
+        cannot = (
+            tuple(
+                (
+                    (entry := Fields(item, p, ("id", "effect"))).uuid("id"),
+                    entry.text("effect", fidu1.TEXT, "an effect id"),
+                )
+                for p, item in fields.array("cannot")
+            )
+            if fields.has("cannot")
+            else ()
+        )
         items = []
         for item_path, item in fields.array("messages"):
             entry = Fields(item, item_path, ("id", "head", "not_after", "operation"))
@@ -479,13 +518,18 @@ class UndoEvidence:
                     operation=entry.text("operation", OPERATION, "an operation"),
                 )
             )
-        if not items:
+        if not items and changes is None:
             raise MalformedError("range", fields.path("messages"), "names at least one message")
-        messages = sorted_by(items, lambda m: (m.message_id,), fields.path("messages"))
+        messages = (
+            sorted_by(items, lambda m: (m.message_id,), fields.path("messages")) if items else ()
+        )
         return cls(
             plan_id=fields.text("plan_id", fidu1.TEXT, "a plan id"),
             messages=messages,
             late=fields.boolean("late"),
+            changes=changes,
+            pending=pending,
+            cannot=cannot,
         )
 
 
@@ -718,6 +762,10 @@ class Resolution:
     - ``reject``: ``{"action": "reject", "proposal": "<hash>"}`` or
       ``{"action": "reject", "plan_id": "<id>"}`` or
       ``{"action": "reject", "mandate": "<digest>"}``
+    - ``undo`` (1.18.0): ``{"action": "undo", "plan_id": "<id>", "changes": "<hash>"}``, and,
+      when there are any, ``messages`` to compensate (``late`` when one is past its window)
+      and ``cancels``: the plan put back from what its commit kept, the hash naming exactly
+      that, with its requests compensated or cancelled
     """
 
     action: str
@@ -729,8 +777,25 @@ class Resolution:
     messages: tuple[MessageTarget, ...] = ()
     reset: str | None = None
     scope: str | None = None
+    changes: str | None = None
+    cancels: tuple[MessageTarget, ...] = ()
+    late: bool = False
 
     def to_json(self) -> dict[str, Any]:
+        if self.action == "undo":
+            assert self.plan_id is not None and self.changes is not None
+            out: dict[str, Any] = {
+                "action": "undo",
+                "plan_id": self.plan_id,
+                "changes": self.changes,
+            }
+            if self.messages:
+                out["messages"] = [m.to_json() for m in self.messages]
+            if self.cancels:
+                out["cancels"] = [m.to_json() for m in self.cancels]
+            if self.late:
+                out["late"] = True
+            return out
         if self.action == "grant":
             assert self.quote is not None and self.amount is not None
             return {"action": "grant", "quote": self.quote, "amount": _money(self.amount)}
@@ -829,6 +894,24 @@ class Resolution:
         if action in ("cancel", "requeue"):
             fields = Fields(raw, path, ("action", "messages"))
             return cls(action=action, messages=_read_targets(fields))
+        if action == "undo":
+            fields = Fields(
+                raw,
+                path,
+                ("action", "plan_id", "changes"),
+                optional=("messages", "cancels", "late"),
+            )
+            late = fields.boolean("late") if fields.has("late") else False
+            if fields.has("late") and not late:
+                raise MalformedError("range", fields.path("late"), "is written only when true")
+            return cls(
+                action="undo",
+                plan_id=fields.text("plan_id", fidu1.TEXT, "a plan id"),
+                changes=fields.hash("changes"),
+                messages=_read_targets(fields) if fields.has("messages") else (),
+                cancels=_read_targets(fields, "cancels") if fields.has("cancels") else (),
+                late=late,
+            )
         if action in ("compensate", "compensate_late"):
             fields = Fields(raw, path, ("action", "plan_id", "messages"))
             return cls(
@@ -847,11 +930,11 @@ class Resolution:
         return cls(action="reject", mandate=fields.hash("mandate"))
 
 
-def _read_targets(fields: Fields) -> tuple[MessageTarget, ...]:
-    items = [MessageTarget.read(item, p) for p, item in fields.array("messages")]
+def _read_targets(fields: Fields, name: str = "messages") -> tuple[MessageTarget, ...]:
+    items = [MessageTarget.read(item, p) for p, item in fields.array(name)]
     if not items:
-        raise MalformedError("range", fields.path("messages"), "names at least one message")
-    return sorted_by(items, lambda m: (m.message_id,), fields.path("messages"))
+        raise MalformedError("range", fields.path(name), "names at least one message")
+    return sorted_by(items, lambda m: (m.message_id,), fields.path(name))
 
 
 @dataclass(frozen=True, slots=True)
@@ -1088,6 +1171,8 @@ def resolution_quorum(mandate: Mandate, evidence: Evidence, resolution: Resoluti
         return max(roster.quorum("release"), roster.quorum(halt_class))
     if action == "reset":
         return roster.quorum(halt_class)
+    if action == "undo":  # 1.18.0: as a compensation of the plan's requests is
+        return roster.quorum("compensate_late" if resolution.late else "compensate")
     return roster.quorum(action)
 
 

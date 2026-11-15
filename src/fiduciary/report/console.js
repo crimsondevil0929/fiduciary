@@ -205,7 +205,7 @@
   // -- the verdict ---------------------------------------------------------------------------
   function statusLine(a) {
     var v = a.verdict;
-    if (v.passed) return "All thirteen checks pass. Every action on this lineage traces back to a signed mandate or warrant, and every record verifies against keys the auditor pinned outside the bundle.";
+    if (v.passed) return "All fourteen checks pass. Every action on this lineage traces back to a signed mandate or warrant, and every record verifies against keys the auditor pinned outside the bundle.";
     var first = a.checks.filter(function (c) { return c.status === "fail"; });
     var n = first.reduce(function (t, c) { return t + c.findings.length; }, 0);
     var ids = first.map(function (c) { return c.id; }).join(", ");
@@ -1217,8 +1217,8 @@
       ["01", "Stage", "The tool call becomes a plan and runs where nothing is final yet: a SQL transaction, a Git worktree, a private copy of a directory, a Kubernetes dry run, or a prediction for an API."],
       ["02", "Measure", "The stage records what the change actually did, including whatever triggers, hooks, renderers and admission webhooks did on top: every row, file, object or record."],
       ["03", "Check", "The measured change is compared with the mandate: which tables, files, objects or records it touched and how many, whose data it reached, how far any guarded value moved, the rate windows and budgets, and what the agent had read before it asked.", "held for 2 of 3", "Anything outside the mandate can still go ahead if a quorum of named principals signs a warrant for that exact change."],
-      ["04", "Commit or undo", "A change that passes commits once, on the exact version that was measured. A change that fails never commits. If an API changes more than predicted, the write is undone."],
-      ["05", "Prove", "Every decision is a signed record. An auditor runs all thirteen checks (V1 to V13) on an exported bundle, offline, with public keys you gave them separately. They need no access to your systems."]
+      ["04", "Commit or undo", "A change that passes commits once, on the exact version that was measured. A change that fails never commits. If an API changes more than predicted, the write is undone. A committed plan can be put back later, exactly as it was."],
+      ["05", "Prove", "Every decision is a signed record. An auditor runs all fourteen checks (V1 to V14) on an exported bundle, offline, with public keys you gave them separately. They need no access to your systems."]
     ];
     var pipe = h("div", { class: "pipe" }, steps.map(function (st, i) {
       return h("div", { class: "pipe-step" + (i === 4 ? " end" : "") }, h("span", { class: "n" }, st[0]), h("b", null, st[1]), h("p", null, st[2]),
@@ -1668,7 +1668,7 @@
     });
     var json = JSON.stringify(a, null, 2);
     return h("div", null,
-      h("div", { class: "card pad" }, h("h3", null, "The thirteen offline checks, and the controls they support"),
+      h("div", { class: "card pad" }, h("h3", null, "The fourteen offline checks, and the controls they support"),
         h("p", { class: "small ink2", style: "margin:4px 0 12px" }, "What each check proves, and which framework controls its evidence supports. Select a control to highlight the checks that cover it. " + (a.mappings ? a.mappings.disclaimer : "This mapping supports an assessment; it is not a certification.")),
         picker, coverage,
         h("div", { class: "tablewrap" }, h("table", { class: "matrix" },
@@ -1716,7 +1716,7 @@
   // checks a dropped bundle's bytes in this browser, and says what needs the console. It
   // only asks the console anything when the console served it (ROOT.served).
   var LIVE = { on: false, status: null, error: null };
-  var CHECKS = [["V1", "schema"], ["V2", "charter"], ["V3", "lineage"], ["V4", "compiled policy"], ["V5", "receipts"], ["V6", "ledger"], ["V7", "completeness"], ["V8", "warrants"], ["V9", "records"], ["V10", "anchors"], ["V11", "revocation"], ["V12", "ordering"], ["V13", "provenance"]];
+  var CHECKS = [["V1", "schema"], ["V2", "charter"], ["V3", "lineage"], ["V4", "compiled policy"], ["V5", "receipts"], ["V6", "ledger"], ["V7", "completeness"], ["V8", "warrants"], ["V9", "records"], ["V10", "anchors"], ["V11", "revocation"], ["V12", "ordering"], ["V13", "provenance"], ["V14", "undo"]];
   var RUNG_NAMES = { T: "transactional", P: "plan-bound", V: "predicted", R: "request-only" };
   var RUNS = PAGES.filter(function (pg) { return pg.primary && pg.attestations && pg.attestations[pg.primary]; });
   var DESK_ROUTE = { dep: null, tid: null };
@@ -1966,14 +1966,24 @@
           ["Tables", m.tables && Object.keys(m.tables).length ? Object.keys(m.tables).map(function (k) { return k + " (" + m.tables[k].join(", ") + ")"; }).join(" · ") : "none: its tools write no rows"]]),
         h("h3", { style: "margin-top:14px" }, "Tools it may call"), tools.length ? table(["Tool", "Governed", "Requests", "Price", "Binding"], tools) : h("p", { class: "small muted" }, "No tool: the agent can call nothing yet."));
     });
-    var receipts = prof.receipts && prof.receipts.length ? table(["Receipt", "Rung", "Outcome", "Measured", "Issued"], prof.receipts.map(function (r) {
-      return [hash(r.receipt_id, 8), h("span", null, rungChip(r.rung), " " + r.measurement), r.outcome === "committed" ? pill("COMMITTED", "good") : r.outcome === "delivered" ? pill("DELIVERED", "good") : r.outcome === "compensated" ? pill("PUT BACK", "warn") : pill(String(r.outcome || "refused").toUpperCase(), "bad"),
+    var undoable = LIVE.on && dep.accepts;
+    var receipts = prof.receipts && prof.receipts.length ? table(["Receipt", "Rung", "Outcome", "Measured", "Issued"].concat(undoable ? [""] : []), prof.receipts.map(function (r) {
+      var row = [hash(r.receipt_id, 8), h("span", null, rungChip(r.rung), " " + r.measurement), r.outcome === "committed" ? pill("COMMITTED", "good") : r.outcome === "delivered" ? pill("DELIVERED", "good") : r.outcome === "compensated" ? pill("PUT BACK", "warn") : pill(String(r.outcome || "refused").toUpperCase(), "bad"),
         h("span", { class: "small" }, r.kind === "delivery" ? (r.substrate + "." + r.operation + (r.remote_ref ? " → " + r.remote_ref : "")) : num(r.rows || 0) + " " + ((PACK && PACK.nouns.rows) || "rows") + " · " + (r.tables || []).join(", ")), h("span", { class: "small tnum" }, String(r.issued_at || "").replace("T", " ").slice(0, 19))];
+      // 1.18.0: a committed plan can be put back, as a ticket the principals approve here.
+      if (undoable) row.push(r.kind === "action" && r.outcome === "committed" && r.plan_id
+        ? h("button", { class: "btn sm", disabled: UNDO.busy ? "disabled" : null, onclick: function () { askUndo(dep, r.plan_id); } }, UNDO.busy === r.plan_id ? "Asking…" : "Undo")
+        : h("span", { class: "muted" }, "—"));
+      return row;
     })) : h("p", { class: "small muted" }, prof.recorded ? "The bundle carries each receipt; the console lists them from the deployment." : "No receipt yet.");
     return h("div", { class: "card td" },
       h("div", { class: "td-head" }, h("div", { class: "line" }, pill("MANDATE", "info"), h("b", null, dep.name), h("span", { class: "spacer" }), LIVE.on ? h("button", { class: "btn sm", onclick: function () { DESK.profileFor = null; render(); } }, "Refresh") : null),
         h("p", { class: "small ink2" }, "What the agent may do here, as its principals' quorum signed it: every tool it can call and how each call is governed.")),
-      mandates, LIVE.on ? passkeySection(dep) : null, h("div", { class: "td-sec" }, h("h3", null, "Latest receipts"), receipts));
+      mandates, LIVE.on ? passkeySection(dep) : null, h("div", { class: "td-sec" }, h("h3", null, "Latest receipts"),
+        undoable ? h("p", { class: "small ink2" }, "Undo puts a committed plan back exactly as it found it, from what its commit kept in the system it changed. It is a ticket: the principals approve it here, at the mandate's compensate quorum. A request that was already sent, with nothing to undo it, is listed first, and stops the undo.") : null,
+        UNDO.error ? errorLine(UNDO.error) : null,
+        UNDO.done ? h("div", { class: "outcome good", role: "status" }, icon("check"), h("span", null, "Undo of plan " + UNDO.done.plan_id + " asked as ticket " + UNDO.done.ticket_id + ": " + many(UNDO.done.changes, "change") + " to put back" + (UNDO.done.compensate.length ? ", " + many(UNDO.done.compensate.length, "request") + " to compensate" : "") + (UNDO.done.cancel.length ? ", " + many(UNDO.done.cancel.length, "request") + " to cancel" : "") + ". Approve it on the desk.")) : null,
+        receipts));
   }
 
   function factList(pairs) {
@@ -2021,9 +2031,16 @@
     if (ev.halt) kids.push(h("p", { class: "small" }, h("b", null, "Scope paused: "), ev.halt.scope + " · " + ev.halt.reason));
     if (t.halt) kids.push(h("p", { class: "small" }, h("b", null, "Scope paused: "), t.halt.scope + " · " + t.halt.reason));
     if (ev.proposed) kids.push(h("p", { class: "small" }, h("b", null, "Proposes "), "mandate version " + ev.proposed.version + " ", hash(ev.proposed.digest, 12)));
+    // 1.18.0: an undo of a plan's own changes, from what its commit kept
+    if (ev.changes) kids.push(h("div", { class: "receipt" },
+      h("p", { class: "small" }, h("b", null, "Puts plan " + ev.plan_id + " back: "), many(ev.changes.count, "change") + ", each exactly as it was before the plan, from what its commit kept. If anything moved since, nothing is put back."),
+      (ev.messages || []).length ? h("p", { class: "small" }, many(ev.messages.length, "delivered request") + " compensated: " + ev.messages.map(function (m) { return m.operation; }).join(", ")) : null,
+      (ev.pending || []).length ? h("p", { class: "small" }, many(ev.pending.length, "request") + " not sent yet, cancelled") : null,
+      (ev.cannot || []).length ? h("p", { class: "small bad-ink" }, many(ev.cannot.length, "request") + " already sent with nothing to undo it (" + ev.cannot.map(function (c) { return c.effect; }).join(", ") + "): it stays sent") : null,
+      h("p", { class: "small muted" }, "Change digests ", hash(ev.changes.hash, 12), ": the warrant puts back exactly these.")));
     if (t.recorded) kids.push(h("p", { class: "small ink2" }, (t.messages ? many(t.messages, "held outbound message") + ". " : "") + "A bundle carries no payloads, rows or arguments, only their digests. It proves who decided what. The console reads the payload and the measured rows from the deployment itself."));
     if (t.statement) kids.push(h("div", { class: "quarantine" }, h("div", { class: "small muted" }, "The agent's statement: an unverified claim, not evidence. No rule reads it."), h("p", null, t.statement)));
-    if (t.evidence && !t.measured && !(t.held || []).length && !ev.proposed) kids.push(h("details", null, h("summary", null, "Evidence, as signed"), h("pre", null, JSON.stringify(t.evidence, null, 2))));
+    if (t.evidence && !t.measured && !(t.held || []).length && !ev.proposed && !ev.changes) kids.push(h("details", null, h("summary", null, "Evidence, as signed"), h("pre", null, JSON.stringify(t.evidence, null, 2))));
     return kids.length ? kids : h("p", { class: "small muted" }, "—");
   }
   function pinsOf(o) {
@@ -2136,6 +2153,15 @@
       loadTicket(dep, tid).then(function (x) { if (x && (x.votes.length > seen || x.status !== "open")) { DESK.poll = 0; refreshStatus(); } else pollTicket(dep, tid, seen); });
     }, 1500);
   }
+  // -- undo (1.18.0) ----------------------------------------------------------------------------
+  var UNDO = { busy: null, error: null, done: null };
+  function askUndo(dep, planId) {
+    UNDO.busy = planId; UNDO.error = null; UNDO.done = null; render();
+    api("POST", "deployments/" + encodeURIComponent(dep.id) + "/undo", { plan_id: planId })
+      .then(function (r) { UNDO.busy = null; UNDO.done = r; DESK.profileFor = null; refreshStatus(); render(); })
+      .catch(function (e) { UNDO.busy = null; UNDO.error = e.message || String(e); render(); });
+  }
+
   // -- passkeys (1.17.0) ------------------------------------------------------------------------
   var PK = { busy: null, error: null, done: null };
   function b64uBytes(text) { var s = String(text).replace(/-/g, "+").replace(/_/g, "/"); while (s.length % 4) s += "="; var r = atob(s), u = new Uint8Array(r.length); for (var i = 0; i < r.length; i++) u[i] = r.charCodeAt(i); return u; }
@@ -2297,8 +2323,8 @@
   function verifyView() {
     var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Offline verification"), h("h2", null, "Verify an audit bundle"),
       h("p", null, LIVE.on
-        ? "Drop any .fidb, fidb/1 or sealed fidb/2. The console runs V1 to V13 on it with no network, against a charter digest pinned outside the bundle. This browser also checks what it can on its own: the container, every member's digest, the hash chain, every record's signature, the seals and each relay's delivery receipt."
-        : "Drop any .fidb, fidb/1 or sealed fidb/2. This browser checks what it can on its own, with Web Crypto: the container, every member's digest, the hash chain, every record's Ed25519 signature, a sealed bundle's seals and each relay's delivery receipt. The rest of V1 to V13 needs the verifier, fiduciary verify-bundle."));
+        ? "Drop any .fidb, fidb/1 or sealed fidb/2. The console runs V1 to V14 on it with no network, against a charter digest pinned outside the bundle. This browser also checks what it can on its own: the container, every member's digest, the hash chain, every record's signature, the seals and each relay's delivery receipt."
+        : "Drop any .fidb, fidb/1 or sealed fidb/2. This browser checks what it can on its own, with Web Crypto: the container, every member's digest, the hash chain, every record's Ed25519 signature, a sealed bundle's seals and each relay's delivery receipt. The rest of V1 to V14 needs the verifier, fiduciary verify-bundle."));
     var dz = h("div", { class: "dropzone", tabindex: "0", role: "button", "aria-label": "Choose or drop a .fidb bundle",
       onclick: function () { pickFile(".fidb,application/x-tar", function (f) { fileBytes(f).then(function (u8) { verifyBytes(f.name, u8); }); }); },
       onkeydown: function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.currentTarget.click(); } },
@@ -2350,7 +2376,7 @@
     var partial = !v && b && passed;
     var status = att ? att.verdict.status : v && v.unreadable ? "UNREADABLE" : v && v.customer ? (v.customer.passed ? "VERIFIED" : "EXIT " + v.customer.exit_code) : b ? (passed ? "PARTLY CHECKED · NOT A VERDICT" : "FAILS IN THIS BROWSER") : "—";
     var exit = att ? att.verdict.exit_code : v && v.unreadable ? 2 : v && v.customer ? v.customer.exit_code : null;
-    var src = v && v.source === "console" ? "Verified by the console, offline, V1 to V13" + (VER.server.pinned_by ? ", pinned by " + (VER.server.pinned_by === "given" ? "the digest you gave" : VER.server.pinned_by + "'s charter") : "") + "."
+    var src = v && v.source === "console" ? "Verified by the console, offline, V1 to V14" + (VER.server.pinned_by ? ", pinned by " + (VER.server.pinned_by === "given" ? "the digest you gave" : VER.server.pinned_by + "'s charter") : "") + "."
       : v && v.source && v.source.indexOf("recorded") === 0 ? (VER.browser ? "These bytes are the bundle this page recorded; " : "") + "its verdict was recorded by fiduciary verify-bundle when this page was built" + (VER.browser ? "." : ". Drop the file to check its bytes here.")
         : "Only this browser's checks ran. They catch a changed byte, a member out of place, a broken chain, a forged signature or a foreign seal, but not what needs the ledger's anchors or a replay of the log. For the full verdict, run fiduciary verify-bundle " + String(VER.name || "bundle.fidb").split("/").pop() + " --charter <digest> --keys pinned-keys.json" + (LIVE.on ? ", or pin a charter digest above." : ".");
     kids.push(h("div", { class: "ver-head " + (partial ? "part" : passed ? "ok" : "no") },
@@ -2375,8 +2401,8 @@
     if (b) kids.push(h("div", { class: "td-sec" }, h("h3", null, "Checked in this browser"), b.error ? h("p", { class: "small muted" }, b.error) : h("ul", { class: "bchecks" }, b.checks.map(function (c) {
       return h("li", null, c.status === "pass" ? pill("PASS", "good") : c.status === "fail" ? pill("FAIL", "bad") : pill("NOT RUN", "permit"), h("span", null, h("b", null, c.name), " ", h("span", { class: "small muted" }, "(part of " + c.part + ")"), h("div", { class: "small ink2" }, c.detail)));
     }))));
-    kids.push(h("div", { class: "td-sec" }, h("h3", null, "V1 to V13, and the controls each supports"),
-      v && v.customer ? h("p", { class: "small ink2" }, "The recorded verdict above is the whole of V1 to V13. Below, what this browser checked again of these bytes.") : null,
+    kids.push(h("div", { class: "td-sec" }, h("h3", null, "V1 to V14, and the controls each supports"),
+      v && v.customer ? h("p", { class: "small ink2" }, "The recorded verdict above is the whole of V1 to V14. Below, what this browser checked again of these bytes.") : null,
       checksTable(att, b)));
     if (VER.server && VER.server.notes && VER.server.notes.length) kids.push(h("details", null, h("summary", null, "Verifier notes (" + VER.server.notes.length + ")"), h("ul", { class: "plain small" }, VER.server.notes.map(function (n) { return h("li", null, n); }))));
     return h("div", { class: "card pad ver-result", id: "ver-result", style: "margin-top:14px" }, kids);
@@ -2392,7 +2418,7 @@
         c[0] + " " + c[1] + ": " + word + (full && full.findings.length ? " · " + many(full.findings.length, "finding") : ""));
     });
     return h("div", null, h("div", { class: "vgrid" }, cells),
-      h("div", { class: "vgrid-note" }, att ? "V1 to V13, as the verifier ran them" : "What this browser could check on its own. The full verdict needs fiduciary verify-bundle."));
+      h("div", { class: "vgrid-note" }, att ? "V1 to V14, as the verifier ran them" : "What this browser could check on its own. The full verdict needs fiduciary verify-bundle."));
   }
   function mappingSource() {
     return RUNS.length ? RUNS[0].attestations[RUNS[0].primary] : null;
@@ -2560,7 +2586,7 @@
 
   function consoleFooter() {
     return h("footer", null, h("div", { class: "wrap" },
-      h("p", null, LIVE.on ? "Served by the console on " + location.host + ", which listens on loopback only, answers only its own origin, and holds no principal's key outside the sandbox." : "Nothing on this page is sent anywhere. Signing, and all of V1 to V13, need the console or the command line."),
+      h("p", null, LIVE.on ? "Served by the console on " + location.host + ", which listens on loopback only, answers only its own origin, and holds no principal's key outside the sandbox." : "Nothing on this page is sent anywhere. Signing, and all of V1 to V14, need the console or the command line."),
       h("p", { style: "margin-top:6px" }, "The evidence is signed and can be checked offline. That makes tampering visible; it doesn't prevent it."),
       docsLine()));
   }

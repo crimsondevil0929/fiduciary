@@ -14,9 +14,12 @@ that cites it:
 - **cancels** them, when a plan of the turn was refused, or the turn ended in an
   exception: none is ever made.
 
-What a turn does not do: put back what the turn's committed plans changed in the
-systems they wrote to. A refused call leaves the earlier calls' rows changed; only the
-requests wait. Where turns come from:
+*Since 1.18.0*, a turn that does not finish also puts back what its committed plans changed,
+latest first, each by an undo (Interlock 1.10.0): exactly the inverse of the plan, from what
+its commit kept in the system it changed, or not at all. Each one put back writes a
+``plan.undone`` record; one that cannot be (nothing was kept, someone changed a row since) is
+named in the ``turn.closed`` record, and stays as it is. Undo needs ``[undo] days`` in the
+deployment's ``interlock.toml``, which ``fiduciary init`` writes. Where turns come from:
 
 - your own code: ``with gov.turn(): ...`` (:meth:`fiduciary.sdk.Governor.turn`), around a
   framework's run as much as around a few calls;
@@ -75,6 +78,10 @@ class Closed:
     messages: tuple[str, ...]
     record: int
     """The ``turn.closed`` record's sequence number."""
+    undone: tuple[str, ...] = ()
+    """The plans of a cancelled turn put back, latest first (1.18.0)."""
+    kept: tuple[tuple[str, str], ...] = ()
+    """The plans of a cancelled turn that could not be put back, and why (1.18.0)."""
 
 
 def new_id() -> str:
@@ -84,16 +91,20 @@ def new_id() -> str:
 def close(
     fid: Fiduciary, mandate_id: str, turn: str, *, release: bool, why: str | None = None
 ) -> Closed | None:
-    """End ``turn``: record it, then release (or cancel) every request held for it.
-    ``None`` when it held none: nothing is recorded.
-
-    :raises TurnError: Without an outbox to hold requests in.
-    """
+    """End ``turn``: when it did not finish, put back what its committed plans changed
+    (1.18.0), latest first; record it; then release (or cancel) every request held for it.
+    ``None`` when it held no request and put nothing back: nothing is recorded."""
     outbox = fid.outbox
-    if outbox is None:
-        return None
-    held = outbox.turn_held(turn).get(turn, [])
-    if not held:
+    with fid.lock:
+        plans = fid.turn_plans.pop(turn, [])
+    held = outbox.turn_held(turn).get(turn, []) if outbox is not None else []
+    undone: list[Any] = []
+    kept: list[Any] = []
+    if not release:
+        for lineage, plan in reversed(plans):
+            done = fid.undo_plan(lineage, plan, why=f"turn {turn} did not finish")
+            (undone if done.undone else kept).append(done)
+    if not held and not undone and not kept:
         return None
     outcome = "released" if release else "cancelled"
     log = fid.log
@@ -107,20 +118,43 @@ def close(
                     "outcome": outcome,
                     "messages": [str(m) for m in held],
                     "why": why,
+                    **(
+                        {
+                            "undone": [
+                                {"plan": u.plan_id, "undo": u.undo_plan_id, "record": u.record}
+                                for u in undone
+                            ]
+                        }
+                        if undone
+                        else {}
+                    ),
+                    **(
+                        {"kept": [{"plan": k.plan_id, "why": k.why_not} for k in kept]}
+                        if kept
+                        else {}
+                    ),
                 },
             )
             record = log.append("turn.closed", body, issued_at=log.now())
-        reason = (
-            f"turn {turn} {'committed' if release else 'did not finish'}: "
-            f"FIDU1 turn record {record.seq}"
-        )
-        try:
-            fid.executor.close_turn(turn, release=release, reason=reason)
-        except Exception as exc:
-            raise TurnError(
-                f"turn {turn} was recorded {outcome}, and the outbox said: {exc}"
-            ) from exc
-    return Closed(turn, outcome, tuple(str(m) for m in held), record.seq)
+        if held:
+            reason = (
+                f"turn {turn} {'committed' if release else 'did not finish'}: "
+                f"FIDU1 turn record {record.seq}"
+            )
+            try:
+                fid.executor.close_turn(turn, release=release, reason=reason)
+            except Exception as exc:
+                raise TurnError(
+                    f"turn {turn} was recorded {outcome}, and the outbox said: {exc}"
+                ) from exc
+    return Closed(
+        turn,
+        outcome,
+        tuple(str(m) for m in held),
+        record.seq,
+        tuple(u.plan_id for u in undone),
+        tuple((k.plan_id, str(k.why_not)) for k in kept),
+    )
 
 
 # -- a turn another process opens (Claude Code's hooks) ---------------------------------

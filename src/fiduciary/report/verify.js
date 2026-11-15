@@ -33,6 +33,9 @@
 //                            the origin is one the charter admits, the relying party is its
 //                            own, the passkey says the user was present and verified, and
 //                            the P-256 signature verifies (checkAssertion, below)
+//   undo        V14          (when the bundle holds an undo, 1.18.0) each undo's change digests
+//                            are the ones its commit names, and the plan's with before and
+//                            after swapped; every plan that committed as an undo is explained
 //   provenance  V13          (when a session in the bundle read anything labeled, 1.16.0)
 //                            every plan committed after the session read untrusted input or
 //                            labeled data met the mandate's provenance rules, or ran as the
@@ -241,7 +244,67 @@
           });
         });
       }).catch(function () { ed.ok = false; add("manifest", "The manifest's signature, by the service key", "V9", "skip", "no Ed25519 in this Web Crypto"); });
-    }).then(function () { return logChecks(); }).then(function () { return passkeyChecks(); }).then(function () { receiptChecks(); provenanceChecks(); return deliveryChecks(); }).then(function () { return out; });
+    }).then(function () { return logChecks(); }).then(function () { return passkeyChecks(); }).then(function () { receiptChecks(); provenanceChecks(); return deliveryChecks(); }).then(function () { return undoChecks(); }).then(function () { return out; });
+
+    // V14 (1.18.0): every undo put back exactly what its plan changed. Each plan.undone
+    // record's two lists of change digests are the ones its plan's and its own COMMITTED
+    // records name ("; changes <sha256>"), its plan says it undoes that plan, and its digests
+    // are the plan's with before and after swapped; and every plan that committed as an
+    // undo has its record. Checked only when a bundle holds an undo.
+    function undoChecks() {
+      var NAME = "Every undo, exactly the inverse of its plan";
+      var records = [];
+      (by["log.jsonl"] ? dec.decode(by["log.jsonl"]) : "").split("\n").forEach(function (l) {
+        if (!l) return;
+        try { var r = JSON.parse(l); if (r && r.kind === "plan.undone") records.push(r); } catch (e) { /* named by the chain check */ }
+      });
+      var chains = {};
+      Object.keys(by).filter(function (n) { return /^escrow\/[^/]+\.chain$/.test(n); }).forEach(function (n) {
+        var lines = [];
+        dec.decode(by[n]).split("\n").forEach(function (l) { if (l) { try { lines.push(JSON.parse(l)); } catch (e) { /* named by the receipts check */ } } });
+        chains[n.slice(7, -6)] = lines;
+      });
+      var undos = [];
+      Object.keys(chains).forEach(function (lineage) {
+        var committed = {};
+        chains[lineage].forEach(function (r) { if (r.record_type === "committed") committed[r.plan_id] = true; });
+        chains[lineage].forEach(function (r) {
+          var m = r.record_type === "plan_admitted" ? /^undo of (\S+): /.exec(r.note || "") : null;
+          if (m && committed[r.plan_id]) undos.push({ lineage: lineage, plan: r.plan_id, of: m[1] });
+        });
+      });
+      if (!records.length && !undos.length) return Promise.resolve();
+      var bad = [], explained = {};
+      function hashOf(list) { return sha("SHA-256", utf8(JSON.stringify(list))); }
+      function keyOf(d) { return JSON.stringify([d[0], d[1]]); }
+      return Promise.all(records.map(function (rec) {
+        var b = rec.body || {}, where = "record " + rec.seq, lines = chains[b.mandate_id] || [];
+        explained[b.mandate_id + " " + b.undo_plan_id] = true;
+        var named = {}, admitted = {};
+        lines.forEach(function (r) {
+          if (r.record_type === "committed") { var m = /; changes ([0-9a-f]{64})/.exec(r.note || ""); named[r.plan_id] = m ? m[1] : null; }
+          if (r.record_type === "plan_admitted") admitted[r.plan_id] = r.note || "";
+        });
+        if ((admitted[b.undo_plan_id] || "").indexOf("undo of " + b.plan_id + ": ") !== 0) bad.push(where + ": plan " + b.undo_plan_id + " does not say it undoes " + b.plan_id);
+        var want = {}, got = {};
+        (b.original || []).forEach(function (d) { want[keyOf(d)] = [d[3], d[2]]; });
+        (b.undo || []).forEach(function (d) { got[keyOf(d)] = [d[2], d[3]]; });
+        Object.keys(want).forEach(function (k) {
+          var name = JSON.parse(k).join(" ");
+          if (!got[k]) bad.push(where + ": " + name + " is not put back");
+          else if (got[k][0] !== want[k][0] || got[k][1] !== want[k][1]) bad.push(where + ": " + name + " is not put back exactly as it was");
+        });
+        Object.keys(got).forEach(function (k) { if (!want[k]) bad.push(where + ": " + JSON.parse(k).join(" ") + " is changed and the plan never changed it"); });
+        return Promise.all([["plan", b.plan_id, b.original || []], ["undo", b.undo_plan_id, b.undo || []]].map(function (x) {
+          if (!(x[1] in named)) { bad.push(where + ": the " + x[0] + " " + x[1] + " did not commit"); return null; }
+          return hashOf(x[2]).then(function (h) { if (named[x[1]] !== h) bad.push(where + ": the " + x[0] + " " + x[1] + "'s change digests are not the ones its commit names"); });
+        }));
+      })).then(function () {
+        undos.forEach(function (u) { if (!explained[u.lineage + " " + u.plan]) bad.push("plan " + u.plan + " committed as the undo of " + u.of + ", and no plan.undone record explains it"); });
+        add("undo", NAME, "V14", bad.length ? "fail" : "pass",
+          bad.length ? bad.slice(0, 3).join("; ") : records.length + " undo" + (records.length === 1 ? "" : "s") + ", each exactly the inverse of its plan");
+      });
+    }
 
     // Passkeys (1.17.0): every document signed webauthn-es256 is checked under the key the
     // charter holds for the principal whose key id it carries, with that key's policy.

@@ -604,6 +604,11 @@ def init(
                 report.changed.append(_sqlite_changes(target.database, before))
             for name, text in st.files.items():
                 (root / name).write_text(text, encoding="utf-8")
+            if target.substrate in UNDOABLE:
+                # What undoes each commit is kept, in the system it changed, for a week
+                # (1.18.0): fiduciary undo, and a turn that does not finish, put plans back.
+                with (root / "interlock.toml").open("a", encoding="utf-8") as config:
+                    config.write(f"\n[undo]\ndays = {UNDO_DAYS}\n")
             _bridge(root, report.scope)
             _write_report(root, report, None, target, solo=solo, shadow=shadow)
         finally:
@@ -701,6 +706,11 @@ def write_pins(
             old.unlink()
 
 
+UNDOABLE: Final = frozenset({"sqlite", "postgres", "filesystem", "git", "rest", "fhir"})
+"""The systems whose commits keep what undoes them (Interlock 1.10.0)."""
+UNDO_DAYS: Final = 7
+"""How long a deployment ``init`` writes keeps each commit's undo."""
+
 DEFAULT_PRINCIPALS: Final = ("approver-1", "approver-2", "approver-3")
 SOLO_PRINCIPAL: Final = "owner"
 SOLO_TERM_DAYS: Final = 365
@@ -761,7 +771,7 @@ fiduciary verify-bundle lineage.fidb --charter {charter} --keys pinned-keys.json
 `verify-bundle` needs no database and no network. `pinned-keys.json` holds this
 deployment's public keys and `charter.digest` the charter's digest, so the bundle is
 checked against them and not against the keys it carries. Neither holds a secret: hand them
-to an auditor once, apart from any bundle, and then each bundle alone. It checks V1 to V13 and
+to an auditor once, apart from any bundle, and then each bundle alone. It checks V1 to V14 and
 exits 0 when the bundle passes. Drop the bundle on the console's Verify page to check it in
 a browser. A system that keeps its own log of writes (Stripe, SendGrid, Kubernetes, FHIR,
 GitHub) can be matched against the bundle with `fiduciary reconcile-actions lineage.fidb
