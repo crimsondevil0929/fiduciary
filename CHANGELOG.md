@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.19.0] - Unreleased
+## [1.19.0] - 2026-11-15
 
 What leaves a session is checked before it leaves. A fetch, a search, an email or a write that
 carries a credential or a private value the agent read is refused, whole or encoded; after
