@@ -1,4 +1,4 @@
-"""The public site's front page, as HTML a reader without a script can read (1.16.0).
+"""The public site's front page, as HTML a reader without a script can read (1.16.0; 1.18.0).
 
 The front page is drawn by the console's script, so a crawler that runs no script, ``curl``
 and a chat app's link preview used to see an empty page. :func:`page_parts` gives
@@ -149,6 +149,7 @@ COPY: Final[dict[str, Any]] = {
                 "Holds a write the agent asks for after reading untrusted input",
                 "Approvals signed with a passkey, which an agent cannot read",
                 "Pins the MCP servers Claude Desktop and Cursor run: fiduciary protect",
+                "Puts a committed plan back exactly, and a failed turn: fiduciary undo",
             ],
         },
     ],
@@ -190,7 +191,7 @@ COPY: Final[dict[str, Any]] = {
                 "Commit or undo",
                 "A change that passes commits once, on the exact version that was measured. A "
                 "change that fails never commits. If an API changes more than predicted, the "
-                "write is undone.",
+                "write is undone. A committed plan can be put back later, exactly as it was.",
             ],
             [
                 "Prove",

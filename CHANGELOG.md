@@ -6,7 +6,7 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
-## [1.18.0] - Unreleased
+## [1.18.0] - 2026-11-14
 
 A committed plan can be put back: exactly, as a plan of its own, from what its commit kept in
 the system it changed. A turn that does not finish now puts back what its earlier calls changed,
