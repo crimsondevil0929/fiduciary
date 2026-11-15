@@ -107,7 +107,9 @@ _KEEP: Final = frozenset(
         "description",
     }
 )
-_HARMLESS: Final = frozenset({"$schema", "$id", "examples", "default", "$comment"})
+_HARMLESS: Final = frozenset({"$schema", "$id", "examples", "default", "$comment", "x-mcp-header"})
+"""Keywords a binding leaves out, as they constrain no value: ``x-mcp-header`` (1.20.0) only
+says which header the transport mirrors an argument into, and the pin covers it."""
 _TYPES: Final = frozenset({"object", "array", "string", "integer", "boolean", "null"})
 
 

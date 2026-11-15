@@ -1759,13 +1759,18 @@ def _protect(args: argparse.Namespace) -> int:
         files.append(("claude-desktop", paths["claude-desktop"]))
     if args.cursor:
         files.append(("cursor", paths["cursor"]))
+    if args.vscode:
+        files.append(("vscode", paths["vscode"]))
+    if args.codex:
+        files.append(("codex", paths["codex"]))
     files += [(f"file-{p.stem.lstrip('.')}", p.expanduser()) for p in args.mcp_config]
+    scanning = getattr(args, "scan_secrets", False)
     if not files:
         found = [(c, p) for c, p in paths.items() if p.is_file()]
-        if not found:
+        if not found and not scanning:
             _fail(
-                "no client file found: name one with --claude-desktop, --cursor or "
-                "--mcp-config FILE"
+                "no client file found: name one with --claude-desktop, --cursor, --vscode, "
+                "--codex or --mcp-config FILE"
             )
         files = found
     try:
@@ -1782,9 +1787,12 @@ def _protect(args: argparse.Namespace) -> int:
             apply=args.apply,
             shadow=not args.enforce,
             move_secrets=args.move_secrets,
+            secret_store=args.secret_store,
         )
     except (OSError, ValueError, FiduciaryError) as exc:
         _fail(str(exc), REFUSED)
+    if scanning:
+        _scan_secrets(args)
     for step in steps:
         where = f"{step.server.name} ({step.server.client})"
         if step.action == "skip":
@@ -1794,7 +1802,7 @@ def _protect(args: argparse.Namespace) -> int:
         if step.pinned:
             _out(f"            {step.pinned}")
         if step.secrets:
-            _out(f"            secrets to the Keychain: {', '.join(step.secrets)}")
+            _out(f"            secrets to {step.store}: {', '.join(step.secrets)}")
         for tool in step.tools:
             _out(f"            {tool['name']}: {tool['mode']}")
             if tool.get("flag"):
@@ -1817,6 +1825,42 @@ def _protect(args: argparse.Namespace) -> int:
     elif args.apply:
         _out("restart the client to start the protected servers; fiduciary unprotect undoes it")
     return OK
+
+
+def _scan_secrets(args: argparse.Namespace) -> None:
+    """``protect --scan-secrets`` (1.20.0): what the scan found, and, with ``--apply``, the
+    seed every protected session takes up."""
+    from fiduciary.flow import WORKSPACE, seed
+    from fiduciary.scan import preview, scan
+
+    workspace = args.workspace.expanduser().resolve()
+    found = scan(workspace)
+    if not found:
+        _out(f"scanned     {workspace}: no credential an agent could read")
+        return
+    _out(f"found       {tally(len(found), 'credential')} an agent could read under {workspace}")
+    for finding in found:
+        where = finding.path.relative_to(workspace)
+        moved = " (an MCP client's file: --move-secrets moves it)" if finding.in_client_file else ""
+        shown = preview(finding.value)
+        _out(f"            {where}:{finding.line}: {finding.kind} ({shown}){moved}")
+    values = sorted({f.value for f in found})
+    if not args.apply:
+        _out(
+            f"            with --apply, every protected server's session treats "
+            f"{'it' if len(values) == 1 else 'them'} as secret from its first call"
+        )
+        return
+    seed(
+        args.root.expanduser(),
+        WORKSPACE,
+        secrets=values,
+        notes=[f"{f.path.relative_to(workspace)}:{f.line}: {f.kind}" for f in found],
+    )
+    _out(
+        f"seeded      every protected server's session treats {tally(len(values), 'value')} as "
+        "secret from its first call: no call carries one out"
+    )
 
 
 def _protect_review(protect: Any, servers: Sequence[Any], *, accept: bool) -> int:
@@ -2696,8 +2740,9 @@ def _parser() -> argparse.ArgumentParser:
     for name, helping in (
         (
             "protect",
-            "put a fiduciary proxy in front of each MCP server Claude Desktop, Cursor or "
-            "another client runs: pinned tools, pinned versions, writes made once",
+            "put a fiduciary proxy in front of each MCP server a client runs, local or remote "
+            "(Claude Desktop, Cursor, Claude Code, VS Code, Codex): pinned tools, pinned "
+            "versions, writes made once, tokens kept out of the client's file",
         ),
         ("unprotect", "put each protected server's entry back as it was"),
     ):
@@ -2706,14 +2751,18 @@ def _parser() -> argparse.ArgumentParser:
         guard.add_argument(
             "--cursor", action="store_true", help="Cursor's file (~/.cursor/mcp.json)"
         )
+        guard.add_argument("--vscode", action="store_true", help="VS Code's profile mcp.json")
+        guard.add_argument(
+            "--codex", action="store_true", help="Codex CLI's file (~/.codex/config.toml)"
+        )
         guard.add_argument(
             "--mcp-config",
             action="append",
             default=[],
             type=Path,
             metavar="FILE",
-            help="any client's file of mcpServers (or servers): Claude Code's .mcp.json, a "
-            "project's .cursor/mcp.json, VS Code's .vscode/mcp.json (repeatable)",
+            help="any client's file: Claude Code's .mcp.json, a project's .cursor/mcp.json, "
+            "VS Code's .vscode/mcp.json, Codex's .codex/config.toml (repeatable)",
         )
         if name == "protect":
             guard.add_argument(
@@ -2727,7 +2776,27 @@ def _parser() -> argparse.ArgumentParser:
             guard.add_argument(
                 "--move-secrets",
                 action="store_true",
-                help="move each server's env values to the macOS Keychain",
+                help="move each server's env values and each remote server's secret headers "
+                "into the system's secret store (macOS Keychain, Linux Secret Service, "
+                "Windows Credential Manager), or a file only you can read where none answers",
+            )
+            guard.add_argument(
+                "--secret-store",
+                choices=("auto", "keychain", "secret-service", "credential-manager", "file"),
+                default="auto",
+                help="with --move-secrets: which store (auto: the system's own, else the file)",
+            )
+            guard.add_argument(
+                "--scan-secrets",
+                action="store_true",
+                help="find the credentials an agent could read under --workspace; with --apply, "
+                "every protected server's session treats them as secret from its first call",
+            )
+            guard.add_argument(
+                "--workspace",
+                type=Path,
+                default=Path("."),
+                help="with --scan-secrets: the directory the agent works in (here)",
             )
             guard.add_argument(
                 "--claude-code",

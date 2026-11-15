@@ -218,25 +218,24 @@ def matches(patterns: Sequence[str], value: str) -> bool:
 
 # -- credentials --------------------------------------------------------------------------
 
-_PATTERNS: Final = tuple(
-    re.compile(p)
-    for p in (
-        r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA)[0-9A-Z]{16}\b",  # AWS access key id
-        r"\bgh[pousr]_[A-Za-z0-9]{36,255}\b",  # GitHub token
-        r"\bgithub_pat_[A-Za-z0-9_]{50,255}\b",  # GitHub fine-grained token
-        r"\bglpat-[A-Za-z0-9_-]{20,}\b",  # GitLab token
-        r"\bxox[abposr]-[A-Za-z0-9-]{10,}\b",  # Slack token
-        r"\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,}\b",  # Stripe key
-        r"\bsk-ant-[A-Za-z0-9_-]{20,}\b",  # Anthropic key
-        r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b",  # OpenAI key
-        r"\bAIza[0-9A-Za-z_-]{35}\b",  # Google API key
-        r"\bSG\.[A-Za-z0-9_-]{16,32}\.[A-Za-z0-9_-]{16,64}\b",  # SendGrid key
-        r"\bnpm_[A-Za-z0-9]{36}\b",  # npm token
-        r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}",  # PyPI token
-        r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",  # JWT
-        r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----",  # a private key block
-    )
+_KINDS: Final = (
+    (r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|ANPA)[0-9A-Z]{16}\b", "an AWS access key id"),
+    (r"\bgh[pousr]_[A-Za-z0-9]{36,255}\b", "a GitHub token"),
+    (r"\bgithub_pat_[A-Za-z0-9_]{50,255}\b", "a GitHub fine-grained token"),
+    (r"\bglpat-[A-Za-z0-9_-]{20,}\b", "a GitLab token"),
+    (r"\bxox[abposr]-[A-Za-z0-9-]{10,}\b", "a Slack token"),
+    (r"\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,}\b", "a Stripe key"),
+    (r"\bsk-ant-[A-Za-z0-9_-]{20,}\b", "an Anthropic key"),
+    (r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b", "an OpenAI key"),
+    (r"\bAIza[0-9A-Za-z_-]{35}\b", "a Google API key"),
+    (r"\bSG\.[A-Za-z0-9_-]{16,32}\.[A-Za-z0-9_-]{16,64}\b", "a SendGrid key"),
+    (r"\bnpm_[A-Za-z0-9]{36}\b", "an npm token"),
+    (r"\bpypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}", "a PyPI token"),
+    (r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}", "a JSON web token"),
+    (r"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----", "a private key"),
 )
+"""Credentials by their providers' published formats, each with what it is (1.20.0)."""
+_PATTERNS: Final = tuple((re.compile(p), kind) for p, kind in _KINDS)
 _PASSWORD_URL: Final = re.compile(r"\b[a-z][a-z0-9+.-]{1,20}://[^/\s:@]{1,128}:([^@\s/]{6,256})@")
 _ASSIGNED: Final = re.compile(
     r"(?i)\b(?:api[_-]?key|secret|token|password|passwd|private[_-]?key|access[_-]?key)"
@@ -261,18 +260,30 @@ def _random_looking(token: str, threshold: float) -> bool:
     )
 
 
+def credentials_in(text: str) -> list[tuple[str, str]]:
+    """Every credential in ``text`` and what it is (1.20.0): by a provider's published format,
+    a password in a connection string, a value assigned to a name like ``api_key``, or a long
+    random-looking token. Sorted by value, each value once, with the first kind that found it.
+    A hash in hex (four bits a character at most) and a UUID are not random-looking enough
+    to count."""
+    found: dict[str, str] = {}
+    for pattern, kind in _PATTERNS:
+        for match in pattern.finditer(text):
+            found.setdefault(match.group(0), kind)
+    for match in _PASSWORD_URL.finditer(text):
+        found.setdefault(match.group(1), "a password in a connection string")
+    for match in _ASSIGNED.finditer(text):
+        if _entropy(match.group(1)) >= 3.0:
+            found.setdefault(match.group(1), "a value given to a credential's name")
+    for match in _BARE.finditer(text):
+        if _random_looking(match.group(0), 4.5):
+            found.setdefault(match.group(0), "a long random-looking token")
+    return sorted(found.items())
+
+
 def secrets_in(text: str) -> list[str]:
-    """Every credential in ``text``: by a provider's published format, a password in a
-    connection string, a value assigned to a name like ``api_key``, or a long random-looking
-    token. Sorted, each once. A hash in hex (four bits a character at most) and a UUID are
-    not random-looking enough to count."""
-    found: set[str] = set()
-    for pattern in _PATTERNS:
-        found.update(m.group(0) for m in pattern.finditer(text))
-    found.update(m.group(1) for m in _PASSWORD_URL.finditer(text))
-    found.update(m.group(1) for m in _ASSIGNED.finditer(text) if _entropy(m.group(1)) >= 3.0)
-    found.update(m.group(0) for m in _BARE.finditer(text) if _random_looking(m.group(0), 4.5))
-    return sorted(found)
+    """Every credential in ``text`` (:func:`credentials_in`), sorted, each once."""
+    return [value for value, _ in credentials_in(text)]
 
 
 # -- values ---------------------------------------------------------------------------------

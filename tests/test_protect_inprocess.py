@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from fiduciary import cli, passkeys, protect, turns
+from fiduciary.custody import CustodyError
 from fiduciary.mcp import McpError, McpServer, Upstream
 from fiduciary.protect import Keychain, ProtectError, Server, read_servers
 from tests.test_protect import write_client_file
@@ -248,15 +249,15 @@ def test_the_helpers_say_what_they_cannot_use(
     found = read_servers(tmp_path / "vscode.json", "vscode")
     assert [(s.name, s.remote) for s in found] == [("a", True), ("b", False)]
     steps = protect.protect(found, root=tmp_path / "p")
-    assert [(s.server.name, s.why) for s in steps] == [
-        ("a", "a remote server: this version wraps stdio servers"),
+    assert [(s.server.name, s.why.split(":")[0]) for s in steps] == [
+        ("a", "the old HTTP+SSE transport (2024-11-05)"),
         ("b", "no command to run"),
     ]
     assert Server("c", missing, "mcpServers", "s", {"args": ["--config"]}).deployment is None
     monkeypatch.setattr(sys, "platform", "linux")
     assert not Keychain.available()
-    with pytest.raises(ProtectError, match="Keychain"):
-        protect.protect(found, root=tmp_path / "p", move_secrets=True)
+    with pytest.raises(CustodyError, match="Keychain"):
+        protect.protect(found, root=tmp_path / "p", move_secrets=True, secret_store="keychain")
     for platform, name in (("linux", ".config"), ("win32", "Claude")):
         monkeypatch.setattr(sys, "platform", platform)
         assert name in str(protect.client_paths()["claude-desktop"])

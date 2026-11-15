@@ -924,30 +924,34 @@ class Session:
                 flow.publish(self._labels, {})
 
     def _from_siblings(self) -> None:
-        """Take up what sibling sessions read (1.19.0): their labels into a
-        ``session.labeled`` record, their tracked values' digests into a ``session.read``
-        record, both from ``fiduciary_sibling``. Only under a version with ``provenance``."""
+        """Take up what sibling sessions read (1.19.0), and what was seeded for every session
+        under the root (1.20.0: the workspace's credentials, a CI job's event and secrets):
+        their labels into a ``session.labeled`` record, their tracked values' digests into a
+        ``session.read`` record, each from its source (``fiduciary_sibling``,
+        ``fiduciary_workspace``, ``fiduciary_ci``). Only under a version with
+        ``provenance``."""
         from fiduciary.flow import SIBLING
 
         flow = self._flow
         mandate = self._engine().mandate
         rules = mandate.provenance
         if flow is None or rules is None or mandate.tools.statements != "any":
-            return  # a version that pins every source admits none from a sibling
-        labels, digests = flow.others()
-        with self._lock:
-            new = sorted(labels - set(self._labels))
-        if new:
-            self._label(SIBLING, new)
-        if not rules.values:
-            return
-        with self._lock:
-            adopted = {
-                label: added
-                for label, found in sorted(digests.items())
-                if (added := self._tracker.adopt(label, found))
-            }
-        if adopted:
+            return  # a version that pins every source admits none from outside
+        for source, (labels, digests) in [*flow.seeded().items(), (SIBLING, flow.others())]:
+            with self._lock:
+                new = sorted(labels - set(self._labels))
+            if new:
+                self._label(source, new)
+            if not rules.values:
+                continue
+            with self._lock:
+                adopted = {
+                    label: added
+                    for label, found in sorted(digests.items())
+                    if (added := self._tracker.adopt(label, found))
+                }
+            if not adopted:
+                continue
             log = self._fid.log
             with log.store.transaction():
                 now = log.now()
@@ -955,7 +959,7 @@ class Session:
                     log.state(),
                     self.session_id,
                     {
-                        "tool": SIBLING,
+                        "tool": source,
                         "turn": self.turn,
                         "records": 0,
                         "values": adopted,

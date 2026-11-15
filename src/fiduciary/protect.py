@@ -69,6 +69,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Final
 
 from fiduciary import turns
+from fiduciary.custody import Keychain, Store
 from fiduciary.exceptions import FiduciaryError
 
 if TYPE_CHECKING:
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
     from fiduciary.documents import Charter, ToolBinding
     from fiduciary.mcp import McpServer, Upstream
     from fiduciary.passkeys import Registered
+    from fiduciary.remote import HttpUpstream
     from fiduciary.webauthn import PasskeyKey, PasskeySigner, Policy
 
 __all__ = [
@@ -118,7 +120,6 @@ FLAG: Final = "--protected"
 SECTIONS: Final = ("mcpServers", "servers")
 """Where a client's file keeps its servers: ``mcpServers`` (Claude Desktop, Cursor,
 Claude Code), ``servers`` (VS Code)."""
-KEYCHAIN_SERVICE: Final = "fiduciary-protect"
 OWNER: Final = "owner"
 """The owner's principal, and its directory under a protect root."""
 ASIDE: Final = "step-aside.json"
@@ -184,18 +185,11 @@ def _short(value: Any) -> str:
 
 
 def client_paths() -> dict[str, Path]:
-    """Where Claude Desktop and Cursor keep their MCP servers, on this system."""
-    home = Path.home()
-    if sys.platform == "darwin":
-        claude = home / "Library" / "Application Support" / "Claude"
-    elif os.name == "nt":
-        claude = Path(os.environ.get("APPDATA", str(home))) / "Claude"
-    else:
-        claude = home / ".config" / "Claude"
-    return {
-        "claude-desktop": claude / "claude_desktop_config.json",
-        "cursor": home / ".cursor" / "mcp.json",
-    }
+    """Where Claude Desktop, Cursor, VS Code and Codex CLI keep their user-wide servers, on
+    this system (:func:`fiduciary.clients.client_paths`)."""
+    from fiduciary.clients import client_paths as paths
+
+    return paths()
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,7 +204,9 @@ class Server:
 
     @property
     def remote(self) -> bool:
-        return "url" in self.spec or str(self.spec.get("type", "stdio")) in ("http", "sse")
+        from fiduciary.clients import remote_of
+
+        return remote_of(self.spec) is not None
 
     @property
     def protected(self) -> bool:
@@ -228,42 +224,27 @@ class Server:
 
 
 def read_servers(config: Path, client: str) -> list[Server]:
-    """Every server entry of ``config``.
+    """Every server entry of ``config``: a JSON client file, or Codex's ``config.toml``.
 
-    :raises ProtectError: When the file is not a JSON object.
+    :raises ProtectError: When the file cannot be read as a client writes it.
     """
+    from fiduciary.clients import ClientFileError, read_entries
+
     try:
-        data = json.loads(config.read_text(encoding="utf-8"))
-    except FileNotFoundError as exc:
-        raise ProtectError(f"{config}: no such file") from exc
-    except ValueError as exc:
-        raise ProtectError(f"{config} is not JSON: {exc}") from exc
-    if not isinstance(data, dict):
-        raise ProtectError(f"{config} is not a JSON object")
-    found = []
-    for section in SECTIONS:
-        servers = data.get(section)
-        if isinstance(servers, dict):
-            for name, spec in servers.items():
-                if isinstance(spec, dict):
-                    found.append(Server(client, config, section, str(name), spec))
-    return found
+        return [Server(client, config, s, n, e) for s, n, e in read_entries(config)]
+    except ClientFileError as exc:
+        raise ProtectError(str(exc)) from exc
 
 
 def _write_config(config: Path, changes: Mapping[tuple[str, str], Mapping[str, Any]]) -> Path:
     """Write ``changes`` (by section and name) into ``config``, keeping a copy of the
-    file as it was before ``protect`` first touched it. The new file replaces the old
-    in one rename."""
-    data = json.loads(config.read_text(encoding="utf-8"))
-    for (section, name), spec in changes.items():
-        data[section][name] = dict(spec)
-    backup = config.with_name(config.name + ".before-fiduciary")
-    if not backup.exists():
-        shutil.copy2(config, backup)
-    temporary = config.with_name(config.name + f".{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    os.replace(temporary, config)
-    return backup
+    file as it was before ``protect`` first touched it (:func:`fiduciary.clients.write_entries`)."""
+    from fiduciary.clients import ClientFileError, write_entries
+
+    try:
+        return write_entries(config, changes)
+    except ClientFileError as exc:
+        raise ProtectError(str(exc)) from exc
 
 
 # --------------------------------------------------------------------------
@@ -349,55 +330,6 @@ def pin_command(command: Sequence[str], resolver: Resolver) -> tuple[list[str], 
 # --------------------------------------------------------------------------
 # secrets
 # --------------------------------------------------------------------------
-
-
-class Keychain:
-    """The macOS Keychain, through ``security``: where ``--move-secrets`` puts each value.
-
-    A value passes on ``security``'s command line for a moment, where another process
-    of the same user could read it, as it could read the JSON file it came from.
-    """
-
-    def __init__(self, runner: Callable[..., Any] = subprocess.run) -> None:
-        self._run = runner
-
-    @staticmethod
-    def available() -> bool:
-        return sys.platform == "darwin" and shutil.which("security") is not None
-
-    def put(self, account: str, value: str) -> None:
-        self._run(
-            [
-                "security",
-                "add-generic-password",
-                "-U",
-                "-s",
-                KEYCHAIN_SERVICE,
-                "-a",
-                account,
-                "-w",
-                value,
-            ],
-            check=True,
-            capture_output=True,
-        )
-
-    def get(self, account: str) -> str:
-        done = self._run(
-            ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account, "-w"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return str(done.stdout).rstrip("\n")
-
-    def delete(self, account: str) -> None:
-        with contextlib.suppress(subprocess.CalledProcessError):
-            self._run(
-                ["security", "delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", account],
-                check=True,
-                capture_output=True,
-            )
 
 
 def _account(state: Mapping[str, Any], variable: str) -> str:
@@ -760,11 +692,25 @@ class Step:
     deployment: Path | None = None
     tools: list[dict[str, str]] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
+    store: str | None = None
+    """Where its secrets went (1.20.0): the store's words, when any moved."""
+    remote: bool = False
+    """A remote server, spoken to over HTTP by the proxy (1.20.0)."""
 
 
 _CREDENTIAL_NAME: Final = re.compile(
-    r"(?i)token|secret|passw(?:or)?d|api_?key|access_?key|private_?key|credential|auth|cookie|_pat$"
+    r"(?i)token|secret|passw(?:or)?d|api[_-]?key|access[_-]?key|private[_-]?key|credential|auth"
+    r"|cookie|_pat$"
 )
+CODEX_KEPT: Final = (
+    "cwd",
+    "enabled",
+    "enabled_tools",
+    "disabled_tools",
+    "startup_timeout_sec",
+    "tool_timeout_sec",
+)
+"""What a Codex entry keeps when it is rewritten (1.20.0): how Codex runs it, not what it runs."""
 
 
 def signed_in(env: Mapping[str, str]) -> bool:
@@ -803,14 +749,16 @@ def protect(
     shadow: bool = True,
     move_secrets: bool = False,
     resolver: Resolver = resolve,
-    keychain: Keychain | None = None,
+    keychain: Store | None = None,
+    store: Store | None = None,
+    secret_store: str = "auto",  # noqa: S107 - a store's name, not a secret
     discover: Callable[[Sequence[str], Mapping[str, str]], list[dict[str, Any]]] | None = None,
     runner: Sequence[str] | None = None,
     passkey: PasskeySigner | None = None,
 ) -> list[Step]:
-    """Protect each stdio server of ``servers``; with ``apply`` false, only say what would
-    be done. A deployment is written for each under ``root/<client>/<server>``, and the
-    client's file is rewritten once, at the end.
+    """Protect each server of ``servers``, local or remote; with ``apply`` false, only say
+    what would be done. A deployment is written for each under ``root/<client>/<server>``,
+    and the client's file is rewritten once, at the end.
 
     Every server under ``root`` has one owner (:class:`Owner`). While its key is a key
     file, a new server's charter names that key. Once it is a passkey, each new server
@@ -818,16 +766,25 @@ def protect(
     the passkey signs them all with one touch (``passkey``, or a page in the browser), and
     the key of its own is retired.
 
+    A remote server (1.20.0) is wrapped the same way: its entry becomes the proxy's command,
+    and the proxy speaks HTTP to its URL (:class:`fiduciary.remote.HttpUpstream`). Its
+    secret headers always leave the client's file: into the secret store with
+    ``move_secrets``, into a file only this user can read without it.
+
     :param shadow: Start each mandate in shadow mode (pins hold either way).
+    :param move_secrets: Move each local server's ``env`` values, and a remote server's
+        secret headers, into ``store``, or the one ``secret_store`` names
+        (:func:`fiduciary.custody.store_for`; ``auto`` is this system's own).
     :param runner: The command a protected entry runs (:func:`executable`, by default).
-    :raises ProtectError: On a secret move asked for where there is no Keychain.
+    :raises fiduciary.custody.CustodyError: On a secret store asked for that is not here.
     """
+    from fiduciary import custody
+    from fiduciary.clients import remote_of
     from fiduciary.init import init
 
-    if move_secrets and keychain is None:
-        if not Keychain.available():
-            raise ProtectError("--move-secrets needs the macOS Keychain (security)")
-        keychain = Keychain()
+    vault: Store | None = store or keychain
+    if move_secrets and vault is None:
+        vault = custody.store_for(secret_store, root)
     run = list(runner or executable())
     owner = Owner.under(root)
     steps: list[Step] = []
@@ -837,41 +794,79 @@ def protect(
         if server.protected:
             steps.append(Step(server, "skip", "protected already"))
             continue
-        if server.remote:
-            steps.append(Step(server, "skip", "a remote server: this version wraps stdio servers"))
-            continue
-        command_text = server.spec.get("command")
-        args = server.spec.get("args") or []
-        if not isinstance(command_text, str) or not isinstance(args, list):
-            steps.append(Step(server, "skip", "no command to run"))
-            continue
-        command, pinned = pin_command([command_text, *map(str, args)], resolver)
-        env = {str(k): str(v) for k, v in (server.spec.get("env") or {}).items()}
-        deployment = root / _slug(server.client) / _slug(server.name)
-        step = Step(
-            server,
-            "wrap",
-            "a stdio server",
-            command,
-            pinned,
-            sorted(env) if move_secrets else [],
-            deployment,
-        )
+        remote = remote_of(server.spec)
+        planned: _RemotePlan | None = None
+        env: dict[str, str] = {}
+        state_extra: dict[str, Any] = {}
+        entry_env: dict[str, str] = {}
+        variables: list[str] = []
+        if remote is not None:
+            found = _remote_plan(server, remote, vault if move_secrets else None, root)
+            if isinstance(found, str):
+                steps.append(Step(server, "skip", found))
+                continue
+            planned = found
+            command: list[str] = []
+            pinned = None
+            step = Step(
+                server,
+                "wrap",
+                "a remote server",
+                [planned.shown],
+                None,
+                sorted(planned.secrets),
+                root / _slug(server.client) / _slug(server.name),
+                store=planned.home.where if planned.secrets else None,
+                remote=True,
+            )
+        else:
+            command_text = server.spec.get("command")
+            args = server.spec.get("args") or []
+            if not isinstance(command_text, str) or not isinstance(args, list):
+                steps.append(Step(server, "skip", "no command to run"))
+                continue
+            command, pinned = pin_command([command_text, *map(str, args)], resolver)
+            env = {str(k): str(v) for k, v in (server.spec.get("env") or {}).items()}
+            step = Step(
+                server,
+                "wrap",
+                "a stdio server",
+                command,
+                pinned,
+                sorted(env) if move_secrets else [],
+                root / _slug(server.client) / _slug(server.name),
+                store=vault.where if move_secrets and env and vault is not None else None,
+            )
+            variables = [str(v) for v in server.spec.get("env_vars") or () if isinstance(v, str)]
+        deployment = step.deployment
+        assert deployment is not None
         steps.append(step)
         if not apply:
             continue
         if deployment.exists() and any(deployment.iterdir()):
             raise ProtectError(f"{deployment} is not empty: protect writes a fresh deployment")
-        listed = (discover or _discover)(command, env)
+        if planned is not None:
+            try:
+                listed = _remote_listing(planned.url, planned.resolved())
+            except (FiduciaryError, OSError) as exc:
+                steps[-1] = dataclasses.replace(step, action="skip", why=str(exc))
+                continue
+            with_credential = bool(planned.headers)
+            state_extra = {"remote": planned.state()}
+            entry_env = planned.entry_env
+            variables = list(planned.variables)
+        else:
+            listed = (discover or _discover)(command, env)
+            with_credential = signed_in(env)
         report = init(
             deployment,
-            command,
+            command or [f"(remote) {step.command[0]}"],
             discovered=listed,
             solo=True,
             shadow=shadow,
             name=_slug(server.name),
             owner=owner.signer() if owner.passkey() is None else None,
-            signed_in=signed_in(env),
+            signed_in=with_credential,
         )
         made.append(deployment)
         step.tools, step.skipped = list(report.tools), list(report.skipped)
@@ -882,35 +877,30 @@ def protect(
             "section": server.section,
             "server": server.name,
             "original": copy.deepcopy(dict(server.spec)),
-            "command": command,
+            "command": command or None,
             "pinned": pinned,
             "secrets": [],
             "env": env,
             "protected_at": datetime.now(UTC).isoformat(),
+            **state_extra,
         }
-        if move_secrets and env:
-            assert keychain is not None
+        if planned is not None:
+            state["original"] = planned.original(dict(server.spec))
+            if planned.secrets:
+                state["store"] = planned.home.name
+        elif move_secrets and env:
+            assert vault is not None
             for variable, value in env.items():
-                keychain.put(_account(state, variable), value)
+                vault.put(_account(state, variable), value)
             state["secrets"] = sorted(env)
+            state["store"] = vault.name
             state["env"] = {}
-            state["original"]["env"] = {k: "(in the Keychain)" for k in env}
+            state["original"]["env"] = {k: f"(in {vault.where})" for k in env}
         (deployment / STATE).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
         os.chmod(deployment / STATE, 0o600)
-        entry: dict[str, Any] = {
-            "command": run[0],
-            "args": [
-                *run[1:],
-                "--config",
-                str(deployment.resolve() / "fiduciary.toml"),
-                "mcp",
-                "proxy",
-                FLAG,
-            ],
-        }
-        if state["env"]:
-            entry["env"] = state["env"]
-        changes.setdefault(server.config, {})[(server.section, server.name)] = entry
+        changes.setdefault(server.config, {})[(server.section, server.name)] = _entry(
+            server, run, deployment, {**state["env"], **entry_env}, variables
+        )
     key = owner.passkey() if made else None
     if key is not None:
         # The owner signs with a passkey: each new server takes it now, with one touch.
@@ -928,6 +918,205 @@ def protect(
     for config, changed in changes.items():
         _write_config(config, changed)
     return steps
+
+
+def _entry(
+    server: Server,
+    run: Sequence[str],
+    deployment: Path,
+    env: Mapping[str, str],
+    variables: Sequence[str],
+) -> dict[str, Any]:
+    """The entry a protected server's client starts: the proxy, over stdio, in the client's
+    own form (VS Code's ``type``; what a Codex entry keeps, and the variables it passes)."""
+    from fiduciary.clients import CODEX
+
+    entry: dict[str, Any] = {}
+    if server.section == "servers" or "type" in server.spec:
+        entry["type"] = "stdio"
+    entry["command"] = run[0]
+    entry["args"] = [
+        *run[1:],
+        "--config",
+        str(deployment.resolve() / "fiduciary.toml"),
+        "mcp",
+        "proxy",
+        FLAG,
+    ]
+    if env:
+        entry["env"] = dict(env)
+    if server.section == CODEX:
+        entry.update({k: server.spec[k] for k in CODEX_KEPT if k in server.spec})
+        if variables:
+            entry["env_vars"] = list(variables)
+    return entry
+
+
+@dataclass
+class _RemotePlan:
+    """How one remote server's entry is kept (1.20.0): its URL and each header, by what
+    becomes of it."""
+
+    url: str
+    url_secret: bool
+    headers: dict[str, dict[str, Any]]
+    secrets: list[str]
+    home: Store
+    entry_env: dict[str, str]
+    values: dict[str, str]
+    """Each secret's value, until it is stored."""
+    shown: str
+    account: Callable[[str], str]
+    variables: tuple[str, ...] = ()
+    """What the client passes to the proxy for a template's sake (Codex's ``env_vars``)."""
+
+    def resolved(self) -> dict[str, str]:
+        """Each header's value now, for listing the server's tools: a template's variables
+        from this process's environment."""
+        out = {}
+        for name, how in self.headers.items():
+            if "value" in how:
+                out[name] = str(how["value"])
+            elif how.get("secret"):
+                out[name] = self.values[f"header:{name}"]
+            else:
+                template = str(how.get("template") or how.get("from") or "")
+                out[name] = _expand(template, os.environ, name)
+        return out
+
+    def state(self) -> dict[str, Any]:
+        for variable, value in self.values.items():
+            self.home.put(self.account(variable), value)
+        return {
+            "url": None if self.url_secret else self.url,
+            "url_secret": self.url_secret,
+            "headers": {
+                name: {k: v for k, v in how.items() if k != "from"}
+                for name, how in self.headers.items()
+            },
+        }
+
+    def original(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """The entry as it was, its secrets named by where they went."""
+        out = copy.deepcopy(spec)
+        where = f"(in {self.home.where})"
+        if self.url_secret:
+            for key in ("url", "serverUrl"):
+                if key in out:
+                    out[key] = where
+        for section in ("headers", "http_headers"):
+            given = out.get(section)
+            if isinstance(given, dict):
+                for name in list(given):
+                    if self.headers.get(str(name), {}).get("secret"):
+                        given[name] = where
+        return out
+
+
+_PLACEHOLDER: Final = re.compile(r"\$\{(?:env:)?([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+"""A header template's variable: ``${NAME}``, ``${env:NAME}`` or ``${NAME:-default}``."""
+
+
+def _expand(template: str, env: Mapping[str, str], header: str) -> str:
+    """``template`` with each variable it names filled in from ``env``.
+
+    :raises ProtectError: For a variable that is not set, or a placeholder only the client
+        fills in (VS Code's ``${input:...}``).
+    """
+
+    def fill(match: re.Match[str]) -> str:
+        value = env.get(match[1])
+        if value is None:
+            if match[2] is not None:
+                return match[2]
+            raise ProtectError(f"its header {header} names ${{{match[1]}}}, which is not set here")
+        return value
+
+    out = _PLACEHOLDER.sub(fill, template)
+    if "${" in out:
+        asked = out[out.index("${") :].split("}", 1)[0] + "}"
+        raise ProtectError(
+            f"its header {header} asks the client for {asked}: only the client fills that "
+            "in, so protect cannot list the server's tools"
+        )
+    return out
+
+
+def _secret_header(name: str, value: str) -> bool:
+    from fiduciary.egress import secrets_in
+
+    return bool(
+        _CREDENTIAL_NAME.search(name)
+        or value.lower().startswith(("bearer ", "basic "))
+        or secrets_in(value)
+    )
+
+
+def _remote_plan(server: Server, remote: Any, vault: Store | None, root: Path) -> _RemotePlan | str:
+    """How ``remote`` is kept, or why it is not wrapped."""
+    import urllib.parse
+
+    from fiduciary import custody
+    from fiduciary.clients import CODEX
+    from fiduciary.egress import secrets_in
+    from fiduciary.remote import RemoteError, check_url
+
+    if remote.transport == "sse":
+        return (
+            "the old HTTP+SSE transport (2024-11-05): protect speaks Streamable HTTP; point the "
+            "entry at the server's Streamable HTTP endpoint"
+        )
+    try:
+        url = check_url(remote.url)
+    except RemoteError as exc:
+        return str(exc)
+    home = vault or custody.FileStore(root)
+    parts = urllib.parse.urlsplit(url)
+    query = parts.query
+    url_secret = bool(query and (secrets_in(query) or _CREDENTIAL_NAME.search(query)))
+    shown = urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+    headers: dict[str, dict[str, Any]] = {}
+    values: dict[str, str] = {}
+    entry_env: dict[str, str] = {}
+    for name, value in remote.headers.items():
+        if "${" in value:
+            if server.section == CODEX:
+                headers[name] = {"template": value}
+            else:
+                variable = "FIDUCIARY_HEADER_" + re.sub(r"[^A-Z0-9]+", "_", name.upper()).strip("_")
+                headers[name] = {"env": variable, "from": value}
+                entry_env[variable] = value
+        elif _secret_header(name, value):
+            headers[name] = {"secret": True}
+            values[f"header:{name}"] = value
+        else:
+            headers[name] = {"value": value}
+    if url_secret:
+        values["url"] = url
+    state = {"client": server.client, "server": server.name}
+    return _RemotePlan(
+        url=url,
+        url_secret=url_secret,
+        headers=headers,
+        secrets=sorted(k.removeprefix("header:") for k in values),
+        home=home,
+        entry_env=entry_env,
+        values=values,
+        shown=shown,
+        account=lambda variable: _account(state, variable),
+        variables=tuple(remote.variables),
+    )
+
+
+def _remote_listing(url: str, headers: Mapping[str, str]) -> list[dict[str, Any]]:
+    """Every tool the remote server at ``url`` lists."""
+    from fiduciary.remote import HttpUpstream
+
+    upstream = HttpUpstream(url, headers=headers)
+    try:
+        return upstream.definitions()
+    finally:
+        upstream.close()
 
 
 def claude_code_turns(
@@ -962,10 +1151,11 @@ def claude_code_turns(
 
 
 def undo(
-    servers: Sequence[Server], *, apply: bool = True, keychain: Keychain | None = None
+    servers: Sequence[Server], *, apply: bool = True, keychain: Store | None = None
 ) -> list[Step]:
     """Put every protected entry of ``servers`` back as it was before ``protect``; its
-    deployment stays where it is, with its records. Secrets come back from the Keychain."""
+    deployment stays where it is, with its records. Secrets come back from the store they
+    went to (1.20.0: whichever it was; the Keychain before)."""
     steps: list[Step] = []
     changes: dict[Path, dict[tuple[str, str], dict[str, Any]]] = {}
     for server in servers:
@@ -979,8 +1169,21 @@ def undo(
             continue
         original = copy.deepcopy(state["original"])
         if state.get("secrets"):
-            chain = keychain or Keychain()
+            chain = _store(state, keychain)
             original["env"] = {v: chain.get(_account(state, v)) for v in state["secrets"]}
+        remote = state.get("remote")
+        if isinstance(remote, dict):
+            chain = _store(state, keychain)
+            if remote.get("url_secret"):
+                for key in ("url", "serverUrl"):
+                    if key in original:
+                        original[key] = chain.get(_account(state, "url"))
+            for section in ("headers", "http_headers"):
+                given = original.get(section)
+                if isinstance(given, dict):
+                    for name in list(given):
+                        if (remote.get("headers") or {}).get(str(name), {}).get("secret"):
+                            given[name] = chain.get(_account(state, f"header:{name}"))
         steps.append(Step(server, "unwrap", "put back as it was", deployment=root))
         changes.setdefault(server.config, {})[(server.section, server.name)] = original
     if apply:
@@ -1009,7 +1212,7 @@ class Flag:
 
 
 def review(
-    root: Path, *, upstream: Upstream | None = None, keychain: Keychain | None = None
+    root: Path, *, upstream: Upstream | None = None, keychain: Store | None = None
 ) -> list[Drift]:
     """Each pinned tool of the deployment at ``root`` whose server now lists another
     definition, and how it changed, against the definition pinned (``pins/``)."""
@@ -1017,17 +1220,16 @@ def review(
 
 
 def inspect(
-    root: Path, *, upstream: Upstream | None = None, keychain: Keychain | None = None
+    root: Path, *, upstream: Upstream | None = None, keychain: Store | None = None
 ) -> tuple[list[Drift], list[Flag]]:
     """:func:`review`'s drifts, and each tool the server lists now whose definition
     contradicts itself (1.19.0), from one listing."""
     from fiduciary.documents import ToolBinding
     from fiduciary.infer import read_tool
-    from fiduciary.mcp import Upstream
 
     state = json.loads((root / STATE).read_text(encoding="utf-8"))
     own = upstream is None
-    server = upstream or Upstream(state["command"], env=_environment(state, keychain))
+    server = upstream or upstream_of(state, keychain)
     try:
         listed = {str(t.get("name")): t for t in server.definitions()}
     finally:
@@ -1070,7 +1272,7 @@ def accept(
     roots: Sequence[Path],
     *,
     discover: Callable[[Sequence[str], Mapping[str, str]], list[dict[str, Any]]] | None = None,
-    keychain: Keychain | None = None,
+    keychain: Store | None = None,
     passkey: PasskeySigner | None = None,
     wait: float = ASIDE_WAIT,
 ) -> dict[Path, Accepted]:
@@ -1098,8 +1300,8 @@ def accept(
     listings = {}
     for root in roots:
         state = json.loads((root / STATE).read_text(encoding="utf-8"))
-        listed = (discover or _discover)(state["command"], _environment(state, keychain))
-        with_credential = bool(state.get("secrets")) or signed_in(state.get("env") or {})
+        listed = _listed(state, keychain, discover)
+        with_credential = _signed(state)
         listings[root] = (state, listed, govern(listed, signed_in=with_credential))
     accepted: dict[Path, Accepted] = {}
     with held(roots, wait=wait):
@@ -1267,12 +1469,87 @@ def _write_bindings(root: Path, bindings: Sequence[ToolBinding]) -> tuple[str, .
     return tuple(sorted(changed))
 
 
-def _environment(state: Mapping[str, Any], keychain: Keychain | None) -> dict[str, str]:
+def _store(state: Mapping[str, Any], given: Store | None = None) -> Store:
+    """The store a deployment's secrets went to (1.20.0; the Keychain before it said)."""
+    from fiduciary import custody
+
+    if given is not None:
+        return given
+    root = Path(str(state.get("owner") or ".")).parent
+    return custody.store_named(str(state.get("store") or "keychain"), root)
+
+
+def _environment(state: Mapping[str, Any], keychain: Store | None) -> dict[str, str]:
     env = {str(k): str(v) for k, v in (state.get("env") or {}).items()}
     if state.get("secrets"):
-        chain = keychain or Keychain()
+        chain = _store(state, keychain)
         env.update({v: chain.get(_account(state, v)) for v in state["secrets"]})
     return env
+
+
+def _remote_headers(
+    state: Mapping[str, Any], store: Store | None, env: Mapping[str, str] | None = None
+) -> tuple[str, dict[str, str]]:
+    """A remote server's URL and headers, as the proxy sends them (1.20.0): a secret from its
+    store, a header the client fills in from the variable the entry passes, a template's
+    variables from the environment."""
+    remote = state["remote"]
+    env = os.environ if env is None else env
+    url = (
+        _store(state, store).get(_account(state, "url"))
+        if remote.get("url_secret")
+        else str(remote["url"])
+    )
+    headers: dict[str, str] = {}
+    for name, how in (remote.get("headers") or {}).items():
+        if "value" in how:
+            headers[name] = str(how["value"])
+        elif how.get("secret"):
+            headers[name] = _store(state, store).get(_account(state, f"header:{name}"))
+        elif "env" in how:
+            value = env.get(str(how["env"]))
+            if value is None:
+                raise ProtectError(f"the client passed no {how['env']}, header {name}'s value")
+            headers[name] = value
+        else:
+            headers[name] = _expand(str(how.get("template") or ""), env, name)
+    return url, headers
+
+
+def upstream_of(state: Mapping[str, Any], store: Store | None = None) -> Upstream | HttpUpstream:
+    """The server a protected deployment fronts (1.20.0): its local command, run with its
+    environment, or its remote URL, spoken to with its headers."""
+    if isinstance(state.get("remote"), dict):
+        from fiduciary.remote import HttpUpstream
+
+        url, headers = _remote_headers(state, store)
+        return HttpUpstream(url, headers=headers)
+    from fiduciary.mcp import Upstream
+
+    return Upstream(state["command"], env=_environment(state, store))
+
+
+def _listed(
+    state: Mapping[str, Any],
+    store: Store | None,
+    discover: Callable[[Sequence[str], Mapping[str, str]], list[dict[str, Any]]] | None,
+) -> list[dict[str, Any]]:
+    """Every tool a protected deployment's server lists now."""
+    if discover is not None and not isinstance(state.get("remote"), dict):
+        return discover(state["command"], _environment(state, store))
+    upstream = upstream_of(state, store)
+    try:
+        return upstream.definitions()
+    finally:
+        upstream.close()
+
+
+def _signed(state: Mapping[str, Any]) -> bool:
+    """Whether a protected server runs with a credential: its reads count as ``private``."""
+    remote = state.get("remote")
+    if isinstance(remote, dict):
+        return bool(remote.get("headers")) or bool(remote.get("url_secret"))
+    return bool(state.get("secrets")) or signed_in(state.get("env") or {})
 
 
 def _discover(command: Sequence[str], env: Mapping[str, str]) -> list[dict[str, Any]]:
@@ -1293,7 +1570,9 @@ def _discover(command: Sequence[str], env: Mapping[str, str]) -> list[dict[str, 
 class Guard:
     """The pins of one protected server, held against what it lists."""
 
-    def __init__(self, fid: Fiduciary, session: Session, upstream: Upstream, root: Path) -> None:
+    def __init__(
+        self, fid: Fiduciary, session: Session, upstream: Upstream | HttpUpstream, root: Path
+    ) -> None:
         self._fid = fid
         self._session = session
         self._upstream = upstream
@@ -1344,7 +1623,9 @@ class Guard:
         return changed
 
 
-def relay_for(root: Path, upstream: Upstream, bindings: Mapping[str, ToolBinding]) -> Relay:
+def relay_for(
+    root: Path, upstream: Upstream | HttpUpstream, bindings: Mapping[str, ToolBinding]
+) -> Relay:
     """Interlock's relay for this deployment's outbox, delivering through ``upstream``:
     a write is made in this process, under the same claim, breaker and signed outcome as
     any relay's."""
@@ -1394,7 +1675,7 @@ class _Proxy:
     relay on it. It lets the deployment go when a command asks (:func:`held`), and opens it
     again, with whatever that command changed, once it is done."""
 
-    def __init__(self, config: Path, upstream: Upstream) -> None:
+    def __init__(self, config: Path, upstream: Upstream | HttpUpstream) -> None:
         self.config = config
         self.root = config.resolve().parent
         self.upstream = upstream
@@ -1504,14 +1785,14 @@ def serve(
     reader: IO[bytes],
     writer: IO[bytes],
     *,
-    keychain: Keychain | None = None,
+    keychain: Store | None = None,
 ) -> None:
     """Serve one client over stdio, in front of the protected server (module docstring)."""
-    from fiduciary.mcp import McpServer, Upstream, serve_stdio
+    from fiduciary.mcp import McpServer, serve_stdio
 
     root = config.resolve().parent
     state = json.loads((root / STATE).read_text(encoding="utf-8"))
-    upstream = Upstream(state["command"], env=_environment(state, keychain))
+    upstream = upstream_of(state, keychain)
     proxy = _Proxy(config, upstream)
     gate = threading.RLock()
     try:
