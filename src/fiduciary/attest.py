@@ -10,7 +10,7 @@ acts, its ledger footprint); and each check's evidence mapped to the controls
 an assessor asks about. The controls come from the packs in
 :mod:`fiduciary.frameworks`: the OWASP Top 10 for Agentic Applications 2026,
 SOC 2's common criteria, the EU AI Act, HIPAA, 21 CFR Part 11, ISO/IEC 27001,
-NIST SP 800-53, SOX IT general controls and GDPR. Each pack's digest is
+NIST SP 800-53, SOX IT general controls, GDPR and AIUC-1 (1.19.0). Each pack's digest is
 recorded under ``mappings``, so a reader can tell which mapping was applied.
 
 It decides nothing. The verdict, the exit code and every finding are the
@@ -62,7 +62,8 @@ PROVES: Final[Mapping[str, str]] = {
     "expired.",
     "V12": "Every timestamp the service wrote agrees with the ledger order of its anchor.",
     "V13": "Every plan committed after its session read untrusted input or labeled data met "
-    "the mandate's provenance rules, or ran as the plan a warrant approved after that read.",
+    "the mandate's provenance rules, or ran as the plan a warrant approved after that read; "
+    "and every send a session recorded met its outbound rules or was refused.",
     "V14": "Every undo put back exactly what its plan changed: its change digests, as its "
     "commit recorded them, are the plan's with before and after swapped.",
 }

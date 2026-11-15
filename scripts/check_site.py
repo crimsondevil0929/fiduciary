@@ -120,7 +120,12 @@ def _readable(site: Path, data: dict[str, Any]) -> list[str]:
     page = _Page()
     page.feed((site / "index.html").read_text(encoding="utf-8"))
     text = " ".join("".join(page.app).split())
-    wanted = [public.COPY["headline"], "@gov.tool", "def close_all(db: fiduciary.Sql) -> str:"]
+    wanted = [
+        public.COPY["headline"],
+        public.COPY["hero"]["lines"][0][1],
+        "@gov.tool",
+        "def refund(api: fiduciary.Rest, order_id: str, amount: str) -> str:",
+    ]
     for pkg in public.COPY["packages"]:
         wanted += [pkg["name"], pkg["role"], f"pip install {pkg['dist']}"]
     for row in (data.get("overview") or {}).get("industries", []):

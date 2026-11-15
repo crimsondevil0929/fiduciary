@@ -762,14 +762,30 @@ class Step:
     skipped: list[dict[str, str]] = field(default_factory=list)
 
 
+_CREDENTIAL_NAME: Final = re.compile(
+    r"(?i)token|secret|passw(?:or)?d|api_?key|access_?key|private_?key|credential|auth|cookie|_pat$"
+)
+
+
+def signed_in(env: Mapping[str, str]) -> bool:
+    """Whether a server runs with a credential (1.19.0): a variable named like one
+    (``GITHUB_TOKEN``, ``API_KEY``, ``DB_PASSWORD``), or a value in a credential's format. A
+    server signed in reads what that credential can see: its reads count as ``private``."""
+    from fiduciary.egress import secrets_in
+
+    return any(_CREDENTIAL_NAME.search(name) or secrets_in(value) for name, value in env.items())
+
+
 def executable() -> list[str]:
     """This installation's ``fiduciary``, by absolute path: what a protected entry runs."""
     found = shutil.which("fiduciary")
-    here = Path(sys.executable).resolve().parent / "fiduciary"
+    # Not resolved (1.19.0): a virtual environment's python is a link out of it, and the
+    # interpreter it links to has none of the environment's packages.
+    here = Path(sys.executable).absolute().parent / "fiduciary"
     for candidate in (here, Path(found) if found else None):
         if candidate is not None and candidate.is_file() and os.access(candidate, os.X_OK):
-            return [str(candidate.resolve())]
-    return [str(Path(sys.executable).resolve()), "-m", "fiduciary"]
+            return [str(candidate.absolute())]
+    return [str(Path(sys.executable).absolute()), "-m", "fiduciary"]
 
 
 def _slug(name: str) -> str:
@@ -855,6 +871,7 @@ def protect(
             shadow=shadow,
             name=_slug(server.name),
             owner=owner.signer() if owner.passkey() is None else None,
+            signed_in=signed_in(env),
         )
         made.append(deployment)
         step.tools, step.skipped = list(report.tools), list(report.skipped)
@@ -982,12 +999,30 @@ class Drift:
     """Field by field; ``("the server no longer lists it",)`` for a tool that is gone."""
 
 
+@dataclass(frozen=True, slots=True)
+class Flag:
+    """A tool whose definition contradicts itself (1.19.0): it claims to read only, and its
+    name, description or arguments say it writes or sends. It is held, not trusted."""
+
+    tool: str
+    why: str
+
+
 def review(
     root: Path, *, upstream: Upstream | None = None, keychain: Keychain | None = None
 ) -> list[Drift]:
     """Each pinned tool of the deployment at ``root`` whose server now lists another
     definition, and how it changed, against the definition pinned (``pins/``)."""
+    return inspect(root, upstream=upstream, keychain=keychain)[0]
+
+
+def inspect(
+    root: Path, *, upstream: Upstream | None = None, keychain: Keychain | None = None
+) -> tuple[list[Drift], list[Flag]]:
+    """:func:`review`'s drifts, and each tool the server lists now whose definition
+    contradicts itself (1.19.0), from one listing."""
     from fiduciary.documents import ToolBinding
+    from fiduciary.infer import read_tool
     from fiduciary.mcp import Upstream
 
     state = json.loads((root / STATE).read_text(encoding="utf-8"))
@@ -998,6 +1033,11 @@ def review(
     finally:
         if own:
             server.close()
+    flags = [
+        Flag(name, why)
+        for name, tool in sorted(listed.items())
+        if (why := read_tool(tool).contradiction) is not None
+    ]
     drifts = []
     for path in sorted((root / "tools").glob("*.tool.json")):
         binding = ToolBinding.loads(path.read_bytes())
@@ -1011,7 +1051,7 @@ def review(
             pinned_file = root / "pins" / f"{binding.name}.json"
             old = json.loads(pinned_file.read_text()) if pinned_file.exists() else {}
             drifts.append(Drift(binding.name, name, tuple(diff(old, now)) or ("a field changed",)))
-    return drifts
+    return drifts, flags
 
 
 @dataclass(frozen=True, slots=True)
@@ -1059,7 +1099,8 @@ def accept(
     for root in roots:
         state = json.loads((root / STATE).read_text(encoding="utf-8"))
         listed = (discover or _discover)(state["command"], _environment(state, keychain))
-        listings[root] = (state, listed, govern(listed))
+        with_credential = bool(state.get("secrets")) or signed_in(state.get("env") or {})
+        listings[root] = (state, listed, govern(listed, signed_in=with_credential))
     accepted: dict[Path, Accepted] = {}
     with held(roots, wait=wait):
         pins: dict[Path, list[dict[str, str]]] = {}

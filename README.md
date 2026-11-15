@@ -8,27 +8,47 @@
 <h1 align="center">Fiduciary</h1>
 
 <p align="center">Signed limits for AI agents that change real systems, and proof anyone can check offline.<br>
-Built on <a href="https://github.com/crimsondevil0929/interlock">Interlock</a> and <a href="https://github.com/crimsondevil0929/agentgov">AgentGov</a>. <a href="https://crimsondevil0929.github.io/fiduciary/">See it working</a>.</p>
+Its engines: <a href="https://github.com/crimsondevil0929/interlock">Interlock</a> stages and measures each change, <a href="https://github.com/crimsondevil0929/agentgov">AgentGov</a> holds the budgets. <a href="https://crimsondevil0929.github.io/fiduciary/">See it working</a>.</p>
 
-Fiduciary adds signed authorization and offline audit to AI agents that change real data.
-It works with [AgentGov](https://github.com/crimsondevil0929/agentgov) (spend limits) and
-[Interlock](https://github.com/crimsondevil0929/interlock) (checks on what an agent's
-write actually changed, before it commits). An MCP or policy gateway decides whether an
-agent may call a tool. This stack decides whether the result of that call may commit, and
-produces evidence that an auditor can verify without trusting the agent or the operator.
+Your agent's rules live in its prompt, and prompts get trimmed. Fiduciary sits between the
+agent and its tools. It pins what each tool is, holds the dangerous calls for your passkey,
+keeps what the agent read from leaving, and puts back what a failed turn changed. An MCP or
+policy gateway decides whether an agent may call a tool; Fiduciary decides whether what the
+call changed may be kept, and what it carries out may leave.
 
 Fiduciary records who set each limit and who approved each exception, as signed
-documents. Anyone with the public keys can verify them offline.
+documents. Anyone with the public keys can verify them offline. `pip install
+interlock-fiduciary` brings both engines; each also works alone.
 
-> **Start here:** [one tool in shadow mode, in 60 seconds](#wrap-one-tool-in-shadow-mode-in-60-seconds) ·
+> **Start here:** [protect the MCP servers your agent runs, in 60 seconds](#protect-the-mcp-servers-your-agent-runs-in-60-seconds) ·
 > [the live console](https://crimsondevil0929.github.io/fiduciary/) ·
 > [30-minute quickstart](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/QUICKSTART.md) · [threat model](https://github.com/crimsondevil0929/fiduciary/blob/main/docs/THREAT_MODEL.md) ·
 > [how the three packages fit together](#start-here)
 
-## Wrap one tool, in shadow mode, in 60 seconds
+## Protect the MCP servers your agent runs, in 60 seconds
 
 ```bash
 pip install interlock-fiduciary
+fiduciary protect --claude-desktop            # says what it would do; nothing changes
+fiduciary protect --claude-desktop --apply    # or --cursor, or --mcp-config .mcp.json
+```
+
+Every MCP server in the client's file gets a proxy in front of it, started in shadow mode.
+Each tool's definition and the server's package version are pinned, and a tool that changes
+is withheld until you accept it (`fiduciary protect --review --accept`). A read-only claim
+the tool's own name or arguments contradict is not believed: the tool is held, and flagged.
+Writes go through once, and those that need approval wait for your passkey
+(`fiduciary passkey add`). A fetch, a search or a send that carries a credential or a
+private value the agent read is refused, whole or encoded. In shadow mode nothing is refused:
+`fiduciary shadow report` lists the writes that would have been, each send that would have been
+is recorded as `shadow`, and `--enforce` turns it on. With Claude Code,
+`--mcp-config .mcp.json --claude-code` adds its turn hooks, so a turn's writes wait for its
+end and a turn that fails puts back what it changed. `fiduciary unprotect` puts every entry
+back.
+
+## Wrap one tool in your own code
+
+```bash
 fiduciary init --solo --shadow --substrate sqlite --database app.db
 ```
 
@@ -201,6 +221,45 @@ What it cannot do: it knows what the agent was shown, not what the model made of
 refund after an unrelated email is held too. It trusts each tool's label as declared, and a
 read nobody labeled is not seen. A refusal in your own process (`fiduciary.open`) is raised
 to your code, not held as a ticket.
+
+## What leaves the session
+
+A read is not only a read. A fetch carries its URL out, a search its query, an email tool its
+recipients. A binding's `egress` names the arguments that say where a call sends (`url`,
+`to`, `repo`); `fiduciary init --mcp` and `fiduciary protect` write it from the tool's schema.
+Then, before such a call leaves:
+
+- **Values.** The session keeps a keyed digest of each distinctive value it read as `secret`
+  (any credential found in a result by its format: AWS, GitHub, Slack, Stripe, OpenAI and
+  Anthropic keys, JWTs, private keys, a password in a connection string) or as `private` (a
+  closed-world read, or any read of a server signed in with a credential). An argument that
+  carries one, as plain text, URL-encoded, base64 or hex, is refused: a credential always, a
+  private value unless it goes where the mandate lists.
+- **The rule of two, for sends.** After untrusted input and private data, nothing more goes
+  out without the principals.
+- **Destinations and budgets.** After sensitive data, only the hosts, email domains and
+  private repositories the mandate lists; and at most so many records read and bytes sent in
+  a turn.
+
+```json
+"provenance": {"untrusted": {"kinds": [], "sinks": []}, "egress": {}, "rule_of_two": true,
+               "on": "hold", "values": true,
+               "destinations": {"hosts": ["*.acme.example"], "repositories": ["acme/*"]},
+               "budget": {"records_read": 5000, "bytes_sent": 65536, "per": "turn"}}
+```
+
+Each send is recorded (`session.sent`) with its destinations, its bytes and the digests it
+carried, never the values, and V13 judges every one again offline. What it cannot do: it
+catches an exact value, whole or encoded once. A model that paraphrases a secret, splits it
+across calls, or sends one shorter than eight characters is not caught, and two protected
+servers are two sessions: a value read through one is not tracked in the other.
+
+`fiduciary infer-policy --mcp -- <server command>` (or `--tools FILE`, `--openapi FILE`)
+drafts all of this for a server you have not seen before: each tool as a read, a send or a
+write, the labels its result brings, where it sends, which tool undoes it, and, with
+`--traces`, bounds from what shadow mode measured. `--llm URL --llm-model NAME` asks any
+OpenAI-compatible endpoint, a local one included, to review the draft, and only what makes it
+stricter is kept. Nothing it writes is signed: you review it.
 
 ## Start here
 
@@ -1089,7 +1148,7 @@ It has three views:
   the options, who has voted, and the warrant once one forms.
 - **Verify a bundle.** Drop any `.fidb`. The console runs V1 to V14 on it, offline, against
   the charter digest and keys you pinned (or the deployment's), and maps each check to the
-  nine control frameworks.
+  ten control frameworks, AIUC-1 among them.
 - **Sandbox**, with `--sandbox` or under `fiduciary demo --serve`: each demo industry built
   fresh in a temporary directory, to try calls on SQL, Git, a directory of files, a
   Kubernetes API server, a FHIR server and a JSON REST API, and to vote on the tickets they

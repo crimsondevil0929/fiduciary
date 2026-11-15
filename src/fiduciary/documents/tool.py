@@ -58,6 +58,8 @@ _NUMBER_PATH: Final = re.compile(
 )
 """An argument's path (1.17.0): dotted names, ``[]`` for each item of an array."""
 _UPSTREAM: Final = re.compile(r"[A-Za-z0-9_.:/-]{1,128}")
+_EGRESS_ARGUMENT: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+_KIND: Final = re.compile(r"email|repository|url")
 MAX_ITEMS: Final = 64
 
 
@@ -237,7 +239,9 @@ class Request:
 SYSTEM: Final = "system"
 UNTRUSTED: Final = "untrusted"
 TRUST: Final = ("principal", SYSTEM, UNTRUSTED)
-CONFIDENTIALITY: Final = ("secret", "tenant")
+CONFIDENTIALITY: Final = ("private", "secret", "tenant")
+DESTINATION_KINDS: Final = ("email", "repository", "url")
+"""What an argument a binding's ``egress`` declares names a destination as (1.19.0)."""
 _OUTPUT_TYPES: Final = frozenset({"integer", "number", "boolean"})
 
 
@@ -333,6 +337,7 @@ class ToolBinding(Document):
         "numbers",
         "pin",
         "upstream",
+        "egress",
     )
 
     name: str
@@ -350,7 +355,9 @@ class ToolBinding(Document):
     ``system`` (the deployment's own records, the default), or ``untrusted`` (anyone's:
     an email, a web page, a ticket a customer wrote). Written only when not ``system``."""
     confidentiality: str | None = None
-    """``secret``, or ``tenant`` (the session's tenant's data), or ``None`` (1.16.0)."""
+    """``secret``, or ``tenant`` (the session's tenant's data), or ``None`` (1.16.0); or
+    ``private`` (1.19.0): what the deployment's own systems hold that is not for everyone,
+    such as a private repository, a mailbox or a database's rows."""
     quarantine: Quarantine | None = None
     """A reader sub-agent's typed result (1.16.0): see :class:`Quarantine`."""
     numbers: tuple[str, ...] = ()
@@ -363,6 +370,11 @@ class ToolBinding(Document):
     A proxy withholds the tool while the server lists anything else."""
     upstream: str | None = None
     """The server's own name for the tool, when it is not the binding's (1.17.0)."""
+    egress: Mapping[str, str] = field(default_factory=dict)
+    """The arguments that name where a call sends (1.19.0), each with its kind: ``url``
+    (a host), ``email`` (a recipient's domain) or ``repository`` (``owner/name``). A
+    passthrough tool that declares one is a send as well as a read: what it carries out is
+    judged before it leaves (:mod:`fiduciary.egress`). Written only when declared."""
     signature: Signature | None = None
 
     def labels(self, tenant: str | None) -> tuple[str, ...]:
@@ -372,8 +384,8 @@ class ToolBinding(Document):
         found = []
         if self.trust == UNTRUSTED:
             found.append(UNTRUSTED)
-        if self.confidentiality == "secret":
-            found.append("secret")
+        if self.confidentiality in ("secret", "private"):
+            found.append(str(self.confidentiality))
         elif self.confidentiality == "tenant":
             found.append(f"partition:tenant={tenant or '-'}")
         return tuple(sorted(found))
@@ -394,6 +406,7 @@ class ToolBinding(Document):
             **({"numbers": list(self.numbers)} if self.numbers else {}),
             **({"pin": self.pin} if self.pin else {}),
             **({"upstream": self.upstream} if self.upstream else {}),
+            **({"egress": dict(sorted(self.egress.items()))} if self.egress else {}),
         }
 
     @classmethod
@@ -495,6 +508,12 @@ class ToolBinding(Document):
             "upstream": fields.text("upstream", _UPSTREAM, "a tool name of 1 to 128 characters")
             if fields.has("upstream")
             else None,
+            "egress": {
+                name: fidu1.check_text(kind, path, _KIND, "url, email or repository")
+                for name, path, kind in fields.mapping("egress", _EGRESS_ARGUMENT)
+            }
+            if fields.has("egress")
+            else {},
         }
 
     def _agree(self) -> None:
@@ -507,6 +526,13 @@ class ToolBinding(Document):
                 "refuses the call",
             )
         arguments = set(schema.get("properties", {}))
+        strays = sorted(set(self.egress) - arguments)
+        if strays:
+            raise MalformedError(
+                "agreement",
+                "$.egress",
+                f"names {', '.join(strays)}, which the input schema does not take",
+            )
         if self.quarantine is not None and self.kind != "passthrough":
             raise MalformedError(
                 "agreement", "$.quarantine", "a reader's result comes from a passthrough tool"

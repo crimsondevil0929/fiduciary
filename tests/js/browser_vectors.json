@@ -116,6 +116,17 @@
    "receipts": "pass",
    "signatures": "pass"
   },
+  "v13-outbound-leak": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "provenance": "fail",
+   "signatures": "pass"
+  },
   "v13-tainted-commit": {
    "anchors": "pass",
    "chain": "pass",
@@ -437,6 +448,17 @@
    "manifest": "pass",
    "members": "pass",
    "receipts": "pass",
+   "signatures": "pass"
+  },
+  "valid-outbound-refused": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "provenance": "pass",
    "signatures": "pass"
   },
   "valid-phase-4-lifecycle": {
@@ -614,6 +636,18 @@
    "receipts": "pass",
    "signatures": "pass"
   },
+  "v13-outbound-leak": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "provenance": "fail",
+   "signatures": "pass"
+  },
   "v13-tainted-commit": {
    "anchors": "pass",
    "chain": "pass",
@@ -964,6 +998,18 @@
    "members": "pass",
    "pins": "pass",
    "receipts": "pass",
+   "signatures": "pass"
+  },
+  "valid-outbound-refused": {
+   "anchors": "pass",
+   "chain": "pass",
+   "container": "pass",
+   "documents": "pass",
+   "ledger": "pass",
+   "manifest": "pass",
+   "members": "pass",
+   "pins": "pass",
+   "provenance": "pass",
    "signatures": "pass"
   },
   "valid-phase-4-lifecycle": {

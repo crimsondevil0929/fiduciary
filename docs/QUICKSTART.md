@@ -1,5 +1,11 @@
 # Put it in front of your agent in 30 minutes
 
+If your agent is Claude Code, Cursor or Claude Desktop, start with no code at all:
+`fiduciary protect --claude-desktop --apply` (or `--cursor`, or `--mcp-config .mcp.json`) puts
+a proxy in front of every MCP server the client runs, in shadow mode
+([README](../README.md#protect-the-mcp-servers-your-agent-runs-in-60-seconds)). This guide is
+for an agent you build yourself.
+
 ## First, one tool in shadow mode (60 seconds)
 
 The quickest way to see what the stack would do is to wrap one tool you already have and let

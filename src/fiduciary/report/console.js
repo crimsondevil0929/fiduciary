@@ -1315,24 +1315,44 @@
     return h("button", { class: "lp-copy", title: "Copy: " + command, "aria-label": label || "Copy " + command, onclick: function () { copy(command); } },
       h("span", { class: "lp-prompt", "aria-hidden": "true" }, "$"), h("code", null, command), icon("copy"));
   }
+  function termLine(r) {
+    if (r[0] === "cmd") return h("div", { class: "tl" }, h("span", { class: "lp-prompt" }, "$"), " " + r[1]);
+    if (r[0] === "agent") return h("div", { class: "tl lp-agent" }, h("span", { class: "lp-prompt" }, ">"), " " + r[1]);
+    return h("div", { class: "tl" + (r[0] === "hit" ? " hit" : "") }, r[1]);
+  }
   function codeWindow() {
-    var lines = C.code.map(function (line, i) { return h("div", { class: "cl" }, h("span", { class: "ln", "aria-hidden": "true" }, String(i + 1)), h("span", null, pyLine(line))); });
-    var report = C.report.map(function (r) {
-      return r[0] === "cmd" ? h("div", { class: "tl" }, h("span", { class: "lp-prompt" }, "$"), " " + r[1]) : h("div", { class: "tl" + (r[0] === "hit" ? " hit" : "") }, r[1]);
+    var x = C.hero;
+    return h("figure", { class: "lp-code lp-terminal", "aria-label": x.label },
+      h("div", { class: "lp-code-bar" }, h("i"), h("i"), h("i"), h("span", { class: "mono" }, x.file), h("span", { class: "spacer" }), h("span", { class: "lp-tag" }, x.mode)),
+      h("div", { class: "lp-term" }, x.lines.map(termLine)),
+      h("figcaption", null, x.caption));
+  }
+  function doorsSection() {
+    var d = C.doors, panels = [], tabs = [];
+    function choose(key) {
+      tabs.forEach(function (t) { t.setAttribute("aria-selected", t.id === "door-" + key ? "true" : "false"); });
+      panels.forEach(function (p) { p.hidden = p.id !== "door-panel-" + key; });
+    }
+    d.items.forEach(function (x, i) {
+      tabs.push(h("button", { class: "lp-door-tab", role: "tab", id: "door-" + x.key, "aria-controls": "door-panel-" + x.key, "aria-selected": i === 0 ? "true" : "false", onclick: function () { choose(x.key); } }, x.tab));
+      var code = x.code.length ? h("pre", { class: "lp-src lp-door-code" }, x.code.map(function (line, n) { return h("div", { class: "cl" }, h("span", { class: "ln", "aria-hidden": "true" }, String(n + 1)), h("span", null, pyLine(line))); })) : null;
+      var panel = h("div", { class: "lp-door", role: "tabpanel", id: "door-panel-" + x.key, "aria-labelledby": "door-" + x.key },
+        h("p", null, x.text), h("div", { class: "lp-door-cmds" }, x.commands.map(function (c) { return copyChip(c); })), code);
+      panel.hidden = i !== 0;
+      panels.push(panel);
     });
-    return h("figure", { class: "lp-code", "aria-label": C.code_label },
-      h("div", { class: "lp-code-bar" }, h("i"), h("i"), h("i"), h("span", { class: "mono" }, C.file), h("span", { class: "spacer" }), h("span", { class: "lp-tag" }, C.mode)),
-      h("pre", { class: "lp-src" }, h("div", { class: "tl lp-init" }, h("span", { class: "lp-prompt" }, "$"), " " + C.init), lines),
-      h("div", { class: "lp-term" }, report),
-      h("figcaption", null, C.caption));
+    return h("section", { class: "lp-sec lp-doors", id: "doors" }, h("div", { class: "wrap" },
+      lpHead(d), h("div", { class: "lp-door-tabs", role: "tablist" }, tabs), panels));
   }
   function systemsStrip() {
     if (!OVERVIEW) return null;
-    var seen = {}, chips = [];
+    var classes = {}, chips = [];
     OVERVIEW.industries.forEach(function (r) {
-      if (!r.ran || !r.substrate || seen[r.substrate]) return;
-      seen[r.substrate] = true;
-      chips.push(h("span", { class: "lp-sys" }, rungChip(r["class"]), r.substrate));
+      if (r.ran && r.substrate && !classes[r.substrate]) classes[r.substrate] = r["class"];
+    });
+    C.systems_order.forEach(function (s) {
+      var letter = s[1] || classes[s[2]];
+      if (letter) chips.push(h("span", { class: "lp-sys" }, rungChip(letter), s[0]));
     });
     return h("div", { class: "lp-systems" }, h("span", { class: "lp-sys-label" }, C.systems), chips);
   }
@@ -1423,7 +1443,7 @@
     view = "run"; use(firstWorkflow()); TAB = null; setRoute(); render(); window.scrollTo(0, 0);
   }
   function home() {
-    return h("main", { id: "home", class: "lp" }, hero(), stackSection(), loopSection(), ladderSection(), numbersSection(), closingSection());
+    return h("main", { id: "home", class: "lp" }, hero(), doorsSection(), stackSection(), loopSection(), ladderSection(), numbersSection(), closingSection());
   }
   function siteFooter() {
     var F = C.footer;

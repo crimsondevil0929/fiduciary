@@ -1223,6 +1223,86 @@ class Decide:
             "labels": sorted(held | set(new)),
         }
 
+    def _pinned_tool(self, opened: Mapping[str, Any], tool: str) -> None:
+        mandate: Mandate = self.load(str(opened["mandate"]), Mandate)
+        if tool not in {pin.name for pin in mandate.tools.bindings}:
+            raise AuthorityError(f"tool {tool!r} is pinned by no version this session runs")
+
+    def read_session(
+        self, state: State, session_id: str, body: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """The ``session.read`` body (1.19.0): what one read of a passthrough tool returned,
+        as the outbound rules count it: how many records, the values it tracked (keyed
+        digests, by label), and whether it was served or withheld by the read budget. V13
+        holds the outcome to the rules; this holds the record to its form."""
+        opened = self._open_session(state, session_id)
+        tool = str(body.get("tool", ""))
+        self._pinned_tool(opened, tool)
+        records = body.get("records")
+        if not isinstance(records, int) or isinstance(records, bool) or not 0 <= records <= 10**9:
+            raise AuthorityError("a read's records are a count")
+        outcome = body.get("outcome")
+        if outcome not in ("served", "withheld", "shadow"):
+            raise AuthorityError("a read is served, withheld, or served in shadow")
+        return {
+            "session": session_id,
+            "mandate_id": opened["mandate_id"],
+            "tool": tool,
+            "turn": _turn(body.get("turn")),
+            "records": records,
+            "values": _digests(body.get("values"), "values"),
+            "outcome": outcome,
+            "rules": _rules(body.get("rules"), outcome != "served"),
+        }
+
+    def send_session(
+        self, state: State, session_id: str, body: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """The ``session.sent`` body (1.19.0): one call that carries data out, judged before
+        it left: the labels the session held (from its records, not the caller's word), where
+        it was going, how many bytes, which tracked values it carried (by digest), and the
+        outcome. V13 judges the outcome again from these; this holds the record to its form."""
+        opened = self._open_session(state, session_id)
+        tool = str(body.get("tool", ""))
+        self._pinned_tool(opened, tool)
+        size = body.get("bytes")
+        if not isinstance(size, int) or isinstance(size, bool) or not 0 <= size <= 10**9:
+            raise AuthorityError("a send's bytes are a count")
+        outcome = body.get("outcome")
+        if outcome not in ("allowed", "refused", "shadow"):
+            raise AuthorityError("a send is allowed, refused or let through in shadow")
+        plan = body.get("plan")
+        if not isinstance(plan, bool):
+            raise AuthorityError("a send says whether it is a plan")
+        where = body.get("destinations")
+        if not isinstance(where, Mapping):
+            raise AuthorityError("a send's destinations are an object")
+        destinations: dict[str, list[str]] = {}
+        for kind in sorted(where):
+            values = where[kind]
+            if kind not in ("email", "repository", "url") or not isinstance(values, list):
+                raise AuthorityError(f"{kind!r} is no destination kind")
+            pattern = _REPOSITORY_NAME if kind == "repository" else _HOST_NAME
+            if not values or values != sorted(set(values)) or len(values) > 64:
+                raise AuthorityError(f"a send's {kind} destinations are sorted, each once")
+            for value in values:
+                if not isinstance(value, str) or not (value == "?" or pattern.fullmatch(value)):
+                    raise AuthorityError(f"{value!r} is no {kind} destination")
+            destinations[kind] = list(values)
+        return {
+            "session": session_id,
+            "mandate_id": opened["mandate_id"],
+            "tool": tool,
+            "turn": _turn(body.get("turn")),
+            "plan": plan,
+            "labels": list(session_labels(state, session_id)),
+            "destinations": destinations,
+            "bytes": size,
+            "matched": _digests(body.get("matched"), "matched"),
+            "outcome": outcome,
+            "rules": _rules(body.get("rules"), outcome != "allowed"),
+        }
+
     def close_session(self, state: State, session_id: str, scopes: Sequence[str]) -> dict[str, Any]:
         """The ``session.closed`` body: every scope the session billed, in
         order, each its subject's or a satellite's (F8-8)."""
@@ -1548,11 +1628,65 @@ def _expected(
         return decide.label_session(
             state, str(body["session"]), str(body["tool"]), list(body["introduced"])
         )
+    if kind == "session.read":
+        return decide.read_session(state, str(body["session"]), body)
+    if kind == "session.sent":
+        return decide.send_session(state, str(body["session"]), body)
     if kind == "turn.closed":
         return decide.close_turn(state, body)
     if kind == "plan.undone":
         return decide.undo_plan(state, body)
     raise AuthorityError(f"no rule writes a {kind} record")
+
+
+_HOST_NAME: Final = re.compile(r"[a-z0-9][a-z0-9.-]{0,252}")
+_REPOSITORY_NAME: Final = re.compile(r"[a-z0-9_.-]{1,100}/[a-z0-9_.-]{1,100}")
+_DIGEST: Final = re.compile(r"[0-9a-f]{32}")
+OUTBOUND_RULES: Final = re.compile(
+    r"rule_of_two|destination:(?:email|repository|url)|value:[a-z][a-z0-9_.:=*-]{0,95}"
+    r"|budget:(?:bytes_sent|records_read)"
+)
+"""A rule of what leaves that a ``session.sent`` or ``session.read`` may name (1.19.0)."""
+
+
+def _turn(turn: object) -> str | None:
+    if turn is None:
+        return None
+    if not isinstance(turn, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", turn):
+        raise AuthorityError(f"{turn!r} is no turn id")
+    return turn
+
+
+def _digests(found: object, what: str) -> dict[str, list[str]]:
+    """``{label: [digest, ...]}``: labels a provenance label each, digests sorted, once."""
+    if not isinstance(found, Mapping):
+        raise AuthorityError(f"a record's {what} are an object")
+    out: dict[str, list[str]] = {}
+    total = 0
+    for label in sorted(found):
+        digests = found[label]
+        if not PROVENANCE_LABEL.fullmatch(str(label)) or not isinstance(digests, list):
+            raise AuthorityError(f"{label!r} is no provenance label")
+        if not digests or digests != sorted(set(digests)):
+            raise AuthorityError(f"the {what} of {label} are sorted, each once")
+        if not all(isinstance(d, str) and _DIGEST.fullmatch(d) for d in digests):
+            raise AuthorityError(f"the {what} of {label} are digests")
+        total += len(digests)
+        out[str(label)] = list(digests)
+    if total > 4096:
+        raise AuthorityError(f"a record holds at most 4096 {what}")
+    return out
+
+
+def _rules(found: object, named: bool) -> list[str]:
+    """The rules a refusal names: sorted, once each, known; none when nothing was refused."""
+    if not isinstance(found, list) or found != sorted(set(found)):
+        raise AuthorityError("a record's rules are sorted, each once")
+    if not all(isinstance(r, str) and OUTBOUND_RULES.fullmatch(r) for r in found):
+        raise AuthorityError("a record names a rule no mandate has")
+    if bool(found) != named:
+        raise AuthorityError("rules are named when, and only when, a rule was broken")
+    return list(found)
 
 
 def session_labels(state: State, session_id: str) -> tuple[str, ...]:

@@ -70,7 +70,18 @@ def test_the_site_page_reads_without_its_script() -> None:
     assert site.COPY["headline"] in text and site.COPY["lede"] in text
     for pkg in site.COPY["packages"]:
         assert pkg["name"] in text and pkg["text"] in text and f"pip install {pkg['dist']}" in text
-    assert "@gov.tool" in text and "def close_all(db: fiduciary.Sql) -> str:" in text
+    # 1.19.0: the hero is a protect run on an MCP server, and three doors follow it
+    assert "fiduciary protect --mcp-config .mcp.json --enforce --apply" in text
+    assert "Not sent: it carries a credential this session read." in text
+    assert "UPDATE tickets" not in text and "close_all" not in text
+    for door in site.COPY["doors"]["items"]:
+        assert door["tab"] in text and door["text"] in text
+    assert "@gov.tool" in text and "def refund(api: fiduciary.Rest" in text
+    strip = text[text.index(site.COPY["systems"]) :]
+    shown = [n for n, _, _ in site.COPY["systems_order"] if n in strip]
+    assert shown[0] == "MCP servers" and shown == sorted(
+        shown, key=[n for n, _, _ in site.COPY["systems_order"]].index
+    )
     # the counts the script fills in, counted as it counts them: two workflows ran
     assert "2 workflows" in text and "on 2 kinds of system, in one run" in text
     assert "6plans refused" in text and "4bundles verified offline" in text

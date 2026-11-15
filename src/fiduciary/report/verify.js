@@ -40,7 +40,9 @@
 //                            every plan committed after the session read untrusted input or
 //                            labeled data met the mandate's provenance rules, or ran as the
 //                            plan a warrant approved after the label entered; and a reader's
-//                            typed result came from a reader that can write nothing
+//                            typed result came from a reader that can write nothing; and
+//                            (1.19.0) every recorded send and read met the version's outbound
+//                            rules, judged again from the records, or was refused
 //
 // Without pinned keys, the keys are the bundle's own (keys.json). The ledger's cosignatures
 // and the entries no anchor is read from (the rest of V6), replay (V3, V7, V8, V11, V12), the charter (V2), the
@@ -383,8 +385,9 @@
         if (r.kind === "session.opened") sessions[b.session] = { trajectory: b.trajectory, mandate: b.mandate, lineage: b.mandate_id, labels: [] };
         else if (r.kind === "session.labeled" && sessions[b.session]) sessions[b.session].labels.push({ seq: r.seq, at: instant(r.issued_at), introduced: b.introduced || [], tool: b.tool });
       });
+      var outbound = outboundProblems(records, json);
       var any = Object.keys(sessions).some(function (k) { return sessions[k].labels.length; });
-      if (!any) return;
+      if (!any && !outbound.sends) return;
       var docs = { tool: [], ticket: [], warrant: [], mandate: [] };
       Object.keys(by).forEach(function (n) {
         var m = /^(tools|tickets|warrants|mandates)\/([0-9a-f]{64})\.json$/.exec(n);
@@ -393,7 +396,7 @@
         d.__digest = m[2];
         docs[{ tools: "tool", tickets: "ticket", warrants: "warrant", mandates: "mandate" }[m[1]]].push(d);
       });
-      var problems = [], held = 0, cleared = 0;
+      var problems = outbound.problems.slice(), held = 0, cleared = 0;
       // a reader's typed result came from a reader that can write nothing
       Object.keys(sessions).forEach(function (k) {
         sessions[k].labels.forEach(function (l) {
@@ -474,7 +477,83 @@
       });
       add("provenance", NAME, "V13", problems.length ? "fail" : "pass",
         problems.length ? problems.slice(0, 3).join("; ") + (problems.length > 3 ? "; and " + (problems.length - 3) + " more" : "")
-          : held + " plan" + (held === 1 ? "" : "s") + " made after a labeled read, " + cleared + " approved by warrant after it");
+          : held + " plan" + (held === 1 ? "" : "s") + " made after a labeled read, " + cleared + " approved by warrant after it" +
+            (outbound.sends ? "; " + outbound.sends + " send" + (outbound.sends === 1 ? "" : "s") + " judged before leaving, " + outbound.refused + " refused" : ""));
+    }
+
+    // V13 (1.19.0): what left a session. The same judgment as fiduciary.egress: after
+    // sensitive data, only listed destinations; no tracked secret or private value out; the
+    // rule of two for a passthrough send; the read and send budgets. Every record is judged
+    // again from what the records say: labels, tracked digests, destinations, bytes.
+    function matchesAny(patterns, value) {
+      if (value === "?") return false;
+      return patterns.some(function (p) {
+        if (p === "*" || p === value) return true;
+        if (p.indexOf("*.") === 0 && value.slice(-(p.length - 1)) === p.slice(1)) return true;
+        return p.slice(-2) === "/*" && value.indexOf(p.slice(0, -1)) === 0 && value.indexOf("/") >= 0;
+      });
+    }
+    function sensitiveLabel(x) { return x === "secret" || x === "private" || x.indexOf("partition:") === 0; }
+    function judgeSend(rules, plan, labels, where, matched, sinks, before, size) {
+      var d = rules.destinations || {}, allowed = function (k) { var v = d[{ url: "hosts", email: "emails", repository: "repositories" }[k]]; return v === undefined ? null : v; };
+      var egress = rules.egress || {}, broken = {}, sensitive = labels.some(sensitiveLabel), kinds = Object.keys(where);
+      if (!plan && rules.rule_of_two && labels.indexOf("untrusted") >= 0 && sensitive && kinds.length) broken.rule_of_two = 1;
+      if (sensitive) kinds.forEach(function (k) { var a = allowed(k); if (a !== null && !where[k].every(function (v) { return matchesAny(a, v); })) broken["destination:" + k] = 1; });
+      if (rules.values) Object.keys(matched).forEach(function (label) {
+        var cleared = egress[label] || null, within = cleared !== null && sinks.every(function (x) { return cleared.indexOf(x) >= 0; });
+        if (plan) {
+          if (label === "secret" ? !within : (cleared !== null && !within)) broken["value:" + label] = 1;
+        } else if (label === "secret") broken["value:secret"] = 1;
+        else {
+          var listed = kinds.map(function (k) { var a = allowed(k); return a !== null && where[k].every(function (v) { return matchesAny(a, v); }); });
+          if (!listed.length || !listed.every(Boolean)) broken["value:" + label] = 1;
+        }
+      });
+      var budget = rules.budget || {};
+      if (budget.bytes_sent !== undefined && budget.bytes_sent !== null && before + size > budget.bytes_sent) broken["budget:bytes_sent"] = 1;
+      return Object.keys(broken).sort();
+    }
+    function outboundProblems(records, json) {
+      var out = { problems: [], sends: 0, refused: 0 }, opened = {}, events = {};
+      records.forEach(function (r) {
+        var b = r && r.body || {};
+        if (r.kind === "session.opened") opened[b.session] = b;
+        if (r.kind === "session.labeled" || r.kind === "session.read" || r.kind === "session.sent") (events[b.session] = events[b.session] || []).push(r);
+      });
+      Object.keys(events).sort().forEach(function (sid) {
+        var list = events[sid].slice().sort(function (a, b) { return a.seq - b.seq; });
+        if (!list.some(function (r) { return r.kind !== "session.labeled"; }) || !opened[sid]) return;
+        var version = json("mandates/" + opened[sid].mandate + ".json");
+        if (!version || !version.provenance) return out.problems.push("session " + sid + " recorded what it read and sent, under a version the bundle does not hold with outbound rules");
+        var rules = version.provenance, shadow = version.enforcement === "shadow", budget = rules.budget || {}, per = budget.per || "turn";
+        var pins = {}; ((version.tools && version.tools.bindings) || []).forEach(function (p) { pins[p.name] = p.digest; });
+        var labels = [], tracked = {}, read = {}, sent = {};
+        list.forEach(function (r) {
+          var b = r.body, key = per === "turn" ? String(b.turn || "") : "", outcome = b.outcome;
+          if (r.kind === "session.labeled") { (b.introduced || []).forEach(function (x) { if (labels.indexOf(x) < 0) labels.push(x); }); return; }
+          if (outcome === "shadow" && !shadow) out.problems.push("record " + r.seq + ": let through in shadow, under a version that enforces its rules");
+          if (r.kind === "session.read") {
+            var limit = budget.records_read;
+            if (limit !== undefined && limit !== null && (read[key] || 0) + b.records > limit && outcome === "served") out.problems.push("record " + r.seq + ": " + b.tool + "'s read was served past the read budget");
+            if (outcome !== "withheld") {
+              read[key] = (read[key] || 0) + b.records;
+              Object.keys(b.values || {}).forEach(function (label) { b.values[label].forEach(function (d) { (tracked[d] = tracked[d] || {})[label] = 1; }); });
+            }
+            return;
+          }
+          out.sends++;
+          var held = (b.labels || []).slice().sort();
+          if (held.join(",") !== labels.slice().sort().join(",")) out.problems.push("record " + r.seq + ": says the session held " + (held.join(", ") || "no label") + ", and its records gave it " + (labels.slice().sort().join(", ") || "none"));
+          Object.keys(b.matched || {}).forEach(function (label) { b.matched[label].forEach(function (d) { if (!(tracked[d] || {})[label]) out.problems.push("record " + r.seq + ": names a " + label + " value no earlier read of the session tracked"); }); });
+          var sinks = [], tool = pins[b.tool] ? json("tools/" + pins[b.tool] + ".json") : null;
+          if (tool) (tool.requests || []).forEach(function (q) { if (sinks.indexOf(q.sink) < 0) sinks.push(q.sink); });
+          var broken = judgeSend(rules, !!b.plan, held, b.destinations || {}, b.matched || {}, sinks.sort(), sent[key] || 0, b.bytes);
+          if (outcome === "refused") { out.refused++; return; }
+          if (broken.length && outcome === "allowed") out.problems.push("record " + r.seq + ": " + b.tool + " sent after the session read " + (held.join(", ") || "nothing labeled") + ", and the version's outbound rules refuse it: " + broken.join(", "));
+          sent[key] = (sent[key] || 0) + b.bytes;
+        });
+      });
+      return out;
     }
 
     function deliveryChecks() {

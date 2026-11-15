@@ -920,6 +920,10 @@ a.brand { color: inherit; text-decoration: none; }
 .lp-term { padding: 12px 0 14px; background: #0a0c0e; border-top: 1px solid rgba(255, 255, 255, 0.07); font: 12.5px/1.65 var(--mono); color: #b9bdc2; overflow-x: auto; }
 .lp-term .tl { padding: 0 18px; white-space: pre; }
 .lp-term .hit { color: #f2b84b; }
+.lp-terminal .lp-term { border-top: 0; padding-top: 14px; }
+.lp-terminal .lp-term .tl { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 34px; text-indent: -16px; }
+.lp-term .lp-agent { color: #86acf2; margin-top: 8px; }
+.lp-term .lp-agent .lp-prompt { color: #86acf2; }
 .lp-code figcaption { padding: 11px 18px 13px; font-size: 12.5px; color: #9aa0a6; border-top: 1px solid rgba(255, 255, 255, 0.07); background: #14171b; }
 
 .lp-systems { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; justify-content: center; margin-top: 56px; padding-top: 26px; border-top: 1px solid var(--line); }
@@ -928,6 +932,19 @@ a.brand { color: inherit; text-decoration: none; }
 .lp-sys .rung { border-radius: 999px; }
 
 .lp-sec { padding: 88px 0; }
+.lp-doors { padding-top: 56px; }
+.lp-door-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.lp-door-tab { font: inherit; font-size: 14px; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink-2); cursor: pointer; text-align: left; }
+.lp-door-tab:hover { border-color: var(--muted); color: var(--ink); }
+.lp-door-tab[aria-selected="true"] { border-color: var(--accent); color: var(--ink); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.lp-door-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.lp-door { max-width: 880px; }
+.lp-door[hidden] { display: none; }
+.lp-door > p { font-size: 16px; line-height: 1.6; color: var(--ink-2); margin-bottom: 16px; }
+.lp-door-cmds { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.lp-door-cmds .lp-copy { height: auto; padding-top: 10px; padding-bottom: 10px; }
+.lp-door-cmds .lp-copy code { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; text-align: left; }
+.lp-door-code { margin-top: 18px; border-radius: var(--lp-r); background: #0f1114; color: #e7e6e1; border: 1px solid rgba(255, 255, 255, 0.08); }
 .lp-alt { background: var(--raise); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .lp-head { max-width: 720px; margin-bottom: 40px; }
 .lp-kicker { display: inline-block; font: 500 11.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
