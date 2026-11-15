@@ -518,6 +518,10 @@ class Fiduciary:
         self.withheld: dict[str, str] = {}
         """Tools a proxy withholds from every session, with what the agent is told (1.17.0):
         each one whose MCP server lists another definition than its binding's pin."""
+        self.protected: tuple[str, ...] = ()
+        """Paths no call may name (1.20.0): a call any of whose arguments is a path at or
+        under one of them is refused before anything runs (``fiduciary ci`` sets
+        ``.github/workflows`` and ``.github/actions``)."""
         self.turn_plans: dict[str, list[tuple[str, str]]] = {}
         """Each open turn's committed plans, as ``(mandate_id, plan_id)``, in order (1.18.0):
         what a turn that does not finish undoes, latest first."""
@@ -837,6 +841,29 @@ def _refused_send(broken: Sequence[str]) -> str:
     )
 
 
+def protected_path(arguments: Any, protected: Sequence[str]) -> str | None:
+    """The first path among ``arguments``' strings that is at or under one of ``protected``
+    (1.20.0), as the call wrote it; ``None`` when none is. A string is read as a path whole
+    (one line, no more than 4,096 characters), with ``.`` and ``..`` resolved and case ignored,
+    so ``./.github/workflows/ci.yml``, ``/home/runner/work/x/.github/workflows/ci.yml`` and
+    ``src/../.GitHub/workflows/`` all name ``.github/workflows``. A file's contents that
+    mention such a path are not one."""
+    import posixpath
+
+    from fiduciary.egress import strings_in
+
+    wanted = [p.strip("/").lower() for p in protected if p.strip("/")]
+    for text in strings_in(arguments):
+        if not text or "\n" in text or len(text) > 4096:
+            continue
+        normal = posixpath.normpath(text.strip().replace("\\", "/")).lower()
+        bounded = "/" + normal.strip("/") + "/"
+        for path in wanted:
+            if f"/{path}/" in bounded:
+                return text
+    return None
+
+
 class Session:
     """One agent's session (module docstring). Open it with
     :meth:`Fiduciary.session`; its methods are its whole surface (F8-1)."""
@@ -1027,45 +1054,10 @@ class Session:
         self._take_up()
         if name in BUILTIN_TOOLS:
             return self._builtin(name, arguments)
-        binding = self._bindings().get(name)
-        if binding is None:
-            return self._reject(
-                None, "unpinned", "No tool of that name is granted to this session."
-            )
-        withheld = self._fid.withheld.get(name)
-        if withheld is not None:
-            return self._reject(name, "withheld", withheld)
-        if binding.numbers:
-            # A number argument is held as its decimal string (1.17.0): no float is hashed.
-            from interlock.mcp import decimals
-
-            arguments = decimals(dict(arguments), binding.numbers)
-        problems = check_arguments(binding.input, arguments)
-        if problems:
-            text = "; ".join(problems)[:1024]
-            return self._reject(name, "arguments", f"The arguments were refused: {text}.")
-        if binding.tenant == "session" and self.tenant is None:
-            return self._reject(
-                name, "tenant", "This tool acts for a tenant; this session has none."
-            )
-        recovery = self._fid.recovering(self.mandate_id)
-        if recovery is not None and name in recovery.revoked:
-            return self._reject(
-                name, "revoked", "Not run: this tool was revoked for the rest of the task."
-            )
-        if not self._count():
-            return self._reject(name, "velocity", "Too many calls in too short a time; wait.")
-        try:
-            self._breaker.observe(
-                self.billing_scope,
-                name,
-                canonical_arguments(kwargs=dict(arguments)),
-                trajectory=self._trajectory(),
-            )
-        except CircuitBreakerError:
-            return CallResult(
-                name, "halted", "This task is halted: it repeated calls without progress."
-            )
+        admitted = self._admit(name, arguments)
+        if isinstance(admitted, CallResult):
+            return admitted
+        binding, arguments = admitted
         self._from_siblings()
         blocked = self._outbound(binding, arguments)
         if blocked is not None:
@@ -1116,6 +1108,106 @@ class Session:
         self.close()
 
     # -- internals ---------------------------------------------------------------------
+
+    def _admit(
+        self, name: str, arguments: Mapping[str, Any]
+    ) -> tuple[ToolBinding, Mapping[str, Any]] | CallResult:
+        """What every call passes before it is judged for what it sends (F8-2): a binding
+        the version pins, not withheld, its arguments in its schema and naming no protected
+        path, a tenant when it needs one, not revoked, within the velocity bound and the
+        breaker. The binding and the arguments as held; or the refusal, recorded."""
+        binding = self._bindings().get(name)
+        if binding is None:
+            return self._reject(
+                None, "unpinned", "No tool of that name is granted to this session."
+            )
+        withheld = self._fid.withheld.get(name)
+        if withheld is not None:
+            return self._reject(name, "withheld", withheld)
+        if binding.numbers:
+            # A number argument is held as its decimal string (1.17.0): no float is hashed.
+            from interlock.mcp import decimals
+
+            arguments = decimals(dict(arguments), binding.numbers)
+        problems = check_arguments(binding.input, arguments)
+        if problems:
+            text = "; ".join(problems)[:1024]
+            return self._reject(name, "arguments", f"The arguments were refused: {text}.")
+        if self._fid.protected:
+            named = protected_path(arguments, self._fid.protected)
+            if named is not None:
+                return self._reject(
+                    name,
+                    "protected",
+                    f"Not run: it names {named}, which this deployment keeps from every call. "
+                    "Nothing was sent; do not make the call again.",
+                )
+        if binding.tenant == "session" and self.tenant is None:
+            return self._reject(
+                name, "tenant", "This tool acts for a tenant; this session has none."
+            )
+        recovery = self._fid.recovering(self.mandate_id)
+        if recovery is not None and name in recovery.revoked:
+            return self._reject(
+                name, "revoked", "Not run: this tool was revoked for the rest of the task."
+            )
+        if not self._count():
+            return self._reject(name, "velocity", "Too many calls in too short a time; wait.")
+        try:
+            self._breaker.observe(
+                self.billing_scope,
+                name,
+                canonical_arguments(kwargs=dict(arguments)),
+                trajectory=self._trajectory(),
+            )
+        except CircuitBreakerError:
+            return CallResult(
+                name, "halted", "This task is halted: it repeated calls without progress."
+            )
+        return binding, arguments
+
+    def _decide(self, name: str, arguments: Mapping[str, Any]) -> tuple[str, str]:
+        """For a tool an agent framework runs itself (:mod:`fiduciary.hooks`, 1.20.0): every
+        check a call passes before it would run, without running it. ``("allow", "")``;
+        ``("deny", why)``, recorded as any refusal is; or ``("ask", why)`` for a write the
+        mandate holds for a person, which the framework's own approval decides."""
+        self._check_open()
+        self._fid.binder.follow()
+        self._take_up()
+        admitted = self._admit(name, arguments)
+        if isinstance(admitted, CallResult):
+            return "deny", admitted.render() or admitted.outcome
+        binding, arguments = admitted
+        self._from_siblings()
+        blocked = self._outbound(binding, arguments)
+        if blocked is not None:
+            self._breaker.record_result(
+                self.billing_scope,
+                blocked.outcome + blocked.feedback,
+                trajectory=self._trajectory(),
+            )
+            return "deny", blocked.render() or blocked.outcome
+        if binding.kind != "passthrough":
+            sinks = self._fid.binder.deployment.sinks
+            if any(
+                (spec := sinks.get(r.sink)) is not None
+                and any(op.name == r.operation and op.hold for op in spec.operations)
+                for r in binding.requests
+            ):
+                return "ask", f"{name} is a write the mandate holds for a person to approve."
+        return "allow", ""
+
+    def _seen(self, name: str, value: Any) -> str | None:
+        """What a tool its framework ran returned (:mod:`fiduciary.hooks`, 1.20.0), before the
+        agent sees it: labels, tracked values and the read budget, as for a passthrough
+        tool's result. The words to show instead, when the read budget withholds it."""
+        binding = self._bindings().get(name)
+        withheld = None
+        if binding is not None and binding.kind == "passthrough":
+            withheld = self._counted_read(binding, value, binding.labels(self.tenant))
+        outcome = withheld.outcome + withheld.feedback if withheld is not None else "served"
+        self._breaker.record_result(self.billing_scope, outcome, trajectory=self._trajectory())
+        return withheld.render() if withheld is not None else None
 
     def _check_open(self) -> None:
         if self._closed:

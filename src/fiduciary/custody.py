@@ -39,6 +39,7 @@ __all__ = [
     "CustodyError",
     "FileStore",
     "Keychain",
+    "MemoryStore",
     "SecretService",
     "Store",
     "store_for",
@@ -270,6 +271,29 @@ class CredentialManager:  # pragma: no cover - Windows only: scripts/check_custo
                 raise CustodyError(f"the Credential Manager did not delete {account} ({error})")
 
 
+class MemoryStore:
+    """Secrets held in this process's memory alone (1.20.0): ``fiduciary ci``'s proxy, which
+    is given its job's secrets on its standard input and keeps them nowhere else. A deployment
+    whose ``protect.json`` names it can be served only by the process that protected it."""
+
+    name = "memory"
+    where = "the CI proxy's memory"
+
+    def __init__(self) -> None:
+        self._values: dict[str, str] = {}
+
+    def put(self, account: str, value: str) -> None:
+        self._values[account] = value
+
+    def get(self, account: str) -> str:
+        if account not in self._values:
+            raise CustodyError(f"{account} was held by a process that has ended")
+        return self._values[account]
+
+    def delete(self, account: str) -> None:
+        self._values.pop(account, None)
+
+
 class FileStore:
     """The fallback: a JSON file only this user can read, under the protect root
     (``custody/secrets.json``, mode 600, in a directory of mode 700). It keeps a secret out of
@@ -329,6 +353,8 @@ def store_named(name: str, root: Path, *, runner: Runner = subprocess.run) -> St
         return CredentialManager()
     if name == "file":
         return FileStore(root)
+    if name == "memory":
+        raise CustodyError("its secrets were held in the memory of the process that protected it")
     raise CustodyError(f"no secret store is named {name!r}: {', '.join(STORES)}")
 
 

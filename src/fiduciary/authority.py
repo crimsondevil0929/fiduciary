@@ -88,6 +88,7 @@ REFUSAL_CODES: Final = (
     "arguments",  # outside the binding's schema, or the canonical domain (F4-13)
     "max_open",  # the lineage's open tickets are at escalation.max_open (F7-2)
     "model",  # a model the mandate does not list, or no price is configured for
+    "protected",  # it names a path the deployment keeps from every call (1.20.0)
     "revoked",  # a tool a recovery step revoked
     "tenant",  # a binding that stamps the session's tenant, in a session with none
     "unpinned",  # no binding the version pins, and no built-in (F4-16)

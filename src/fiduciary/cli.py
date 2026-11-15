@@ -10,6 +10,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import os
 import shlex
 import sys
 import uuid
@@ -1863,6 +1864,79 @@ def _scan_secrets(args: argparse.Namespace) -> None:
     )
 
 
+def _ci_trust() -> tuple[str, ...]:
+    from fiduciary.ci import DEFAULT_TRUST
+
+    return DEFAULT_TRUST
+
+
+def _ci_start(args: argparse.Namespace) -> int:
+    """``fiduciary ci start`` (1.20.0)."""
+    from fiduciary.ci import PROTECTED, CiError, start
+
+    try:
+        state = start(
+            args.mcp_config.expanduser(),
+            args.root.expanduser(),
+            event=args.event_name,
+            event_path=args.event_path,
+            secret_names=args.secret,
+            trust=[t.strip() for t in args.trust.split(",") if t.strip()],
+            protected=args.protected_path or PROTECTED,
+        )
+    except CiError as exc:
+        _fail(str(exc), REFUSED)
+    config = args.root.expanduser().resolve() / "mcp.json"
+    for name in sorted(state["servers"]):
+        _out(f"serving     {name} at {state['url']}/mcp/{name}")
+    for name, why in sorted(state.get("skipped", {}).items()):
+        _out(f"skip        {name}: {why}")
+    for source in state.get("sources") or ():
+        from fiduciary.ci import Source
+
+        _out(f"untrusted   {Source(**source).words()}")
+    if state.get("secrets"):
+        kept = ", ".join(state["secrets"])
+        _out(f"kept        {kept}: out of the agent's reach, and refused in any call")
+    _out(f"agent       --mcp-config {config}")
+    target = os.environ.get("GITHUB_OUTPUT")
+    if target:
+        with open(target, "a", encoding="utf-8") as out:
+            out.write(f"mcp-config={config}\n")
+    return OK
+
+
+def _ci_serve(args: argparse.Namespace) -> int:
+    """``fiduciary ci serve``: the proxy ``ci start`` runs, given its values on stdin."""
+    from fiduciary.ci import serve
+
+    given = json.loads(sys.stdin.read())
+    serve(args.root.expanduser().resolve(), given)
+    return OK
+
+
+def _ci_finish(args: argparse.Namespace) -> int:
+    """``fiduciary ci finish`` (1.20.0)."""
+    from fiduciary.ci import CiError, finish, outputs
+
+    root = args.root.expanduser()
+    bundles = (args.bundles or root / "bundles").expanduser()
+    try:
+        found = finish(root, bundles=bundles, summary=args.summary, comment=args.comment)
+    except CiError as exc:
+        _fail(str(exc), REFUSED)
+    target = os.environ.get("GITHUB_OUTPUT")
+    outputs(found, Path(target) if target else None, bundles)
+    _out(found.markdown.rstrip())
+    if any(s.verified is False for s in found.servers):
+        return REFUSED
+    if args.fail_on == "refused" and found.refused:
+        return REFUSED
+    if args.fail_on == "held" and (found.refused or found.held):
+        return REFUSED
+    return OK
+
+
 def _protect_review(protect: Any, servers: Sequence[Any], *, accept: bool) -> int:
     drifted: dict[Path, str] = {}
     for server in servers:
@@ -3072,6 +3146,66 @@ def _parser() -> argparse.ArgumentParser:
         help="seconds an instant may stray from its anchor's ledger time; [bridge] skew_seconds",
     )
     verify.set_defaults(handler=_verify)
+
+    ci = commands.add_parser(
+        "ci",
+        help="run an agent's MCP servers in CI behind protected proxies: untrusted event text "
+        "labeled from the start, secrets kept from the agent, workflow files refused",
+    ).add_subparsers(dest="ci_command", required=True, metavar="COMMAND")
+    root_default = Path(os.environ.get("RUNNER_TEMP", ".")) / "fiduciary-ci"
+    starting = ci.add_parser("start", help="start the CI proxy and write the agent's MCP file")
+    starting.add_argument(
+        "--mcp-config", type=Path, default=Path(".mcp.json"), help="the servers (.mcp.json)"
+    )
+    starting.add_argument("--root", type=Path, default=root_default, help="where it keeps its work")
+    starting.add_argument(
+        "--secret",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="an environment variable holding a secret the agent must never send (repeatable)",
+    )
+    starting.add_argument(
+        "--trust",
+        default=",".join(_ci_trust()),
+        help="author associations whose text is trusted (OWNER,MEMBER,COLLABORATOR)",
+    )
+    starting.add_argument(
+        "--protected-path",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="a path no call may name (.github/workflows and .github/actions by default)",
+    )
+    starting.add_argument("--event-name", default=os.environ.get("GITHUB_EVENT_NAME", ""))
+    starting.add_argument(
+        "--event-path", type=Path, default=os.environ.get("GITHUB_EVENT_PATH") or None
+    )
+    starting.set_defaults(handler=_ci_start)
+    serving = ci.add_parser("serve", help="the CI proxy itself (ci start runs it)")
+    serving.add_argument("--root", type=Path, required=True)
+    serving.set_defaults(handler=_ci_serve)
+    finishing = ci.add_parser(
+        "finish", help="stop the CI proxy, write the job summary and export the bundles"
+    )
+    finishing.add_argument("--root", type=Path, default=root_default)
+    finishing.add_argument("--bundles", type=Path, help="where each server's bundle is written")
+    finishing.add_argument(
+        "--summary",
+        type=Path,
+        default=os.environ.get("GITHUB_STEP_SUMMARY") or None,
+        help="the Markdown summary is added to this file ($GITHUB_STEP_SUMMARY)",
+    )
+    finishing.add_argument(
+        "--comment", type=Path, help="write the summary here too when a call was refused or held"
+    )
+    finishing.add_argument(
+        "--fail-on",
+        choices=("never", "refused", "held"),
+        default="never",
+        help="exit 1 when a call was refused (refused), or refused or held (held)",
+    )
+    finishing.set_defaults(handler=_ci_finish)
     # The listing shows the commands most people need; every one still parses, and
     # ``fiduciary help advanced`` lists them all.
     every = list(commands._choices_actions)

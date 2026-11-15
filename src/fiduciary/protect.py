@@ -1696,6 +1696,9 @@ class _Proxy:
 
         fid = Fiduciary.from_config(self.config, bridged=True)
         try:
+            with contextlib.suppress(OSError, ValueError, AttributeError):
+                state = json.loads((self.root / STATE).read_text(encoding="utf-8"))
+                fid.protected = tuple(str(p) for p in state.get("protected_paths") or ())
             mandate = json.loads((self.root / "mandate.json").read_text())
             session = fid.session(mandate["subject"]["scope"], bridged=True)
             self._share(session)
