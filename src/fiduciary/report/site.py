@@ -174,9 +174,9 @@ COPY: Final[dict[str, Any]] = {
         "lede": (
             "A gateway decides whether an agent may call a tool. Fiduciary decides whether what "
             "the call changed may be kept, and leaves evidence for someone who trusts neither the "
-            "agent nor the operator. pip install interlock-fiduciary brings both engines: "
-            "Interlock stages and measures each change, AgentGov holds the budgets. Each also "
-            "works alone."
+            "agent nor the operator. Installing interlock-fiduciary brings both engines with it: "
+            "Interlock stages and measures each change, and AgentGov keeps the budgets. Each "
+            "also works on its own."
         ),
     },
     "packages": [
@@ -192,14 +192,11 @@ COPY: Final[dict[str, Any]] = {
                 "as a bundle anyone can verify offline."
             ),
             "points": [
-                "Governed tools in your own code, or over MCP",
+                "Pins the MCP servers your client runs: fiduciary protect",
+                "Keeps what the agent read from leaving, whole or encoded",
+                "Approvals signed with a passkey the agent cannot reach",
+                "Puts a committed change back exactly: fiduciary undo",
                 "Shadow mode first: see what it would have refused",
-                "Holds a write the agent asks for after reading untrusted input",
-                "Keeps what the agent read from leaving: a credential or a private value, "
-                "whole or encoded",
-                "Approvals signed with a passkey, which an agent cannot read",
-                "Pins the MCP servers Claude Desktop and Cursor run: fiduciary protect",
-                "Puts a committed plan back exactly, and a failed turn: fiduciary undo",
             ],
         },
         {
@@ -259,16 +256,15 @@ COPY: Final[dict[str, Any]] = {
             ],
             [
                 "Measure",
-                "The stage records what the change actually did, including whatever triggers, "
-                "hooks, renderers and admission webhooks did on top: every row, file, object or "
-                "record.",
+                "The stage records what the change actually did, down to every row, file, "
+                "object or record, including whatever triggers, hooks and admission webhooks "
+                "added on top.",
             ],
             [
                 "Check",
-                "The measured change is compared with the mandate: which tables, files, objects "
-                "or records it touched and how many, whose data it reached, how far any guarded "
-                "value moved, the rate windows and budgets, and what the agent had read before it "
-                "asked.",
+                "The measured change is compared with the mandate: what it touched and how much, "
+                "whose data it reached, how far any guarded value moved, the rate limits and "
+                "budgets, and what the agent had read before it asked.",
             ],
             [
                 "Commit or undo",
@@ -332,6 +328,13 @@ COPY: Final[dict[str, Any]] = {
             "Open source, Apache-2.0. This page is built from the repository with fiduciary demo "
             "--replay, and SHA256SUMS lists the SHA-256 of the page and of every bundle it links."
         ),
+        "guides": [
+            ["Secure MCP servers", "protect/"],
+            ["Claude Code and Cursor", "claude-code/"],
+            ["Stop data leaving", "outbound/"],
+            ["Passkeys for approvals", "passkeys/"],
+            ["Verify an audit bundle", "verify/"],
+        ],
         "read": [
             ["Quickstart", REPO + "fiduciary/blob/main/docs/QUICKSTART.md"],
             ["Threat model", REPO + "fiduciary/blob/main/docs/THREAT_MODEL.md"],
@@ -463,7 +466,7 @@ def counts(data: Mapping[str, Any]) -> dict[str, object]:
     demo = data.get("demo") or {}
     served = (demo.get("model") or {}).get("served")
     mode = (
-        f"recorded {served} session, replayed at no cost"
+        f"a recorded {served} session, replayed with no model called"
         if demo.get("mode") == "replay" and served
         else f"live {served} session"
         if demo.get("mode") == "live" and served
@@ -713,6 +716,7 @@ def _footer(c: Mapping[str, Any], mark: _Marks) -> str:
         f"<p>{_e(foot['text'])}</p></div>"
         + col("Source", [(p["name"], REPO + p["key"]) for p in packages])
         + col("Install", [(p["dist"], f"{PYPI}{p['dist']}/") for p in packages])
+        + col("Guides", [(text, href) for text, href in foot["guides"]])
         + col("Read", [(text, href) for text, href in foot["read"]])
         + f'</div><p class="lp-foot-note">{_e(foot["note"])}</p></div></footer>'
     )
@@ -829,14 +833,18 @@ def built_on(data: Mapping[str, Any]) -> str:
 
 
 def sitemap(data: Mapping[str, Any]) -> str:
-    """The site's one address. The views behind ``#/`` are the same page to a crawler."""
+    """The site's addresses: the front page, and each guide (1.19.0). The views behind
+    ``#/`` are the same page to a crawler, so the guides are pages of their own."""
+    from fiduciary.report.guides import GUIDES
+
     day = built_on(data)
     lastmod = f"<lastmod>{day}</lastmod>" if re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) else ""
+    urls = [SITE_URL, *(f"{SITE_URL}{g['slug']}/" for g in GUIDES)]
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
-        f"  <url><loc>{SITE_URL}</loc>{lastmod}</url>\n"
-        "</urlset>\n"
+        + "".join(f"  <url><loc>{url}</loc>{lastmod}</url>\n" for url in urls)
+        + "</urlset>\n"
     )
 
 

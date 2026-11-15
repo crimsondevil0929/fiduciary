@@ -849,6 +849,7 @@ class Session:
         "_closed",
         "_committed",
         "_fid",
+        "_flow",
         "_granted",
         "_labels",
         "_lock",
@@ -878,6 +879,8 @@ class Session:
         """The values the session read as ``secret`` or ``private`` (1.19.0), by digest."""
         self._read: dict[str, int] = {}
         self._sent: dict[str, int] = {}
+        self._flow: Any = None
+        """What sibling sessions of the same client read (1.19.0, :mod:`fiduciary.flow`)."""
         """Records read and bytes sent so far (1.19.0), per turn, or ``""`` per session."""
         self.turn: str | None = None
         """The agent turn the session's next plans are part of (1.17.0): their requests
@@ -910,6 +913,58 @@ class Session:
         with self._lock:
             return self._labels
 
+    def _share(self, flow: Any) -> None:
+        """Share what this session reads with its sibling sessions, and take up what they
+        read, through ``flow`` (:class:`fiduciary.flow.Flow`, 1.19.0): its values are
+        tracked under the flow's key from now on."""
+        with self._lock:
+            self._flow = flow
+            self._tracker = Tracker(key=flow.key)
+            if self._labels:
+                flow.publish(self._labels, {})
+
+    def _from_siblings(self) -> None:
+        """Take up what sibling sessions read (1.19.0): their labels into a
+        ``session.labeled`` record, their tracked values' digests into a ``session.read``
+        record, both from ``fiduciary_sibling``. Only under a version with ``provenance``."""
+        from fiduciary.flow import SIBLING
+
+        flow = self._flow
+        mandate = self._engine().mandate
+        rules = mandate.provenance
+        if flow is None or rules is None or mandate.tools.statements != "any":
+            return  # a version that pins every source admits none from a sibling
+        labels, digests = flow.others()
+        with self._lock:
+            new = sorted(labels - set(self._labels))
+        if new:
+            self._label(SIBLING, new)
+        if not rules.values:
+            return
+        with self._lock:
+            adopted = {
+                label: added
+                for label, found in sorted(digests.items())
+                if (added := self._tracker.adopt(label, found))
+            }
+        if adopted:
+            log = self._fid.log
+            with log.store.transaction():
+                now = log.now()
+                body = self._fid._authority.decide.read_session(
+                    log.state(),
+                    self.session_id,
+                    {
+                        "tool": SIBLING,
+                        "turn": self.turn,
+                        "records": 0,
+                        "values": adopted,
+                        "outcome": "served",
+                        "rules": [],
+                    },
+                )
+                log.append("session.read", body, issued_at=now)
+
     def _label(self, tool: str, labels: Sequence[str]) -> tuple[str, ...]:
         """Join ``labels`` (what ``tool``'s result brought) into the session's, and record
         ``session.labeled`` when that adds one (1.16.0). The labels it holds after."""
@@ -924,6 +979,8 @@ class Session:
                 )
                 log.append("session.labeled", body, issued_at=now)
             self._labels = tuple(body["labels"])
+            if self._flow is not None:
+                self._flow.publish(self._labels, {})
             return self._labels
 
     @property
@@ -1005,6 +1062,7 @@ class Session:
             return CallResult(
                 name, "halted", "This task is halted: it repeated calls without progress."
             )
+        self._from_siblings()
         blocked = self._outbound(binding, arguments)
         if blocked is not None:
             result = blocked
@@ -1459,6 +1517,8 @@ class Session:
                 if "private" in labels:
                     values["private"] = self._tracker.track("private", tracked(value))
                 values = {k: v for k, v in values.items() if v}
+                if values and self._flow is not None:
+                    self._flow.publish(self._labels, values)
         if values or out.counts:
             log = self._fid.log
             with log.store.transaction():

@@ -2096,7 +2096,7 @@ def _shadow_report(args: argparse.Namespace) -> int:
     from interlock.exceptions import InterlockError
 
     from fiduciary.config import ConfigError, load_config
-    from fiduciary.shadow import render, report
+    from fiduciary.shadow import Lineage, flows, render, report
 
     path = _deployment_config(args)
     try:
@@ -2109,10 +2109,31 @@ def _shadow_report(args: argparse.Namespace) -> int:
         lineages = report(config.chains, args.mandate)
     except (OSError, InterlockError) as exc:
         _fail(str(exc))
+    # What left each session (1.19.0): the deployment's own log, read as it stands.
+    args.config = str(path)
+    _, state = _store_and_state(args)
+    outbound = {m: f for m, f in flows(state.sessions).items() if args.mandate in (None, m)}
     if args.json:
-        _out(json.dumps([lineage.to_json(args.top) for lineage in lineages], indent=2))
+        known = {lineage.mandate_id for lineage in lineages}
+        every = [*lineages, *(Lineage(m) for m in sorted(outbound) if m not in known)]
+        _out(
+            json.dumps(
+                [
+                    {
+                        **lineage.to_json(args.top),
+                        **(
+                            {"outbound": outbound[lineage.mandate_id].to_json()}
+                            if lineage.mandate_id in outbound
+                            else {}
+                        ),
+                    }
+                    for lineage in every
+                ],
+                indent=2,
+            )
+        )
     else:
-        sys.stdout.write(render(lineages, top=args.top))
+        sys.stdout.write(render(lineages, top=args.top, outbound=outbound))
     return OK
 
 

@@ -48,6 +48,8 @@ MODULES = (
     "starters.py",
     # 1.16.0: the site's front page, written once for the script and for the HTML
     "report/site.py",
+    # 1.19.0: the guides, each a page of its own
+    "report/guides.py",
 )
 """Where the demo's, the reports' and the SDK's words are written."""
 

@@ -1417,6 +1417,7 @@ class _Proxy:
         try:
             mandate = json.loads((self.root / "mandate.json").read_text())
             session = fid.session(mandate["subject"]["scope"], bridged=True)
+            self._share(session)
             guard = Guard(fid, session, self.upstream, self.root)
             guard.notes = self.notes
             bindings = guard.bindings()
@@ -1446,6 +1447,19 @@ class _Proxy:
         self.mandate_id = str(mandate["mandate_id"])
         if self.server is not None:
             self.server._session = session
+
+    def _share(self, session: Session) -> None:
+        """Share what this server's session reads with the sessions of the other servers
+        the same client started (1.19.0, :mod:`fiduciary.flow`): one owner's root, one
+        client process."""
+        from fiduciary.flow import for_client
+
+        try:
+            state = json.loads((self.root / STATE).read_text(encoding="utf-8"))
+            owner = Path(state["owner"])
+        except (OSError, ValueError, KeyError, TypeError):
+            return  # not a deployment protect wrote: nothing to share with
+        session._share(for_client(owner.parent, str(state.get("server", "")), session.session_id))
 
     def close(self) -> None:
         if self.relay is not None:

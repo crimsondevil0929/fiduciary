@@ -393,6 +393,19 @@ class Tracker:
                 added.add(digest)
         return sorted(added)
 
+    def adopt(self, label: str, digests: Iterable[str]) -> list[str]:
+        """Track digests another session made under the same key (:mod:`fiduciary.flow`);
+        the ones newly tracked, sorted."""
+        added: set[str] = set()
+        for digest in digests:
+            if len(self.by_digest) >= PER_SESSION:
+                break
+            labels = self.by_digest.setdefault(digest, set())
+            if label not in labels:
+                labels.add(label)
+                added.add(digest)
+        return sorted(added)
+
     def found(self, tokens: Iterable[str]) -> dict[str, list[str]]:
         """Each tracked digest among ``tokens``, by the label it was tracked under."""
         hits: dict[str, set[str]] = {}

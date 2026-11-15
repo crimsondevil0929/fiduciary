@@ -43,9 +43,9 @@ surface. It holds a session, over MCP or in process.
   session read, whole or encoded once (1.19.0). A model that rewrites a secret in its own
   words, splits it across calls, or sends a value shorter than eight characters is not
   caught. A read that no binding labels (a tool marked `system` that returns a stranger's
-  text) is not seen, and a value read through one protected server is not tracked in
-  another: each is its own session. Data the agent sends through a channel the bridge does
-  not serve (its own shell and network) is outside this model.
+  text) is not seen. The servers one client started share what they read; two clients share
+  nothing. Data the agent sends through a channel the bridge does not serve (its own shell
+  and network) is outside this model.
 - **Unescrowed tools and unobserved tables.** A passthrough tool the mandate trusts to be
   read-only is trusted. A table no `TableSpec` observes is denied to the stage on SQLite and
   by grants on PostgreSQL. A cascade into one is refused unless an operator acknowledged it,

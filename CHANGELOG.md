@@ -46,6 +46,14 @@ its own name or arguments say otherwise, is held. Requires interlock-escrow 1.11
   digest, each one tracked by an earlier read), its destinations and bytes, against the rules
   of the session's own mandate version. Golden bundles `valid-outbound-refused` and
   `v13-outbound-leak`.
+- **One client's protected servers share what they read** (`fiduciary.flow`): the proxies
+  `fiduciary protect` starts for one client share the labels they hold and the digests they
+  tracked, so a token read through a database server is refused when it leaves through a fetch
+  server. Each server records what it took up (`fiduciary_sibling`) on its own chain, and its
+  bundle verifies on its own.
+- **`fiduciary shadow report` says what would have left**: the sends judged, refused, and
+  those a shadow mandate would have refused, by rule and tool ("a credential the session had
+  read, in what it sent: 1 send, from fetch"), and the reads past the read budget.
 - **`fiduciary infer-policy`**: a draft policy from an MCP server's tools (`--mcp`, `--tools`),
   an OpenAPI document (`--openapi`) or a deployment's shadow runs (`--traces`): each tool as a
   read, a send or a write, held or not, the labels its result brings, where it sends, which
@@ -67,6 +75,16 @@ its own name or arguments say otherwise, is held. Requires interlock-escrow 1.11
   Three ways in follow it (a desktop or coding client; Python; CI and infrastructure), the
   systems are listed MCP servers first, and Fiduciary is the product, with Interlock and
   AgentGov as its engines.
+- **Five guides, each a page of its own** at `/fiduciary/protect/`, `/claude-code/`,
+  `/outbound/`, `/passkeys/` and `/verify/`: securing MCP servers against rug pulls, passkey
+  approvals for Claude Code and Cursor, stopping data from leaving, WebAuthn approvals, and
+  verifying an audit bundle offline. Plain HTML with its own title, description, canonical
+  link and structured data (an article, breadcrumbs, the steps and the questions it answers),
+  listed in `sitemap.xml` and linked from the front page's footer (`fiduciary.report.guides`).
+  `check_site.py` holds each to it.
+- **The front page, refined**: the three ways in are a segmented control over a framed panel;
+  the stack's cards are balanced; the workbench, the verifier and the sandbox say what they
+  do in plainer words.
 - **`fiduciary --help` lists eight commands**; `fiduciary help advanced` lists every one.
   Release numbers are gone from the help.
 

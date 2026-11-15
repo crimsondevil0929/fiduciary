@@ -1810,9 +1810,21 @@ billing scope. It is recorded (`session.opened`) before its first call.
     says `shadow`. Every send is recorded (`session.sent`).
   - What this catches is an exact value leaving, whole or encoded once. A paraphrase, a value
     split across calls, a value shorter than eight characters, and a send through a channel
-    the bridge does not serve are not seen. Labels belong to one session: two servers
-    protected apart are two sessions, and a value read through one is not tracked in the
-    other.
+    the bridge does not serve are not seen.
+  - *Amended before release:* **sibling sessions** (`fiduciary.flow`). The proxies
+    `fiduciary protect` starts for one client (the process that is their parent) share a file
+    under the protect root: each publishes the labels it holds (`untrusted`, `secret`,
+    `private`, partition labels) and the digests it tracked, under one key kept beside the
+    file. Before each call, a session whose version admits statements no binding pins
+    (`tools.statements: "any"`, as every protected server's does) takes up what its siblings
+    published: a `session.labeled` record and a `session.read` record of its own (no records,
+    the digests), both from `fiduciary_sibling`. So a value read through one server is judged
+    when it leaves through another, and each server's bundle verifies on its own. The file
+    holds labels and digests, never a value; a client's file is removed once the client is
+    gone. Two clients share nothing.
+  - *Amended before release:* `fiduciary shadow report` adds, for each lineage, the sends
+    judged, refused, and those a shadow version would have refused, by rule and tool, and the
+    reads the read budget withheld or would have, read from the deployment's log.
 
 ## 8.2 MCP
 

@@ -251,8 +251,10 @@ Then, before such a call leaves:
 Each send is recorded (`session.sent`) with its destinations, its bytes and the digests it
 carried, never the values, and V13 judges every one again offline. What it cannot do: it
 catches an exact value, whole or encoded once. A model that paraphrases a secret, splits it
-across calls, or sends one shorter than eight characters is not caught, and two protected
-servers are two sessions: a value read through one is not tracked in the other.
+across calls, or sends one shorter than eight characters is not caught. The MCP servers one
+client started share what they read: a token read through a database server and sent out
+through a fetch server is caught too, and each server's records say so on its own.
+`fiduciary shadow report` lists the sends that would have been refused, and why.
 
 `fiduciary infer-policy --mcp -- <server command>` (or `--tools FILE`, `--openapi FILE`)
 drafts all of this for a server you have not seen before: each tool as a read, a send or a

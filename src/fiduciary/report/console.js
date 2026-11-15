@@ -677,7 +677,7 @@
     var how = DEMO.mode === "live" ? which + " was run live by " + who + "; the others are scripted calls."
       : DEMO.mode === "replay" ? "In " + which.toLowerCase() + ", " + who + " picks the calls. Its recorded session is replayed on today's engine, so no model is called. The other scenarios are scripted."
       : "Every scenario is a scripted sequence of calls, with no model involved.";
-    return "Each tool call goes to two places. The input gateway (Cedar policies, " + DEMO.gateway.engine + ") decides from the call alone. The stack runs the call, measures what it actually changed and enforces the mandate. " + how + " Every number below was measured during the run, which took " + DEMO.seconds + " s.";
+    return "Every tool call is checked twice. First an input gateway (Cedar policies, " + DEMO.gateway.engine + ") decides from the call alone, as most setups do today. Then Fiduciary runs it, measures what it actually changed, and holds that to the mandate. " + how + " Every number below was measured during the run, which took " + DEMO.seconds + " s.";
   }
   function scenariosTab() {
     var draw = PACK ? function (x) { return (PACK_ACTS[x.key] || packCalls)(x); } : function (x) { return ACTS[x.key](x); };
@@ -1180,7 +1180,7 @@
   }
   function modeShort() {
     if (!DEMO) return "a bundle, verified";
-    if (DEMO.mode === "replay" && DEMO.model) return "recorded " + DEMO.model.served + " session, replayed at no cost";
+    if (DEMO.mode === "replay" && DEMO.model) return "a recorded " + DEMO.model.served + " session, replayed with no model called";
     if (DEMO.mode === "live" && DEMO.model) return "live " + DEMO.model.served + " session";
     return "scripted calls, no model";
   }
@@ -1215,8 +1215,8 @@
     var o = OVERVIEW, tt = totals(), acc = o.acceptance;
     var steps = [
       ["01", "Stage", "The tool call becomes a plan and runs where nothing is final yet: a SQL transaction, a Git worktree, a private copy of a directory, a Kubernetes dry run, or a prediction for an API."],
-      ["02", "Measure", "The stage records what the change actually did, including whatever triggers, hooks, renderers and admission webhooks did on top: every row, file, object or record."],
-      ["03", "Check", "The measured change is compared with the mandate: which tables, files, objects or records it touched and how many, whose data it reached, how far any guarded value moved, the rate windows and budgets, and what the agent had read before it asked.", "held for 2 of 3", "Anything outside the mandate can still go ahead if a quorum of named principals signs a warrant for that exact change."],
+      ["02", "Measure", "The stage records what the change actually did, down to every row, file, object or record, including whatever triggers, hooks and admission webhooks added on top."],
+      ["03", "Check", "The measured change is compared with the mandate: what it touched and how much, whose data it reached, how far any guarded value moved, the rate limits and budgets, and what the agent had read before it asked.", "held for 2 of 3", "Anything outside the mandate can still go ahead if a quorum of named principals signs a warrant for that exact change."],
       ["04", "Commit or undo", "A change that passes commits once, on the exact version that was measured. A change that fails never commits. If an API changes more than predicted, the write is undone. A committed plan can be put back later, exactly as it was."],
       ["05", "Prove", "Every decision is a signed record. An auditor runs all fourteen checks (V1 to V14) on an exported bundle, offline, with public keys you gave them separately. They need no access to your systems."]
     ];
@@ -1454,6 +1454,7 @@
           h("p", null, F.text)),
         col("Source", PACKAGES.map(function (p) { return [p.name, REPO + p.key]; })),
         col("Install", PACKAGES.map(function (p) { return [p.dist, PYPI + p.dist + "/"]; })),
+        col("Guides", F.guides),
         col("Read", F.read)),
       h("p", { class: "lp-foot-note" }, F.note)));
   }
@@ -2344,7 +2345,7 @@
     var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Offline verification"), h("h2", null, "Verify an audit bundle"),
       h("p", null, LIVE.on
         ? "Drop any .fidb, fidb/1 or sealed fidb/2. The console runs V1 to V14 on it with no network, against a charter digest pinned outside the bundle. This browser also checks what it can on its own: the container, every member's digest, the hash chain, every record's signature, the seals and each relay's delivery receipt."
-        : "Drop any .fidb, fidb/1 or sealed fidb/2. This browser checks what it can on its own, with Web Crypto: the container, every member's digest, the hash chain, every record's Ed25519 signature, a sealed bundle's seals and each relay's delivery receipt. The rest of V1 to V14 needs the verifier, fiduciary verify-bundle."));
+        : "Drop an audit bundle (.fidb) here. Your browser checks what it can on its own, with Web Crypto: the container, the digest of every file in it, the hash chain, every record's Ed25519 signature, a sealed bundle's seals and each relay's delivery receipt. For all fourteen checks, V1 to V14, run fiduciary verify-bundle."));
     var dz = h("div", { class: "dropzone", tabindex: "0", role: "button", "aria-label": "Choose or drop a .fidb bundle",
       onclick: function () { pickFile(".fidb,application/x-tar", function (f) { fileBytes(f).then(function (u8) { verifyBytes(f.name, u8); }); }); },
       onkeydown: function (ev) { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.currentTarget.click(); } },
@@ -2487,7 +2488,7 @@
     var doms = sbDomains();
     if (!SB.key || !doms.some(function (d) { return d.key === SB.key; })) SB.key = (PACK && doms.some(function (d) { return d.key === PACK.key; })) ? PACK.key : doms[0].key;
     var dom = doms.filter(function (d) { return d.key === SB.key; })[0];
-    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Sandbox"), h("h2", null, LIVE.on ? "Try a call on each kind of system" : "Every call the run recorded, by system"),
+    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Sandbox"), h("h2", null, LIVE.on ? "Try a call on each kind of system" : "Every call from the demo run, system by system"),
       h("p", null, LIVE.on
         ? "Each workflow gets its own deployment, built fresh in a scratch directory that the console deletes when it stops. It has the same engine, mandate, checks and approvers as the recorded run, on SQLite, Git, a directory of files, a Kubernetes API server, a FHIR server or a JSON REST API. A call goes through the input gateway, and then the stack stages and measures it. Nothing here touches a recorded run on disk."
         : "Each recorded call, with what the gateway decided and what the stack measured. To try new calls against a scratch deployment of each workflow, start the console: fiduciary demo --out <this directory> --serve."));

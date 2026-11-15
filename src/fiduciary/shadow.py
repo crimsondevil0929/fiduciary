@@ -13,19 +13,25 @@ any process remembers:
 It reads only the chain: the checks' names, the measured counts and the tools' names. The
 verdicts' full text, which can name other tenants, is in the operator's view and the audit
 bundle, not here.
+
+*Added in 1.19.0:* what left each session, from the deployment's own log (``session.sent`` and
+``session.read``, F8-14): how many sends were judged before they left, how many were refused,
+and, under a shadow mandate, how many would have been and by which rule (a credential the
+session had read, the rule of two, a destination, a budget), with the tools that made them;
+and the reads the read budget withheld, or would have.
 """
 
 from __future__ import annotations
 
 import re
 from collections import Counter, defaultdict
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Final
 
-__all__ = ["Lineage", "Plan", "read_chain", "render", "report"]
+__all__ = ["Flow", "Lineage", "Plan", "flows", "read_chain", "render", "report"]
 
 _OBSERVED: Final = "admitted; observed, not enforced: "
 _TOOL: Final = re.compile(r"(?:fiduciary sdk|FIDU1 tool) ([a-z][a-z0-9_]{0,63})")
@@ -94,6 +100,70 @@ class Lineage:
         }
 
 
+RULE_WORDS: Final = {
+    "value:secret": "a credential the session had read, in what it sent",
+    "value:private": "a private value the session had read, sent where the mandate does not list",
+    "rule_of_two": "the rule of two: untrusted input and sensitive data, then a send",
+    "destination:url": "a host the mandate does not list, after sensitive data",
+    "destination:email": "an email domain the mandate does not list, after sensitive data",
+    "destination:repository": "a repository not listed as private, after sensitive data",
+    "budget:bytes_sent": "past the send budget",
+    "budget:records_read": "past the read budget",
+}
+"""Each outbound rule (F8-14), as the report says it."""
+
+
+@dataclass
+class Flow:
+    """What left one lineage's sessions (1.19.0), from its ``session.sent`` and
+    ``session.read`` records."""
+
+    mandate_id: str
+    sends: int = 0
+    refused: int = 0
+    """Sends refused under an enforcing mandate."""
+    observed: int = 0
+    """Sends a shadow mandate let through that it would have refused."""
+    rules: dict[str, Counter[str]] = field(default_factory=dict)
+    """For each rule a send broke (refused or observed), the tools whose sends it was."""
+    withheld: int = 0
+    would_withhold: int = 0
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "sends": self.sends,
+            "refused": self.refused,
+            "would_have_refused": self.observed,
+            "rules": {
+                rule: {"sends": sum(tools.values()), "tools": dict(sorted(tools.items()))}
+                for rule, tools in sorted(self.rules.items())
+            },
+            "reads_withheld": self.withheld,
+            "reads_would_have_withheld": self.would_withhold,
+        }
+
+
+def flows(sessions: Mapping[str, Sequence[tuple[str, Mapping[str, Any], int]]]) -> dict[str, Flow]:
+    """Each lineage's :class:`Flow`, from a store's sessions (``State.sessions``)."""
+    found: dict[str, Flow] = {}
+    for events in sessions.values():
+        for event, body, _ in events:
+            if event not in ("read", "sent"):
+                continue
+            flow = found.setdefault(str(body["mandate_id"]), Flow(str(body["mandate_id"])))
+            outcome = str(body.get("outcome", ""))
+            if event == "read":
+                flow.withheld += outcome == "withheld"
+                flow.would_withhold += outcome == "shadow"
+            else:
+                flow.sends += 1
+                flow.refused += outcome == "refused"
+                flow.observed += outcome == "shadow"
+            for rule in body.get("rules", ()):
+                flow.rules.setdefault(str(rule), Counter())[str(body["tool"])] += 1
+    return found
+
+
 def _largest(plans: Iterable[Plan], top: int) -> list[Plan]:
     return sorted(plans, key=lambda p: (-p.changes, p.plan_id))[:top]
 
@@ -143,15 +213,58 @@ def _plural(count: int, noun: str) -> str:
     return noun if count == 1 else noun + ("es" if noun.endswith(("s", "x")) else "s")
 
 
-def render(lineages: Sequence[Lineage], *, top: int = 5) -> str:
+def _flow_lines(flow: Flow) -> list[str]:
+    out = []
+    if flow.sends:
+        out.append(
+            f"  {flow.sends} {_plural(flow.sends, 'send')} judged before leaving: "
+            f"{flow.refused} refused."
+        )
+        if flow.observed:
+            out.append(
+                f"  {flow.observed} {_plural(flow.observed, 'send')} would have been refused "
+                f"if the mandate were enforced:"
+            )
+    for rule, tools in sorted(flow.rules.items()):
+        if rule == "budget:records_read":
+            continue
+        named = ", ".join(f"{tool} ({n})" for tool, n in sorted(tools.items()))
+        total = sum(tools.values())
+        out.append(
+            f"    {RULE_WORDS.get(rule, rule)}: {total} {_plural(total, 'send')}, from {named}"
+        )
+    if flow.withheld or flow.would_withhold:
+        out.append(
+            f"  Reads past the read budget: {flow.withheld} withheld"
+            + (f", {flow.would_withhold} would have been" if flow.would_withhold else "")
+            + "."
+        )
+    return out
+
+
+def render(
+    lineages: Sequence[Lineage], *, top: int = 5, outbound: Mapping[str, Flow] | None = None
+) -> str:
     """The report, as a person reads it."""
-    if not lineages:
-        return "No lineage has staged a plan here yet."
+    flowing = dict(outbound or {})
+    if not lineages and not flowing:
+        return "No lineage has staged a plan or sent anything here yet."
     out: list[str] = []
-    for lineage in lineages:
+    for lineage in [
+        *lineages,
+        *(
+            Lineage(m)
+            for m in sorted(flowing)
+            if m not in {lineage.mandate_id for lineage in lineages}
+        ),
+    ]:
         summary = lineage.to_json(top)
         plans = summary["plans"]
         out.append(f"Mandate {lineage.mandate_id}")
+        if not plans and lineage.mandate_id in flowing:
+            out.extend(_flow_lines(flowing[lineage.mandate_id]))
+            out.append("")
+            continue
         out.append(
             f"  {plans} {_plural(plans, 'plan')} staged: {summary['committed']} committed, "
             f"{summary['refused']} refused, {summary['compensated']} put back."
@@ -178,5 +291,8 @@ def render(lineages: Sequence[Lineage], *, top: int = 5) -> str:
                     else ""
                 )
                 out.append(f"    {p['changes']} {p['noun']}: {p['tool']}, plan {p['plan_id']}{why}")
+        flow = flowing.get(lineage.mandate_id)
+        if flow is not None:
+            out.extend(_flow_lines(flow))
         out.append("")
     return "\n".join(out).rstrip() + "\n"

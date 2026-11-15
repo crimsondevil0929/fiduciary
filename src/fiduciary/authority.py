@@ -1223,10 +1223,15 @@ class Decide:
             "labels": sorted(held | set(new)),
         }
 
-    def _pinned_tool(self, opened: Mapping[str, Any], tool: str) -> None:
+    def _pinned_tool(self, opened: Mapping[str, Any], tool: str, *, sibling: bool = False) -> None:
         mandate: Mandate = self.load(str(opened["mandate"]), Mandate)
-        if tool not in {pin.name for pin in mandate.tools.bindings}:
-            raise AuthorityError(f"tool {tool!r} is pinned by no version this session runs")
+        if tool in {pin.name for pin in mandate.tools.bindings}:
+            return
+        # What a session took up from its siblings (1.19.0, fiduciary.flow) is recorded from
+        # fiduciary_sibling, under a version that admits statements no binding pins.
+        if sibling and tool == "fiduciary_sibling" and mandate.tools.statements == "any":
+            return
+        raise AuthorityError(f"tool {tool!r} is pinned by no version this session runs")
 
     def read_session(
         self, state: State, session_id: str, body: Mapping[str, Any]
@@ -1237,7 +1242,7 @@ class Decide:
         holds the outcome to the rules; this holds the record to its form."""
         opened = self._open_session(state, session_id)
         tool = str(body.get("tool", ""))
-        self._pinned_tool(opened, tool)
+        self._pinned_tool(opened, tool, sibling=True)
         records = body.get("records")
         if not isinstance(records, int) or isinstance(records, bool) or not 0 <= records <= 10**9:
             raise AuthorityError("a read's records are a count")
