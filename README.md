@@ -30,10 +30,11 @@ interlock-fiduciary` brings both engines; each also works alone.
 ```bash
 pip install interlock-fiduciary
 fiduciary protect --claude-desktop            # says what it would do; nothing changes
-fiduciary protect --claude-desktop --apply    # or --cursor, or --mcp-config .mcp.json
+fiduciary protect --claude-desktop --apply    # or --cursor, --vscode, --codex, --mcp-config FILE
 ```
 
-Every MCP server in the client's file gets a proxy in front of it, started in shadow mode.
+Every MCP server in the client's file gets a proxy in front of it, local or remote, started in
+shadow mode.
 Each tool's definition and the server's package version are pinned, and a tool that changes
 is withheld until you accept it (`fiduciary protect --review --accept`). A read-only claim
 the tool's own name or arguments contradict is not believed: the tool is held, and flagged.
@@ -41,10 +42,14 @@ Writes go through once, and those that need approval wait for your passkey
 (`fiduciary passkey add`). A fetch, a search or a send that carries a credential or a
 private value the agent read is refused, whole or encoded. In shadow mode nothing is refused:
 `fiduciary shadow report` lists the writes that would have been, each send that would have been
-is recorded as `shadow`, and `--enforce` turns it on. With Claude Code,
+is recorded as `shadow`, and `--enforce` turns it on. A remote server's token leaves the client's file, and
+`--move-secrets` puts every server's secrets in the system's own store. With Claude Code,
 `--mcp-config .mcp.json --claude-code` adds its turn hooks, so a turn's writes wait for its
 end and a turn that fails puts back what it changed. `fiduciary unprotect` puts every entry
 back.
+
+The same proxies run [an agent in GitHub Actions](#agents-in-ci) for the length of a job, and
+the [incident replays](#incident-replays) show three public failures run through them.
 
 ## Wrap one tool in your own code
 
@@ -109,12 +114,13 @@ command line, with Seatbelt or bubblewrap confining each command.
 
 ```bash
 fiduciary protect --claude-desktop             # says what it would do
-fiduciary protect --claude-desktop --apply     # or --cursor, or --mcp-config .mcp.json
+fiduciary protect --claude-desktop --apply     # or --cursor, --vscode, --codex, --mcp-config FILE
 ```
 
-Each local MCP server in the client's file is then started through `fiduciary mcp proxy
---protected`, behind a deployment of its own in `~/.fiduciary/protect/`. Every server there
-has the same owner, you:
+Each MCP server in the client's file is then started through `fiduciary mcp proxy
+--protected`, behind a deployment of its own in `~/.fiduciary/protect/`. The clients are
+Claude Desktop, Cursor, Claude Code (a project's `.mcp.json`), VS Code (`mcp.json`) and Codex
+CLI (`config.toml`). Every server there has the same owner, you:
 
 - **Pinned tools.** Each tool's whole definition (its name, title, description, schemas and
   annotations) is hashed into its signed binding. The proxy lists the server's tools again
@@ -128,9 +134,28 @@ has the same owner, you:
   published now>`, and `uvx` likewise, so the code that runs is the code that was pinned.
 - **Writes that answer.** A write the mandate lets through is made at once, in the proxy, and
   the agent gets the server's own result. A destructive one waits for your approval.
-- **Secrets out of the file.** `--move-secrets` moves each `env` value to the macOS Keychain.
+- **Remote servers.** A remote entry (a URL and its headers) becomes the proxy's command, and
+  the proxy speaks Streamable HTTP to the server, in the 2026-07-28 revision or the older one.
+  Its tools are pinned the same way. Its `Authorization` token, and any header or URL that
+  carries a credential, leaves the client's file: the agent's process never holds it. A token
+  the client gets by OAuth stays with the client.
+- **Secrets out of the file.** `--move-secrets` moves each local server's `env` values and
+  each remote server's secrets into the system's own store: the macOS Keychain, the Linux
+  Secret Service (`secret-tool`) or the Windows Credential Manager, or a file only you can
+  read where none answers (`--secret-store` picks one). The proxy reads them back when it
+  starts the server.
+- **Tokens lying around.** `--scan-secrets` looks through the project the agent works in
+  (`--workspace`) for credentials it could read in passing: a `.env`, a deploy script. With
+  `--apply`, each one is given to every protected session as a secret before its first call,
+  so no call carries it out, even when the agent read it with the client's own file tools.
+  Nothing is moved: say where each one is, and move it yourself.
+- **Approval in the client.** A client that speaks MCP 2026-07-28 and can open a URL for the
+  person (URL-mode elicitation) is answered, for a held write, with the console's page for its
+  ticket; once the owner approves there, the client's retry gets the server's own answer. The
+  official Python SDK's client does this; for other clients, the held message is as before.
 
-`fiduciary unprotect` puts every entry back as it was. What it cannot catch: a server that
+`fiduciary protect` runs on macOS and Linux. `fiduciary unprotect` puts every entry back as
+it was. What it cannot catch: a server that
 changes what a tool does without changing its definition or its version, and anything a
 server does on its own side of the call.
 
@@ -262,6 +287,75 @@ write, the labels its result brings, where it sends, which tool undoes it, and, 
 `--traces`, bounds from what shadow mode measured. `--llm URL --llm-model NAME` asks any
 OpenAI-compatible endpoint, a local one included, to review the draft, and only what makes it
 stricter is kept. Nothing it writes is signed: you review it.
+
+## Agents in CI
+
+An agent that answers issues or reviews pull requests in GitHub Actions reads text anyone can
+write, with tools that can push, comment and read the job's secrets. `fiduciary ci` runs its MCP
+servers behind protected proxies for the length of the job, in a process of its own:
+
+```yaml
+- uses: crimsondevil0929/fiduciary@v1.20.0
+  id: fiduciary
+  with: { step: start, mcp-config: .github/agent-mcp.json, secrets: GITHUB_TOKEN }
+  env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+- uses: anthropics/claude-code-action@v1
+  with:
+    claude_args: --mcp-config ${{ steps.fiduciary.outputs.mcp-config }} --disallowedTools Bash
+- uses: crimsondevil0929/fiduciary@v1.20.0
+  if: always()
+  with: { step: finish }
+```
+
+- The event's text from anyone the repository does not trust (owners, members and
+  collaborators are trusted by default), and anything from a fork, labels every session
+  `untrusted` before the agent reads a word.
+- The job's secrets reach the proxy on its standard input and stay in its memory. The agent's
+  step gets only an MCP file of loopback addresses and a token that reaches the proxy, and a
+  call carrying a secret is refused.
+- A call that points at `.github/workflows` or `.github/actions` is refused.
+- Nobody approves in CI, so a held call is not made. The finish step writes what was refused
+  and held, and why, to the job summary (and, with `comment:`, to the issue or pull request),
+  and uploads each server's bundle, verified.
+
+What it cannot see: an agent with a shell of its own (give it none), and tools the agent's
+action brings itself, such as its own comment tool. A full workflow is in
+[`docs/ci/agent.yml`](docs/ci/agent.yml), and the [guide](https://crimsondevil0929.github.io/fiduciary/ci/)
+says more.
+
+## The approval hook your framework already has
+
+The OpenAI Agents SDK asks `needs_approval` before a tool runs; the Claude Agent SDK asks
+`can_use_tool` and runs `PreToolUse` hooks. Each can ask a mandate instead:
+
+```python
+import fiduciary
+
+gate = fiduciary.Gate.for_tools(definitions)   # a deployment for the framework's own tools
+tools = fiduciary.hooks.openai_agents(tools, gate)   # needs_approval and guardrails, per tool
+options = ClaudeAgentOptions(can_use_tool=fiduciary.can_use_tool(gate),
+                             hooks=fiduciary.hooks.claude_hooks(gate))
+```
+
+Each call is checked before it runs (its schema, the velocity bound, what it would send under
+the outbound rules) and is allowed, refused with a reason the model reads, or held for the
+framework's own approval; what it returned is read before the model sees it. The tools are
+still the framework's: nothing they change is staged or measured, and whoever answers the
+framework's prompt approves, with no signature. For that, use `@gov.tool` or `fiduciary protect`.
+
+## Incident replays
+
+```bash
+fiduciary replay all --out replays
+```
+
+Three patterns from public incidents, rebuilt against stand-in servers and run through
+`fiduciary protect`: a destructive cloud call made with a token found in a config file; a
+public issue that leads an agent to publish a private repository through another server; and
+an MCP server that updates in place to add a hidden recipient. Each run prints what the agent
+did and what the proxy answered, and verifies every bundle. The
+[replays page](https://crimsondevil0929.github.io/fiduciary/replays/) shows the recorded run
+and links the public write-ups.
 
 ## Start here
 

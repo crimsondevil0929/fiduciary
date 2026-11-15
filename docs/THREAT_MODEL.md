@@ -27,6 +27,8 @@ surface. It holds a session, over MCP or in process.
 | **One approver, or a minority**, acting alone. | An authority-granting decision takes k of n distinct principals' signatures over the exact bytes they were shown: 2 of 3 by default. | V8 (every warrant had its quorum) |
 | **An agent that signs its own approval** with a principal's key file it can read: a solo owner's `keys/owner.key` is readable by any program the owner runs, an agent's tools included. | A principal's key can be a passkey (1.17.0): it signs only when its owner touches it, and its private key never leaves the device. Each signature says the user was present and verified, on an origin the charter admits. | V2 (the charter holds the passkey), V8; the browser's `passkeys` check |
 | **An MCP server that changes after it was approved** ("rug pull"): an `npx` package updated overnight, a tool's description rewritten, or a read-only tool turned into a write. | A protected server's tools are pinned whole in their signed bindings and its package version is pinned. A tool whose definition moved is withheld before its next call, and the change is shown field by field (1.17.0). | `drift.json`; the bindings' `pin` |
+| **A token in reach of the agent** (1.20.0): a cloud token in an unrelated config file, a server's token in the client's JSON file, a remote server's `Authorization` header. | `fiduciary protect --move-secrets` moves each server's secrets into the system's store (the macOS Keychain, the Linux Secret Service, the Windows Credential Manager), and a remote server's token always leaves the client's file. `--scan-secrets` finds credentials in the workspace and seeds them as secret into every protected session, so no call carries one out, whichever tool the agent read it with. A destructive tool waits for its owner. | V13 (the seeded values are on each session's records) |
+| **An agent in CI steered by text anyone can write** (1.20.0): an issue, a comment, a pull request from a fork. | That text labels every session untrusted from the first call; the job's secrets live in the CI proxy's memory, and any call carrying one is refused; a call that points at `.github/workflows` or `.github/actions` is refused; held calls are not made, and the job summary says why. | V13; `session.refused` records |
 | **A turn that sends an email and then fails**: the agent refunds, emails the customer, and its next call is refused. | Within a turn, every request waits, held, and is made only if every call of the turn committed; otherwise it is cancelled (1.17.0). | V7 (each release and cancel cites its `turn.closed` record) |
 | **A replayed approval, ticket or warrant**, in another context or after its state moved. | Each is bound to its ticket, deployment, the heads it was decided on, and an expiry. | V8, V12 |
 | **The database owner or a compromised service** editing, deleting, reordering or forging records, or acting with no warrant. A break-glass release or a by-hand reset is one example. | Not prevented. Every such act is detected: the logs are hash-chained, signed, and anchored in a ledger whose checkpoint is signed. | V1 to V12. V7 names each act with no mandate or warrant behind it, labelled `[break-glass]` when the charter declared that key |
@@ -67,12 +69,30 @@ surface. It holds a session, over MCP or in process.
   version pin catches a changed package. A server that changes what a tool does behind an
   unchanged definition and version is not caught, and what the server does with a call is
   its own. An agent that can edit the client's file can unwrap a server; `fiduciary protect`
-  shows which entries are protected, and nothing prevents the edit. Remote (HTTP) servers are
-  not wrapped yet. Every protected server shares one owner, so until a passkey replaces it,
+  shows which entries are protected, and nothing prevents the edit. A remote server (1.20.0)
+  is wrapped, but its code cannot be pinned, only its definitions, and a token its client got
+  by OAuth stays with the client. Every protected server shares one owner, so until a passkey replaces it,
   one key file (`owner/owner.key`) signs for all of them: an agent that reads it can approve
   its own writes on every server. And a program running as you can write `step-aside.json`
   into a deployment to make its proxy refuse calls for up to 15 minutes at a time; that
   stops the agent, and lets nothing through.
+- **Secrets on the same account.** A secret store (1.20.0) keeps a token out of files an agent
+  reads in passing; it does not keep it from a program of the same user that asks the store,
+  and the file fallback (`--secret-store file`, or where no store answers) is readable by any
+  such program. A local server's process holds its own token in its environment. In CI the
+  proxy holds the job's secrets in memory and, on Linux, marks itself not dumpable; an agent
+  with a shell of its own still reaches the network and the runner's files directly, so give
+  it none.
+- **The frameworks' own tools** (1.20.0, `fiduciary.hooks`). A mandate in the OpenAI Agents
+  SDK's or the Claude Agent SDK's approval hooks decides before a tool runs and reads what it
+  returned, but the tool runs in the framework's process: nothing it changes is staged,
+  measured or undone, and an `ask` is approved by whoever answers the framework's prompt, with
+  no signature. The record says a call was asked, not who said yes.
+- **Clients that do not ask in the client.** A held write is offered to the client as a URL
+  to approve at (MCP 2026-07-28 multi round-trip requests, 1.20.0) only when the client
+  declares URL elicitation; every other client is told in words, and the owner approves in the
+  console. The URL only carries the person to the console; the approval is the owner's
+  signature there.
 - **What a turn's committed calls changed.** A refused call cancels the turn's requests and
   (1.18.0) puts back what its earlier calls changed, but only exactly: a row someone changed
   in the meantime stays as it is, and a request already sent with no compensation stays sent.

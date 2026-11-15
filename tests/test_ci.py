@@ -209,3 +209,22 @@ def test_the_ci_proxy_refuses_what_is_not_the_agents(tmp_path: Path) -> None:
     with pytest.raises(CiError, match="loopback only"):
         ci._listener(served, stop, "0.0.0.0:0")
     assert os.environ.get("RUNNER_TEMP") is None or True
+
+
+def test_the_action_is_named_at_this_version() -> None:
+    """The workflows the README, the guide and ``docs/ci/agent.yml`` show use this release's
+    tag, and the Action installs this checkout's own source."""
+    from fiduciary import __version__
+    from fiduciary.report import guides
+
+    root = Path(__file__).resolve().parent.parent
+    tag = f"crimsondevil0929/fiduciary@v{__version__}"
+    for text in (
+        (root / "README.md").read_text(),
+        (root / "docs" / "ci" / "agent.yml").read_text(),
+        guides.page(next(g for g in guides.GUIDES if g["slug"] == "ci")),
+    ):
+        assert tag in text
+        assert "crimsondevil0929/fiduciary@v" not in text.replace(tag, "")
+    action = (root / "action.yml").read_text()
+    assert '"$GITHUB_ACTION_PATH"' in action and "fiduciary-venv" in action

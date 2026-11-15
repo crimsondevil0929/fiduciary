@@ -682,7 +682,8 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
                 "ul": [
                     "It governs the tools behind the proxy. An agent with a shell reaches the "
                     "network and the runner's files directly, so give it none: in Claude Code, "
-                    "--disallowedTools Bash.",
+                    "--disallowedTools Bash. Tools the agent's action brings itself, such as "
+                    "its own comment tool, do not go through the proxy either.",
                     "A local MCP server holds its own token in its environment, which a process "
                     "of the same user with a shell could read. A remote server's token never "
                     "leaves the proxy.",
@@ -736,11 +737,14 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 .wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
 .top { border-bottom: 1px solid var(--line); }
-.top .wrap { max-width: 1120px; display: flex; align-items: center; gap: 18px; height: 58px;
-  flex-wrap: wrap; }
+.top .wrap { max-width: 1120px; display: flex; align-items: center; gap: 18px; min-height: 58px;
+  flex-wrap: wrap; padding-top: 8px; padding-bottom: 8px; }
 .brand { display: flex; align-items: center; gap: 9px; color: var(--ink); font-weight: 650; }
 .top nav { display: flex; gap: 16px; margin-left: auto; font-size: 14px; flex-wrap: wrap; }
-.top nav a { color: var(--ink-2); }
+.top nav a { color: var(--ink-2); white-space: nowrap; }
+@media (max-width: 720px) { .top nav { width: 100%; margin-left: 0; flex-wrap: nowrap;
+  overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .top nav::-webkit-scrollbar { display: none; } }
 main { padding: 56px 0 72px; }
 .kicker { font: 500 12px var(--mono); letter-spacing: .08em; text-transform: uppercase;
   color: var(--accent); }
@@ -846,7 +850,7 @@ _COMMAND: Final = re.compile(
     r"verify-bundle|export-bundle|init|undo|infer-policy|ci start|ci finish|ci|replay)"
     r"(?: --[a-z][a-z-]*)*"
     r"|--[a-z][a-z-]+|readOnlyHint|\.mcp\.json|\.claude/settings\.local\.json|mcpServers"
-    r"|\.github/(?:workflows|actions)|config\.toml|\.env\b"
+    r"|\.github/(?:workflows|actions)|config\.toml|(?<![\w./])\.env\b"
 )
 """What prose shows as code: a command, a flag, a file or a field."""
 
