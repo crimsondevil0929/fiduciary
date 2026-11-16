@@ -121,6 +121,7 @@ def test_the_surface_is_five_methods(world: bound.World) -> None:
         "billing_scope",
         "labels",  # 1.16.0: what the session has read, read-only
         "turn",  # 1.17.0: the turn its next plans are part of, set by the serving process
+        "workspace",  # 1.21.0: the workspace whose memory files are read once on the first call
     }
     world.issue_and_bind(kit.mandate(world))
     session = kit.fiduciary(world).session(bound.SCOPE, tenant="acme")

@@ -21,7 +21,8 @@ surface. It holds a session, over MCP or in process.
 | Threat | What happens | Checked offline by |
 |---|---|---|
 | **A prompt-injected or careless agent** calls a tool it was given, with arguments that look fine. A trigger, cascade, webhook, hook or rule then does far more. | The change is measured before it commits: the records a trigger wrote, the files a hook generated, the replicas a webhook multiplied. A change beyond the mandate's bounds (how much changed, where, for whom, how fast, at what cost) is refused, and nothing lands. | V4 (each receipt was judged by the mandated checkers) and V5 (the receipts) |
-| **Data leaving through a read, a fetch or a send** (1.19.0): a URL that carries a token the agent read, an email to an outside address with a customer's details, a pull request into a public repository after reading a private one, a bulk export. | Before a call leaves, its arguments are searched for the exact values the session read as secret or private, as plain text, URL-decoded, base64 or hex: a credential never leaves, a private value only to a destination the mandate lists. After untrusted input and private data together, nothing more is sent without the principals. Reads and bytes sent count against a budget. | V13 (each send judged again from its record) |
+| **Data leaving through a read, a fetch or a send** (1.19.0; hardened 1.21.0): a URL that carries a token the agent read, an email to an outside address with a customer's details, a pull request into a public repository after reading a private one, a bulk export, or an encoded/split secret. | Before a call leaves, its arguments are searched for exact tracked values and credentials across up to 4 layers of URL, HTML, backslash, NFKC, base64, base32 and hex encodings plus single-call splits (`Tracker.split_in`): a credential never leaves, a private value only to a destination the mandate lists, and duplicate JSON keys or ambiguous `\` URL authorities are refused. After untrusted input and private data together, nothing more is sent without the principals. | V13 (each send judged again from its record) |
+| **A poisoned memory across sessions** (1.21.0, OWASP ASI06): an agent reads untrusted text today and saves instructions to `MEMORY.md`, `CLAUDE.md` or a memory server for tomorrow's clean session. | Writes to memory tools or memory files emit `session.remembered` with keyed line fingerprints and session labels; any later session (across tools or servers) that reads a line back inherits the labels in `session.labeled` citing that record, and `fiduciary undo` can revert file/table memory writes. | V13 (`session.remembered` to `session.labeled` citation check in Python and browser) |
 | **A tool that lies about itself**: an MCP server marks a destructive tool `readOnlyHint: true`. | The claim is not believed when the tool's own name, description or arguments say it writes or sends: it is held, and flagged for review (1.19.0). | the bindings, in the bundle |
 | **An agent that tries to widen its own authority**, by calling a tool it was not given, writing outside its tables or tenants, raising its own budget, or approving its own request. | It has no credential to do any of it. An exception is a ticket that principals decide. The agent's own text is shown to them apart, as an unverified claim. | V3 (delegation), V7, V8 |
 | **One approver, or a minority**, acting alone. | An authority-granting decision takes k of n distinct principals' signatures over the exact bytes they were shown: 2 of 3 by default. | V8 (every warrant had its quorum) |
@@ -42,12 +43,15 @@ surface. It holds a session, over MCP or in process.
 - **Enough colluding principals.** k of them are the authority. Their decisions are recorded
   and attributable, and are never second-guessed.
 - **A paraphrase of what an agent read.** What leaves is checked for the exact values a
-  session read, whole or encoded once (1.19.0). A model that rewrites a secret in its own
-  words, splits it across calls, or sends a value shorter than eight characters is not
-  caught. A read that no binding labels (a tool marked `system` that returns a stranger's
+  session read, whole or encoded up to `MAX_LAYERS` deep and credentials split across arguments in
+  one call (1.21.0). A model that rewrites a secret in its own words, splits a value across
+  separate calls or sends fragments shorter than eight characters, or applies non-transport
+  transforms (ROT13, XOR, reversed) is not matched and is bounded by `bytes_sent` and call velocity
+  instead. A read that no binding labels (a tool marked `system` that returns a stranger's
   text) is not seen. The servers one client started share what they read; two clients share
-  nothing. Data the agent sends through a channel the bridge does not serve (its own shell
-  and network) is outside this model.
+  nothing, except via explicit cross-session memory fingerprints under a shared deploy root. Data
+  the agent sends through a channel the bridge does not serve (its own shell and network) is
+  outside this model.
 - **Unescrowed tools and unobserved tables.** A passthrough tool the mandate trusts to be
   read-only is trusted. A table no `TableSpec` observes is denied to the stage on SQLite and
   by grants on PostgreSQL. A cascade into one is refused unless an operator acknowledged it,

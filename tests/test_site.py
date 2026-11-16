@@ -134,7 +134,7 @@ def test_the_script_draws_the_front_page_from_the_same_words() -> None:
 def test_the_files_beside_the_page() -> None:
     data = _with_overview(_run())
     sitemap = site.sitemap(data)
-    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 8  # 1.20.0
+    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 9  # 1.21.0
     assert f"Sitemap: {site.SITE_URL}sitemap.xml" in site.robots()
     assert site.favicon().startswith("<svg") and "prefers-color-scheme:dark" in site.favicon()
     card = (ROOT / "docs" / site.CARD).read_bytes()
@@ -175,9 +175,9 @@ def test_each_guide_is_a_page_of_its_own() -> None:
         assert ("FAQPage" in kinds) == bool(guide["faq"])
         others = [g for g in guides.GUIDES if g is not guide]
         assert all(f'href="../{g["slug"]}/"' in page for g in others)
-    assert len(titles) == len(descriptions) == len(guides.GUIDES) == 7
+    assert len(titles) == len(descriptions) == len(guides.GUIDES) == 8
     mapped = site.sitemap({})
-    assert mapped.count("<loc>") == 8 and f"<loc>{site.SITE_URL}replays/</loc>" in mapped
+    assert mapped.count("<loc>") == 9 and f"<loc>{site.SITE_URL}benchmarks/</loc>" in mapped
     footer = site.COPY["footer"]["guides"]
     assert [href for _, href in footer] == [f"{g['slug']}/" for g in guides.GUIDES]
 
@@ -196,3 +196,37 @@ def test_the_hero_is_what_a_run_records(tmp_path: Path) -> None:
     shown = {k: site.COPY["hero"][k] for k in fresh}
     assert fresh == shown, "run scripts/record_hero.py and read the diff"
     assert [c["verdict"] for c in fresh["calls"]] == ["read", "held", "refused", "allowed"]
+
+
+def test_the_benchmarks_guide_shows_what_was_recorded(tmp_path: Path) -> None:
+    """1.21.0: ``scripts/record_benchmarks.py`` measures local overhead and counts the 8
+    workflows and 3 replays into ``report/benchmarks.json``, which ``/benchmarks/`` draws."""
+    import importlib.util
+
+    from fiduciary.report import guides
+
+    script = ROOT / "scripts" / "record_benchmarks.py"
+    spec = importlib.util.spec_from_file_location("record_benchmarks", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    out = tmp_path / "benchmarks.json"
+    assert module.main(out, samples=3) == 0
+    fresh = json.loads(out.read_text(encoding="utf-8"))
+    recorded = json.loads(
+        (ROOT / "src" / "fiduciary" / "report" / "benchmarks.json").read_text(encoding="utf-8")
+    )
+    assert fresh["versions"].keys() == {"agentgov", "interlock", "fiduciary"}
+    assert [r["operation"] for r in fresh["latency"]] == [
+        r["operation"] for r in recorded["latency"]
+    ]
+    assert fresh["workflows"] == recorded["workflows"]
+    assert fresh["replays"] == recorded["replays"]
+    assert len(fresh["workflows"]) == 8 and len(fresh["replays"]) == 3
+
+    guide = next(g for g in guides.GUIDES if g["slug"] == "benchmarks")
+    page = guides.page(guide)
+    assert "SHA256SUMS" in page and "MIN_LENGTH" in page and "bytes_sent" in page
+    assert "Workspace agent" in page and "Clinical EHR" in page
+    assert "Class V put-back double faults" in page
+    assert "AgentGov hold and capture" in page

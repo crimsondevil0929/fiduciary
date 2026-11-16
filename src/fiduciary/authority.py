@@ -81,9 +81,14 @@ BUILTIN_TOOLS: Final = ("fiduciary_request", "fiduciary_ticket_status")
 PROVENANCE_LABEL: Final = re.compile(r"[a-z][a-z0-9_.:=-]{0,95}")
 """A provenance label a session record may hold (1.16.0)."""
 TOOL_NAME: Final = re.compile(r"[a-z][a-z0-9_-]{0,63}")
-OUTSIDE_SOURCES: Final = frozenset({"fiduciary_sibling", "fiduciary_workspace", "fiduciary_ci"})
+OUTSIDE_SOURCES: Final = frozenset(
+    {"fiduciary_sibling", "fiduciary_workspace", "fiduciary_ci", "fiduciary_memory"}
+)
 """What a session's records may name as a source no binding pins (``fiduciary.flow``): its
-siblings (1.19.0), the workspace's credentials and a CI job (1.20.0)."""
+siblings (1.19.0), the workspace's credentials and a CI job (1.20.0), and the memory files a
+client loads by itself (1.21.0, :mod:`fiduciary.memory`)."""
+SHAREABLE: Final = frozenset({"untrusted", "secret", "private"})
+"""Labels a memory carries into a later session (1.21.0), with every ``partition:`` label."""
 REFUSAL_CODES: Final = (
     "arguments",  # outside the binding's schema, or the canonical domain (F4-13)
     "max_open",  # the lineage's open tickets are at escalation.max_open (F7-2)
@@ -1198,11 +1203,20 @@ class Decide:
         }
 
     def label_session(
-        self, state: State, session_id: str, tool: str, introduced: Sequence[str]
+        self,
+        state: State,
+        session_id: str,
+        tool: str,
+        introduced: Sequence[str],
+        memory: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """The ``session.labeled`` body (1.16.0): what a tool's result brought into the
         session, and every label the session holds now. Labels only join: one record per
-        tool call that brought a label the session did not hold."""
+        tool call that brought a label the session did not hold.
+
+        With ``memory`` (1.21.0): the labels came from what earlier sessions wrote into
+        memory, and the body cites their ``session.remembered`` records and the fingerprints
+        that matched (:func:`cited_memory`)."""
         opened = self._open_session(state, session_id)
         mandate: Mandate = self.load(str(opened["mandate"]), Mandate)
         pinned = {pin.name for pin in mandate.tools.bindings}
@@ -1219,12 +1233,63 @@ class Decide:
         for label in new:
             if not PROVENANCE_LABEL.fullmatch(label):
                 raise AuthorityError(f"{label!r} is no provenance label")
-        return {
+        body: dict[str, Any] = {
             "session": session_id,
             "mandate_id": opened["mandate_id"],
             "tool": tool,
             "introduced": new,
             "labels": sorted(held | set(new)),
+        }
+        if memory is not None:
+            body["memory"] = cited_memory(state, memory, new)
+        return body
+
+    def remember_session(
+        self, state: State, session_id: str, body: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """The ``session.remembered`` body (1.21.0): what a session wrote into an agent's
+        memory (a tool, its plan, the paths or names written, a fingerprint of each line),
+        with every label the session held then, from its records, not the caller's word, and
+        whether the write was made or held. Only a session that holds a label a memory
+        carries (:data:`SHAREABLE`, a partition's) records one."""
+        opened = self._open_session(state, session_id)
+        tool = str(body.get("tool", ""))
+        mandate: Mandate = self.load(str(opened["mandate"]), Mandate)
+        if tool not in {pin.name for pin in mandate.tools.bindings} and (
+            mandate.tools.statements != "any"
+        ):
+            raise AuthorityError(f"tool {tool!r} is pinned by no version this session runs")
+        if not TOOL_NAME.fullmatch(tool):
+            raise AuthorityError(f"{tool!r} is no tool name")
+        plan = body.get("plan")
+        if plan is not None and not (isinstance(plan, str) and _PLAN_ID.fullmatch(plan)):
+            raise AuthorityError(f"{plan!r} is no plan id")
+        keys = body.get("keys")
+        if (
+            not isinstance(keys, list)
+            or keys != sorted(set(keys))
+            or len(keys) > 64
+            or not all(isinstance(k, str) and 0 < len(k) <= 256 and k.isprintable() for k in keys)
+        ):
+            raise AuthorityError("a memory write's keys are sorted, each once, at most 64")
+        prints = _fingerprints(body.get("fingerprints"))
+        outcome = body.get("outcome")
+        if outcome not in ("written", "held"):
+            raise AuthorityError("a memory write is written or held")
+        labels = list(session_labels(state, session_id))
+        if not any(carried(label) for label in labels):
+            raise AuthorityError(
+                f"session {session_id} holds no label a memory carries: nothing to remember"
+            )
+        return {
+            "session": session_id,
+            "mandate_id": opened["mandate_id"],
+            "tool": tool,
+            "plan": plan,
+            "keys": list(keys),
+            "labels": labels,
+            "fingerprints": prints,
+            "outcome": outcome,
         }
 
     def _pinned_tool(self, opened: Mapping[str, Any], tool: str, *, sibling: bool = False) -> None:
@@ -1636,8 +1701,14 @@ def _expected(
         return decide.close_session(state, str(body["session"]), list(body["scopes"]))
     if kind == "session.labeled":
         return decide.label_session(
-            state, str(body["session"]), str(body["tool"]), list(body["introduced"])
+            state,
+            str(body["session"]),
+            str(body["tool"]),
+            list(body["introduced"]),
+            body.get("memory"),
         )
+    if kind == "session.remembered":
+        return decide.remember_session(state, str(body["session"]), body)
     if kind == "session.read":
         return decide.read_session(state, str(body["session"]), body)
     if kind == "session.sent":
@@ -1657,6 +1728,79 @@ OUTBOUND_RULES: Final = re.compile(
     r"|budget:(?:bytes_sent|records_read)"
 )
 """A rule of what leaves that a ``session.sent`` or ``session.read`` may name (1.19.0)."""
+
+
+_PLAN_ID: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_RECORD_HASH: Final = re.compile(r"[0-9a-f]{64}")
+
+
+def carried(label: str) -> bool:
+    """Whether a memory carries ``label`` into a later session (1.21.0)."""
+    return label in SHAREABLE or label.startswith("partition:")
+
+
+def _fingerprints(found: object) -> list[str]:
+    if (
+        not isinstance(found, list)
+        or not found
+        or found != sorted(set(found))
+        or len(found) > 4096
+        or not all(isinstance(d, str) and _DIGEST.fullmatch(d) for d in found)
+    ):
+        raise AuthorityError("fingerprints are digests, sorted, each once, 1 to 4096")
+    return list(found)
+
+
+def cited_memory(
+    state: State, memory: Mapping[str, Any], introduced: Sequence[str]
+) -> dict[str, Any]:
+    """A ``session.labeled`` record's citation of memory (1.21.0): the ``session.remembered``
+    records a read matched, each by sequence number and hash, and the fingerprints that
+    matched. A cited record this log holds (the same sequence number, the same hash) must
+    share a fingerprint with the read, and when every cited record is this log's, the labels
+    the read introduced must be among theirs and every fingerprint among theirs. A record of
+    another log (another server's, under one protect root) is cited by its hash, for a reader
+    who holds that log: a citation can only add labels, never take one away."""
+    if not isinstance(memory, Mapping) or set(memory) != {"records", "fingerprints"}:
+        raise AuthorityError("a memory citation names its records and fingerprints")
+    records = memory["records"]
+    if not isinstance(records, list) or not 0 < len(records) <= 64:
+        raise AuthorityError("a memory citation names 1 to 64 records")
+    cited: list[dict[str, Any]] = []
+    for item in records:
+        if (
+            not isinstance(item, Mapping)
+            or set(item) != {"seq", "hash"}
+            or not isinstance(item["seq"], int)
+            or isinstance(item["seq"], bool)
+            or item["seq"] < 1
+            or not isinstance(item["hash"], str)
+            or not _RECORD_HASH.fullmatch(item["hash"])
+        ):
+            raise AuthorityError("a cited record is its sequence number and hash")
+        cited.append({"seq": item["seq"], "hash": item["hash"]})
+    if cited != sorted(cited, key=lambda c: (c["seq"], c["hash"])) or len(
+        {c["hash"] for c in cited}
+    ) != len(cited):
+        raise AuthorityError("a memory citation's records are in order, each once")
+    prints = _fingerprints(memory["fingerprints"])
+    ours = []
+    for item in cited:
+        found = state.remembered.get(item["seq"])
+        if found is not None and found[0] == item["hash"]:
+            ours.append(found[1])
+    for body in ours:
+        if not set(prints) & set(body["fingerprints"]):
+            raise AuthorityError("a cited memory shares no fingerprint with what was read")
+    if ours and len(ours) == len(cited):
+        labels = {label for body in ours for label in body["labels"] if carried(label)}
+        strays = sorted(set(introduced) - labels)
+        if strays:
+            raise AuthorityError(f"no cited memory carries {', '.join(strays)}")
+        known = {d for body in ours for d in body["fingerprints"]}
+        if not set(prints) <= known:
+            raise AuthorityError("a fingerprint cited is in no cited memory")
+    return {"records": cited, "fingerprints": prints}
 
 
 def _turn(turn: object) -> str | None:

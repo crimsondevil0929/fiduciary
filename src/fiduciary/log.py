@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable, Iterable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Final
 
@@ -164,6 +164,9 @@ class Log:
         self._ledger = ledger
         self._scope = scope
         self._clock = clock
+        self._last: datetime | None = None
+        """The latest instant a record of the log says (1.21.0): no record is dated before
+        it, whatever the host's clock says."""
         self._state = State()
         """The state as of the last record read: a record never changes, so
         only those appended since are read, and folded into a copy."""
@@ -188,7 +191,33 @@ class Log:
         return self._signer
 
     def now(self) -> datetime:
-        return self._clock()
+        """The clock's instant, or the log's last record's when the clock is behind it (1.21.0).
+
+        A host clock can step backwards (an NTP correction, a virtual machine resumed from a
+        snapshot). Records are dated in order regardless: one dated before its predecessor
+        would fail V12 by more than the skew, for a step the deployment did not take. While
+        the clock is behind, each record takes the last record's instant, and a warning says
+        by how much; once the clock passes it, records follow the clock again."""
+        now = self._clock()
+        last = self._last if self._last is not None else self._state.head_time
+        if last is not None and now < last:
+            if last - now > timedelta(seconds=1):
+                logger.warning(
+                    "the clock is %.1f s behind log %s's last record: records are dated at "
+                    "that record's instant until it catches up",
+                    (last - now).total_seconds(),
+                    self._log_id,
+                )
+            return last
+        return now
+
+    def _latest(self, seq: int) -> datetime | None:
+        """The instant record ``seq`` of the log says, read once per process."""
+        if self._last is None and seq:
+            rows = list(self._store.records(self._log_id, after=seq - 1))
+            if rows:
+                self._last = Record.from_json(fidu1.parse(rows[0].data)).issued_at
+        return self._last
 
     def records(self, *, after: int = 0) -> list[Record]:
         """The log's records past sequence ``after``, each read strictly from
@@ -255,9 +284,12 @@ class Log:
         written so (F5-7). They are anchored once the outermost transaction
         commits, so the ledger never anchors a record the log rolled back."""
         written: list[Record] = []
-        when = issued_at or self._clock()
+        when = issued_at or self.now()
         with self._store.transaction():
             seq, head = self._store.head(self._log_id)
+            latest = self._latest(seq)
+            if latest is not None and when < latest:
+                when = latest  # never dated before its predecessor (1.21.0, now())
             for document in documents:
                 self.put(document)
             state = self._sealing(seq)
@@ -288,8 +320,13 @@ class Log:
                     self._store.insert_row(table, row)
                 written.append(record)
                 seq, head = record.seq, record.hash
+            self._dated(when)
             self._store.after_commit(lambda: self._anchor_all(written))
         return written
+
+    def _dated(self, when: datetime) -> None:
+        if self._last is None or when > self._last:
+            self._last = when
 
     def _sealing(self, head: int) -> State | None:
         """The state to seal the next records after, a copy; ``None`` for a

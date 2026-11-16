@@ -1328,6 +1328,7 @@ class _Checks:
         from interlock.types import OUTBOX_TARGET
 
         self._v13_outbound()
+        self._v13_memory()
         sessions: dict[str, dict[str, Any]] = {}
         for record in self.b.records:
             body = record.content
@@ -1547,6 +1548,81 @@ class _Checks:
                 f"leaving; {refused} refused"
                 + (f", {shadowed} let through in shadow" if shadowed else "")
                 + "; exact values only: a paraphrase is not seen"
+            )
+
+    def _v13_memory(self) -> None:
+        """1.21.0: what sessions wrote into an agent's memory, and what later sessions took
+        from it. Each ``session.remembered`` record names exactly the labels its session's
+        records gave it; each label a session took from memory cites a ``session.remembered``
+        record that carries it and shares a fingerprint with what was read. A citation of a
+        record this bundle does not hold (another server's log) is named, not judged: it
+        can only have added a label."""
+        from fiduciary.authority import carried
+
+        remembered: dict[int, tuple[str, Mapping[str, Any]]] = {}
+        held: dict[str, set[str]] = {}
+        writes = taken = elsewhere = 0
+        for record in self.b.records:
+            body = record.content
+            session = str(body.get("session", ""))
+            if record.kind == "session.remembered":
+                writes += 1
+                said = set(body.get("labels", ()))
+                mine = held.get(session, set())
+                if said != mine:
+                    self.add(
+                        "V13",
+                        "provenance",
+                        f"record {record.seq}: a write to memory names the labels "
+                        f"{', '.join(sorted(said)) or 'none'}, and its session held "
+                        f"{', '.join(sorted(mine)) or 'none'}",
+                    )
+                remembered[record.seq] = (record.hash, body)
+            elif record.kind == "session.labeled":
+                memory = body.get("memory")
+                introduced = set(body.get("introduced", ()))
+                if isinstance(memory, Mapping):
+                    taken += 1
+                    prints = set(memory.get("fingerprints", ()))
+                    ours: list[Mapping[str, Any]] = []
+                    for cited in memory.get("records", ()):
+                        found = remembered.get(int(cited.get("seq", 0)))
+                        if found is not None and found[0] == cited.get("hash"):
+                            ours.append(found[1])
+                        else:
+                            elsewhere += 1
+                    for each in ours:
+                        if not prints & set(each.get("fingerprints", ())):
+                            self.add(
+                                "V13",
+                                "provenance",
+                                f"record {record.seq}: it cites a memory that shares no line "
+                                f"with what was read",
+                            )
+                    if ours and len(ours) == len(memory.get("records", ())):
+                        carried_by = {
+                            x for each in ours for x in each.get("labels", ()) if carried(x)
+                        }
+                        missing = sorted(introduced - carried_by)
+                        if missing:
+                            self.add(
+                                "V13",
+                                "provenance",
+                                f"record {record.seq}: no memory it cites carries "
+                                f"{', '.join(missing)}",
+                            )
+                held.setdefault(session, set()).update(introduced)
+        if writes or taken:
+            self.r.notes.append(
+                f"memory: {writes} {'write' if writes == 1 else 'writes'} to agent memory "
+                f"recorded with the labels the session held; {taken} later "
+                f"{'read' if taken == 1 else 'reads'} took labels from memory"
+                + (
+                    f"; {elsewhere} cited {'memory' if elsewhere == 1 else 'memories'} of "
+                    f"another log, not in this bundle"
+                    if elsewhere
+                    else ""
+                )
             )
 
     def _v13_approved(self) -> dict[str, datetime]:

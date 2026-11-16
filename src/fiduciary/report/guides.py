@@ -141,6 +141,283 @@ def _replays_guide() -> Mapping[str, Any]:
     }
 
 
+def _benchmarks_guide() -> Mapping[str, Any]:
+    """Commit-pinned benchmarks, gateway vs. stack catches, fault matrix and boundaries (1.21.0)."""
+    from importlib.resources import files
+
+    recorded = json.loads((files("fiduciary.report") / "benchmarks.json").read_text("utf-8"))
+    versions = recorded["versions"]
+    workflow_rows = [
+        [
+            w["workflow"],
+            w["substrate"],
+            w["class"],
+            w["refused_plans"],
+            w["writes_undone"],
+            ", ".join(w["checks"]),
+            f"{w['bundles_verified']} (after exit {w['after_exit']})",
+        ]
+        for w in recorded["workflows"]
+    ]
+    replay_rows = [[r["title"], r["caught"], r["bundles_verified"]] for r in recorded["replays"]]
+    latency_rows = [
+        [
+            row["operation"],
+            row["samples"],
+            f"{row['p50_ms']:.2f}",
+            f"{row['p95_ms']:.2f}",
+            f"{row['p99_ms']:.2f}",
+        ]
+        for row in recorded["latency"]
+    ]
+    sections: list[dict[str, Any]] = [
+        {
+            "h2": "Pinned to this build",
+            "code": [
+                f"pip install interlock-fiduciary=={versions['fiduciary']}",
+                "sha256sum -c SHA256SUMS",
+                "fiduciary verify-bundle after.fidb --charter $(cat charter.digest) \\",
+                "  --keys pinned-keys.json",
+            ],
+            "p": [
+                (
+                    f"Every table on this page was generated from benchmarks.json alongside the "
+                    f"built site, pinned to interlock-agentgov {versions['agentgov']}, "
+                    f"interlock-escrow {versions['interlock']} and "
+                    f"interlock-fiduciary {versions['fiduciary']}."
+                ),
+                (
+                    "Timings reflect warm local execution over SQLite ledgers, local "
+                    "directories, cryptographic keys and egress scanners with 100 timed "
+                    "iterations per operation after warmup. Production deployments add network "
+                    "round trips to remote APIs, PostgreSQL or Kubernetes control planes, plus "
+                    "human approval time when a warrant is required."
+                ),
+            ],
+        },
+        {
+            "h2": "Input gateway permit vs. what the stack catches",
+            "p": [
+                (
+                    "Each workflow replays a recorded model session whose tool calls passed a "
+                    "static input gateway policy first. Interlock stages each write inside its "
+                    "own system, measures every affected row, file, object or API record, checks "
+                    "the signed mandate, and refuses or undoes what breached a rule. All eight "
+                    "workflows verify offline across 16 bundles (V1 to V14)."
+                ),
+            ],
+            "table": {
+                "headers": [
+                    "Workflow",
+                    "System",
+                    "Rung",
+                    "Refused",
+                    "Undone",
+                    "Checks that stopped or undid it",
+                    "Bundles verified",
+                ],
+                "numeric": (3, 4),
+                "rows": workflow_rows,
+            },
+        },
+        {
+            "h2": "Incident replays on this release",
+            "p": [
+                (
+                    "Each incident replay reconstructs a public agent failure pattern against "
+                    "stand-in MCP servers protected by fiduciary protect."
+                ),
+            ],
+            "table": {
+                "headers": ["Replay", "What caught it", "Bundles verified"],
+                "numeric": (2,),
+                "rows": replay_rows,
+            },
+        },
+        {
+            "h2": "Measured local overhead",
+            "p": [
+                (
+                    "In-process latency percentiles across core agent governance, transactional "
+                    "staging, signature verification, outbound inspection and memory recall "
+                    "operations."
+                ),
+            ],
+            "table": {
+                "headers": ["Operation", "Samples", "P50 (ms)", "P95 (ms)", "P99 (ms)"],
+                "numeric": (1, 2, 3, 4),
+                "rows": latency_rows,
+            },
+        },
+        {
+            "h2": "Adversarial and fault-injection test matrix",
+            "p": [
+                (
+                    "Every control and recovery path below runs deterministically in CI against "
+                    "SQLite, PostgreSQL, loopback REST and FHIR servers, MCP proxies and Node "
+                    "Web Crypto."
+                ),
+            ],
+            "table": {
+                "headers": [
+                    "Attack or fault class",
+                    "Runtime behavior",
+                    "Offline check",
+                    "Test file",
+                ],
+                "rows": [
+                    [
+                        "Layered outbound encodings",
+                        (
+                            "Decodes URL, HTML, backslash, NFKC, base64, base32 and hex up to "
+                            "MAX_LAYERS deep"
+                        ),
+                        "V13 outbound digests and rule verdict",
+                        "test_evasion.py",
+                    ],
+                    [
+                        "Split credentials inside one call",
+                        (
+                            "Rejoins secret fragments in call order across arguments, query "
+                            "parameters, path segments and bodies"
+                        ),
+                        "V13 secret match recorded",
+                        "test_evasion.py",
+                    ],
+                    [
+                        "URL parser differential and duplicate keys",
+                        (
+                            "Rejects duplicate JSON object keys on parse and parses backslash "
+                            "authorities per WHATWG"
+                        ),
+                        "V13 destination check against allowed domains",
+                        "test_evasion.py",
+                    ],
+                    [
+                        "Three-server confused deputy",
+                        (
+                            "Shares taint labels, memory citations and secret digests across "
+                            "servers under one protected client"
+                        ),
+                        "V13 verifies memory citations across server logs",
+                        "test_toxic_flow.py",
+                    ],
+                    [
+                        "Cross-session memory poisoning",
+                        (
+                            "Records session.remembered on writes to memory tools or MEMORY.md / "
+                            "CLAUDE.md and relabels future reads"
+                        ),
+                        "V13 verifies session.remembered to session.labeled citations",
+                        "test_memory.py",
+                    ],
+                    [
+                        "Backward host clock steps",
+                        (
+                            "Clamps record timestamps at the last record instant so log order "
+                            "never moves backwards"
+                        ),
+                        "V12 timestamp ordering check passes",
+                        "test_faults.py",
+                    ],
+                    [
+                        "Crashed or hung sub-agent budget holds",
+                        (
+                            "Operators release stale holds; slow callers rebook safely without "
+                            "double spend"
+                        ),
+                        "V6 ledger conservation verified",
+                        "test_faults.py",
+                    ],
+                    [
+                        "Class V put-back double faults",
+                        (
+                            "Retries 429 and 503 with Retry-After up to COMPENSATION_RETRIES; "
+                            "persistent 503 or 412 leaves the intent open with "
+                            "CommitUnsettledError and trips the scope breaker"
+                        ),
+                        "Open escrow intent and signed AgentGov trip memo",
+                        "interlock test_rest.py, test_fhir.py",
+                    ],
+                ],
+            },
+        },
+        {
+            "h2": "Where the boundary is",
+            "p": [
+                (
+                    "Deterministic enforcement blocks exact mechanisms and documents clear "
+                    "boundaries where static checks do not substitute for isolation or human "
+                    "review."
+                ),
+            ],
+            "ul": [
+                (
+                    "Paraphrases and summaries. Secret and private value scanning detects exact "
+                    "tokens and supported transport encodings. A model that rewords sensitive "
+                    "data is not matched and is bounded by bytes_sent and call limits instead."
+                ),
+                (
+                    "Chunks shorter than MIN_LENGTH. Values or fragments shorter than "
+                    "MIN_LENGTH characters and split private non-credential text are not "
+                    "reassembled across arguments."
+                ),
+                (
+                    "Cross-call splits and non-transport transforms. Secret fragments spread "
+                    "across separate calls, out-of-order pieces, ROT13, XOR or encryption are "
+                    "bounded by bytes_sent rather than value matching."
+                ),
+                (
+                    "Channels outside the proxy. Direct shell commands, raw sockets or built-in "
+                    "client tools that bypass protected MCP servers are not observed; disable "
+                    "shell tools such as Bash in CI."
+                ),
+                (
+                    "Concurrent edits during Class V put-back. When an operator or external "
+                    "request modifies a REST or FHIR record concurrently (409 or 412), "
+                    "put-back leaves that change untouched, keeps the intent open and halts the "
+                    "scope for manual review."
+                ),
+            ],
+        },
+    ]
+    return {
+        "slug": "benchmarks",
+        "nav": "Benchmarks and limits",
+        "title": "AI agent security benchmarks, overhead and limits",
+        "description": (
+            "Measured P50, P95 and P99 overhead, gateway permit versus stack catches across "
+            "eight workflows and three replays, adversarial tests, and honest limits."
+        ),
+        "h1": "Measured overhead, what the checks catch, and where the boundary is",
+        "lede": (
+            f"Pinned to interlock-agentgov {versions['agentgov']}, interlock-escrow "
+            f"{versions['interlock']} and interlock-fiduciary {versions['fiduciary']}. Every "
+            "number below comes from running scripts/record_benchmarks.py against this build."
+        ),
+        "sections": sections,
+        "steps": [
+            ("Install this release", f"pip install interlock-fiduciary=={versions['fiduciary']}"),
+            ("Generate local benchmarks", "python scripts/record_benchmarks.py"),
+            ("Build and verify the site", "python scripts/build_site.py site"),
+        ],
+        "faq": [
+            (
+                "Do these benchmarks include LLM or network API time?",
+                "No. Latency numbers measure local stack enforcement (AgentGov, Interlock and "
+                "Fiduciary) in process, while workflow outcomes replay recorded model sessions "
+                "deterministically at $0 model spend.",
+            ),
+            (
+                "How do I verify these numbers against a release build?",
+                "Check SHA256SUMS beside the built site, run scripts/record_benchmarks.py on "
+                "your hardware, and verify exported bundles offline with fiduciary verify-bundle.",
+            ),
+        ],
+        "app": ("Explore the eight workflows in the demo", "../#/run"),
+    }
+
+
 GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
     {
         "slug": "protect",
@@ -633,7 +910,7 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
             {
                 "h2": "Add it to a workflow",
                 "code": [
-                    "- uses: crimsondevil0929/fiduciary@v1.20.0",
+                    "- uses: crimsondevil0929/fiduciary@v1.21.0",
                     "  id: fiduciary",
                     "  with:",
                     "    step: start",
@@ -648,7 +925,7 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
                     "      --mcp-config ${{ steps.fiduciary.outputs.mcp-config }}",
                     "      --disallowedTools Bash",
                     "",
-                    "- uses: crimsondevil0929/fiduciary@v1.20.0",
+                    "- uses: crimsondevil0929/fiduciary@v1.21.0",
                     "  if: always()",
                     "  with:",
                     "    step: finish",
@@ -717,6 +994,7 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
         "app": ("Read the incident replays", "../replays/"),
     },
     _replays_guide(),
+    _benchmarks_guide(),
 )
 """Each guide: its address, its words, and where it leads."""
 
@@ -784,6 +1062,17 @@ footer { border-top: 1px solid var(--line); padding: 28px 0 40px; font-size: 13.
 :root[data-theme="dark"] .who.agent { color: #f5a65b; }
 :root[data-theme="dark"] .who.owner { color: #a5b4fc; }
 .background { font-size: 14px; color: var(--muted); }
+.tablewrap { margin-top: 14px; overflow-x: auto; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--surface); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
+th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tbody tr:last-child td { border-bottom: 0; }
+th { font: 600 12px var(--mono); letter-spacing: .04em; text-transform: uppercase;
+  color: var(--muted); white-space: nowrap; }
+td { color: var(--ink-2); }
+td code { padding: 1px 5px; border-radius: 5px; border: 1px solid var(--line);
+  background: var(--page); color: var(--ink); white-space: nowrap; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 """
 """The guides' stylesheet: the site's colors and type, for reading."""
 
@@ -851,6 +1140,8 @@ _COMMAND: Final = re.compile(
     r"(?: --[a-z][a-z-]*)*"
     r"|--[a-z][a-z-]+|readOnlyHint|\.mcp\.json|\.claude/settings\.local\.json|mcpServers"
     r"|\.github/(?:workflows|actions)|config\.toml|(?<![\w./])\.env\b"
+    r"|SHA256SUMS|MEMORY\.md|CLAUDE\.md|MIN_LENGTH|MAX_LAYERS|bytes_sent"
+    r"|CommitUnsettledError|COMPENSATION_RETRIES|session\.remembered|session\.labeled"
 )
 """What prose shows as code: a command, a flag, a file or a field."""
 
@@ -873,6 +1164,28 @@ def _section(section: Mapping[str, Any]) -> str:
         out += "".join(f"<p>{_prose(text)}</p>" for text in section.get("p", ()))
     if "ul" in section:
         out += "<ul>" + "".join(f"<li>{_item(item)}</li>" for item in section["ul"]) + "</ul>"
+    if "table" in section:
+        table = section["table"]
+        numeric = set(table.get("numeric", ()))
+        head = "".join(
+            f'<th class="num">{_e(col)}</th>' if i in numeric else f"<th>{_e(col)}</th>"
+            for i, col in enumerate(table["headers"])
+        )
+        body = "".join(
+            "<tr>"
+            + "".join(
+                f'<td class="num">{_e(str(cell))}</td>'
+                if i in numeric
+                else f"<td>{_prose(str(cell))}</td>"
+                for i, cell in enumerate(row)
+            )
+            + "</tr>"
+            for row in table["rows"]
+        )
+        out += (
+            f'<div class="tablewrap"><table><thead><tr>{head}</tr></thead>'
+            f"<tbody>{body}</tbody></table></div>"
+        )
     if "transcript" in section:
         out += (
             '<ol class="replay">'

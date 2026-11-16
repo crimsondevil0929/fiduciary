@@ -422,9 +422,21 @@ def test_declines_and_lapses_follow_the_ticket(escalated: Escalated, clock: Cloc
     _refuses("is lapsed already", decide.lapse_ticket, log.state(), ticket.digest, after)
 
     # A warrant with no intent lapses once it can no longer run.
-    waiting = _quote_ticket(clock, "ext-waiting", authority.log)
+    clock.now = after
+    until = fidu1.format_instant(after + timedelta(hours=1))
+    evidence = copy.deepcopy(e.ticket_json()["evidence"])
+    evidence["quote"]["expires_at"] = until
+    waiting = _quote_ticket(clock, "ext-waiting", authority.log, not_after=until, evidence=evidence)
     _raise(authority, waiting, clock)
-    approve(log.store, ("cfo",), "ticket", waiting.digest, resolution=waiting.options[1].digest)
+    approve(
+        log.store,
+        ("cfo",),
+        "ticket",
+        waiting.digest,
+        resolution=waiting.options[1].digest,
+        issued_at=fidu1.format_instant(after),
+        not_after=until,
+    )
     authority.process_intake()
     (row,) = [w for w in log.state().warrants.values() if w.ticket_id == waiting.ticket_id]
     found = log.store.document(row.digest)

@@ -6,6 +6,49 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-11-15
+
+Provenance survives across sessions into agent memory, outbound inspection closes multi-layer
+encoding and split-credential evasions, logs stay monotonic under backward clock steps and
+voided sub-agent holds, and the site publishes commit-pinned benchmarks. Requires
+`interlock-escrow>=1.12.0`.
+
+### Added
+
+- **Cross-session memory provenance** (`fiduciary.memory`, `session.remembered`, `V13`,
+  `report/verify.js`):
+  - Writes to memory tools (`create_entities`, `save_memory`, `@gov.tool(memory=True)`) or
+    workspace memory files (`MEMORY.md`, `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, etc.) in a
+    labeled session emit `session.remembered` with keyed line fingerprints and session labels.
+  - Later sessions (including new sessions and separate protected MCP servers under one root)
+    that read those lines back, or load top-level workspace memory files via
+    `fiduciary_memory`, inherit the labels in `session.labeled` citing the `session.remembered`
+    record. Both the Python offline verifier and browser `verify.js` check memory citations
+    under `V13`. Tested in `tests/test_memory.py` and the 3-server confused-deputy flow in
+    `tests/test_toxic_flow.py`.
+- **Commit-pinned `/benchmarks/` guide page** (`scripts/record_benchmarks.py`,
+  `report/benchmarks.json`, `report/guides.py`, `report/site.py`): measures local P50/P95/P99
+  overhead across core AgentGov, Interlock, signature, egress and memory paths, summarizes
+  gateway-permitted catches across all 8 workflows and 3 replays, and documents adversarial
+  tests and honest boundaries alongside `SHA256SUMS`.
+
+### Hardened
+
+- **Multi-layer egress decoding and split-credential rejoining** (`fiduciary.egress`,
+  `fiduciary.flow`, `fiduciary.mcp`, `tests/test_evasion.py`):
+  - Decodes up to `MAX_LAYERS = 4` nested layers of URL percent-encoding, HTML entities, JSON
+    backslash escapes, Unicode compatibility normalization (with zero-width characters stripped),
+    base64, base32 and hex.
+  - Rejoins split credentials across arguments, query parameters, path segments, URL and body
+    within a single call (`Tracker.split_in`), while skipping file paths in entropy scans.
+  - Rejects duplicate JSON object keys and non-finite constants at MCP message parse, and
+    parses `\` authority separators per WHATWG in `egress.destinations`.
+- **Clock and hold resilience** (`fiduciary.log`, `fiduciary.bridge`, `tests/test_faults.py`):
+  - Clamps log record timestamps to the previous record instant when the host clock steps
+    backwards so bundles preserve `V12` timestamp order.
+  - Rebooks late-returning calls cleanly if their budget hold was voided as stale (`V6`
+    conservation preserved without double spend).
+
 ## [1.20.0] - 2026-11-15
 
 Protect reaches every client and remote servers, tokens leave the agent's reach, an agent in CI

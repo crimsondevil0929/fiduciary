@@ -408,8 +408,14 @@ class GovernedTool:
         description: str,
         schema: Mapping[str, Any],
         labels: Sequence[str] = (),
+        memory: bool = False,
     ) -> None:
         self._governor = governor
+        self.memory = memory
+        """Whether the tool writes into the agent's memory (1.21.0, :mod:`fiduciary.memory`):
+        a call made after the session read something untrusted, secret or private records
+        ``session.remembered``, and a later session that reads what it wrote takes the
+        labels."""
         self.labels = tuple(sorted(set(labels)))
         """What the tool's result brings into the session (1.16.0): ``untrusted``,
         ``secret``, a partition's label."""
@@ -510,6 +516,7 @@ class Governor:
         input_schema: Mapping[str, Any] | None = None,
         trust: str = "system",
         confidentiality: str | None = None,
+        memory: bool = False,
     ) -> Callable[[F], GovernedTool]: ...
 
     def tool(
@@ -522,6 +529,7 @@ class Governor:
         input_schema: Mapping[str, Any] | None = None,
         trust: str = "system",
         confidentiality: str | None = None,
+        memory: bool = False,
     ) -> GovernedTool | Callable[[F], GovernedTool]:
         """Govern ``function``: ``@gov.tool``, or ``@gov.tool(name=..., ...)``.
 
@@ -530,6 +538,12 @@ class Governor:
         wrote (an email, a web page), ``confidentiality="secret"``. Once the agent has seen
         such a result, the session's later plans carry its label, and the mandate's
         ``provenance`` rules judge them.
+
+        ``memory=True`` (1.21.0) says the function writes into the agent's memory (a notes
+        file, a memory table): a call made after the session read something untrusted, secret
+        or private records the labels with fingerprints of what it wrote, and a later session
+        that reads a line of it, through any tool here or :meth:`read`, takes those labels.
+        Through a :class:`Workspace` or :class:`Sql` handle, ``fiduciary undo`` puts it back.
 
         The function's first parameter is the handle; the others are the tool's
         arguments. Its name and docstring are the tool's unless given.
@@ -547,7 +561,13 @@ class Governor:
             schema = dict(input_schema) if input_schema is not None else _input(found)
             labels = _labels_for(trust, confidentiality)
             governed = GovernedTool(
-                self, found, name=tool_name, description=text, schema=schema, labels=labels
+                self,
+                found,
+                name=tool_name,
+                description=text,
+                schema=schema,
+                labels=labels,
+                memory=memory,
             )
             self.tools[tool_name] = governed
             return governed
@@ -597,6 +617,7 @@ class Governor:
             raise Refused(_told(exc), outcome="error") from exc
         if result is None:
             self._label(tool)
+            self._recalled(tool.name, value)
             return value  # it wrote nothing: nothing to judge, and nothing recorded
         if not result.committed:
             if turn is not None:
@@ -606,7 +627,19 @@ class Governor:
             self._observe(tool, result)
         if turn is not None:
             self._fiduciary.committed_in_turn(turn.id, self._mandate_id, str(result.plan.plan_id))
+        if tool.memory and self._session is not None:
+            from types import SimpleNamespace
+
+            from fiduciary.documents.tool import MemoryWrite
+
+            self._session._remember(
+                SimpleNamespace(name=tool.name, memory=MemoryWrite()),
+                arguments,
+                str(result.plan.plan_id),
+                "written",
+            )
         self._label(tool)
+        self._recalled(tool.name, value)
         return value
 
     @contextlib.contextmanager
@@ -688,7 +721,20 @@ class Governor:
         if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", source):
             raise ValueError(f"{source!r}: a source's name is a lowercase identifier")
         self._record(source, _labels_for(trust, confidentiality))
+        self._recalled(source, value)
         return value
+
+    def _recalled(self, source: str, value: Any) -> None:
+        """Take up the labels of a memory ``value`` carries a line of (1.21.0), in a session
+        opened for it when there is a memory to match."""
+        memory = self._fiduciary.memory
+        if memory is None:
+            return
+        if self._session is None:
+            if memory.empty and not self._fiduciary.log.state().remembered:
+                return
+            self._session = self._fiduciary.session(self._mandate_id, trajectory=self.trajectory)
+        self._session._recall(source, value)
 
     def _label(self, tool: GovernedTool) -> None:
         self._record(tool.name, tool.labels)

@@ -219,6 +219,42 @@ private data, nothing more is changed or sent without the principals; a value re
 or private does not leave."""
 
 
+def _provenance_for(tools: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """:data:`MCP_PROVENANCE`, and for a server whose write tools write an agent's memory and
+    nothing else (1.21.0): every write held once the session holds ``untrusted``, so a note
+    an untrusted page or issue put in the agent's head waits for its owner before it is
+    stored."""
+    found = copy.deepcopy(MCP_PROVENANCE)
+    writes = [t for t in tools if t.get("kind") == "plan"]
+    if writes and all("memory" in t and "paths" not in t["memory"] for t in writes):
+        found["untrusted"] = {"kinds": [], "sinks": [SINK]}
+    return found
+
+
+_FILE_WRITES: Final = frozenset(
+    {"write_file", "edit_file", "create_file", "append_file", "write", "edit", "save_file"}
+)
+_PATH_ARGUMENTS: Final = ("path", "file_path", "filename")
+
+
+def memory_of(tool: Mapping[str, Any], binding: Mapping[str, Any]) -> dict[str, Any] | None:
+    """What a write tool writes into an agent's memory (1.21.0, :mod:`fiduciary.memory`), as
+    its binding's ``memory``: every call of a memory server's write tool, or a file tool's
+    calls on a memory file (``MEMORY.md``, ``CLAUDE.md``); ``None`` for any other."""
+    from fiduciary.memory import MEMORY_FILES, MEMORY_TOOLS
+
+    if binding.get("kind") != "plan":
+        return None
+    name = str(tool.get("name") or "")
+    if name in MEMORY_TOOLS:
+        return {}
+    arguments = set(binding.get("input", {}).get("properties", {}))
+    paths = [a for a in _PATH_ARGUMENTS if a in arguments]
+    if name in _FILE_WRITES and paths:
+        return {"keys": paths[:1], "paths": sorted(MEMORY_FILES)}
+    return None
+
+
 def classify(tool: Mapping[str, Any]) -> tuple[str, str]:
     """How a tool is governed, and why, from MCP's tool annotations, checked against the
     rest of its definition (1.19.0): a read-only claim it contradicts is not believed."""
@@ -492,7 +528,7 @@ def _pack(
         acts=lambda run: None,
         canaries=lambda run: {},
         nouns={"substrate": "MCP", "unit": "USD", "partition": "the tenant"},
-        provenance=MCP_PROVENANCE,
+        provenance=_provenance_for(tools),
         system="",
         # The back office holds the outbox and nothing else: the plans only
         # enqueue requests (interlock 1.4.1's tables = []).
@@ -740,6 +776,14 @@ def govern(listed: Sequence[Mapping[str, Any]], *, signed_in: bool = False) -> G
         if mode == READ and binding.get("egress"):
             sent = ", ".join(sorted(binding["egress"]))
             why = f"{why}; it sends what {sent} carries, judged before it leaves"
+        memory = memory_of(tool, binding)
+        if memory is not None:
+            binding["memory"] = memory
+            why = f"{why}; " + (
+                "it writes the agent's memory on a memory file"
+                if memory
+                else "it writes the agent's memory"
+            )
         bindings.append(binding)
         modes[tool_name] = mode
         schemas[tool_name] = binding["input"]

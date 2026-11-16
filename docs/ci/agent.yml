@@ -1,4 +1,4 @@
-# An agent that answers issue comments, behind fiduciary's CI proxy (fiduciary 1.20.0).
+# An agent that answers issue comments, behind fiduciary's CI proxy (fiduciary 1.21.0).
 #
 # Copy this to .github/workflows/agent.yml, and list the agent's MCP servers in
 # .github/agent-mcp.json, as Claude Code's .mcp.json does. Values the servers need are
@@ -33,7 +33,7 @@ jobs:
 
       - name: Start the CI proxy
         id: fiduciary
-        uses: crimsondevil0929/fiduciary@v1.20.0
+        uses: crimsondevil0929/fiduciary@v1.21.0
         with:
           step: start
           mcp-config: .github/agent-mcp.json
@@ -54,7 +54,7 @@ jobs:
 
       - name: Finish, explain and keep the bundles
         if: always()
-        uses: crimsondevil0929/fiduciary@v1.20.0
+        uses: crimsondevil0929/fiduciary@v1.21.0
         with:
           step: finish
           comment: refusals

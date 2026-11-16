@@ -2248,6 +2248,12 @@ read budget, `shadow` under a version that enforces, a send whose labels are not
 and a matched digest no earlier read tracked. The note counts the sends judged and refused, and
 says that only exact values are seen.
 
+*Amended in 1.21.0.* Each `session.remembered` record must carry the exact labels its session
+held, and every `session.labeled` record citing an in-bundle `session.remembered` record must share
+a fingerprint and carry an introduced label present in that record (`_v13_memory`, verified in both
+Python and browser `verify.js`). Both runtime log clocks (`Log.now`) and commit holds tolerate
+backward host clock steps (preserving V12 order) and voided stale holds (preserving V6 conservation).
+
 A failing run prints every check, not only the first that fails. It exits with the code of
 the first failing check in the order V1 to V14.
 
@@ -3252,3 +3258,4 @@ SQLite and on PostgreSQL. The test kinds:
 | F8-16: the frameworks' approval hooks | 1.20.0 | an OpenAI Agents SDK run on its `ScriptedModel` (a refused fetch, a held delete approved through `needs_approval`, an unapproved hold refused); `ClaudeSDKClient` over a stand-in CLI transport (`can_use_tool`, `PreToolUse`, `PostToolUse`) | Implemented (1.20.0). `test_hooks.py` |
 | F4-12e, F4-16b, F8-13, F8-14, V13: what leaves a session | 1.19.0 | a token read from a private repository refused at five sends (plain, URL-encoded, base64, hex, and an email carrying a private address), V13 passing with its note; the rule of two for a passthrough send; destinations after private data; the read budget withholding and the send budget refusing, per session and per turn; shadow sends recorded `shadow`; a plan carrying a credential refused; a service that let a token out failing V13 with exit 6 while V3 passes; the records held to their form; the golden bundles `valid-outbound-refused` and `v13-outbound-leak` in Python and in the browser; `readOnlyHint` contradictions held and flagged by `init`, `protect` and `protect --review`; `infer-policy` | Implemented (1.19.0), both stores. `test_outbound.py`, `test_infer.py`, `test_bundle_vectors.py`, `test_browser_verifier.py` |
 | F4-12e, F4-16b, F7-1a, F8-13, V13: provenance | 1.16.0 | a refund after an untrusted email held, approved 2 of 3 and run as the cleared plan, V13 passing with its note; `on: "refuse"` raising nothing; a refund the gate let through committed without a warrant, V13 failing with exit 6 while V4 passes; a reader that may write counted as untrusted; the SDK's tool and `read` labels; `init --mcp`'s open-world default; the golden bundles `valid-provenance-held` and `v13-tainted-commit` in Python and in the browser; the demo's eighth act | Implemented (1.16.0), both stores. `test_provenance.py`, `test_init.py`, `test_bundle_vectors.py`, `test_browser_verifier.py`, `test_demo.py` |
+| F8-14, V13 (1.21.0): cross-session memory provenance, egress evasion hardening, clock/hold fault tolerance | 1.21.0 | `session.remembered` and cited `session.labeled` across sessions and 3-server confused deputy; 4-layer encodings, single-call split credentials, `\` URL authority parsing and duplicate key rejection; backward NTP clock clamp (V12) and voided stale-hold rebook (V6); commit-pinned `/benchmarks/` guide page | Implemented (1.21.0), both stores. `test_memory.py`, `test_toxic_flow.py`, `test_evasion.py`, `test_faults.py`, `test_site.py` |

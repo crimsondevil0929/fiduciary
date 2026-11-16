@@ -23,7 +23,15 @@ from fiduciary.documents.mandate import OPERATION, SINK_NAME, TOOL
 from fiduciary.exceptions import MalformedError
 from fiduciary.fidu1 import Fields, Signature
 
-__all__ = ["SCHEMA_KEYWORDS", "Effect", "Request", "ToolBinding", "check_schema", "placeholders"]
+__all__ = [
+    "SCHEMA_KEYWORDS",
+    "Effect",
+    "MemoryWrite",
+    "Request",
+    "ToolBinding",
+    "check_schema",
+    "placeholders",
+]
 
 SCHEMA_KEYWORDS: Final = frozenset(
     {
@@ -59,6 +67,7 @@ _NUMBER_PATH: Final = re.compile(
 """An argument's path (1.17.0): dotted names, ``[]`` for each item of an array."""
 _UPSTREAM: Final = re.compile(r"[A-Za-z0-9_.:/-]{1,128}")
 _EGRESS_ARGUMENT: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+_MEMORY_PATH: Final = re.compile(r"[A-Za-z0-9_.*?/\[\]-]{1,128}")
 _KIND: Final = re.compile(r"email|repository|url")
 MAX_ITEMS: Final = 64
 
@@ -315,6 +324,39 @@ class Quarantine:
         return cls(reader=fields.text("reader", SCOPE, "a lineage's subject scope"), output=output)
 
 
+@dataclass(frozen=True, slots=True)
+class MemoryWrite:
+    """What a tool writes into an agent's memory (1.21.0, :mod:`fiduciary.memory`): a
+    session that holds a label others may take up and calls it records
+    ``session.remembered``, and a later session that reads what it wrote takes the labels.
+
+    - ``keys``: the arguments that name what is written (a path, an entity's name); none
+      given, :data:`fiduciary.memory.KEY_ARGUMENTS`.
+    - ``paths``: a call writes memory only when a key's value matches one of these globs
+      (``MEMORY.md``, ``.claude/*.md``); none given, every call does.
+    """
+
+    keys: tuple[str, ...] = ()
+    paths: tuple[str, ...] = ()
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            **({"keys": list(self.keys)} if self.keys else {}),
+            **({"paths": list(self.paths)} if self.paths else {}),
+        }
+
+    @classmethod
+    def read(cls, fields: Fields) -> MemoryWrite:
+        return cls(
+            keys=fields.strings("keys", _EGRESS_ARGUMENT, "an argument's name", MAX_ITEMS)
+            if fields.has("keys")
+            else (),
+            paths=fields.strings("paths", _MEMORY_PATH, "a path or a glob", MAX_ITEMS)
+            if fields.has("paths")
+            else (),
+        )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ToolBinding(Document):
     """A tool binding (F4-13 to F4-16)."""
@@ -338,6 +380,7 @@ class ToolBinding(Document):
         "pin",
         "upstream",
         "egress",
+        "memory",
     )
 
     name: str
@@ -375,6 +418,9 @@ class ToolBinding(Document):
     (a host), ``email`` (a recipient's domain) or ``repository`` (``owner/name``). A
     passthrough tool that declares one is a send as well as a read: what it carries out is
     judged before it leaves (:mod:`fiduciary.egress`). Written only when declared."""
+    memory: MemoryWrite | None = None
+    """What the tool writes into an agent's memory (1.21.0): see :class:`MemoryWrite`.
+    Written only when declared."""
     signature: Signature | None = None
 
     def labels(self, tenant: str | None) -> tuple[str, ...]:
@@ -407,6 +453,7 @@ class ToolBinding(Document):
             **({"pin": self.pin} if self.pin else {}),
             **({"upstream": self.upstream} if self.upstream else {}),
             **({"egress": dict(sorted(self.egress.items()))} if self.egress else {}),
+            **({"memory": self.memory.to_json()} if self.memory is not None else {}),
         }
 
     @classmethod
@@ -514,6 +561,9 @@ class ToolBinding(Document):
             }
             if fields.has("egress")
             else {},
+            "memory": MemoryWrite.read(fields.object("memory", (), ("keys", "paths")))
+            if fields.has("memory")
+            else None,
         }
 
     def _agree(self) -> None:
@@ -533,6 +583,18 @@ class ToolBinding(Document):
                 "$.egress",
                 f"names {', '.join(strays)}, which the input schema does not take",
             )
+        if self.memory is not None:
+            if self.kind != "plan":
+                raise MalformedError(
+                    "agreement", "$.memory", "a memory write is a write: a plan tool's"
+                )
+            strays = sorted(set(self.memory.keys) - arguments)
+            if strays:
+                raise MalformedError(
+                    "agreement",
+                    "$.memory.keys",
+                    f"names {', '.join(strays)}, which the input schema does not take",
+                )
         if self.quarantine is not None and self.kind != "passthrough":
             raise MalformedError(
                 "agreement", "$.quarantine", "a reader's result comes from a passthrough tool"
