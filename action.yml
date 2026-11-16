@@ -65,6 +65,10 @@ runs:
       shell: bash
       run: |
         python3 -m venv "$RUNNER_TEMP/fiduciary-venv"
+        "$RUNNER_TEMP/fiduciary-venv/bin/python" "$GITHUB_ACTION_PATH/scripts/upstream_pins.py" > "$RUNNER_TEMP/fiduciary-pins.txt"
+        if [ -s "$RUNNER_TEMP/fiduciary-pins.txt" ]; then
+          "$RUNNER_TEMP/fiduciary-venv/bin/python" -m pip install --quiet --disable-pip-version-check -r "$RUNNER_TEMP/fiduciary-pins.txt"
+        fi
         "$RUNNER_TEMP/fiduciary-venv/bin/python" -m pip install --quiet --disable-pip-version-check "$GITHUB_ACTION_PATH"
         "$RUNNER_TEMP/fiduciary-venv/bin/fiduciary" --version
 
