@@ -8,30 +8,30 @@
     {
       "operation": "AgentGov hold and capture (SQLite ledger)",
       "samples": 100,
-      "p50_ms": 0.39,
-      "p95_ms": 0.45,
-      "p99_ms": 0.56
+      "p50_ms": 0.4,
+      "p95_ms": 0.87,
+      "p99_ms": 2.04
     },
     {
       "operation": "Interlock SQLite stage, diff and commit",
       "samples": 100,
-      "p50_ms": 1.61,
-      "p95_ms": 1.86,
-      "p99_ms": 1.95
+      "p50_ms": 1.6,
+      "p95_ms": 1.87,
+      "p99_ms": 2.18
     },
     {
       "operation": "Interlock directory stage and diff",
       "samples": 100,
-      "p50_ms": 3.03,
-      "p95_ms": 3.46,
-      "p99_ms": 3.68
+      "p50_ms": 3.09,
+      "p95_ms": 3.67,
+      "p99_ms": 4.73
     },
     {
       "operation": "Fiduciary FIDU1 Ed25519 verify",
       "samples": 100,
-      "p50_ms": 0.19,
-      "p95_ms": 0.22,
-      "p99_ms": 0.28
+      "p50_ms": 0.18,
+      "p95_ms": 0.19,
+      "p99_ms": 0.19
     },
     {
       "operation": "Fiduciary WebAuthn ES256 passkey verify",
@@ -44,15 +44,15 @@
       "operation": "Outbound V13 layered egress and split scan",
       "samples": 100,
       "p50_ms": 0.11,
-      "p95_ms": 0.13,
-      "p99_ms": 0.14
+      "p95_ms": 0.12,
+      "p99_ms": 0.13
     },
     {
       "operation": "Cross-session memory fingerprint and recall",
       "samples": 100,
       "p50_ms": 0.02,
-      "p95_ms": 0.02,
-      "p99_ms": 0.03
+      "p95_ms": 0.03,
+      "p99_ms": 0.04
     }
   ],
   "workflows": [

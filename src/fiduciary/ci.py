@@ -424,8 +424,8 @@ def _listener(served: Mapping[str, _Served], stop: threading.Event, listen: str)
                 return
             path = self.path.split("?", 1)[0].rstrip("/")
             if path == "/shutdown":
-                self._answer(204)
                 stop.set()
+                self._answer(204)
                 return
             each = served.get(path.removeprefix("/mcp/")) if path.startswith("/mcp/") else None
             if each is None:
