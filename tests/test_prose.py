@@ -59,6 +59,8 @@ MODULES = (
     "ci.py",
     "hooks.py",
     "replays.py",
+    # 1.21.0: cross-session memory provenance
+    "memory.py",
 )
 """Where the demo's, the reports' and the SDK's words are written."""
 

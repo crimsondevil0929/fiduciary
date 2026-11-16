@@ -1670,6 +1670,18 @@ def plan_messages(root: Path, plan_id: str) -> list[Any]:
     return [uuid.UUID(str(r[0])) for r in rows]
 
 
+def workspace_of(state: Mapping[str, Any]) -> Path | None:
+    """The workspace whose memory files a protected server's client loads by itself (1.21.0):
+    the one ``protect.json`` names, else the directory the client started the proxy in,
+    unless that is the home directory or the file system's root (where a desktop client
+    starts its servers)."""
+    named = state.get("workspace")
+    if isinstance(named, str) and named:
+        return Path(named)
+    here = Path.cwd()
+    return None if here in (Path.home(), Path(here.anchor)) else here
+
+
 class _Proxy:
     """One protected server's proxy: the deployment it holds open, and the session, pins and
     relay on it. It lets the deployment go when a command asks (:func:`held`), and opens it
@@ -1737,6 +1749,7 @@ class _Proxy:
         the same client started (1.19.0, :mod:`fiduciary.flow`): one owner's root, one
         client process."""
         from fiduciary.flow import for_client
+        from fiduciary.memory import Memory
 
         try:
             state = json.loads((self.root / STATE).read_text(encoding="utf-8"))
@@ -1744,6 +1757,11 @@ class _Proxy:
         except (OSError, ValueError, KeyError, TypeError):
             return  # not a deployment protect wrote: nothing to share with
         session._share(for_client(owner.parent, str(state.get("server", "")), session.session_id))
+        # 1.21.0: one memory key and index for every server under the root, so a note one
+        # server's session wrote carries its labels into a session of any other; and the
+        # memory files the client loads by itself, read at the session's first call.
+        session._fid.memory = Memory(owner.parent / "memory")
+        session.workspace = workspace_of(state)
 
     def close(self) -> None:
         if self.relay is not None:

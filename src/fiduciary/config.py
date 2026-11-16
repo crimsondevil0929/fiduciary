@@ -983,6 +983,9 @@ def open_fiduciary(
                 in_process="tool-calls-only" if bridged else config.in_process,
                 on_close=lambda: _close_all(opened),
             )
+            from fiduciary.memory import Memory
+
+            fid.memory = Memory(Path(path).resolve().parent / "memory")
         except BaseException:
             # The chains the engines it resumed claimed, at once: a takeover
             # retried in this process finds them free (§10.7).

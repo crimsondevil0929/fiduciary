@@ -386,8 +386,9 @@
         else if (r.kind === "session.labeled" && sessions[b.session]) sessions[b.session].labels.push({ seq: r.seq, at: instant(r.issued_at), introduced: b.introduced || [], tool: b.tool });
       });
       var outbound = outboundProblems(records, json);
+      var memory = memoryProblems(records);
       var any = Object.keys(sessions).some(function (k) { return sessions[k].labels.length; });
-      if (!any && !outbound.sends) return;
+      if (!any && !outbound.sends && !memory.writes) return;
       var docs = { tool: [], ticket: [], warrant: [], mandate: [] };
       Object.keys(by).forEach(function (n) {
         var m = /^(tools|tickets|warrants|mandates)\/([0-9a-f]{64})\.json$/.exec(n);
@@ -396,7 +397,7 @@
         d.__digest = m[2];
         docs[{ tools: "tool", tickets: "ticket", warrants: "warrant", mandates: "mandate" }[m[1]]].push(d);
       });
-      var problems = outbound.problems.slice(), held = 0, cleared = 0;
+      var problems = outbound.problems.concat(memory.problems), held = 0, cleared = 0;
       // a reader's typed result came from a reader that can write nothing
       Object.keys(sessions).forEach(function (k) {
         sessions[k].labels.forEach(function (l) {
@@ -478,7 +479,42 @@
       add("provenance", NAME, "V13", problems.length ? "fail" : "pass",
         problems.length ? problems.slice(0, 3).join("; ") + (problems.length > 3 ? "; and " + (problems.length - 3) + " more" : "")
           : held + " plan" + (held === 1 ? "" : "s") + " made after a labeled read, " + cleared + " approved by warrant after it" +
-            (outbound.sends ? "; " + outbound.sends + " send" + (outbound.sends === 1 ? "" : "s") + " judged before leaving, " + outbound.refused + " refused" : ""));
+            (outbound.sends ? "; " + outbound.sends + " send" + (outbound.sends === 1 ? "" : "s") + " judged before leaving, " + outbound.refused + " refused" : "") +
+            (memory.writes || memory.taken ? "; " + memory.writes + " write" + (memory.writes === 1 ? "" : "s") + " to memory carried " + (memory.writes === 1 ? "its" : "their") + " session's labels, " + memory.taken + " later read" + (memory.taken === 1 ? "" : "s") + " took labels from memory" : ""));
+    }
+
+    // V13 (1.21.0): what sessions wrote into an agent's memory, and what later sessions took
+    // from it, as fiduciary.bundle.verify's _v13_memory judges it. A record's hash is the next
+    // record's prev, which the chain check holds to the record.
+    function memoryProblems(records) {
+      var out = { problems: [], writes: 0, taken: 0, elsewhere: 0 }, held = {}, remembered = {}, hashOf = {};
+      function carried(x) { return x === "untrusted" || x === "secret" || x === "private" || x.indexOf("partition:") === 0; }
+      records.forEach(function (r) { if (r && r.prev) hashOf[r.seq - 1] = r.prev; });
+      records.slice().sort(function (a, b) { return a.seq - b.seq; }).forEach(function (r) {
+        var b = r && r.body || {}, sid = b.session;
+        if (r.kind === "session.remembered") {
+          out.writes++;
+          var said = (b.labels || []).slice().sort().join(", "), mine = Object.keys(held[sid] || {}).sort().join(", ");
+          if (said !== mine) out.problems.push("record " + r.seq + ": a write to memory names the labels " + (said || "none") + ", and its session held " + (mine || "none"));
+          remembered[r.seq] = b;
+        } else if (r.kind === "session.labeled") {
+          var m = b.memory, introduced = b.introduced || [];
+          if (m) {
+            out.taken++;
+            var prints = m.fingerprints || [], cited = m.records || [], ours = [];
+            cited.forEach(function (c) { var f = remembered[c.seq]; if (f && hashOf[c.seq] === c.hash) ours.push(f); else out.elsewhere++; });
+            ours.forEach(function (f) { if (!prints.some(function (d) { return (f.fingerprints || []).indexOf(d) >= 0; })) out.problems.push("record " + r.seq + ": it cites a memory that shares no line with what was read"); });
+            if (ours.length && ours.length === cited.length) {
+              var carriers = {};
+              ours.forEach(function (f) { (f.labels || []).forEach(function (x) { if (carried(x)) carriers[x] = 1; }); });
+              var missing = introduced.filter(function (x) { return !carriers[x]; });
+              if (missing.length) out.problems.push("record " + r.seq + ": no memory it cites carries " + missing.join(", "));
+            }
+          }
+          introduced.forEach(function (x) { (held[sid] = held[sid] || {})[x] = 1; });
+        }
+      });
+      return out;
     }
 
     // V13 (1.19.0): what left a session. The same judgment as fiduciary.egress: after

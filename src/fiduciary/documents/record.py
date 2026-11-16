@@ -42,6 +42,7 @@ RECORD_KINDS: Final = frozenset(
         "session.labeled",
         "session.read",
         "session.sent",
+        "session.remembered",
         "turn.closed",
         "plan.undone",
     }

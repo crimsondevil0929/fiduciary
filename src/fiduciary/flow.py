@@ -118,12 +118,19 @@ class Flow:
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
-    def publish(self, labels: Sequence[str], digests: Mapping[str, Sequence[str]]) -> None:
-        """Add ``labels`` (those a sibling may take up) and ``digests`` to this session's
-        share of the file."""
+    def publish(
+        self,
+        labels: Sequence[str],
+        digests: Mapping[str, Sequence[str]],
+        lengths: Sequence[int] = (),
+    ) -> None:
+        """Add ``labels`` (those a sibling may take up), ``digests`` and the lengths of the
+        credentials tracked (1.21.0, never a value) to this session's share of the file."""
         with self._locked() as state:
             mine = state["sources"].setdefault(self.source, {"labels": [], "digests": {}})
             mine["labels"] = sorted({*mine.get("labels", ()), *filter(_shared, labels)})
+            if lengths:
+                mine["lengths"] = sorted({*mine.get("lengths", ()), *lengths})[:256]
             kept = mine.setdefault("digests", {})
             total = sum(len(d) for s in state["sources"].values() for d in s["digests"].values())
             for label, found in digests.items():
@@ -174,6 +181,24 @@ class Flow:
                         v for v in values if isinstance(v, str)
                     )
         return labels, digests
+
+    def lengths(self) -> set[int]:
+        """The lengths of the credentials every other session of the client tracked, and
+        of those seeded (1.21.0): what a split credential is looked for by."""
+        found: set[int] = set()
+        for path in (self.path, self.directory / SEEDS):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            sources = data.get("sources") if isinstance(data, dict) else None
+            for source, share in (sources or {}).items():
+                if source == self.source or not isinstance(share, dict):
+                    continue
+                found.update(
+                    n for n in share.get("lengths", ()) if isinstance(n, int) and 0 < n <= 256
+                )
+        return found
 
 
 def for_client(root: Path, server: str, session: str) -> Flow:
@@ -227,6 +252,8 @@ def seed(
             mine["labels"] = sorted({*mine.get("labels", ()), *filter(_shared, labels)})
             kept = sorted({*mine.get("digests", {}).get("secret", ()), *digests})[:MAX_DIGESTS]
             mine["digests"] = {"secret": kept} if kept else {}
+            sizes = {len(v) for v in secrets if 8 <= len(v) <= 256}
+            mine["lengths"] = sorted({*mine.get("lengths", ()), *sizes})[:256]
             mine["notes"] = list(dict.fromkeys([*mine.get("notes", ()), *notes]))[:256]
             temporary = path.with_suffix(".tmp")
             temporary.write_text(json.dumps(state, sort_keys=True, indent=1), encoding="utf-8")

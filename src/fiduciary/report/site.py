@@ -43,9 +43,9 @@ DESCRIPTION: Final = (
 
 COPY: Final[dict[str, Any]] = {
     "badge": {
-        "version": "1.20",
-        "text": "Remote MCP servers, agents in CI, and three incident replays",
-        "href": "replays/",
+        "version": "1.21",
+        "text": "Cross-session memory provenance, evasion hardening, and measured benchmarks",
+        "href": "benchmarks/",
     },
     "headline": "Let AI agents change real systems. Keep only the changes you approved.",
     "lede": (
@@ -317,6 +317,7 @@ COPY: Final[dict[str, Any]] = {
             ["Verify an audit bundle", "verify/"],
             ["Agents in CI", "ci/"],
             ["Incident replays", "replays/"],
+            ["Benchmarks and limits", "benchmarks/"],
         ],
         "read": [
             ["Quickstart", REPO + "fiduciary/blob/main/docs/QUICKSTART.md"],

@@ -232,6 +232,7 @@ def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
         "session.labeled",
         "session.read",
         "session.sent",
+        "session.remembered",
     ):
         session_event = kind.split(".")[1]
         if session_event == "opened":
@@ -240,7 +241,7 @@ def rows_for(record: Record) -> list[tuple[str, tuple[Any, ...]]]:
             session_detail = str(body["code"])
         elif session_event == "labeled":
             session_detail = " ".join(str(label) for label in body["labels"])
-        elif session_event in ("read", "sent"):
+        elif session_event in ("read", "sent", "remembered"):
             session_detail = str(body["outcome"])
         else:
             session_detail = " ".join(str(s) for s in body["scopes"])
@@ -404,6 +405,8 @@ class State:
     """Each resolution action's warrants, by digest."""
     undone: dict[int, tuple[str, str, str]] = field(default_factory=dict)
     """Each ``plan.undone`` record (1.18.0): ``(plan_id, undo_plan_id, mandate_id)`` by seq."""
+    remembered: dict[int, tuple[str, dict[str, Any]]] = field(default_factory=dict)
+    """Each ``session.remembered`` record (1.21.0): its hash and body, by seq."""
 
     @classmethod
     def of(cls, records: Sequence[Record | Withheld]) -> State:
@@ -449,6 +452,8 @@ class State:
         # a record simulated by after() has no hash yet
         self.head_hash = record.hash if record.signature is not None else None
         body = record.content
+        if record.kind == "session.remembered" and record.signature is not None:
+            self.remembered[record.seq] = (record.hash, dict(body))
         if record.kind == "plan.undone":
             self.undone[record.seq] = (
                 str(body["plan_id"]),

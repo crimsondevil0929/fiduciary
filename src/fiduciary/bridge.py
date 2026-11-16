@@ -69,6 +69,7 @@ from agentgov.exceptions import (
     AgentGovError,
     BudgetExceededError,
     CircuitBreakerError,
+    DoubleSpendError,
     RunawayLoopDetectedError,
 )
 from agentgov.interceptor import (
@@ -108,7 +109,6 @@ from fiduciary.binding import Binder, BindingError, MandateEngine
 from fiduciary.documents import Mandate, Ticket, ToolBinding
 from fiduciary.egress import (
     Tracker,
-    carried,
     destinations,
     judge_read,
     judge_send,
@@ -523,6 +523,11 @@ class Fiduciary:
         """Paths no call may name (1.20.0): a call any of whose arguments is a path at or
         under one of them is refused before anything runs (``fiduciary ci`` sets
         ``.github/workflows`` and ``.github/actions``)."""
+        self.memory: Any = None
+        """Where this deployment's memory key and index are (1.21.0,
+        :class:`fiduciary.memory.Memory`): ``memory/`` beside ``fiduciary.toml``, or a protect
+        root's, shared by its servers. ``None``: what sessions write to memory carries no
+        labels."""
         self.turn_plans: dict[str, list[tuple[str, str]]] = {}
         """Each open turn's committed plans, as ``(mandate_id, plan_id)``, in order (1.18.0):
         what a turn that does not finish undoes, latest first."""
@@ -881,6 +886,7 @@ class Session:
         "_granted",
         "_labels",
         "_lock",
+        "_memory_read",
         "_opened",
         "_pending",
         "_read",
@@ -888,6 +894,7 @@ class Session:
         "_tickets",
         "_tracker",
         "turn",
+        "workspace",
     )
 
     def __init__(self, fid: Fiduciary, opened: Mapping[str, Any]) -> None:
@@ -913,6 +920,10 @@ class Session:
         self.turn: str | None = None
         """The agent turn the session's next plans are part of (1.17.0): their requests
         wait for it (:mod:`fiduciary.turns`)."""
+        self.workspace: Path | None = None
+        """The workspace whose memory files the client loads by itself (1.21.0): read at the
+        session's first call (:func:`fiduciary.memory.workspace_memory`)."""
+        self._memory_read = False
         engine = fid.binder.engine(self.mandate_id)
         self._breaker = CognitiveBreaker(policy=engine.compiled.cognitive, manager=fid.governor)
 
@@ -960,6 +971,7 @@ class Session:
         ``provenance``."""
         from fiduciary.flow import SIBLING
 
+        self._from_memory_files()
         flow = self._flow
         mandate = self._engine().mandate
         rules = mandate.provenance
@@ -973,10 +985,11 @@ class Session:
             if not rules.values:
                 continue
             with self._lock:
+                sizes = flow.lengths()
                 adopted = {
                     label: added
                     for label, found in sorted(digests.items())
-                    if (added := self._tracker.adopt(label, found))
+                    if (added := self._tracker.adopt(label, found, sizes))
                 }
             if not adopted:
                 continue
@@ -997,9 +1010,12 @@ class Session:
                 )
                 log.append("session.read", body, issued_at=now)
 
-    def _label(self, tool: str, labels: Sequence[str]) -> tuple[str, ...]:
+    def _label(
+        self, tool: str, labels: Sequence[str], memory: Mapping[str, Any] | None = None
+    ) -> tuple[str, ...]:
         """Join ``labels`` (what ``tool``'s result brought) into the session's, and record
-        ``session.labeled`` when that adds one (1.16.0). The labels it holds after."""
+        ``session.labeled`` when that adds one (1.16.0), citing the memories they came from
+        (1.21.0). The labels it holds after."""
         with self._lock:
             if set(labels) <= set(self._labels):
                 return self._labels
@@ -1007,13 +1023,101 @@ class Session:
             with log.store.transaction():
                 now = log.now()
                 body = self._fid._authority.decide.label_session(
-                    log.state(), self.session_id, tool, labels
+                    log.state(), self.session_id, tool, labels, memory
                 )
                 log.append("session.labeled", body, issued_at=now)
             self._labels = tuple(body["labels"])
             if self._flow is not None:
                 self._flow.publish(self._labels, {})
             return self._labels
+
+    # -- memory (1.21.0, fiduciary.memory) ---------------------------------------------------
+
+    def _memory(self) -> Any:
+        """The deployment's :class:`fiduciary.memory.Memory`, with every ``session.remembered``
+        record of this log in its index; ``None`` when there is none to read or write."""
+        memory = self._fid.memory
+        if memory is None:
+            return None
+        state = self._fid.log.state()
+        for seq, (record_hash, body) in sorted(state.remembered.items()):
+            memory.publish(seq, record_hash, body["labels"], body["fingerprints"])
+        return memory
+
+    def _recall(self, tool: str, value: Any) -> None:
+        """Take up the labels of what earlier sessions wrote into memory, when ``value`` (what
+        ``tool`` returned, or a memory file the client loaded) carries a line of it: one
+        ``session.labeled`` record, citing the ``session.remembered`` records that matched."""
+        memory = self._memory()
+        if memory is None or memory.empty:
+            return
+        if tool not in self._bindings() and self._engine().mandate.tools.statements != "any":
+            return  # a version that pins every source records labels from no other
+        from fiduciary.authority import carried
+
+        cited = memory.recall(memory.fingerprints(value))
+        with self._lock:
+            held = set(self._labels)
+        new = sorted({x for c in cited for x in c.labels if carried(x)} - held)
+        if not new:
+            return
+        useful = [c for c in cited if set(c.labels) & set(new)][:64]
+        self._label(
+            tool,
+            new,
+            {
+                "records": [{"seq": c.seq, "hash": c.hash} for c in useful],
+                "fingerprints": sorted({d for c in useful for d in c.matched}),
+            },
+        )
+
+    def _from_memory_files(self) -> None:
+        """Once, at the session's first call: the memory files the client loads into every
+        session without a tool call (a ``CLAUDE.md``), read as if a tool had returned them."""
+        if self._memory_read or self.workspace is None:
+            return
+        self._memory_read = True
+        from fiduciary.memory import SOURCE, workspace_memory
+
+        found = workspace_memory(self.workspace)
+        if found:
+            self._recall(SOURCE, found)
+
+    def _remember(
+        self, binding: Any, arguments: Mapping[str, Any], plan_id: str, outcome: str
+    ) -> None:
+        """Record what a call wrote into memory, with the session's labels (``written``, or
+        ``held`` for a principal's approval), when the session holds a label a memory
+        carries; and add it to the index later sessions read."""
+        from fiduciary.authority import carried
+        from fiduciary.memory import memory_of
+
+        keys = memory_of(binding, arguments)
+        memory = self._fid.memory
+        if keys is None or memory is None:
+            return
+        with self._lock:
+            if not any(carried(label) for label in self._labels):
+                return
+        prints = memory.fingerprints(arguments)
+        if not prints:
+            return
+        log = self._fid.log
+        with log.store.transaction():
+            now = log.now()
+            body = self._fid._authority.decide.remember_session(
+                log.state(),
+                self.session_id,
+                {
+                    "tool": binding.name,
+                    "plan": plan_id,
+                    "keys": keys,
+                    "fingerprints": prints,
+                    "outcome": outcome,
+                },
+            )
+            record = log.append("session.remembered", body, issued_at=now)
+        memory.publish(record.seq, record.hash, body["labels"], prints)
 
     @property
     def billing_scope(self) -> str:
@@ -1206,6 +1310,8 @@ class Session:
         withheld = None
         if binding is not None and binding.kind == "passthrough":
             withheld = self._counted_read(binding, value, binding.labels(self.tenant))
+        else:
+            self._recall(name, value)
         outcome = withheld.outcome + withheld.feedback if withheld is not None else "served"
         self._breaker.record_result(self.billing_scope, outcome, trajectory=self._trajectory())
         return withheld.render() if withheld is not None else None
@@ -1348,6 +1454,7 @@ class Session:
                 with contextlib.suppress(FiduciaryError):
                     charter = self._fid._authority.decide.charter(self._fid.log.state())
                     alone = len(charter.principals) == 1
+            self._remember(binding, arguments, plan_id, "held" if held else "written")
             return CallResult(
                 name,
                 "committed",
@@ -1355,7 +1462,10 @@ class Session:
                 value={"plan_id": plan_id, **({"held": held} if held else {})},
             )
         if "provenance_gate" in result.blocked_by:
-            return self._held_for_provenance(name, engine, plan, result, rendered)
+            found = self._held_for_provenance(name, engine, plan, result, rendered)
+            if found.ticket is not None:
+                self._remember(binding, arguments, str(plan.plan_id), "held")
+            return found
         try:
             repair = engine.engine.repair(plan)
         except InterlockError:
@@ -1543,7 +1653,7 @@ class Session:
         if not plan and not where:
             return None  # the tool sends nowhere this time: no destination was given
         size = size_of(arguments)
-        matched = self._tracker.found(carried(arguments)) if out.values else {}
+        matched = self._tracker.carried_by(arguments) if out.values else {}
         with self._lock:
             key = self._per(out.per)
             before = self._sent.get(key, 0)
@@ -1595,6 +1705,7 @@ class Session:
         if rules is None:
             if brought:
                 self._label(name, brought)
+            self._recall(name, value)
             return None
         out = rules.outbound()
         found = sorted({c for text in strings_in(value) for c in secrets_in(text)})
@@ -1613,6 +1724,7 @@ class Session:
         if outcome != "withheld":
             if labels:
                 self._label(name, labels)
+            self._recall(name, value)
             if out.values:
                 if found:
                     values["secret"] = self._tracker.track("secret", found)
@@ -1620,7 +1732,7 @@ class Session:
                     values["private"] = self._tracker.track("private", tracked(value))
                 values = {k: v for k, v in values.items() if v}
                 if values and self._flow is not None:
-                    self._flow.publish(self._labels, values)
+                    self._flow.publish(self._labels, values, sorted(self._tracker.lengths))
         if values or out.counts:
             log = self._fid.log
             with log.store.transaction():
@@ -1723,6 +1835,24 @@ class Session:
             self._fid.governor.capture(held, cost, memo=memo)
         except BudgetExceededError:
             pass  # recorded by AgentGov, and the scope halted: the next call says so
+        except DoubleSpendError:
+            # The hold was released while the call ran (1.21.0): an operator's void_stale
+            # on a call that looked hung. It ran all the same, so its cost is booked once
+            # more, as a hold captured at once; past the budget, the scope halts, and the
+            # next call says so. The released hold is never captured: AgentGov refuses that.
+            logger.warning(
+                "session %s: the hold for %s was released while the call ran; its cost is "
+                "booked again",
+                self.session_id,
+                memo,
+            )
+            try:
+                again = self._fid.governor.authorize(
+                    self.billing_scope, cost, memo=f"{memo}; its first hold was released"
+                )
+                self._fid.governor.capture(again, cost, memo=memo)
+            except AgentGovError:
+                logger.warning("session %s: %s could not be booked again", self.session_id, memo)
 
     # -- built-ins (F8-4) ---------------------------------------------------------------
 

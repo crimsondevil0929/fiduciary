@@ -13,9 +13,23 @@ offline verifier share, with no I/O of its own:
 - **the rules** (:class:`Outbound`, from a mandate's ``provenance``) and the judgment of one
   send or one read against them (:func:`judge_send`, :func:`judge_read`).
 
-What this catches is an exact value leaving, whole or encoded. It does not catch a
-paraphrase, a summary, a value split across calls, or a value shorter than the minimum
-length: a model that rewrites a secret in its own words is not seen.
+What this catches is an exact value leaving, whole or encoded (1.21.0: up to
+:data:`MAX_LAYERS` layers of percent-encoding, HTML entities, backslash escapes, Unicode
+compatibility forms with invisible characters removed, base64, base32 and hex, in any order),
+and a credential split into pieces inside one call (:meth:`Tracker.split_in`): its pieces in
+the order the call gives them, across arguments, path segments and query values.
+
+What it does not catch, and what bounds it instead:
+
+- a paraphrase or a summary: a model that rewrites a secret in its own words is not seen;
+- a value shorter than :data:`MIN_LENGTH`, and a ``private`` value split into pieces (only a
+  credential is put back together);
+- a value split across separate calls, pieces sent out of order, or pieces each encoded on
+  their own;
+- any transformation that is not a transport encoding: reversed, ROT13, XOR, encrypted.
+
+Each of those is bounded by the mandate's ``bytes_sent`` budget and the session's call
+velocity, not by this module.
 """
 
 from __future__ import annotations
@@ -24,9 +38,11 @@ import base64
 import binascii
 import hashlib
 import hmac
+import html
 import math
 import re
 import secrets
+import unicodedata
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from email.utils import getaddresses
@@ -42,14 +58,17 @@ __all__ = [
     "destinations",
     "egress_of",
     "is_sensitive",
+    "joined",
     "judge_read",
     "judge_send",
     "matches",
+    "plain",
     "records_in",
     "secrets_in",
     "size_of",
     "strings_in",
     "tracked",
+    "variants",
 ]
 
 DESTINATION_KINDS: Final = ("email", "repository", "url")
@@ -67,6 +86,16 @@ PER_READ: Final = 512
 
 PER_SESSION: Final = 16384
 """At most this many values are tracked in one session; past it, nothing more is."""
+
+MAX_LAYERS: Final = 4
+"""How many encodings deep a value is looked for (1.21.0): base64 of URL-encoded base64 is
+three."""
+
+MAX_VARIANTS: Final = 512
+"""At most this many decodings of one argument's string are looked through (1.21.0)."""
+
+MAX_JOINED: Final = 8192
+"""The longest run of a call's pieces searched for a split credential (1.21.0)."""
 
 UNREADABLE: Final = "?"
 """A destination that could not be read: never one a rule allows."""
@@ -169,6 +198,9 @@ def _values(value: Any) -> Iterator[str]:
 
 def _host(value: str) -> str:
     text = value.strip()
+    # A browser, curl and every WHATWG parser read a backslash in an http(s) URL as a slash:
+    # http://evil.example\\@allowed.example/ goes to evil.example (1.21.0).
+    text = text.replace("\\", "/")
     if "://" not in text:
         text = "http://" + text
     try:
@@ -278,9 +310,22 @@ def credentials_in(text: str) -> list[tuple[str, str]]:
         if _entropy(match.group(1)) >= 3.0:
             found.setdefault(match.group(1), "a value given to a credential's name")
     for match in _BARE.finditer(text):
-        if _random_looking(match.group(0), 4.5):
+        if _random_looking(match.group(0), 4.5) and not _path_like(match.group(0)):
             found.setdefault(match.group(0), "a long random-looking token")
     return sorted(found.items())
+
+
+_WORD: Final = re.compile(r"[a-z]{4,}")
+
+
+def _path_like(token: str) -> bool:
+    """A file path, not a token (1.21.0): two slashes or more, and an absolute path or a part
+    that is a lower-case word (``/private/var/folders/...``, ``src/components/...``). A
+    random base64 token rarely is either; a credential assigned to a name is found by its
+    name whatever its form."""
+    if token.count("/") < 2:
+        return False
+    return token.startswith("/") or any(_WORD.fullmatch(part) for part in token.split("/"))
 
 
 def secrets_in(text: str) -> list[str]:
@@ -347,8 +392,23 @@ def tracked(value: Any) -> list[str]:
     return sorted(found)[:PER_READ]
 
 
+_BASE32: Final = re.compile(r"(?:[A-Z2-7]{16,}|[a-z2-7]{16,})={0,6}")
+_ESCAPE: Final = re.compile(r"\\u([0-9a-fA-F]{4})|\\x([0-9a-fA-F]{2})|\\U([0-9a-fA-F]{8})")
+_INVISIBLE: Final = re.compile(
+    "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u202a-\u202e"
+    "\u2060-\u2064\u2066-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0]"
+)
+"""Characters that show nothing: zero-width spaces and joiners, direction marks, soft
+hyphens, variation selectors. Removed before a value is looked for (1.21.0)."""
+_SPACE: Final = re.compile(r"\s+")
+
+
+def _readable(text: str) -> bool:
+    return bool(text) and sum(c.isprintable() or c.isspace() for c in text) >= 0.9 * len(text)
+
+
 def _decoded(token: str) -> Iterator[str]:
-    """What ``token`` says as base64 or hex, when it reads as text."""
+    """What ``token`` says as hex, base64 or base32, when it reads as text."""
     if _HEX.fullmatch(token):
         try:
             yield bytes.fromhex(token).decode("utf-8")
@@ -358,37 +418,143 @@ def _decoded(token: str) -> Iterator[str]:
         padded = token + "=" * (-len(token) % 4)
         for decode in (base64.b64decode, base64.urlsafe_b64decode):
             try:
-                raw = decode(padded.encode("ascii"))
-                text = raw.decode("utf-8")
+                text = decode(padded.encode("ascii")).decode("utf-8")
             except (binascii.Error, ValueError, UnicodeDecodeError):
                 continue
-            if text and sum(c.isprintable() or c.isspace() for c in text) >= 0.9 * len(text):
+            if _readable(text):
                 yield text
+    if _BASE32.fullmatch(token):
+        bare = token.rstrip("=").upper()
+        try:
+            raw = base64.b32decode(bare + "=" * (-len(bare) % 8))
+            decoded = raw.decode("utf-8")
+        except (binascii.Error, ValueError, UnicodeDecodeError):
+            return
+        if _readable(decoded):
+            yield decoded
+
+
+def _unescaped(text: str) -> str:
+    """``text`` with its backslash escapes (``\\u0053``, ``\\x53``) read."""
+
+    def one(match: re.Match[str]) -> str:
+        point = int(match.group(1) or match.group(2) or match.group(3), 16)
+        if point > 0x10FFFF or 0xD800 <= point <= 0xDFFF:
+            return match.group(0)
+        return chr(point)
+
+    return _ESCAPE.sub(one, text) if "\\" in text else text
+
+
+def plain(text: str) -> str:
+    """``text`` as it reads (1.21.0): its Unicode compatibility forms folded (NFKC:
+    a full-width S is an S) and its invisible characters removed."""
+    return unicodedata.normalize("NFKC", _INVISIBLE.sub("", text))
+
+
+def _rewritings(text: str) -> Iterator[str]:
+    """One layer of the transport encodings a whole string can be in."""
+    yield unquote(text)
+    yield unquote_plus(text)
+    if "&" in text:
+        yield html.unescape(text)
+    yield _unescaped(text)
+    yield plain(text)
+
+
+def variants(text: str) -> set[str]:
+    """``text`` and what it says under every encoding :func:`carried` reads, up to
+    :data:`MAX_LAYERS` deep and :data:`MAX_VARIANTS` in all (1.21.0)."""
+    seen = {text}
+    frontier = [text]
+    for _ in range(MAX_LAYERS):
+        found: list[str] = []
+        for item in frontier:
+            candidates = list(_rewritings(item))
+            stripped = item.strip()
+            for token in {*_tokens(item), stripped, _SPACE.sub("", stripped)}:
+                candidates.extend(_decoded(token))
+            for candidate in candidates:
+                if candidate and candidate not in seen and len(seen) < MAX_VARIANTS:
+                    seen.add(candidate)
+                    found.append(candidate)
+        if not found:
+            break
+        frontier = found
+    return seen
 
 
 def carried(arguments: Any) -> set[str]:
-    """Every token ``arguments`` carry out: in plain text, URL-decoded, and decoded once
-    more from base64 or hex."""
+    """Every token ``arguments`` carry out: in plain text, and under every layering of the
+    encodings :func:`variants` reads (1.21.0; before, one URL-decoding and one base64 or hex
+    decoding)."""
     found: set[str] = set()
     for text in strings_in(arguments):
-        for variant in {text, unquote(text), unquote_plus(text)}:
-            tokens = _tokens(variant)
-            found.update(tokens)
-            for token in [*tokens, variant]:
-                for decoded in _decoded(token.strip()):
-                    found.update(_tokens(decoded))
-                    found.update(_tokens(unquote(decoded)))
+        for variant in variants(text):
+            found.update(_tokens(variant))
     return found
+
+
+def _in_order(value: Any, limit: int = 4096) -> list[str]:
+    """The strings ``value`` holds, keys left out, in the order the call gives them."""
+    out: list[str] = []
+    stack = [value]
+    while stack and len(out) < limit:
+        item = stack.pop()
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, Mapping):
+            stack.extend(reversed(list(item.values())))
+        elif isinstance(item, list | tuple):
+            stack.extend(reversed(item))
+    return out
+
+
+def _pieces(text: str) -> list[str]:
+    """The parts of one string a value could be split across: a URL's path segments, query
+    values and fragment; a query string's values; or the string with its spaces removed."""
+    if "://" in text:
+        try:
+            parts = urlsplit(text.strip())
+        except ValueError:
+            return [text]
+        found = [unquote(p) for p in parts.path.split("/") if p]
+        found += [unquote_plus(v) for _, _, v in (q.partition("=") for q in parts.query.split("&"))]
+        if parts.fragment:
+            found.append(unquote(parts.fragment))
+        return [p for p in found if p]
+    if "=" in text and ("&" in text or text.count("=") == 1):
+        values = [unquote_plus(v) for _, _, v in (q.partition("=") for q in text.split("&"))]
+        if all(" " not in v for v in values):
+            return [v for v in values if v]
+    return [_SPACE.sub("", plain(text))]
+
+
+def joined(arguments: Any) -> list[str]:
+    """Runs of a call's pieces put back together, each at most :data:`MAX_JOINED` characters
+    (1.21.0): every piece of every string, in the call's order and in sorted-key order, and
+    each string's own pieces."""
+    runs: list[str] = []
+    for order in (_in_order(arguments), list(strings_in(arguments))):
+        pieces = [_pieces(text) for text in order]
+        runs.append("".join(p for each in pieces for p in each)[:MAX_JOINED])
+        runs.extend("".join(each)[:MAX_JOINED] for each in pieces if len(each) > 1)
+    return list(dict.fromkeys(r for r in runs if len(r) >= MIN_LENGTH))
 
 
 @dataclass
 class Tracker:
     """The values one session read, as keyed digests, by label. The key is the session's
     own, kept in memory and never recorded: a digest in a record can be matched against
-    another record of the same session, and against nothing else."""
+    another record of the same session, and against nothing else.
+
+    It also keeps the lengths of the credentials it tracks (1.21.0), never their values, so
+    a credential split into pieces inside one call can be looked for (:meth:`split_in`)."""
 
     key: bytes = field(default_factory=lambda: secrets.token_bytes(32))
     by_digest: dict[str, set[str]] = field(default_factory=dict)
+    lengths: set[int] = field(default_factory=set)
+    """The lengths of the ``secret`` values tracked or adopted."""
 
     def digest(self, value: str) -> str:
         return hmac.new(self.key, value.encode("utf-8"), hashlib.sha256).hexdigest()[:32]
@@ -401,14 +567,18 @@ class Tracker:
                 break
             digest = self.digest(value)
             labels = self.by_digest.setdefault(digest, set())
+            if label == "secret" and MIN_LENGTH <= len(value) <= MAX_LENGTH:
+                self.lengths.add(len(value))
             if label not in labels:
                 labels.add(label)
                 added.add(digest)
         return sorted(added)
 
-    def adopt(self, label: str, digests: Iterable[str]) -> list[str]:
-        """Track digests another session made under the same key (:mod:`fiduciary.flow`);
-        the ones newly tracked, sorted."""
+    def adopt(self, label: str, digests: Iterable[str], lengths: Iterable[int] = ()) -> list[str]:
+        """Track digests another session made under the same key (:mod:`fiduciary.flow`),
+        and the lengths of its credentials; the digests newly tracked, sorted."""
+        if label == "secret":
+            self.lengths.update(n for n in lengths if MIN_LENGTH <= n <= MAX_LENGTH)
         added: set[str] = set()
         for digest in digests:
             if len(self.by_digest) >= PER_SESSION:
@@ -426,6 +596,33 @@ class Tracker:
             digest = self.digest(token)
             for label in self.by_digest.get(digest, ()):
                 hits.setdefault(label, set()).add(digest)
+        return {label: sorted(d) for label, d in sorted(hits.items())}
+
+    def split_in(self, arguments: Any) -> list[str]:
+        """The digests of tracked credentials that ``arguments`` carry split into pieces
+        (1.21.0): every window of each :func:`joined` run, as long as a credential tracked,
+        looked up by digest. Sorted."""
+        if not self.lengths:
+            return []
+        base = hmac.new(self.key, digestmod=hashlib.sha256)
+        hits: set[str] = set()
+        for run in joined(arguments):
+            for size in sorted(self.lengths):
+                for start in range(len(run) - size + 1):
+                    mac = base.copy()
+                    mac.update(run[start : start + size].encode("utf-8"))
+                    digest = mac.hexdigest()[:32]
+                    if "secret" in self.by_digest.get(digest, ()):
+                        hits.add(digest)
+        return sorted(hits)
+
+    def carried_by(self, arguments: Any) -> dict[str, list[str]]:
+        """Every tracked value ``arguments`` carry, by label (1.21.0): whole or encoded
+        (:func:`carried`), and credentials split into pieces (:meth:`split_in`)."""
+        hits = {label: set(d) for label, d in self.found(carried(arguments)).items()}
+        split = self.split_in(arguments)
+        if split:
+            hits.setdefault("secret", set()).update(split)
         return {label: sorted(d) for label, d in sorted(hits.items())}
 
 
