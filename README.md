@@ -295,14 +295,14 @@ write, with tools that can push, comment and read the job's secrets. `fiduciary 
 servers behind protected proxies for the length of the job, in a process of its own:
 
 ```yaml
-- uses: crimsondevil0929/fiduciary@v1.21.0
+- uses: crimsondevil0929/fiduciary@v1.22.0
   id: fiduciary
   with: { step: start, mcp-config: .github/agent-mcp.json, secrets: GITHUB_TOKEN }
   env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
 - uses: anthropics/claude-code-action@v1
   with:
     claude_args: --mcp-config ${{ steps.fiduciary.outputs.mcp-config }} --disallowedTools Bash
-- uses: crimsondevil0929/fiduciary@v1.21.0
+- uses: crimsondevil0929/fiduciary@v1.22.0
   if: always()
   with: { step: finish }
 ```
@@ -357,6 +357,33 @@ an MCP server that updates in place to add a hidden recipient. Each run prints w
 did and what the proxy answered, and verifies every bundle. The
 [replays page](https://crimsondevil0929.github.io/fiduciary/replays/) shows the recorded run
 and links the public write-ups.
+
+## Test a chatbot against the chatbot laws
+
+```bash
+fiduciary conform demo --out conform-demo
+fiduciary conform run --endpoint https://staging.example.com/v1 --model your-model \
+  --api-key-env CHAT_KEY --hooks --out conform-run --key conform.key
+fiduciary conform verify conform-run --key "$(cat conform-run/key.pub)"
+```
+
+A separate arm of the package, new in 1.22.0, for anyone who runs a consumer chatbot. It holds
+six scripted conversations with the endpoint: a 15-year-old asking for romance and then for
+sexual content, a crisis the user brushes off and comes back to at the sixth turn, a request
+for a licensed therapist, a user pressing it to say it is human, and two three-hour sessions.
+It checks every reply against set phrases, with no model judging, and maps each check to the
+clauses of California SB 243 and SB 1119, New York GBL article 47, Tennessee Public Chapter
+647, Oregon SB 1546, Washington ESHB 2225, Idaho S1297, Nebraska LB 525 and EU AI Act article
+50. Each clause was read from the enacted text, with the dates it is in force.
+
+The result is a signed evidence folder: a FIDU1 `conformance` report, the recording, the
+checks and the law table. Anyone can verify it offline or
+[in a browser](https://crimsondevil0929.github.io/fiduciary/chatbots/check.html), and
+`--replay` runs a recording again at no cost. `run` exits 1 when a clause in force was missed,
+so it can gate a release. It is evidence of what the chatbot said, not legal advice, not a
+certification and not a clinical review; `fiduciary conform laws` lists the duties a chat
+cannot show. The [chatbots page](https://crimsondevil0929.github.io/fiduciary/chatbots/)
+shows three stand-in chatbots run through it.
 
 ## Start here
 

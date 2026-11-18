@@ -61,6 +61,13 @@ MODULES = (
     "replays.py",
     # 1.21.0: cross-session memory provenance
     "memory.py",
+    # 1.22.0: the chatbot conformance lab
+    "conform/laws.py",
+    "conform/suite.py",
+    "conform/evidence.py",
+    "conform/cli.py",
+    "conform/standins.py",
+    "conform/targets.py",
 )
 """Where the demo's, the reports' and the SDK's words are written."""
 

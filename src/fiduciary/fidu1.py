@@ -68,10 +68,21 @@ GENESIS: Final = "0" * 64
 
 DOMAINS: Final[Mapping[str, bytes]] = {
     kind: f"FIDU1/{kind}/v1\n".encode("ascii")
-    for kind in ("charter", "mandate", "tool", "ticket", "approval", "warrant", "record", "bundle")
+    for kind in (
+        "charter",
+        "mandate",
+        "tool",
+        "ticket",
+        "approval",
+        "warrant",
+        "record",
+        "bundle",
+        "conformance",
+    )
 }
 """Each document type's signing domain (§3.4). None is a prefix of another,
-and none begins ``ARC1/`` or ``ILOK1/`` (F3-5)."""
+and none begins ``ARC1/`` or ``ILOK1/`` (F3-5). ``conformance`` (1.22.0) signs a chatbot
+conformance run's report (:mod:`fiduciary.conform`)."""
 
 MAX_DOMAIN: Final = 32
 MAX_SIGNING_INPUT: Final = MAX_DOMAIN + 64

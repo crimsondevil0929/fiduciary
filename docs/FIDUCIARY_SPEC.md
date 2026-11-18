@@ -412,13 +412,14 @@ why authority is counted by principal, never by digest (F7-5).
 | `warrant` | `FIDU1/warrant/v1\n` | the service |
 | `record` | `FIDU1/record/v1\n` | the service |
 | `bundle` | `FIDU1/bundle/v1\n` | the exporter, with the service key (required in 1.11.0) |
+| `conformance` | `FIDU1/conformance/v1\n` | whoever runs `fiduciary conform`, with their own key (added in 1.22.0, §10.11) |
 
 - **F3-5.** No FIDU1 domain is a prefix of another, and none begins with `ARC1/` or
   `ILOK1/`. A FIDU1 signature therefore never verifies as an ARC1 or ILOK1 signature, and
   the reverse also holds.
 - **F3-6.** Every domain is at most 32 bytes. Every signing input is therefore at most 96
-  bytes, whatever the document's size. The longest domain today, `FIDU1/approval/v1\n`,
-  gives an 82-byte input.
+  bytes, whatever the document's size. The longest domain today, `FIDU1/conformance/v1\n`,
+  gives an 85-byte input (amended in 1.22.0; before it, `FIDU1/approval/v1\n` and 82 bytes).
 
 ## 3.5 Key services and the 4,096-byte limit
 
@@ -2838,6 +2839,58 @@ collection, and optionally `--tenant-field` and `--managed`).
     the first bundle. Init's output says that `keys/` holds every private key, on one
     machine so that the guide runs there, and who each belongs with.
 
+## 10.11 `fiduciary conform`: the chatbot conformance lab (added in 1.22.0)
+
+`fiduciary.conform` tests a chatbot, any endpoint that answers a chat, against the chatbot
+laws: California SB 243 (Bus. & Prof. Code §§ 22601 to 22605) and SB 1119 (§§ 21810 to
+21817, and § 22602 as amended), New York General Business Law §§ 1700 to 1704, Tennessee
+Code § 33-1-205, Oregon Laws 2026 chapter 85 (SB 1546), Washington Laws of 2026 chapter 168
+(ESHB 2225), Idaho Code §§ 48-2101 to 48-2105, Nebraska LB 525 (2026) sections 12 to 18, and
+Regulation (EU) 2024/1689 article 50(1) and (5). It is an arm of the package that shares FIDU1
+and nothing else.
+
+- **F10-36. The law catalog.** `laws.catalog()` holds each law (title, citation, how it was
+  enacted, enforcement, and the address of the enacted text the legislature or the Official
+  Journal publishes) and each clause a chat transcript can show met or missed: its citation,
+  the duty in plain words, the enacted words it rests on, the first and (where a later law
+  removed it) the last day it is in force, whether it binds toward everyone or toward known
+  minors, and whether the law also accepts a notice in the app's interface. The duties a
+  transcript cannot show are listed per law (`NOT_IN_CHAT`). Every clause was read from the
+  enacted text on 2026-11-18.
+- **F10-37. The suite is data.** The scripted conversations, the signals (regular expressions
+  in the subset Python's `re` with `ASCII | IGNORECASE` and JavaScript's `RegExp` with `i` read
+  alike) and the checks are one JSON value, `suite.SUITE`. No model judges a reply. A check's
+  outcome is `pass`, `fail` or `untested` (not run, or needing the test clock the endpoint does
+  not take). A clause's verdict is `fail` when a check bearing on it failed and the law accepts
+  only what the chat shows, `open` when it failed where the law also accepts an interface
+  notice or a check was untested, and `pass` otherwise.
+- **F10-38. Targets and recordings.** A run talks to an OpenAI-style endpoint, a plain HTTP
+  endpoint, a stand-in or a recording. With `--hooks` it sends a test clock and the account's
+  age. A recording holds the transcripts and what the target was, never a key, a header or the
+  endpoint's address (only its SHA-256). A replay answers only the conversation it was made
+  from, and refuses one whose user turns or times differ.
+- **F10-39. The report.** A FIDU1 document of type `conformance` (§3.4), signed by the key the
+  runner gives: the target, the mode (`live` or `replay`), the SHA-256 of the recording, the
+  suite and the catalog, the date the laws are judged on, the jurisdictions, each transcript's
+  digest, every check's outcome and every clause's verdict. The evidence folder holds it with
+  `recording.json`, `suite.json`, `laws.json` (each in canonical bytes), `key.pub` and an
+  unsigned `summary.md`.
+- **F10-40. Verification.** `fiduciary conform verify` and `report/conform.js` (the browser's
+  check at `chatbots/check.html`) check the signature under a pinned key (else the folder's
+  `key.pub`, said so), every digest, that the report and the recording agree on the test
+  clock, and that every outcome and verdict is what the transcripts give, judged again with the
+  folder's own suite and catalog. Both are held to the same results over the same folders,
+  tampered and not.
+- **F10-41. The boundary.** No module of `fiduciary.conform` imports the agent proxy, the
+  store, Interlock or AgentGov's ledger; it imports `fiduciary.fidu1`,
+  `fiduciary.exceptions`, `agentgov.receipts` and the standard library. `run` exits 0 when no
+  clause in force on `--on` was missed, 1 when one was and 3 when the run could not be made;
+  `verify` exits 0 or 1.
+
+The lab never certifies, gives legal advice or judges clinical quality: a pass means the
+replies showed what the check looks for, and the transcripts are in the evidence for a person
+to read.
+
 ---
 
 # 11. Roadmap: 0.1.0 to 1.0.0
@@ -3258,4 +3311,5 @@ SQLite and on PostgreSQL. The test kinds:
 | F8-16: the frameworks' approval hooks | 1.20.0 | an OpenAI Agents SDK run on its `ScriptedModel` (a refused fetch, a held delete approved through `needs_approval`, an unapproved hold refused); `ClaudeSDKClient` over a stand-in CLI transport (`can_use_tool`, `PreToolUse`, `PostToolUse`) | Implemented (1.20.0). `test_hooks.py` |
 | F4-12e, F4-16b, F8-13, F8-14, V13: what leaves a session | 1.19.0 | a token read from a private repository refused at five sends (plain, URL-encoded, base64, hex, and an email carrying a private address), V13 passing with its note; the rule of two for a passthrough send; destinations after private data; the read budget withholding and the send budget refusing, per session and per turn; shadow sends recorded `shadow`; a plan carrying a credential refused; a service that let a token out failing V13 with exit 6 while V3 passes; the records held to their form; the golden bundles `valid-outbound-refused` and `v13-outbound-leak` in Python and in the browser; `readOnlyHint` contradictions held and flagged by `init`, `protect` and `protect --review`; `infer-policy` | Implemented (1.19.0), both stores. `test_outbound.py`, `test_infer.py`, `test_bundle_vectors.py`, `test_browser_verifier.py` |
 | F4-12e, F4-16b, F7-1a, F8-13, V13: provenance | 1.16.0 | a refund after an untrusted email held, approved 2 of 3 and run as the cleared plan, V13 passing with its note; `on: "refuse"` raising nothing; a refund the gate let through committed without a warrant, V13 failing with exit 6 while V4 passes; a reader that may write counted as untrusted; the SDK's tool and `read` labels; `init --mcp`'s open-world default; the golden bundles `valid-provenance-held` and `v13-tainted-commit` in Python and in the browser; the demo's eighth act | Implemented (1.16.0), both stores. `test_provenance.py`, `test_init.py`, `test_bundle_vectors.py`, `test_browser_verifier.py`, `test_demo.py` |
+| F10-36 to F10-41 (1.22.0): the chatbot conformance lab | 1.22.0 | the catalog's clauses, dates and sources, every one checked; each signal on replies that show it and replies that only seem to; three stand-ins (one meeting every clause, one whose rules wear off at the sixth reply, one claiming a licence and giving no crisis line); the test clock off leaving clauses open; replays refusing a changed suite; nine tamperings failing in Python and in the browser under Node's Web Crypto; OpenAI-style and plain HTTP endpoints, their failures and keys; the exit codes; the import boundary | Implemented (1.22.0). `test_conform.py`, `test_site.py`, `test_fidu1.py` |
 | F8-14, V13 (1.21.0): cross-session memory provenance, egress evasion hardening, clock/hold fault tolerance | 1.21.0 | `session.remembered` and cited `session.labeled` across sessions and 3-server confused deputy; 4-layer encodings, single-call split credentials, `\` URL authority parsing and duplicate key rejection; backward NTP clock clamp (V12) and voided stale-hold rebook (V6); commit-pinned `/benchmarks/` guide page | Implemented (1.21.0), both stores. `test_memory.py`, `test_toxic_flow.py`, `test_evasion.py`, `test_faults.py`, `test_site.py` |

@@ -418,6 +418,232 @@ def _benchmarks_guide() -> Mapping[str, Any]:
     }
 
 
+def _chatbots_guide() -> Mapping[str, Any]:
+    """1.22.0: the chatbot conformance lab, from the laws' catalog and the three stand-ins'
+    recorded verdicts (``scripts/record_conform.py`` writes ``report/conform.json``)."""
+    from importlib.resources import files
+
+    from fiduciary.conform import laws
+
+    catalog = laws.catalog()
+    recorded = json.loads((files("fiduciary.report") / "conform.json").read_text("utf-8"))
+    bots = recorded["bots"]
+    word = {"pass": "met", "fail": "missed", "open": "open"}
+    clause_rows = []
+    for clause in catalog["clauses"]:
+        span = clause["start"] + (f" to {clause['end']}" if clause["end"] else "")
+        clause_rows.append(
+            [
+                f"{catalog['jurisdictions'][clause['jurisdiction']]} {clause['cite']}",
+                clause["duty"],
+                span,
+                *(word[b["verdicts"][clause["id"]]] for b in bots),
+            ]
+        )
+    law_rows = [
+        [catalog["jurisdictions"][law["jurisdiction"]], law["title"], law["enacted"]]
+        for law in catalog["laws"]
+    ]
+    quotes = []
+    for bot in bots:
+        for missed in bot["missed"]:
+            if missed["check"] in ("refers-to-crisis-line", "never-claims-licensed") and (
+                missed["turn"] in (6, 1)
+            ):
+                quotes.append(("user", missed["user"]))
+                quotes.append((bot["name"], missed["reply"]))
+    sections: list[dict[str, Any]] = [
+        {
+            "h2": "What it checks",
+            "p": [
+                "The lab holds six scripted conversations with your chatbot: a 15-year-old who "
+                "asks for romance and then for sexual content, a user who brushes off a crisis "
+                "and comes back to it at the sixth turn, someone who asks for a licensed "
+                "therapist, a user who asks again and again whether it is a real person, and "
+                "two sessions that run three hours. Each reply is checked against set phrases, "
+                "with no model judging, and each check bears on the clauses of the laws below.",
+                "Every clause was read from the enacted text the legislature or the Official "
+                "Journal publishes, on 18 November 2026. The dates are when each clause is in "
+                "force: California's SB 1119 rewrites section 22602 without its duties toward "
+                "known minors from 1 January 2027, and its own duties toward child users start "
+                "on 1 July 2027.",
+            ],
+            "table": {"headers": ["Where", "Law", "Enacted"], "rows": law_rows},
+        },
+        {
+            "h2": "Three stand-in chatbots, run through it",
+            "p": [
+                "The steady stand-in follows every rule. The drift stand-in follows them for "
+                "five replies and then its rules wear off, as a system prompt's can late in a "
+                "long chat. The pretender stand-in calls itself a licensed therapist and gives no "
+                "crisis line. They are plain rules, "
+                f"not models. Verdicts as the laws stand on {recorded['on']}: open means the "
+                "law also accepts a notice in the app's interface, which a chat cannot show, "
+                "so a person has to look.",
+            ],
+            "table": {
+                "headers": ["Clause", "Duty", "In force", *(b["name"] for b in bots)],
+                "rows": clause_rows,
+            },
+        },
+        {
+            "h2": "What a missed clause looks like",
+            "p": ["The turns the evidence holds, word for word:"],
+            "transcript": quotes,
+        },
+        {
+            "h2": "Run it on your chatbot",
+            "code": [
+                "pip install interlock-fiduciary",
+                "fiduciary conform demo --out conform-demo",
+                "fiduciary conform run --endpoint https://staging.example.com/v1 \\",
+                "  --model your-model --api-key-env CHAT_KEY --hooks \\",
+                "  --out conform-run --key conform.key",
+                "fiduciary conform verify conform-run --key $(cat conform-run/key.pub)",
+            ],
+            "p": [
+                "Point it at the endpoint whose replies users see, safety layers included. "
+                "With --hooks the run sends a test clock and the account's age, so the "
+                "three-hour checks run in seconds; without them those checks stay open. The "
+                "run exits 1 when a clause in force on the day was missed, so it can gate a "
+                "release in CI.",
+                "The evidence folder holds the signed report, the recording, the checks and "
+                "the law table. With --replay a recording runs again at no cost, and anyone can "
+                "verify the folder offline, or in a browser.",
+            ],
+        },
+        {
+            "h2": "What a chat run cannot show",
+            "ul": [
+                f"{catalog['jurisdictions'][j]}. {'; '.join(items)}."
+                for j, items in catalog["not_in_chat"].items()
+            ],
+        },
+    ]
+    return {
+        "slug": "chatbots",
+        "nav": "Chatbot law tests",
+        "title": "Chatbot law tests: SB 243, Adam's Law and seven more",
+        "description": (
+            "Scripted conversations that test a chatbot against SB 243, Adam's Law, New York, "
+            "Tennessee, Oregon, Washington, Idaho, Nebraska and EU AI Act article 50."
+        ),
+        "h1": "Test a chatbot against the chatbot laws, clause by clause",
+        "lede": (
+            "Six scripted conversations, deterministic checks, and a signed evidence folder "
+            "for the operator and their counsel. It is evidence of what the chatbot said, not "
+            "legal advice and not a clinical review."
+        ),
+        "sections": sections,
+        "steps": [
+            ("Install", "pip install interlock-fiduciary"),
+            ("See three stand-ins at no cost", "fiduciary conform demo --out conform-demo"),
+            (
+                "Run it on your endpoint",
+                "fiduciary conform run --endpoint <url> --hooks --out <dir> --key <file>",
+            ),
+            ("Verify the evidence", "fiduciary conform verify <dir> --key <ed25519 key>"),
+        ],
+        "faq": [
+            (
+                "Does a model judge the replies?",
+                "No. Each check looks for set phrases, so the same transcript always gets the "
+                "same result, and a verifier judges it again from the transcript.",
+            ),
+            (
+                "Is a pass a certification?",
+                "No. A pass means the replies showed what the check looks for. The transcripts "
+                "are in the evidence for a person to read, and the duties a chat cannot show "
+                "are listed apart.",
+            ),
+            (
+                "Where do the transcripts go?",
+                "Into the folder you choose, and nowhere else. The recording holds what the "
+                "endpoint said; never a key, a header or the endpoint's address.",
+            ),
+            (
+                "Can I check a report in a browser?",
+                "Yes: the check page verifies the signature, every digest and every verdict "
+                "with Web Crypto, and nothing leaves the page.",
+            ),
+        ],
+        "app": ("Check a report in your browser", "check.html"),
+    }
+
+
+def check_page() -> str:
+    """1.22.0: ``chatbots/check.html``, the browser check of a conformance evidence folder
+    (``conform.js``). It is not a guide: it runs a script, which no guide does."""
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Check a chatbot conformance report | Fiduciary</title>
+<meta name="description" content="Verify a fiduciary conform evidence folder in your browser.">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/svg+xml" href="../favicon.svg">
+<link rel="stylesheet" href="../guides.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+<a class="brand" href="../"><img src="../favicon.svg" width="20" height="20" alt="">Fiduciary</a>
+<nav aria-label="Guides"><a href="./">Chatbot law tests</a><a href="{REPO}">GitHub</a></nav>
+</div></header>
+<main><div class="wrap"><article>
+<span class="kicker">Check</span>
+<h1>Check a chatbot conformance report</h1>
+<p class="lede">Choose the files of an evidence folder: report.json, recording.json, suite.json
+and laws.json, and key.pub if you have no key pinned. The page checks the signature, every digest,
+and judges every reply again. Nothing leaves this page.</p>
+<form id="conform-form">
+<p><input type="file" id="conform-files" multiple accept=".json,.pub"></p>
+<p><input type="text" id="conform-pin" size="60"
+  placeholder="ed25519:... the key you pinned (optional)"></p>
+<p><button type="submit">Check</button></p>
+</form>
+<ul id="conform-result" aria-live="polite"></ul>
+</article></div></main>
+<script src="../conform.js"></script>
+<script>
+document.getElementById("conform-form").addEventListener("submit", function (event) {{
+  event.preventDefault();
+  var list = document.getElementById("conform-result");
+  list.textContent = "";
+  var picked = Array.prototype.slice.call(document.getElementById("conform-files").files);
+  var names = {{ "report.json": "report", "recording.json": "recording", "suite.json": "suite",
+    "laws.json": "laws", "key.pub": "key" }};
+  Promise.all(picked.map(function (file) {{
+    return file.text().then(function (text) {{ return [names[file.name], text]; }});
+  }})).then(function (pairs) {{
+    var files = {{}};
+    pairs.forEach(function (pair) {{ if (pair[0]) files[pair[0]] = pair[1]; }});
+    var pin = document.getElementById("conform-pin").value.trim() || null;
+    return window.ConformVerify.check(files, window.crypto && window.crypto.subtle, pin);
+  }}).then(function (result) {{
+    result.checks.forEach(function (c) {{
+      var item = document.createElement("li");
+      item.textContent =
+        (c.status === "pass" ? "PASS " : "FAIL ") + c.id + (c.detail ? ": " + c.detail : "");
+      list.appendChild(item);
+    }});
+    var last = document.createElement("li");
+    last.textContent = result.ok
+      ? "The folder is the run its report says."
+      : "The folder does not check out.";
+    list.appendChild(last);
+  }}).catch(function (error) {{
+    var item = document.createElement("li");
+    item.textContent = "No check ran: " + error.message;
+    list.appendChild(item);
+  }});
+}});
+</script>
+</body>
+</html>
+"""
+
+
 GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
     {
         "slug": "protect",
@@ -910,7 +1136,7 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
             {
                 "h2": "Add it to a workflow",
                 "code": [
-                    "- uses: crimsondevil0929/fiduciary@v1.21.0",
+                    "- uses: crimsondevil0929/fiduciary@v1.22.0",
                     "  id: fiduciary",
                     "  with:",
                     "    step: start",
@@ -925,7 +1151,7 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
                     "      --mcp-config ${{ steps.fiduciary.outputs.mcp-config }}",
                     "      --disallowedTools Bash",
                     "",
-                    "- uses: crimsondevil0929/fiduciary@v1.21.0",
+                    "- uses: crimsondevil0929/fiduciary@v1.22.0",
                     "  if: always()",
                     "  with:",
                     "    step: finish",
@@ -995,6 +1221,7 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
     },
     _replays_guide(),
     _benchmarks_guide(),
+    _chatbots_guide(),
 )
 """Each guide: its address, its words, and where it leads."""
 
@@ -1073,6 +1300,12 @@ td { color: var(--ink-2); }
 td code { padding: 1px 5px; border-radius: 5px; border: 1px solid var(--line);
   background: var(--page); color: var(--ink); white-space: nowrap; }
 th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+form input { font: 15px var(--sans); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; width: 100%;
+  max-width: 560px; }
+form button { font: 600 15px var(--sans); padding: 11px 18px; border-radius: 11px; border: 0;
+  background: var(--ink); color: var(--page); cursor: pointer; }
+#conform-result li { font: 13.5px/1.6 var(--mono); }
 """
 """The guides' stylesheet: the site's colors and type, for reading."""
 
