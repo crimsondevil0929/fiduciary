@@ -12,6 +12,14 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
   sentences (57 words to 42), the release badge points at 1.22.0's chatbot law tests instead of
   1.21.0's notes, the MCP client tab says what the proxy does in whole sentences, and the
   stack section's text is shorter.
+- **The front page's order.** The run's numbers come right under the hero, with a link to each
+  workflow the run ran. The measurement ladder is left to the How it works view, which already
+  holds it word for word, and the loop section links there. Four questions a first visitor
+  asks (an account, a model deciding, what it does not catch, the overhead) come before the
+  closing card; the overhead answer reads its medians from `benchmarks.json`. On a phone the
+  four numbers sit two by two.
+- **The demo's scenarios tab** opens on the paragraph that says how each call is checked and
+  how the run was made, instead of ending on it.
 - **One name per workflow.** The recorded calls, the bundle verifier and the approvals desk use
   the names the demo uses ("Refunds & payments", "Workspace agent"), not the packs' industry
   names ("Fintech", "Platform ops"). On the static site the "Live sandbox" view is now

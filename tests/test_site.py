@@ -93,6 +93,15 @@ def test_the_site_page_reads_without_its_script() -> None:
     assert "6plans refused" in text and "4bundles verified offline" in text
     assert "Refunds & payments" in text and "Coding agent" in text
     assert "Cloud SRE" not in text  # a workflow the run did not run is not linked
+    # 1.22.1: the run's numbers come right under the hero, the ladder is left to #/how, and
+    # four questions come before the close
+    assert text.index(site.COPY["hero"]["caption"]) < text.index("6plans refused")
+    assert text.index("6plans refused") < text.index(site.COPY["doors"]["title"])
+    assert "measurement ladder" not in text.lower() and "ladder" not in site.COPY
+    for question, answer in site.COPY["faq"]["items"]:
+        assert question in text and answer in text and "{" not in answer
+    assert text.index(site.COPY["faq"]["title"]) < text.index(site.COPY["closing"]["title"])
+    assert site.COPY["loop"]["more"] in text
     # what a link preview and a search engine read
     for tag in (
         f'<link rel="canonical" href="{site.SITE_URL}">',

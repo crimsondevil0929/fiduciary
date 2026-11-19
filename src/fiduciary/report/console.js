@@ -681,7 +681,7 @@
   }
   function scenariosTab() {
     var draw = PACK ? function (x) { return (PACK_ACTS[x.key] || packCalls)(x); } : function (x) { return ACTS[x.key](x); };
-    return h("div", { class: "scn-tab" }, scenarioLayout(DEMO.acts, draw), h("p", { class: "tab-note" }, scenarioLede()));
+    return h("div", { class: "scn-tab" }, h("p", { class: "tab-note" }, scenarioLede()), scenarioLayout(DEMO.acts, draw));
   }
   // -- a domain pack's acts --------------------------------------------------------------
   function mandateOf(a) { return a.authority.mandates.filter(function (m) { return !m.parent; })[0] || a.authority.mandates[0] || {}; }
@@ -1414,32 +1414,28 @@
           h("div", { class: "lp-node" }, h("span", null, String(i + 1))),
           h("div", { class: "lp-step-body" }, h("div", { class: "lp-step-icon" }, icon(STEP_ICONS[i], 18)), h("h3", null, st[0]), h("p", null, st[1]),
             i === 2 ? h("div", { class: "lp-fork" }, h("b", null, L.fork[0]), " " + L.fork[1]) : null));
-      }))));
-  }
-  function ladderSection() {
-    if (!OVERVIEW) return null;
-    var strength = { T: 4, P: 3, V: 2, R: 1 };
-    return h("section", { class: "lp-sec", id: "ladder" }, h("div", { class: "wrap" },
-      lpHead(C.ladder),
-      h("div", { class: "lp-rungs" }, OVERVIEW.ladder.map(function (rung) {
-        var k = strength[rung["class"]] || 0;
-        var here = OVERVIEW.industries.filter(function (r) { return r["class"] === rung["class"] && r.ran; });
-        return h("article", { class: "lp-card lp-rung" },
-          h("div", { class: "lp-rung-head" }, h("span", { class: "lp-letter" }, rung["class"]), h("div", null, h("h3", null, rung.name.charAt(0).toUpperCase() + rung.name.slice(1)), h("div", { class: "lp-meter", title: k + " of 4" }, [1, 2, 3, 4].map(function (i) { return h("i", { class: i <= k ? "on" : "" }); })))),
-          h("p", null, rung.promise),
-          h("p", { class: "lp-where" }, rung.where),
-          h("div", { class: "lp-here" }, rung["class"] === "R" ? h("span", null, C.ladder.everywhere) : here.length ? here.map(function (r) {
-            return h("a", { href: "#/run/" + r.key, onclick: function (ev) { ev.preventDefault(); openPage(r.key); } }, r.workflow || r.industry);
-          }) : h("span", { class: "muted" }, C.ladder.none)));
-      }))));
+      })),
+      h("p", { class: "lp-more" }, h("a", { href: "#/how", onclick: function (ev) { ev.preventDefault(); go("how"); } }, L.more))));
   }
   function numbersSection() {
     if (!OVERVIEW) return null;
     var n = counted();
-    return h("section", { class: "lp-sec lp-numbers" }, h("div", { class: "wrap" },
+    // Right under the hero (1.22.1), with a link to each workflow the run ran.
+    var ran = OVERVIEW.industries.filter(function (r) { return r.ran; });
+    return h("section", { class: "lp-sec lp-numbers", id: "numbers" }, h("div", { class: "wrap" },
       h("div", { class: "lp-stats" }, C.numbers.stats.map(function (st) { return h("div", { class: "lp-stat" }, h("b", { class: "tnum" }, fill(st[0], n)), h("span", null, fill(st[1], n)), h("small", null, fill(st[2], n))); })),
       h("p", { class: "lp-stats-note" }, fill(C.numbers.counted, n) + " ",
-        h("a", { href: "#/how", onclick: function (ev) { ev.preventDefault(); go("how"); } }, C.numbers.how))));
+        h("a", { href: "#/how", onclick: function (ev) { ev.preventDefault(); go("how"); } }, C.numbers.how)),
+      h("div", { class: "lp-runs" }, h("span", null, C.numbers.runs), ran.map(function (r) {
+        return h("a", { href: "#/run/" + r.key, onclick: function (ev) { ev.preventDefault(); openPage(r.key); } }, r.workflow || r.industry);
+      }))));
+  }
+  function faqSection() {
+    // Four questions a first visitor asks (1.22.1), each answered in full.
+    var Q = C.faq;
+    return h("section", { class: "lp-sec", id: "faq" }, h("div", { class: "wrap" },
+      h("header", { class: "lp-head" }, h("span", { class: "lp-kicker" }, Q.kicker), h("h2", null, Q.title)),
+      h("div", { class: "lp-faq" }, Q.items.map(function (x) { return h("div", { class: "lp-card lp-q" }, h("h3", null, x[0]), h("p", null, x[1])); }))));
   }
   function closingSection() {
     var X = C.closing;
@@ -1455,7 +1451,7 @@
     view = "run"; use(firstWorkflow()); TAB = null; setRoute(); render(); window.scrollTo(0, 0);
   }
   function home() {
-    return h("main", { id: "home", class: "lp" }, hero(), doorsSection(), stackSection(), loopSection(), ladderSection(), numbersSection(), closingSection());
+    return h("main", { id: "home", class: "lp" }, hero(), numbersSection(), doorsSection(), stackSection(), loopSection(), faqSection(), closingSection());
   }
   function siteFooter() {
     var F = C.footer;
