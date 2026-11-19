@@ -275,8 +275,9 @@ Then, before such a call leaves:
 
 Each send is recorded (`session.sent`) with its destinations, its bytes and the digests it
 carried, never the values, and V13 judges every one again offline. What it cannot do: it
-catches an exact value, whole or encoded once. A model that paraphrases a secret, splits it
-across calls, or sends one shorter than eight characters is not caught. The MCP servers one
+catches an exact value, whole or under up to four layers of encoding, and a credential split
+across the arguments of one call. A model that paraphrases a secret, splits it across calls,
+or sends one shorter than eight characters is not caught. The MCP servers one
 client started share what they read: a token read through a database server and sent out
 through a fetch server is caught too, and each server's records say so on its own.
 `fiduciary shadow report` lists the sends that would have been refused, and why.

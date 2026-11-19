@@ -254,7 +254,7 @@
     // are the plan's with before and after swapped; and every plan that committed as an
     // undo has its record. Checked only when a bundle holds an undo.
     function undoChecks() {
-      var NAME = "Every undo, exactly the inverse of its plan";
+      var NAME = "Every undo put back exactly what its plan changed";
       var records = [];
       (by["log.jsonl"] ? dec.decode(by["log.jsonl"]) : "").split("\n").forEach(function (l) {
         if (!l) return;
@@ -601,7 +601,7 @@
       var names = Object.keys(bundles).filter(function (n) { return bundles[n] && bundles[n].receipt && bundles[n].receipt.v === "ARC1-delivery"; });
       out.deliveries = names.length;
       if (!names.length) return Promise.resolve();
-      var NAME = "Every delivery receipt: signed, included, attested by its relay, bound to its action";
+      var NAME = "Every delivery receipt is signed, in the receipt log, attested by its relay and tied to its action";
       if (!ed.ok) { add("deliveries", NAME, "V5", "skip", "no Ed25519 in this Web Crypto"); return Promise.resolve(); }
       var actions = {};
       Object.keys(bundles).forEach(function (n) { var b = bundles[n]; if (b && b.receipt && b.receipt.v === "ARC1") actions[b.receipt.receipt_id] = b.receipt; });
@@ -687,7 +687,7 @@
       // Part of V6 (1.11.0). The anchors V10 reads are only those of entries that hash to
       // themselves and are included in the checkpoint, which the ledger key signs, of exactly
       // the manifest's cut; and the cut is the anchor of the range's last record.
-      var NAME = "The ledger entries anchors are read from: hashed, proven, signed, cut at the range's end";
+      var NAME = "The ledger entries behind the anchors hash correctly, sit in the signed checkpoint and end where the range ends";
       var lines = by["ledger/entries.jsonl"] ? dec.decode(by["ledger/entries.jsonl"]).split("\n").filter(function (l) { return l.length; }) : [];
       var cp = null; try { cp = by["ledger/checkpoint.json"] ? JSON.parse(dec.decode(by["ledger/checkpoint.json"])) : null; } catch (e) { cp = null; }
       var cut = man.ledger ? man.ledger.cut : null, to = man.range ? Number(man.range.to) : 0;
@@ -745,7 +745,7 @@
       }
       function anchorsCheck(problems) {
         problems = missing.concat(problems);
-        add("anchors", "Every record in range anchored by its hash" + (out.format === "fidb/2" ? ", no withheld one the bundle's own" : ""), "V10", problems.length ? "fail" : "pass",
+        add("anchors", "Every record in range anchored by its hash" + (out.format === "fidb/2" ? ", with none of the bundle's own records withheld" : ""), "V10", problems.length ? "fail" : "pass",
           problems.length ? problems.slice(0, 3).join("; ") + (problems.length > 3 ? "; and " + (problems.length - 3) + " more" : "")
             : (to - from + 1) + " records anchored in the ledger entries proven above" + (withheld.length ? "; " + withheld.length + " withheld, none opening under the bundle's keys" : ""));
       }

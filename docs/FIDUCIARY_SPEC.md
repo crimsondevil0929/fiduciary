@@ -1812,9 +1812,11 @@ billing scope. It is recorded (`session.opened`) before its first call.
     with no such rule); and `budget.bytes_sent`. A send that breaks a rule is refused, and its
     feedback names the rule, never the value; under a shadow version it goes, and the record
     says `shadow`. Every send is recorded (`session.sent`).
-  - What this catches is an exact value leaving, whole or encoded once. A paraphrase, a value
-    split across calls, a value shorter than eight characters, and a send through a channel
-    the bridge does not serve are not seen.
+  - What this catches is an exact value leaving, whole or under up to four layers of encoding
+    (`egress.MAX_LAYERS`), and a credential split across the arguments of one call. A
+    paraphrase, a value split across calls, a value shorter than eight characters, and a send
+    through a channel the bridge does not serve are not seen. *Amended in 1.22.1:* this said
+    "whole or encoded once", which the layered decoding and split rejoining of 1.21.0 outgrew.
   - *Amended before release:* **sibling sessions** (`fiduciary.flow`). The proxies
     `fiduciary protect` starts for one client (the process that is their parent) share a file
     under the protect root: each publishes the labels it holds (`untrusted`, `secret`,

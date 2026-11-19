@@ -41,18 +41,25 @@ DESCRIPTION: Final = (
     "did against limits your team signed, and proves it offline."
 )
 
+_BENCH: Final = {
+    row["operation"]: f"{row['p50_ms']:.1f} ms"
+    for row in json.loads((files("fiduciary.report") / "benchmarks.json").read_text("utf-8"))[
+        "latency"
+    ]
+}
+"""Each benchmarked operation's median, as the front page's questions quote it."""
+
 COPY: Final[dict[str, Any]] = {
     "badge": {
-        "version": "1.21",
-        "text": "Cross-session memory provenance, evasion hardening, and measured benchmarks",
-        "href": "benchmarks/",
+        "version": "1.22",
+        "text": "New: test a chatbot against ten chatbot laws",
+        "href": "chatbots/",
     },
     "headline": "Let AI agents change real systems. Keep only the changes you approved.",
     "lede": (
-        "Your agent's rules live in its prompt, and prompts get trimmed. Fiduciary sits between "
-        "the agent and its tools. It pins what each tool is, holds the dangerous calls for your "
-        "passkey, keeps what the agent read from leaving, and puts back what a failed turn "
-        "changed. Every decision is a signed record anyone can check offline."
+        "Fiduciary sits between your agent and its tools. It holds risky calls for your passkey, "
+        "refuses sends that carry a secret the agent read, and puts back what a failed turn "
+        "changed. Every decision is signed, and anyone can check it offline."
     ),
     "demo": "Open the interactive demo",
     "workflows": "{workflows} workflows",
@@ -85,9 +92,10 @@ COPY: Final[dict[str, Any]] = {
                 "key": "clients",
                 "tab": "I use Claude Code, Cursor or Claude Desktop",
                 "text": (
-                    "No code. Every MCP server in the client's file gets a proxy in front: its "
-                    "tools pinned, its writes made once, a passkey for what needs approval, and a "
-                    "fetch or send that carries what the agent read refused."
+                    "No code. Each MCP server in your client's config gets a proxy in front of "
+                    "it. The proxy pins the server's tools, makes each write once, asks for your "
+                    "passkey when a call needs approval, and refuses a send that carries what the "
+                    "agent read."
                 ),
                 "commands": [
                     "fiduciary protect --claude-desktop --apply",
@@ -154,10 +162,9 @@ COPY: Final[dict[str, Any]] = {
         "title": "Fiduciary, and the two engines under it",
         "lede": (
             "A gateway decides whether an agent may call a tool. Fiduciary decides whether what "
-            "the call changed may be kept, and leaves evidence for someone who trusts neither the "
-            "agent nor the operator. Installing interlock-fiduciary brings both engines with it: "
-            "Interlock stages and measures each change, and AgentGov keeps the budgets. Each "
-            "also works on its own."
+            "the call changed may be kept, and signs evidence an outsider can check. Installing "
+            "it brings both engines: Interlock stages and measures each change, and AgentGov "
+            "keeps the budgets."
         ),
     },
     "packages": [
@@ -260,22 +267,12 @@ COPY: Final[dict[str, Any]] = {
                 "They need no access to your systems.",
             ],
         ],
+        "more": "How each kind of system is measured, and which check stopped which plan →",
         "fork": [
             "Outside the mandate?",
             "It can still go ahead if two of three named principals sign a warrant for that "
             "exact change.",
         ],
-    },
-    "ladder": {
-        "kicker": "The measurement ladder",
-        "title": "How much is known before a change is final",
-        "lede": (
-            "A database transaction shows every row before commit. An API can only be predicted, "
-            "then read back. Each system is placed on the highest rung it supports, and every "
-            "receipt says which rung measured it."
-        ),
-        "everywhere": "Every workflow, for its outbound requests",
-        "none": "Not in this run",
     },
     "numbers": {
         "stats": [
@@ -294,6 +291,38 @@ COPY: Final[dict[str, Any]] = {
         ],
         "counted": "Counted from the run this page was built from: {mode}.",
         "how": "Which check stopped which plan →",
+        "runs": "Step through a workflow:",
+    },
+    "faq": {
+        "kicker": "Questions",
+        "title": "Before you install it",
+        "items": [
+            [
+                "Does it need an account or a cloud service?",
+                "No. It is open source under Apache-2.0 and runs on your machine or your "
+                "servers, and its records stay where the deployment is.",
+            ],
+            [
+                "Does a model decide what is allowed?",
+                "No. Each check is a fixed rule over what the change measured and what the "
+                "session read, so the same records always get the same verdict. The model only "
+                "makes the calls being checked.",
+            ],
+            [
+                "What does it not catch?",
+                "A secret the model paraphrases or splits across calls, a value shorter than "
+                "eight characters, and anything sent through a channel the proxy does not sit "
+                "on, such as the agent's own shell. Every guide lists its limits.",
+            ],
+            [
+                "Does it slow my agent down?",
+                "Reads pass straight through. A write is staged and checked on your machine "
+                "before it is made: at the median, "
+                f"{_BENCH['Interlock SQLite stage, diff and commit']} for a SQLite change and "
+                f"{_BENCH['Interlock directory stage and diff']} for a directory, on the machine "
+                "the benchmarks ran on. A call that needs approval waits for a person.",
+            ],
+        ],
     },
     "closing": {
         "title": "Watch it refuse a change. Then check the proof yourself.",
@@ -336,7 +365,7 @@ COPY: Final[dict[str, Any]] = {
 NAV: Final = (
     ("home", "Overview"),
     ("run", "Interactive demo"),
-    ("sandbox", "Live sandbox"),
+    ("sandbox", "Recorded calls"),
     ("verify", "Verify a bundle"),
 )
 """The site's views, as the script's top bar lists them."""
@@ -641,42 +670,14 @@ def _loop(c: Mapping[str, Any]) -> str:
             f'<div class="lp-step-icon">{_icon(_STEP_ICONS[i], 18)}</div>'
             f"<h3>{_e(title)}</h3><p>{_e(text)}</p>{fork}</div></li>"
         )
-    return _section("lp-sec lp-alt", "loop", f'{_head(loop)}<ol class="lp-steps">{steps}</ol>')
+    more = f'<p class="lp-more"><a href="#/how">{_e(loop["more"])}</a></p>'
+    return _section(
+        "lp-sec lp-alt", "loop", f'{_head(loop)}<ol class="lp-steps">{steps}</ol>{more}'
+    )
 
 
-def _ladder(c: Mapping[str, Any], data: Mapping[str, Any]) -> str:
-    overview = data.get("overview") or {}
-    if not overview:
-        return ""
-    strength = {"T": 4, "P": 3, "V": 2, "R": 1}
-    words, cards = c["ladder"], ""
-    for rung in overview.get("ladder", []):
-        letter, name = rung["class"], str(rung["name"])
-        k = strength.get(letter, 0)
-        here = [
-            r for r in overview.get("industries", []) if r.get("class") == letter and r.get("ran")
-        ]
-        links = (
-            f"<span>{_e(words['everywhere'])}</span>"
-            if letter == "R"
-            else "".join(
-                f'<a href="#/run/{_e(r["key"])}">{_e(r.get("workflow") or r["industry"])}</a>'
-                for r in here
-            )
-            or f'<span class="muted">{_e(words["none"])}</span>'
-        )
-        meter = "".join(f'<i class="{"on" if i <= k else ""}"></i>' for i in range(1, 5))
-        cards += (
-            f'<article class="lp-card lp-rung"><div class="lp-rung-head">'
-            f'<span class="lp-letter">{_e(letter)}</span><div><h3>{_e(name[:1].upper() + name[1:])}'
-            f'</h3><div class="lp-meter" title="{k} of 4">{meter}</div></div></div>'
-            f'<p>{_e(rung["promise"])}</p><p class="lp-where">{_e(rung["where"])}</p>'
-            f'<div class="lp-here">{links}</div></article>'
-        )
-    return _section("lp-sec", "ladder", f'{_head(words)}<div class="lp-rungs">{cards}</div>')
-
-
-def _numbers(c: Mapping[str, Any], n: Mapping[str, object]) -> str:
+def _numbers(c: Mapping[str, Any], n: Mapping[str, object], rows: list[Mapping[str, Any]]) -> str:
+    """The run's numbers, right under the hero (1.22.1), and a link to each workflow it ran."""
     if not n.get("workflows"):
         return ""
     words = c["numbers"]
@@ -685,11 +686,29 @@ def _numbers(c: Mapping[str, Any], n: Mapping[str, object]) -> str:
         f"<span>{_e(_fill(label, n))}</span><small>{_e(_fill(note, n))}</small></div>"
         for value, label, note in words["stats"]
     )
+    runs = "".join(
+        f'<a href="#/run/{_e(r["key"])}">{_e(r.get("workflow") or r["industry"])}</a>' for r in rows
+    )
     return _section(
         "lp-sec lp-numbers",
-        None,
+        "numbers",
         f'<div class="lp-stats">{stats}</div><p class="lp-stats-note">'
-        f'{_e(_fill(words["counted"], n))} <a href="#/how">{_e(words["how"])}</a></p>',
+        f'{_e(_fill(words["counted"], n))} <a href="#/how">{_e(words["how"])}</a></p>'
+        f'<div class="lp-runs"><span>{_e(words["runs"])}</span>{runs}</div>',
+    )
+
+
+def _faq(c: Mapping[str, Any]) -> str:
+    """Four questions a first visitor asks (1.22.1), each answered in full."""
+    x = c["faq"]
+    items = "".join(
+        f'<div class="lp-card lp-q"><h3>{_e(q)}</h3><p>{_e(a)}</p></div>' for q, a in x["items"]
+    )
+    return _section(
+        "lp-sec",
+        "faq",
+        f'<header class="lp-head"><span class="lp-kicker">{_e(x["kicker"])}</span>'
+        f'<h2>{_e(x["title"])}</h2></header><div class="lp-faq">{items}</div>',
     )
 
 
@@ -732,11 +751,11 @@ def front_page(data: Mapping[str, Any]) -> str:
     n, mark = counts(data), _Marks()
     main = (
         _hero(COPY, n, _ran(data))
+        + _numbers(COPY, n, _ran(data))
         + _doors(COPY)
         + _stack(COPY, _versions(data), mark)
         + _loop(COPY)
-        + _ladder(COPY, data)
-        + _numbers(COPY, n)
+        + _faq(COPY)
         + _closing(COPY, mark)
     )
     return "\n".join(

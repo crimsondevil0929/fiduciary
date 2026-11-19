@@ -681,7 +681,7 @@
   }
   function scenariosTab() {
     var draw = PACK ? function (x) { return (PACK_ACTS[x.key] || packCalls)(x); } : function (x) { return ACTS[x.key](x); };
-    return h("div", { class: "scn-tab" }, scenarioLayout(DEMO.acts, draw), h("p", { class: "tab-note" }, scenarioLede()));
+    return h("div", { class: "scn-tab" }, h("p", { class: "tab-note" }, scenarioLede()), scenarioLayout(DEMO.acts, draw));
   }
   // -- a domain pack's acts --------------------------------------------------------------
   function mandateOf(a) { return a.authority.mandates.filter(function (m) { return !m.parent; })[0] || a.authority.mandates[0] || {}; }
@@ -1060,6 +1060,9 @@
     if (!OVERVIEW) return null;
     return OVERVIEW.industries.filter(function (r) { return r.key === key; })[0] || null;
   }
+  // The name a workflow goes by on every view: the overview's ("Refunds & payments"), not its
+  // pack's industry ("Fintech"), so the demo, the recorded calls and the verifier agree.
+  function shownName(key, fallback) { var r = industryRow(key); return (r && r.workflow) || fallback; }
   function tabList() { return DEMO ? TABS : TABS.slice(1); }
   function use(i) {
     activePage = i; P = PAGES[i]; DEMO = P.demo; PACK = DEMO && DEMO.domain ? DEMO.domain : null;
@@ -1254,7 +1257,7 @@
         h("div", { class: "here" }, rung["class"] === "R" ? "Every workflow here, for its outbound requests." : here.length ? here.join(", ") : "—"));
     }));
     var matrixCard = h("div", { class: "card pad acceptance" },
-      h("div", { class: "ind-head" }, h("b", null, "Customer acceptance matrix"), h("span", { class: "spacer" }), pill(acc.passed + " of " + acc.cases + " pass", "good")),
+      h("div", { class: "ind-head" }, h("b", null, "Acceptance matrix"), h("span", { class: "spacer" }), pill(acc.passed + " of " + acc.cases + " pass", "good")),
       h("p", { class: "small" }, "Live Claude models (" + acc.models.join(", ") + ") worked " + acc.domains.length + " unrelated domains on one Interlock engine: " + acc.domains.join("; ") + ". They proposed " + acc.plans.proposed + " plans, " + acc.plans.committed + " committed and " + acc.plans.refused + " were refused by a check. AgentGov metered $" + acc.metered_usd + " of model spend."),
       h("p", { class: "small muted" }, acc.note + " Source: " + acc.source + ", recorded " + acc.generated + " on interlock " + acc.interlock + "."));
     return h("main", { id: "how" }, h("div", { class: "wrap" },
@@ -1411,32 +1414,28 @@
           h("div", { class: "lp-node" }, h("span", null, String(i + 1))),
           h("div", { class: "lp-step-body" }, h("div", { class: "lp-step-icon" }, icon(STEP_ICONS[i], 18)), h("h3", null, st[0]), h("p", null, st[1]),
             i === 2 ? h("div", { class: "lp-fork" }, h("b", null, L.fork[0]), " " + L.fork[1]) : null));
-      }))));
-  }
-  function ladderSection() {
-    if (!OVERVIEW) return null;
-    var strength = { T: 4, P: 3, V: 2, R: 1 };
-    return h("section", { class: "lp-sec", id: "ladder" }, h("div", { class: "wrap" },
-      lpHead(C.ladder),
-      h("div", { class: "lp-rungs" }, OVERVIEW.ladder.map(function (rung) {
-        var k = strength[rung["class"]] || 0;
-        var here = OVERVIEW.industries.filter(function (r) { return r["class"] === rung["class"] && r.ran; });
-        return h("article", { class: "lp-card lp-rung" },
-          h("div", { class: "lp-rung-head" }, h("span", { class: "lp-letter" }, rung["class"]), h("div", null, h("h3", null, rung.name.charAt(0).toUpperCase() + rung.name.slice(1)), h("div", { class: "lp-meter", title: k + " of 4" }, [1, 2, 3, 4].map(function (i) { return h("i", { class: i <= k ? "on" : "" }); })))),
-          h("p", null, rung.promise),
-          h("p", { class: "lp-where" }, rung.where),
-          h("div", { class: "lp-here" }, rung["class"] === "R" ? h("span", null, C.ladder.everywhere) : here.length ? here.map(function (r) {
-            return h("a", { href: "#/run/" + r.key, onclick: function (ev) { ev.preventDefault(); openPage(r.key); } }, r.workflow || r.industry);
-          }) : h("span", { class: "muted" }, C.ladder.none)));
-      }))));
+      })),
+      h("p", { class: "lp-more" }, h("a", { href: "#/how", onclick: function (ev) { ev.preventDefault(); go("how"); } }, L.more))));
   }
   function numbersSection() {
     if (!OVERVIEW) return null;
     var n = counted();
-    return h("section", { class: "lp-sec lp-numbers" }, h("div", { class: "wrap" },
+    // Right under the hero (1.22.1), with a link to each workflow the run ran.
+    var ran = OVERVIEW.industries.filter(function (r) { return r.ran; });
+    return h("section", { class: "lp-sec lp-numbers", id: "numbers" }, h("div", { class: "wrap" },
       h("div", { class: "lp-stats" }, C.numbers.stats.map(function (st) { return h("div", { class: "lp-stat" }, h("b", { class: "tnum" }, fill(st[0], n)), h("span", null, fill(st[1], n)), h("small", null, fill(st[2], n))); })),
       h("p", { class: "lp-stats-note" }, fill(C.numbers.counted, n) + " ",
-        h("a", { href: "#/how", onclick: function (ev) { ev.preventDefault(); go("how"); } }, C.numbers.how))));
+        h("a", { href: "#/how", onclick: function (ev) { ev.preventDefault(); go("how"); } }, C.numbers.how)),
+      h("div", { class: "lp-runs" }, h("span", null, C.numbers.runs), ran.map(function (r) {
+        return h("a", { href: "#/run/" + r.key, onclick: function (ev) { ev.preventDefault(); openPage(r.key); } }, r.workflow || r.industry);
+      }))));
+  }
+  function faqSection() {
+    // Four questions a first visitor asks (1.22.1), each answered in full.
+    var Q = C.faq;
+    return h("section", { class: "lp-sec", id: "faq" }, h("div", { class: "wrap" },
+      h("header", { class: "lp-head" }, h("span", { class: "lp-kicker" }, Q.kicker), h("h2", null, Q.title)),
+      h("div", { class: "lp-faq" }, Q.items.map(function (x) { return h("div", { class: "lp-card lp-q" }, h("h3", null, x[0]), h("p", null, x[1])); }))));
   }
   function closingSection() {
     var X = C.closing;
@@ -1452,7 +1451,7 @@
     view = "run"; use(firstWorkflow()); TAB = null; setRoute(); render(); window.scrollTo(0, 0);
   }
   function home() {
-    return h("main", { id: "home", class: "lp" }, hero(), doorsSection(), stackSection(), loopSection(), ladderSection(), numbersSection(), closingSection());
+    return h("main", { id: "home", class: "lp" }, hero(), numbersSection(), doorsSection(), stackSection(), loopSection(), faqSection(), closingSection());
   }
   function siteFooter() {
     var F = C.footer;
@@ -1734,7 +1733,7 @@
     return h("footer", null, h("div", { class: "wrap" },
       h("b", { class: "ink2" }, "Notes from the verifier on " + current + ".fidb"),
       h("ul", null, a.notes.map(function (n) { return h("li", null, n); })),
-      h("p", { style: "margin-top:10px" }, "Verifier: fiduciary " + a.verifier.fiduciary + ", interlock-escrow " + a.verifier.interlock + ", interlock-agentgov " + a.verifier.agentgov + ". Optional upstream features available: " + (Object.keys(up).filter(function (k) { return up[k]; }).join(", ") || "none") + (Object.keys(up).some(function (k) { return !up[k]; }) ? "; not available: " + Object.keys(up).filter(function (k) { return !up[k]; }).join(", ") : "") + ". Generated " + when(a.generated_at) + "."),
+      h("p", { style: "margin-top:10px" }, "Verifier: fiduciary " + a.verifier.fiduciary + ", interlock-escrow " + a.verifier.interlock + ", interlock-agentgov " + a.verifier.agentgov + ". " + (SITE ? "" : "Optional upstream features available: " + (Object.keys(up).filter(function (k) { return up[k]; }).join(", ") || "none") + (Object.keys(up).some(function (k) { return !up[k]; }) ? "; not available: " + Object.keys(up).filter(function (k) { return !up[k]; }).join(", ") : "") + ". ") + "Generated " + when(a.generated_at) + "."),
       h("p", { style: "margin-top:6px" }, "The evidence is signed and can be checked offline. That makes tampering visible; it doesn't prevent it. " + (LIVE.on ? "Served by the console on loopback; the page talks only to it." : "Nothing on this page is sent anywhere.")),
       docsLine()));
   }
@@ -1758,7 +1757,7 @@
     var out = [];
     if (SITE && hasRun()) {
       out.push(["home", "Overview"], ["run", "Interactive demo"]);
-      if (DEMO) out.push(["sandbox", "Live sandbox"]);
+      if (DEMO) out.push(["sandbox", "Recorded calls"]);
       out.push(["verify", "Verify a bundle"]);
       return out;
     }
@@ -1858,7 +1857,7 @@
     return RUNS.map(function (pg) {
       var d = pg.demo && pg.demo.domain ? pg.demo.domain : null;
       var a = pg.attestations[pg.primary];
-      return { id: d ? d.key : "fintech", name: d ? d.industry : "Fintech", kind: "bundle", page: pg, tickets: a.tickets.length,
+      return { id: d ? d.key : "fintech", name: shownName(d ? d.key : "fintech", d ? d.industry : "Fintech"), kind: "bundle", page: pg, tickets: a.tickets.length,
         open: recordedTickets(pg).filter(function (t) { return t.status === "open"; }).length, principals: a.authority.charter.principals };
     });
   }
@@ -2298,9 +2297,9 @@
     var out = [];
     RUNS.forEach(function (pg) {
       var d = pg.demo && pg.demo.domain ? pg.demo.domain : null, dir = d && PAGES.length > 1 && pg !== ROOT ? d.key + "/" : "";
-      Object.keys(pg.attestations).forEach(function (n) { out.push({ path: dir + n + ".fidb", label: (d ? d.industry : "Fintech") + " · " + n + ".fidb", att: pg.attestations[n], page: pg }); });
+      Object.keys(pg.attestations).forEach(function (n) { out.push({ path: dir + n + ".fidb", label: shownName(d ? d.key : "fintech", d ? d.industry : "Fintech") + " · " + n + ".fidb", att: pg.attestations[n], page: pg }); });
       if (pg.demo) pg.demo.acts.forEach(function (x) {
-        if (x.key === "trust-center") x.customers.forEach(function (c) { out.push({ path: dir + c.file, label: (d ? d.industry : "") + " · " + c.customer + " (sealed)", customer: c, page: pg }); });
+        if (x.key === "trust-center") x.customers.forEach(function (c) { out.push({ path: dir + c.file, label: shownName(d ? d.key : "", d ? d.industry : "") + " · " + c.customer + " (sealed)", customer: c, page: pg }); });
       });
     });
     return out;
@@ -2497,12 +2496,12 @@
     var doms = sbDomains();
     if (!SB.key || !doms.some(function (d) { return d.key === SB.key; })) SB.key = (PACK && doms.some(function (d) { return d.key === PACK.key; })) ? PACK.key : doms[0].key;
     var dom = doms.filter(function (d) { return d.key === SB.key; })[0];
-    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, "Sandbox"), h("h2", null, LIVE.on ? "Try a call on each kind of system" : "Every call from the demo run, system by system"),
+    var head = h("div", { class: "sec-head" }, h("span", { class: "kicker" }, LIVE.on ? "Sandbox" : "Recorded calls"), h("h2", null, LIVE.on ? "Try a call on each kind of system" : "Every call from the demo run, system by system"),
       h("p", null, LIVE.on
         ? "Each workflow gets its own deployment, built fresh in a scratch directory that the console deletes when it stops. It has the same engine, mandate, checks and approvers as the recorded run, on SQLite, Git, a directory of files, a Kubernetes API server, a FHIR server or a JSON REST API. A call goes through the input gateway, and then the stack stages and measures it. Nothing here touches a recorded run on disk."
-        : "Each recorded call, with what the gateway decided and what the stack measured. To try new calls against a scratch deployment of each workflow, start the console: fiduciary demo --out <this directory> --serve."));
-    var picker = h("div", { class: "seg dom-seg", role: "group", "aria-label": "Industry" }, doms.map(function (d) {
-      return h("button", { "aria-pressed": d.key === SB.key ? "true" : "false", onclick: function () { SB.key = d.key; SB.error = null; render(); } }, rungChip(d.rung, d.substrate), d.industry);
+        : "Each recorded call, with what the gateway decided and what the stack measured. To make calls of your own against a fresh copy of each workflow, run the console on your machine: pip install interlock-fiduciary, then fiduciary demo --replay --out demo --serve."));
+    var picker = h("div", { class: "seg dom-seg", role: "group", "aria-label": "Workflow" }, doms.map(function (d) {
+      return h("button", { "aria-pressed": d.key === SB.key ? "true" : "false", onclick: function () { SB.key = d.key; SB.error = null; render(); } }, rungChip(d.rung, d.substrate), shownName(d.key, d.industry));
     }));
     var body = LIVE.on ? liveSandbox(dom) : recordedSandbox(dom);
     return h("section", { id: "sandbox" }, h("div", { class: "wrap" }, head, picker, body));
@@ -2513,7 +2512,7 @@
       SB.opening[dom.key] = true; SB.busy = true;
       api("POST", "sandbox/" + dom.key + "/open", {}).then(function (p) { SB.busy = false; SB.profiles[dom.key] = p; refreshStatus(); }).catch(failed(SB));
     }
-    if (!prof) return h("div", { class: "card pad", style: "margin-top:14px" }, SB.error ? errorLine(SB.error) : busyLine("Building the " + dom.industry + " sandbox: its charter, mandate and keys, and its " + dom.substrate + "…"));
+    if (!prof) return h("div", { class: "card pad", style: "margin-top:14px" }, SB.error ? errorLine(SB.error) : busyLine("Building the " + shownName(dom.key, dom.industry) + " sandbox: its charter, mandate and keys, and its " + dom.substrate + "…"));
     var calls = SB.calls[dom.key] || [];
     var presets = h("div", { class: "presets" }, prof.presets.map(function (p) {
       var tag = p.expect === "commits" ? pill("COMMITS", "good") : p.expect === "refused" ? pill("HIDDEN CONSEQUENCE", "warn") : pill("HELD FOR 2 OF 3", "info");
@@ -2536,7 +2535,7 @@
       } }, "Run the call")));
     var led = prof.ledger;
     var ledger = led ? h("p", { class: "small muted" }, "Ledger · " + led.scope + ": " + money(led.available) + " of " + money(led.envelope) + " available" + (led.halted ? " · PAUSED" : "") + Object.keys(led.units || {}).map(function (u) { return " · " + u + " " + num(led.units[u].available) + " of " + num(led.units[u].envelope); }).join("")) : null;
-    var left = h("div", { class: "card pad sb-left" }, h("div", { class: "line" }, h("b", null, prof.industry), rungChip(prof.rung), h("span", { class: "small muted" }, prof.measurement + " on " + prof.substrate), h("span", { class: "spacer" }),
+    var left = h("div", { class: "card pad sb-left" }, h("div", { class: "line" }, h("b", null, shownName(dom.key, prof.industry)), rungChip(prof.rung), h("span", { class: "small muted" }, prof.measurement + " on " + prof.substrate), h("span", { class: "spacer" }),
       h("button", { class: "btn sm", disabled: SB.busy ? "disabled" : null, onclick: function () { SB.busy = true; SB.error = null; render(); api("POST", "sandbox/" + dom.key + "/reset", {}).then(function (p) { SB.busy = false; SB.profiles[dom.key] = p; SB.calls[dom.key] = []; if (DESK.dep === p.id) selectDep(p.id); refreshStatus(); }).catch(failed(SB)); } }, "Reset")),
       presets, composer, ledger);
     var right = h("div", { class: "sb-right" }, SB.busy ? h("div", { class: "card pad" }, busyLine("Staging and measuring…")) : null, errorLine(SB.error),
@@ -2594,7 +2593,7 @@
     pg.demo.acts.forEach(function (x) { (x.calls || (x.call ? [x.call] : [])).forEach(function (c) { if (c && c.tool) calls.push({ act: x, call: c }); }); });
     var pick = SB.step[dom.key] || 0;
     if (pick >= calls.length) pick = 0;
-    var list = h("div", { class: "card pad sb-left" }, h("div", { class: "side-label" }, "Recorded calls · " + dom.industry), h("div", { class: "tk-list" }, calls.map(function (e, i) {
+    var list = h("div", { class: "card pad sb-left" }, h("div", { class: "side-label" }, "Recorded calls · " + shownName(dom.key, dom.industry)), h("div", { class: "tk-list" }, calls.map(function (e, i) {
       var m = e.call.measured;
       var tag = e.call.gateway && e.call.gateway.decision !== "PERMIT" ? pill("DENIED", "bad") : m ? (m.committed ? pill("COMMITTED", "good") : m.compensated ? pill("PUT BACK", "warn") : pill("REFUSED", "bad")) : pill(String(e.call.outcome || "—").toUpperCase(), "permit");
       return h("button", { class: "tk" + (i === pick ? " on" : ""), onclick: function () { SB.step[dom.key] = i; render(); } }, h("span", { class: "tk-top" }, tag, h("b", { class: "mono" }, e.call.tool)), h("span", { class: "tk-id small muted" }, "Scenario " + e.act.n + " · " + e.act.title));

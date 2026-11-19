@@ -6,6 +6,40 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+### Changed
+
+- **The site's front page.** The text under the headline says what Fiduciary does in three
+  sentences (57 words to 42), the release badge points at 1.22.0's chatbot law tests instead of
+  1.21.0's notes, the MCP client tab says what the proxy does in whole sentences, and the
+  stack section's text is shorter.
+- **The front page's order.** The run's numbers come right under the hero, with a link to each
+  workflow the run ran. The measurement ladder is left to the How it works view, which already
+  holds it word for word, and the loop section links there. Four questions a first visitor
+  asks (an account, a model deciding, what it does not catch, the overhead) come before the
+  closing card; the overhead answer reads its medians from `benchmarks.json`. On a phone the
+  four numbers sit two by two.
+- **The demo's scenarios tab** opens on the paragraph that says how each call is checked and
+  how the run was made, instead of ending on it.
+- **One name per workflow.** The recorded calls, the bundle verifier and the approvals desk use
+  the names the demo uses ("Refunds & payments", "Workspace agent"), not the packs' industry
+  names ("Fintech", "Platform ops"). On the static site the "Live sandbox" view is now
+  "Recorded calls", since it makes no calls, and its text gives the command that starts a
+  console with a live sandbox (`fiduciary demo --replay --out demo --serve`). The public site
+  no longer lists the verifier's optional upstream features, and the acceptance matrix is no
+  longer called a customer acceptance matrix: it is a recorded test run, not customers.
+- **The benchmarks page** is recorded again on 1.22.0 and says which release its numbers came
+  from. Its limits are given as numbers (four layers of encoding, eight characters, three
+  retries) instead of code constants, and its steps start from a clone of the repository,
+  where `scripts/record_benchmarks.py` lives.
+- Four of the browser verifier's check names are now whole sentences, among them "Every undo
+  put back exactly what its plan changed".
+
+### Fixed
+
+- The outbound guide, the README and the specification said a value leaving is caught "whole
+  or encoded once". Since 1.21.0 it is looked for under up to four layers of encoding, and a
+  credential split across the arguments of one call is rejoined. The specification is amended.
+
 ## [1.22.0] - 2026-11-18
 
 A chatbot conformance lab, `fiduciary conform`: an arm of the package that shares its
