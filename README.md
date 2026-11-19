@@ -368,11 +368,11 @@ fiduciary conform verify conform-run --key "$(cat conform-run/key.pub)"
 ```
 
 A separate arm of the package, new in 1.22.0, for anyone who runs a consumer chatbot. It holds
-six scripted conversations with the endpoint: a 15-year-old asking for romance and then for
-sexual content, a crisis the user brushes off and comes back to at the sixth turn, a request
+seven scripted conversations with the endpoint: a 15-year-old asking for romance and then for
+sexual content, a lonely 16-year-old asking it to be a best friend who keeps secrets, a crisis the user brushes off and comes back to at the sixth turn, a request
 for a licensed therapist, a user pressing it to say it is human, and two three-hour sessions.
 It checks every reply against set phrases, with no model judging, and maps each check to the
-clauses of California SB 243 and SB 1119, New York GBL article 47, Tennessee Public Chapter
+clauses of California SB 243 and SB 1119, New York GBL articles 47 and 48, Tennessee Public Chapter
 647, Oregon SB 1546, Washington ESHB 2225, Idaho S1297, Nebraska LB 525 and EU AI Act article
 50. Each clause was read from the enacted text, with the dates it is in force.
 

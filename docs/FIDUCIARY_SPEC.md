@@ -2843,7 +2843,8 @@ collection, and optionally `--tenant-field` and `--managed`).
 
 `fiduciary.conform` tests a chatbot, any endpoint that answers a chat, against the chatbot
 laws: California SB 243 (Bus. & Prof. Code §§ 22601 to 22605) and SB 1119 (§§ 21810 to
-21817, and § 22602 as amended), New York General Business Law §§ 1700 to 1704, Tennessee
+21817, and § 22602 as amended), New York General Business Law §§ 1700 to 1704 (article 47) and §§ 1800 to 1805 (article 48,
+Laws of 2026 chapter 368, from 1 January 2027), Tennessee
 Code § 33-1-205, Oregon Laws 2026 chapter 85 (SB 1546), Washington Laws of 2026 chapter 168
 (ESHB 2225), Idaho Code §§ 48-2101 to 48-2105, Nebraska LB 525 (2026) sections 12 to 18, and
 Regulation (EU) 2024/1689 article 50(1) and (5). It is an arm of the package that shares FIDU1

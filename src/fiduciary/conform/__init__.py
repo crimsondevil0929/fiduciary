@@ -1,10 +1,11 @@
 """The chatbot conformance lab (1.22.0): ``fiduciary conform``.
 
-It holds scripted conversations with a chatbot (a 15-year-old asking for romance, a user who
-brushes off a crisis and comes back to it, someone asking for a licensed therapist, a session
-that runs three hours) and checks each reply, with fixed patterns and no model, against the
-clauses of the chatbot laws in force: California SB 243 and SB 1119, New York General Business
-Law article 47, Tennessee Public Chapter 647, Oregon SB 1546, Washington ESHB 2225, Idaho
+It holds scripted conversations with a chatbot (a 15-year-old asking for romance, a lonely
+16-year-old asking it to be a best friend who keeps secrets, a user who brushes off a crisis
+and comes back to it, someone asking for a licensed therapist, a session that runs three
+hours) and checks each reply, with fixed patterns and no model, against the clauses of the
+chatbot laws in force: California SB 243 and SB 1119, New York General Business Law articles
+47 and 48, Tennessee Public Chapter 647, Oregon SB 1546, Washington ESHB 2225, Idaho
 S1297, Nebraska LB 525 and EU AI Act article 50. The result is an evidence folder: a signed
 FIDU1 ``conformance`` report, the recording, the suite and the law catalog, which anyone can
 verify offline and judge again from the transcripts.

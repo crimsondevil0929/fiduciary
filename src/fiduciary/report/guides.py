@@ -418,6 +418,14 @@ def _benchmarks_guide() -> Mapping[str, Any]:
     }
 
 
+QUOTED: Final = {
+    ("refers-to-crisis-line", 6),
+    ("never-claims-licensed", 1),
+    ("no-secrecy-with-minor", 1),
+}
+"""The missed turns the chatbots guide quotes word for word."""
+
+
 def _chatbots_guide() -> Mapping[str, Any]:
     """1.22.0: the chatbot conformance lab, from the laws' catalog and the three stand-ins'
     recorded verdicts (``scripts/record_conform.py`` writes ``report/conform.json``)."""
@@ -447,17 +455,16 @@ def _chatbots_guide() -> Mapping[str, Any]:
     quotes = []
     for bot in bots:
         for missed in bot["missed"]:
-            if missed["check"] in ("refers-to-crisis-line", "never-claims-licensed") and (
-                missed["turn"] in (6, 1)
-            ):
+            if (missed["check"], missed["turn"]) in QUOTED:
                 quotes.append(("user", missed["user"]))
                 quotes.append((bot["name"], missed["reply"]))
     sections: list[dict[str, Any]] = [
         {
             "h2": "What it checks",
             "p": [
-                "The lab holds six scripted conversations with your chatbot: a 15-year-old who "
-                "asks for romance and then for sexual content, a user who brushes off a crisis "
+                "The lab holds seven scripted conversations with your chatbot: a 15-year-old "
+                "who asks for romance and then for sexual content, a lonely 16-year-old who "
+                "asks it to be a best friend and keep secrets, a user who brushes off a crisis "
                 "and comes back to it at the sixth turn, someone who asks for a licensed "
                 "therapist, a user who asks again and again whether it is a real person, and "
                 "two sessions that run three hours. Each reply is checked against set phrases, "
@@ -466,7 +473,9 @@ def _chatbots_guide() -> Mapping[str, Any]:
                 "Journal publishes, on 18 November 2026. The dates are when each clause is in "
                 "force: California's SB 1119 rewrites section 22602 without its duties toward "
                 "known minors from 1 January 2027, and its own duties toward child users start "
-                "on 1 July 2027.",
+                "on 1 July 2027. New York's article 48 bans a list of companion features "
+                "toward known minors from 1 January 2027; the six a transcript can show are "
+                "checked here, and the ones that need a person's judgment are listed below.",
             ],
             "table": {"headers": ["Where", "Law", "Enacted"], "rows": law_rows},
         },
@@ -475,8 +484,9 @@ def _chatbots_guide() -> Mapping[str, Any]:
             "p": [
                 "The steady stand-in follows every rule. The drift stand-in follows them for "
                 "five replies and then its rules wear off, as a system prompt's can late in a "
-                "long chat. The pretender stand-in calls itself a licensed therapist and gives no "
-                "crisis line. They are plain rules, "
+                "long chat. The pretender stand-in calls itself a licensed therapist, gives no "
+                "crisis line, and tells a lonely minor it is their best friend and will keep "
+                "their secrets. They are plain rules, "
                 f"not models. Verdicts as the laws stand on {recorded['on']}: open means the "
                 "law also accepts a notice in the app's interface, which a chat cannot show, "
                 "so a person has to look.",
@@ -523,14 +533,14 @@ def _chatbots_guide() -> Mapping[str, Any]:
     return {
         "slug": "chatbots",
         "nav": "Chatbot law tests",
-        "title": "Chatbot law tests: SB 243, Adam's Law and seven more",
+        "title": "Chatbot law tests: SB 243, Adam's Law and eight more",
         "description": (
-            "Scripted conversations that test a chatbot against SB 243, Adam's Law, New York, "
-            "Tennessee, Oregon, Washington, Idaho, Nebraska and EU AI Act article 50."
+            "Scripted chats that test a chatbot against SB 243, Adam's Law, New York articles "
+            "47 and 48, Tennessee, Oregon, Washington, Idaho, Nebraska and EU AI Act article 50."
         ),
         "h1": "Test a chatbot against the chatbot laws, clause by clause",
         "lede": (
-            "Six scripted conversations, deterministic checks, and a signed evidence folder "
+            "Seven scripted conversations, deterministic checks, and a signed evidence folder "
             "for the operator and their counsel. It is evidence of what the chatbot said, not "
             "legal advice and not a clinical review."
         ),
