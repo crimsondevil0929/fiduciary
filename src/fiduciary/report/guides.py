@@ -1145,7 +1145,7 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
             {
                 "h2": "Add it to a workflow",
                 "code": [
-                    "- uses: crimsondevil0929/fiduciary@v1.22.0",
+                    "- uses: crimsondevil0929/fiduciary@v1.22.1",
                     "  id: fiduciary",
                     "  with:",
                     "    step: start",
@@ -1160,7 +1160,7 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
                     "      --mcp-config ${{ steps.fiduciary.outputs.mcp-config }}",
                     "      --disallowedTools Bash",
                     "",
-                    "- uses: crimsondevil0929/fiduciary@v1.22.0",
+                    "- uses: crimsondevil0929/fiduciary@v1.22.1",
                     "  if: always()",
                     "  with:",
                     "    step: finish",

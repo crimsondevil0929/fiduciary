@@ -33,7 +33,7 @@ jobs:
 
       - name: Start the CI proxy
         id: fiduciary
-        uses: crimsondevil0929/fiduciary@v1.22.0
+        uses: crimsondevil0929/fiduciary@v1.22.1
         with:
           step: start
           mcp-config: .github/agent-mcp.json
@@ -54,7 +54,7 @@ jobs:
 
       - name: Finish, explain and keep the bundles
         if: always()
-        uses: crimsondevil0929/fiduciary@v1.22.0
+        uses: crimsondevil0929/fiduciary@v1.22.1
         with:
           step: finish
           comment: refusals

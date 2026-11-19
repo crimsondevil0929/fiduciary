@@ -296,14 +296,14 @@ write, with tools that can push, comment and read the job's secrets. `fiduciary 
 servers behind protected proxies for the length of the job, in a process of its own:
 
 ```yaml
-- uses: crimsondevil0929/fiduciary@v1.22.0
+- uses: crimsondevil0929/fiduciary@v1.22.1
   id: fiduciary
   with: { step: start, mcp-config: .github/agent-mcp.json, secrets: GITHUB_TOKEN }
   env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
 - uses: anthropics/claude-code-action@v1
   with:
     claude_args: --mcp-config ${{ steps.fiduciary.outputs.mcp-config }} --disallowedTools Bash
-- uses: crimsondevil0929/fiduciary@v1.22.0
+- uses: crimsondevil0929/fiduciary@v1.22.1
   if: always()
   with: { step: finish }
 ```
