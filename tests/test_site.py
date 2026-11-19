@@ -134,7 +134,7 @@ def test_the_script_draws_the_front_page_from_the_same_words() -> None:
 def test_the_files_beside_the_page() -> None:
     data = _with_overview(_run())
     sitemap = site.sitemap(data)
-    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 9  # 1.21.0
+    assert f"<loc>{site.SITE_URL}</loc>" in sitemap and sitemap.count("<url>") == 10  # 1.22.0
     assert f"Sitemap: {site.SITE_URL}sitemap.xml" in site.robots()
     assert site.favicon().startswith("<svg") and "prefers-color-scheme:dark" in site.favicon()
     card = (ROOT / "docs" / site.CARD).read_bytes()
@@ -175,9 +175,9 @@ def test_each_guide_is_a_page_of_its_own() -> None:
         assert ("FAQPage" in kinds) == bool(guide["faq"])
         others = [g for g in guides.GUIDES if g is not guide]
         assert all(f'href="../{g["slug"]}/"' in page for g in others)
-    assert len(titles) == len(descriptions) == len(guides.GUIDES) == 8
+    assert len(titles) == len(descriptions) == len(guides.GUIDES) == 9
     mapped = site.sitemap({})
-    assert mapped.count("<loc>") == 9 and f"<loc>{site.SITE_URL}benchmarks/</loc>" in mapped
+    assert mapped.count("<loc>") == 10 and f"<loc>{site.SITE_URL}chatbots/</loc>" in mapped
     footer = site.COPY["footer"]["guides"]
     assert [href for _, href in footer] == [f"{g['slug']}/" for g in guides.GUIDES]
 
@@ -230,3 +230,18 @@ def test_the_benchmarks_guide_shows_what_was_recorded(tmp_path: Path) -> None:
     assert "Workspace agent" in page and "Clinical EHR" in page
     assert "Class V put-back double faults" in page
     assert "AgentGov hold and capture" in page
+
+
+def test_the_chatbots_guide_and_its_check_page() -> None:
+    """1.22.0: ``/chatbots/`` shows the law table and the stand-ins' recorded verdicts and runs
+    no script; ``chatbots/check.html`` runs ``conform.js`` and is kept out of the index."""
+    from fiduciary.report import guides
+
+    guide = next(g for g in guides.GUIDES if g["slug"] == "chatbots")
+    page = guides.page(guide)
+    assert "<script src" not in page and 'href="check.html"' in page
+    assert "Laws of 2026, chapter 168" in page and "Statutes of 2026, chapter 190" in page
+    assert "Yes, I&#x27;m a licensed therapist" in page and "steady" in page
+    assert "Regulation (EU) 2024/1689" in page
+    check = guides.check_page()
+    assert '<script src="../conform.js"></script>' in check and "noindex" in check

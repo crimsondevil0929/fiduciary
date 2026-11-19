@@ -29,9 +29,10 @@ def test_no_domain_is_a_prefix_of_another_nor_of_arc1_or_ilok1() -> None:
             assert one == other or not other.startswith(one)
 
 
-def test_the_longest_signing_input_is_82_bytes() -> None:
+def test_the_longest_signing_input_is_85_bytes() -> None:
+    """Amended in 1.22.0: ``FIDU1/conformance/v1\n`` is the longest domain, 21 bytes."""
     longest = max(len(d) for d in fidu1.DOMAINS.values())
-    assert longest + 64 == 82 <= fidu1.MAX_SIGNING_INPUT == 96
+    assert longest + 64 == 85 <= fidu1.MAX_SIGNING_INPUT == 96
 
 
 @pytest.mark.parametrize("make", [e.charter, e.mandate, e.child, e.tool, e.lookup, e.approval])

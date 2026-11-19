@@ -38,6 +38,7 @@ from fiduciary.report import guides, site
 
 PUBLIC = ("before.fidb", "after.fidb", "pinned-keys.json", "charter.digest", "report.md")
 CARD = Path(__file__).resolve().parent.parent / "docs" / site.CARD
+CONFORM_JS = Path(__file__).resolve().parent.parent / "src" / "fiduciary" / "report" / "conform.js"
 
 
 def build(out: Path) -> list[Path]:
@@ -65,6 +66,9 @@ def build(out: Path) -> list[Path]:
     for guide in guides.GUIDES:
         (out / guide["slug"]).mkdir()
         (out / guide["slug"] / "index.html").write_text(guides.page(guide), encoding="utf-8")
+    # 1.22.0: the chatbot conformance lab's browser check, a page apart from its guide
+    (out / "chatbots" / "check.html").write_text(guides.check_page(), encoding="utf-8")
+    shutil.copyfile(CONFORM_JS, out / "conform.js")
     (out / "robots.txt").write_text(site.robots(), encoding="utf-8")
     (out / "favicon.svg").write_text(site.favicon(), encoding="utf-8")
     shutil.copyfile(CARD, out / site.CARD)

@@ -6,6 +6,34 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-11-18
+
+A chatbot conformance lab, `fiduciary conform`: an arm of the package that shares its
+signatures and verifier craft and nothing else. Requires `interlock-escrow>=1.12.0` as before;
+no Interlock or AgentGov change.
+
+### Added
+
+- **`fiduciary conform`** (`fiduciary.conform`, spec §10.11, F10-36 to F10-41): seven scripted
+  conversations with any OpenAI-style or plain HTTP chat endpoint, checked with fixed patterns
+  and no model against 41 clauses of California SB 243 and SB 1119, New York GBL articles 47
+  and 48, Tennessee Public Chapter 647, Oregon SB 1546, Washington ESHB 2225, Idaho S1297, Nebraska
+  LB 525 and EU AI Act article 50(1) and (5). Each clause was read from the enacted text on
+  2026-11-18 and carries the dates it is in force (SB 1119 drops § 22602(c) from 1 January 2027;
+  its own child duties start 1 July 2027; Washington's minor notice is hourly; New York's
+  article 48, chapter 368 of 2026, bans six testable companion features toward known minors
+  from 1 January 2027 and lists the ones that need judgment apart).
+- **A signed evidence folder**: a FIDU1 `conformance` report (new signing domain
+  `FIDU1/conformance/v1\n`, §3.4 amended: the longest signing input is now 85 bytes), with the
+  recording, the suite and the law catalog, verified offline by `fiduciary conform verify` and
+  in a browser by `report/conform.js` at `chatbots/check.html`, each judging every reply again
+  from the transcripts.
+- **Three stand-in chatbots** (`steady`, `drift`, `pretender`) with recordings, so
+  `fiduciary conform demo` runs at no cost, and `fiduciary conform stand-in` serves one on a
+  loopback OpenAI-style endpoint.
+- **`/chatbots/` guide** (sitemap 10) with the law table and the stand-ins' verdicts, and its
+  browser check page.
+
 ## [1.21.0] - 2026-11-15
 
 Provenance survives across sessions into agent memory, outbound inspection closes multi-layer

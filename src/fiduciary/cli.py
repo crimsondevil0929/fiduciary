@@ -3192,6 +3192,11 @@ def _parser() -> argparse.ArgumentParser:
     replaying.add_argument("--json", action="store_true", help="print each replay as JSON")
     replaying.set_defaults(handler=_replay)
 
+    # 1.22.0: the chatbot conformance lab, an arm of its own (fiduciary.conform)
+    from fiduciary.conform.cli import add as add_conform
+
+    add_conform(commands)
+
     ci = commands.add_parser(
         "ci",
         help="run an agent's MCP servers in CI behind protected proxies: untrusted event text "
