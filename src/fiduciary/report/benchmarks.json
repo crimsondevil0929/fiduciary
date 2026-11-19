@@ -2,36 +2,36 @@
   "versions": {
     "agentgov": "1.3.3",
     "interlock": "1.12.0",
-    "fiduciary": "1.21.0"
+    "fiduciary": "1.22.0"
   },
   "latency": [
     {
       "operation": "AgentGov hold and capture (SQLite ledger)",
       "samples": 100,
-      "p50_ms": 0.4,
-      "p95_ms": 0.87,
-      "p99_ms": 2.04
+      "p50_ms": 0.41,
+      "p95_ms": 0.66,
+      "p99_ms": 0.84
     },
     {
       "operation": "Interlock SQLite stage, diff and commit",
       "samples": 100,
-      "p50_ms": 1.6,
-      "p95_ms": 1.87,
-      "p99_ms": 2.18
+      "p50_ms": 1.57,
+      "p95_ms": 1.97,
+      "p99_ms": 3.11
     },
     {
       "operation": "Interlock directory stage and diff",
       "samples": 100,
-      "p50_ms": 3.09,
-      "p95_ms": 3.67,
-      "p99_ms": 4.73
+      "p50_ms": 3.05,
+      "p95_ms": 3.52,
+      "p99_ms": 3.79
     },
     {
       "operation": "Fiduciary FIDU1 Ed25519 verify",
       "samples": 100,
-      "p50_ms": 0.18,
+      "p50_ms": 0.19,
       "p95_ms": 0.19,
-      "p99_ms": 0.19
+      "p99_ms": 0.2
     },
     {
       "operation": "Fiduciary WebAuthn ES256 passkey verify",
@@ -45,14 +45,14 @@
       "samples": 100,
       "p50_ms": 0.11,
       "p95_ms": 0.12,
-      "p99_ms": 0.13
+      "p99_ms": 0.18
     },
     {
       "operation": "Cross-session memory fingerprint and recall",
       "samples": 100,
       "p50_ms": 0.02,
       "p95_ms": 0.03,
-      "p99_ms": 0.04
+      "p99_ms": 0.03
     }
   ],
   "workflows": [

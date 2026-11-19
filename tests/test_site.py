@@ -226,9 +226,13 @@ def test_the_benchmarks_guide_shows_what_was_recorded(tmp_path: Path) -> None:
 
     guide = next(g for g in guides.GUIDES if g["slug"] == "benchmarks")
     page = guides.page(guide)
-    assert "SHA256SUMS" in page and "MIN_LENGTH" in page and "bytes_sent" in page
+    assert "SHA256SUMS" in page and "eight characters" in page and "bytes_sent" in page
     assert "Workspace agent" in page and "Clinical EHR" in page
-    assert "Class V put-back double faults" in page
+    assert "A put-back on a REST or FHIR system fails twice" in page
+    assert (
+        "recorded with scripts/record_benchmarks.py on interlock-fiduciary "
+        f"{recorded['versions']['fiduciary']}"
+    ) in page
     assert "AgentGov hold and capture" in page
 
 

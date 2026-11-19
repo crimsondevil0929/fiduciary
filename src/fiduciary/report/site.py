@@ -43,16 +43,15 @@ DESCRIPTION: Final = (
 
 COPY: Final[dict[str, Any]] = {
     "badge": {
-        "version": "1.21",
-        "text": "Cross-session memory provenance, evasion hardening, and measured benchmarks",
-        "href": "benchmarks/",
+        "version": "1.22",
+        "text": "New: test a chatbot against ten chatbot laws",
+        "href": "chatbots/",
     },
     "headline": "Let AI agents change real systems. Keep only the changes you approved.",
     "lede": (
-        "Your agent's rules live in its prompt, and prompts get trimmed. Fiduciary sits between "
-        "the agent and its tools. It pins what each tool is, holds the dangerous calls for your "
-        "passkey, keeps what the agent read from leaving, and puts back what a failed turn "
-        "changed. Every decision is a signed record anyone can check offline."
+        "Fiduciary sits between your agent and its tools. It holds risky calls for your passkey, "
+        "refuses sends that carry a secret the agent read, and puts back what a failed turn "
+        "changed. Every decision is signed, and anyone can check it offline."
     ),
     "demo": "Open the interactive demo",
     "workflows": "{workflows} workflows",
@@ -85,9 +84,10 @@ COPY: Final[dict[str, Any]] = {
                 "key": "clients",
                 "tab": "I use Claude Code, Cursor or Claude Desktop",
                 "text": (
-                    "No code. Every MCP server in the client's file gets a proxy in front: its "
-                    "tools pinned, its writes made once, a passkey for what needs approval, and a "
-                    "fetch or send that carries what the agent read refused."
+                    "No code. Each MCP server in your client's config gets a proxy in front of "
+                    "it. The proxy pins the server's tools, makes each write once, asks for your "
+                    "passkey when a call needs approval, and refuses a send that carries what the "
+                    "agent read."
                 ),
                 "commands": [
                     "fiduciary protect --claude-desktop --apply",
@@ -154,10 +154,9 @@ COPY: Final[dict[str, Any]] = {
         "title": "Fiduciary, and the two engines under it",
         "lede": (
             "A gateway decides whether an agent may call a tool. Fiduciary decides whether what "
-            "the call changed may be kept, and leaves evidence for someone who trusts neither the "
-            "agent nor the operator. Installing interlock-fiduciary brings both engines with it: "
-            "Interlock stages and measures each change, and AgentGov keeps the budgets. Each "
-            "also works on its own."
+            "the call changed may be kept, and signs evidence an outsider can check. Installing "
+            "it brings both engines: Interlock stages and measures each change, and AgentGov "
+            "keeps the budgets."
         ),
     },
     "packages": [
@@ -336,7 +335,7 @@ COPY: Final[dict[str, Any]] = {
 NAV: Final = (
     ("home", "Overview"),
     ("run", "Interactive demo"),
-    ("sandbox", "Live sandbox"),
+    ("sandbox", "Recorded calls"),
     ("verify", "Verify a bundle"),
 )
 """The site's views, as the script's top bar lists them."""

@@ -142,7 +142,8 @@ def _replays_guide() -> Mapping[str, Any]:
 
 
 def _benchmarks_guide() -> Mapping[str, Any]:
-    """Commit-pinned benchmarks, gateway vs. stack catches, fault matrix and boundaries (1.21.0)."""
+    """The benchmarks page (1.21.0; plain prose 1.22.1): overhead, what the stack caught after
+    the gateway allowed it, the attack and fault tests, and the limits."""
     from importlib.resources import files
 
     recorded = json.loads((files("fiduciary.report") / "benchmarks.json").read_text("utf-8"))
@@ -170,9 +171,14 @@ def _benchmarks_guide() -> Mapping[str, Any]:
         ]
         for row in recorded["latency"]
     ]
+    bundles = sum(int(w["bundles_verified"]) for w in recorded["workflows"])
+    recorded_on = (
+        f"interlock-fiduciary {versions['fiduciary']}, interlock-escrow {versions['interlock']} "
+        f"and interlock-agentgov {versions['agentgov']}"
+    )
     sections: list[dict[str, Any]] = [
         {
-            "h2": "Pinned to this build",
+            "h2": "Check these numbers against this build",
             "code": [
                 f"pip install interlock-fiduciary=={versions['fiduciary']}",
                 "sha256sum -c SHA256SUMS",
@@ -181,29 +187,22 @@ def _benchmarks_guide() -> Mapping[str, Any]:
             ],
             "p": [
                 (
-                    f"Every table on this page was generated from benchmarks.json alongside the "
-                    f"built site, pinned to interlock-agentgov {versions['agentgov']}, "
-                    f"interlock-escrow {versions['interlock']} and "
-                    f"interlock-fiduciary {versions['fiduciary']}."
-                ),
-                (
-                    "Timings reflect warm local execution over SQLite ledgers, local "
-                    "directories, cryptographic keys and egress scanners with 100 timed "
-                    "iterations per operation after warmup. Production deployments add network "
-                    "round trips to remote APIs, PostgreSQL or Kubernetes control planes, plus "
-                    "human approval time when a warrant is required."
+                    "Each timing is 100 runs of one operation on one machine, after a warm-up, "
+                    "against local SQLite ledgers and directories. A real deployment adds network "
+                    "round trips to its APIs, PostgreSQL or Kubernetes, and the time a person "
+                    "takes to approve."
                 ),
             ],
         },
         {
-            "h2": "Input gateway permit vs. what the stack catches",
+            "h2": "Allowed by the gateway, then caught by the stack",
             "p": [
                 (
-                    "Each workflow replays a recorded model session whose tool calls passed a "
-                    "static input gateway policy first. Interlock stages each write inside its "
-                    "own system, measures every affected row, file, object or API record, checks "
-                    "the signed mandate, and refuses or undoes what breached a rule. All eight "
-                    "workflows verify offline across 16 bundles (V1 to V14)."
+                    "In each workflow a recorded model session makes calls that a static gateway "
+                    "policy allows. Interlock stages each write in its own system and measures "
+                    "every row, file, object or record it touched. Fiduciary checks that against "
+                    "the signed mandate, and refuses or undoes what broke a rule. All "
+                    f"{bundles} bundles verify offline, V1 to V14."
                 ),
             ],
             "table": {
@@ -221,11 +220,11 @@ def _benchmarks_guide() -> Mapping[str, Any]:
             },
         },
         {
-            "h2": "Incident replays on this release",
+            "h2": "Incident replays",
             "p": [
                 (
-                    "Each incident replay reconstructs a public agent failure pattern against "
-                    "stand-in MCP servers protected by fiduciary protect."
+                    "Each replay rebuilds the pattern of a public incident against stand-in MCP "
+                    "servers, protected the way fiduciary protect protects yours."
                 ),
             ],
             "table": {
@@ -238,9 +237,8 @@ def _benchmarks_guide() -> Mapping[str, Any]:
             "h2": "Measured local overhead",
             "p": [
                 (
-                    "In-process latency percentiles across core agent governance, transactional "
-                    "staging, signature verification, outbound inspection and memory recall "
-                    "operations."
+                    "The time each step takes in process, on one machine: budget holds, staging, "
+                    "signature checks, outbound inspection and memory recall."
                 ),
             ],
             "table": {
@@ -250,133 +248,130 @@ def _benchmarks_guide() -> Mapping[str, Any]:
             },
         },
         {
-            "h2": "Adversarial and fault-injection test matrix",
+            "h2": "Attacks and faults the tests run",
             "p": [
                 (
-                    "Every control and recovery path below runs deterministically in CI against "
-                    "SQLite, PostgreSQL, loopback REST and FHIR servers, MCP proxies and Node "
-                    "Web Crypto."
+                    "Each row is a test that runs in CI, against SQLite, PostgreSQL, loopback "
+                    "REST and FHIR servers, the MCP proxy and Node's Web Crypto."
                 ),
             ],
             "table": {
                 "headers": [
-                    "Attack or fault class",
-                    "Runtime behavior",
-                    "Offline check",
+                    "Attack or fault",
+                    "What the runtime does",
+                    "What the offline check sees",
                     "Test file",
                 ],
                 "rows": [
                     [
-                        "Layered outbound encodings",
+                        "A value hidden under layers of encoding",
                         (
-                            "Decodes URL, HTML, backslash, NFKC, base64, base32 and hex up to "
-                            "MAX_LAYERS deep"
+                            "Decodes URL encoding, HTML entities, JSON escapes, Unicode "
+                            "normalization, base64, base32 and hex, up to four layers deep"
                         ),
                         "V13 outbound digests and rule verdict",
                         "test_evasion.py",
                     ],
                     [
-                        "Split credentials inside one call",
+                        "A credential split inside one call",
                         (
-                            "Rejoins secret fragments in call order across arguments, query "
-                            "parameters, path segments and bodies"
+                            "Rejoins the pieces, in order, across the call's arguments, query "
+                            "parameters, path segments and body"
                         ),
-                        "V13 secret match recorded",
+                        "V13 records the secret match",
                         "test_evasion.py",
                     ],
                     [
-                        "URL parser differential and duplicate keys",
+                        "Duplicate JSON keys and URL parser tricks",
                         (
-                            "Rejects duplicate JSON object keys on parse and parses backslash "
-                            "authorities per WHATWG"
+                            "Refuses a message with duplicate keys, and reads a backslash in a "
+                            "URL's host part the way browsers do (WHATWG)"
                         ),
                         "V13 destination check against allowed domains",
                         "test_evasion.py",
                     ],
                     [
-                        "Three-server confused deputy",
+                        "A confused deputy across three servers",
                         (
-                            "Shares taint labels, memory citations and secret digests across "
-                            "servers under one protected client"
+                            "Shares labels, memory citations and secret digests across every "
+                            "server one client starts"
                         ),
-                        "V13 verifies memory citations across server logs",
+                        "V13 checks memory citations across the servers' logs",
                         "test_toxic_flow.py",
                     ],
                     [
-                        "Cross-session memory poisoning",
+                        "Memory poisoned in one session, read in the next",
                         (
-                            "Records session.remembered on writes to memory tools or MEMORY.md / "
-                            "CLAUDE.md and relabels future reads"
+                            "Records session.remembered when a tool writes memory, MEMORY.md or "
+                            "CLAUDE.md, and labels later reads of it"
                         ),
-                        "V13 verifies session.remembered to session.labeled citations",
+                        "V13 ties each session.remembered to the reads that cite it",
                         "test_memory.py",
                     ],
                     [
-                        "Backward host clock steps",
+                        "The host clock steps backwards",
                         (
-                            "Clamps record timestamps at the last record instant so log order "
-                            "never moves backwards"
+                            "Holds a record's time at the previous record's, so the log never "
+                            "goes back in time"
                         ),
-                        "V12 timestamp ordering check passes",
+                        "V12 time order passes",
                         "test_faults.py",
                     ],
                     [
-                        "Crashed or hung sub-agent budget holds",
+                        "A sub-agent crashes or hangs while holding budget",
                         (
-                            "Operators release stale holds; slow callers rebook safely without "
-                            "double spend"
+                            "An operator releases the stale hold, and a slow caller books again "
+                            "without spending twice"
                         ),
-                        "V6 ledger conservation verified",
+                        "V6 ledger balance",
                         "test_faults.py",
                     ],
                     [
-                        "Class V put-back double faults",
+                        "A put-back on a REST or FHIR system fails twice",
                         (
-                            "Retries 429 and 503 with Retry-After up to COMPENSATION_RETRIES; "
-                            "persistent 503 or 412 leaves the intent open with "
-                            "CommitUnsettledError and trips the scope breaker"
+                            "Retries a busy or briefly down system (429, 502, 503, 504) up to "
+                            "three times; a 412, or a failure that persists, leaves the intent "
+                            "open (CommitUnsettledError) and trips the scope's circuit breaker"
                         ),
-                        "Open escrow intent and signed AgentGov trip memo",
+                        "The open intent, and AgentGov's signed record of the trip",
                         "interlock test_rest.py, test_fhir.py",
                     ],
                 ],
             },
         },
         {
-            "h2": "Where the boundary is",
+            "h2": "What it does not catch",
             "p": [
                 (
-                    "Deterministic enforcement blocks exact mechanisms and documents clear "
-                    "boundaries where static checks do not substitute for isolation or human "
-                    "review."
+                    "The checks match exact values and known mechanisms. These are the gaps, "
+                    "and what bounds each one."
                 ),
             ],
             "ul": [
                 (
-                    "Paraphrases and summaries. Secret and private value scanning detects exact "
-                    "tokens and supported transport encodings. A model that rewords sensitive "
-                    "data is not matched and is bounded by bytes_sent and call limits instead."
+                    "Paraphrases and summaries. Scanning matches exact values and the encodings "
+                    "above. A model that rewords sensitive data is not matched; only the "
+                    "bytes_sent budget and call limits bound it."
                 ),
                 (
-                    "Chunks shorter than MIN_LENGTH. Values or fragments shorter than "
-                    "MIN_LENGTH characters and split private non-credential text are not "
-                    "reassembled across arguments."
+                    "Values shorter than eight characters. A value or a piece shorter than eight "
+                    "characters is not tracked, and private text that is not a credential is not "
+                    "rejoined from pieces."
                 ),
                 (
-                    "Cross-call splits and non-transport transforms. Secret fragments spread "
-                    "across separate calls, out-of-order pieces, ROT13, XOR or encryption are "
-                    "bounded by bytes_sent rather than value matching."
+                    "Splits across calls, and transforms that are not encodings. Pieces sent in "
+                    "separate calls or out of order, ROT13, XOR and encryption are not matched; "
+                    "the bytes_sent budget bounds them."
                 ),
                 (
-                    "Channels outside the proxy. Direct shell commands, raw sockets or built-in "
-                    "client tools that bypass protected MCP servers are not observed; disable "
-                    "shell tools such as Bash in CI."
+                    "Channels outside the proxy. Shell commands, raw sockets and a client's own "
+                    "built-in tools do not pass through a protected MCP server and are not seen. "
+                    "In CI, turn off shell tools such as Bash."
                 ),
                 (
-                    "Concurrent edits during Class V put-back. When an operator or external "
-                    "request modifies a REST or FHIR record concurrently (409 or 412), "
-                    "put-back leaves that change untouched, keeps the intent open and halts the "
-                    "scope for manual review."
+                    "Someone else's edit during a put-back. If a REST or FHIR record changes "
+                    "while a put-back runs (409 or 412), the put-back leaves that change alone, "
+                    "keeps the intent open and pauses the scope until a person looks."
                 ),
             ],
         },
@@ -386,35 +381,38 @@ def _benchmarks_guide() -> Mapping[str, Any]:
         "nav": "Benchmarks and limits",
         "title": "AI agent security benchmarks, overhead and limits",
         "description": (
-            "Measured P50, P95 and P99 overhead, gateway permit versus stack catches across "
-            "eight workflows and three replays, adversarial tests, and honest limits."
+            "Measured P50, P95 and P99 overhead, what the stack caught after a gateway allowed "
+            "the call in eight workflows and three replays, the attack tests, and the limits."
         ),
-        "h1": "Measured overhead, what the checks catch, and where the boundary is",
+        "h1": "What it catches, what it costs, and what it misses",
         "lede": (
-            f"Pinned to interlock-agentgov {versions['agentgov']}, interlock-escrow "
-            f"{versions['interlock']} and interlock-fiduciary {versions['fiduciary']}. Every "
-            "number below comes from running scripts/record_benchmarks.py against this build."
+            f"Every number on this page was recorded with scripts/record_benchmarks.py on "
+            f"{recorded_on}."
         ),
         "sections": sections,
         "steps": [
-            ("Install this release", f"pip install interlock-fiduciary=={versions['fiduciary']}"),
-            ("Generate local benchmarks", "python scripts/record_benchmarks.py"),
-            ("Build and verify the site", "python scripts/build_site.py site"),
+            (
+                "Get the source at this release",
+                f"git clone --branch v{versions['fiduciary']} "
+                "https://github.com/crimsondevil0929/fiduciary",
+            ),
+            ("Install it", "pip install -e ."),
+            ("Record the numbers on your machine", "python scripts/record_benchmarks.py"),
+            ("Build the site from them", "python scripts/build_site.py site"),
         ],
         "faq": [
             (
-                "Do these benchmarks include LLM or network API time?",
-                "No. Latency numbers measure local stack enforcement (AgentGov, Interlock and "
-                "Fiduciary) in process, while workflow outcomes replay recorded model sessions "
-                "deterministically at $0 model spend.",
+                "Do these numbers include model or network time?",
+                "No. The timings are local and in process. The workflow results replay "
+                "recorded model sessions, so no model is called and nothing is spent.",
             ),
             (
-                "How do I verify these numbers against a release build?",
-                "Check SHA256SUMS beside the built site, run scripts/record_benchmarks.py on "
-                "your hardware, and verify exported bundles offline with fiduciary verify-bundle.",
+                "How do I check them?",
+                "Run scripts/record_benchmarks.py on your own machine, check SHA256SUMS beside "
+                "the built site, and verify the bundles offline with fiduciary verify-bundle.",
             ),
         ],
-        "app": ("Explore the eight workflows in the demo", "../#/run"),
+        "app": ("Step through the eight workflows in the demo", "../#/run"),
     }
 
 
@@ -705,8 +703,8 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
                 "p": [
                     "A remote server's entry (a URL and its headers) is wrapped the same way. The "
                     "proxy speaks Streamable HTTP to the server, both the 2026-07-28 revision and "
-                    "the older one, and its Authorization token leaves the client's file, which "
-                    "every program that reads files can read, the agent among them.",
+                    "the older one, and its Authorization token is taken out of the client's "
+                    "file, which any program you run can read, the agent included.",
                     "With --move-secrets, each local server's environment values and each remote "
                     "server's token go to the system's own store: the macOS Keychain, the Linux "
                     "Secret Service or the Windows Credential Manager, and a file only you can "
@@ -832,8 +830,8 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
                 "ul": [
                     "Each request a turn's calls make waits in an outbox until the turn ends, "
                     "and is sent only if every call of the turn went through.",
-                    "If a call is refused, the turn's earlier changes are put back exactly, "
-                    "where the system they changed keeps what undoes them.",
+                    "If a call is refused, the turn's earlier changes are put back exactly, on "
+                    "each system that keeps the records an undo needs.",
                     "A call that needs approval waits for your passkey. The agent sees that it "
                     "is held, and is told not to call it again.",
                 ],
@@ -938,10 +936,11 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
             {
                 "h2": "What it does not catch",
                 "p": [
-                    "It catches an exact value, whole or encoded once. A model that paraphrases "
-                    "a secret, splits it across calls, or sends one shorter than eight "
-                    "characters is not caught, and neither is data sent through a channel the "
-                    "proxy does not serve, such as the agent's own shell.",
+                    "It catches an exact value, whole or under up to four layers of encoding, "
+                    "and a credential split across the arguments of one call. A model that "
+                    "paraphrases a secret, splits it across calls, or sends one shorter than "
+                    "eight characters is not caught, and neither is data sent through a channel "
+                    "the proxy does not serve, such as the agent's own shell.",
                 ],
             },
         ],
@@ -1176,10 +1175,11 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
             {
                 "h2": "What it does for each call",
                 "ul": [
-                    "Untrusted from the start. Issue and pull request text, comments, reviews and "
-                    "branch names from anyone the repository does not trust (owners, members and "
-                    "collaborators are trusted by default), and anything from a fork, label "
-                    "every session before the agent reads a word.",
+                    "Untrusted from the start. When the event holds text from anyone the "
+                    "repository does not trust (issue and pull request text, comments, reviews, "
+                    "branch names, or anything from a fork), every session is labeled untrusted "
+                    "before the agent reads a word. Owners, members and collaborators are "
+                    "trusted by default.",
                     "Secrets kept. The job's secrets live in the proxy's memory alone, and a "
                     "call that carries one is refused, whole or encoded.",
                     "Workflow files refused. A call whose arguments point at a path under "
@@ -1197,9 +1197,9 @@ GUIDES: Final[tuple[Mapping[str, Any], ...]] = (
                     "network and the runner's files directly, so give it none: in Claude Code, "
                     "--disallowedTools Bash. Tools the agent's action brings itself, such as "
                     "its own comment tool, do not go through the proxy either.",
-                    "A local MCP server holds its own token in its environment, which a process "
-                    "of the same user with a shell could read. A remote server's token never "
-                    "leaves the proxy.",
+                    "A local MCP server keeps its token in its own environment, where any "
+                    "process running as the same user can read it. A remote server's token "
+                    "never leaves the proxy.",
                     "Approvals are not asked for in CI. A held call waits, and the job ends "
                     "without it.",
                 ],
