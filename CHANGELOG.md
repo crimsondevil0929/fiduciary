@@ -6,6 +6,12 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
 
 ## [Unreleased]
 
+## [1.22.1] - 2026-11-19
+
+The public site and the docs, with one correction to what the outbound check is said to catch.
+No change to the engine, the bundle format or any verdict; requires `interlock-escrow>=1.12.0`
+as before.
+
 ### Changed
 
 - **The site's front page.** The text under the headline says what Fiduciary does in three
@@ -27,8 +33,8 @@ All notable changes to `interlock-fiduciary` are recorded here. The format follo
   console with a live sandbox (`fiduciary demo --replay --out demo --serve`). The public site
   no longer lists the verifier's optional upstream features, and the acceptance matrix is no
   longer called a customer acceptance matrix: it is a recorded test run, not customers.
-- **The benchmarks page** is recorded again on 1.22.0 and says which release its numbers came
-  from. Its limits are given as numbers (four layers of encoding, eight characters, three
+- **The benchmarks page** is recorded again, on this release, and says which release its numbers
+  came from. Its limits are given as numbers (four layers of encoding, eight characters, three
   retries) instead of code constants, and its steps start from a clone of the repository,
   where `scripts/record_benchmarks.py` lives.
 - Four of the browser verifier's check names are now whole sentences, among them "Every undo
